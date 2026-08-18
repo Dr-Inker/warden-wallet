@@ -80,25 +80,22 @@ pub fn process(_pid: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramR
         return Err(ProgramError::InvalidArgument);
     }
 
-    // 2) clientDataJSON checks by byte-substring (no JSON parser on-chain):
-    //    type, challenge, origin. See result.md for the caveat this carries.
-    if !contains(cdj, b"\"type\":\"webauthn.get\"") {
-        msg!("type mismatch");
-        return Err(ProgramError::InvalidArgument);
-    }
-    let mut cpat = b"\"challenge\":\"".to_vec();
-    cpat.extend_from_slice(chal);
-    cpat.push(b'"');
-    if !contains(cdj, &cpat) {
-        msg!("challenge mismatch");
-        return Err(ProgramError::InvalidArgument);
-    }
-    let mut opat = b"\"origin\":\"".to_vec();
-    opat.extend_from_slice(origin);
-    opat.push(b'"');
-    if !contains(cdj, &opat) {
-        msg!("origin mismatch");
-        return Err(ProgramError::InvalidArgument);
+    // 2) clientDataJSON checks by byte-substring (no JSON parser on-chain).
+    //    NOT PRODUCTION-SAFE — see `client_data_check` and result.md.
+    match client_data_check(cdj, chal, origin) {
+        ClientDataCheck::Ok => {}
+        ClientDataCheck::TypeMismatch => {
+            msg!("type mismatch");
+            return Err(ProgramError::InvalidArgument);
+        }
+        ClientDataCheck::ChallengeMismatch => {
+            msg!("challenge mismatch");
+            return Err(ProgramError::InvalidArgument);
+        }
+        ClientDataCheck::OriginMismatch => {
+            msg!("origin mismatch");
+            return Err(ProgramError::InvalidArgument);
+        }
     }
 
     // 3) the secp256r1 precompile instruction must be in this tx and bind
@@ -148,6 +145,113 @@ pub fn process(_pid: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramR
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ClientDataCheck {
+    Ok,
+    TypeMismatch,
+    ChallengeMismatch,
+    OriginMismatch,
+}
+
+/// Byte-substring "parse" of `clientDataJSON`.
+///
+/// # THIS IS NOT PRODUCTION-SAFE — DO NOT REUSE VERBATIM
+///
+/// It is extracted as a pure function purely so the spike can *demonstrate* its
+/// holes in unit tests (see the `substring_match_holes` module below) rather
+/// than merely assert them in prose. Known defects:
+/// * a `origin` key nested inside another object satisfies the check;
+/// * a duplicate top-level `origin`/`challenge` key satisfies the check even
+///   when the first occurrence is attacker-chosen;
+/// * a legitimately escaped value (`\/` or `\u002f`) is falsely rejected;
+/// * `crossOrigin` is not examined at all;
+/// * cost is O(haystack x needle) with no length cap on `clientDataJSON`.
+///
+/// Phase 1 MUST replace this with a top-level, duplicate-rejecting,
+/// escape-aware scanner, or bind a canonical `clientDataJSON` template.
+pub fn client_data_check(cdj: &[u8], challenge_b64url: &[u8], origin: &[u8]) -> ClientDataCheck {
+    if !contains(cdj, b"\"type\":\"webauthn.get\"") {
+        return ClientDataCheck::TypeMismatch;
+    }
+    let mut cpat = b"\"challenge\":\"".to_vec();
+    cpat.extend_from_slice(challenge_b64url);
+    cpat.push(b'"');
+    if !contains(cdj, &cpat) {
+        return ClientDataCheck::ChallengeMismatch;
+    }
+    let mut opat = b"\"origin\":\"".to_vec();
+    opat.extend_from_slice(origin);
+    opat.push(b'"');
+    if !contains(cdj, &opat) {
+        return ClientDataCheck::OriginMismatch;
+    }
+    ClientDataCheck::Ok
+}
+
 fn contains(h: &[u8], n: &[u8]) -> bool {
     n.len() <= h.len() && h.windows(n.len()).any(|w| w == n)
+}
+
+/// Executable documentation of the substring matcher's holes.
+///
+/// These are unit tests rather than LiteSVM transactions on purpose: an
+/// end-to-end version would need a signature over the crafted
+/// `clientDataJSON` under the *root* passkey, which is exactly what an attacker
+/// cannot produce. The hole being demonstrated lives entirely in the string
+/// check, so that is where it is demonstrated. Phase 1's stricter parser must
+/// flip the `_passes_` tests below to rejections.
+#[cfg(test)]
+mod substring_match_holes {
+    use super::*;
+
+    const ORIGIN: &[u8] = b"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi";
+    const CHAL: &[u8] = b"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q";
+
+    #[test]
+    fn accepts_the_real_client_data_json() {
+        let cdj = br#"{"type":"webauthn.get","challenge":"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q","origin":"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi","crossOrigin":false}"#;
+        assert_eq!(client_data_check(cdj, CHAL, ORIGIN), ClientDataCheck::Ok);
+    }
+
+    /// KNOWN HOLE (Phase 1 must flip this to a rejection): the *real* origin is
+    /// an attacker's, and ours only appears inside a nested object.
+    #[test]
+    fn documents_nested_origin_hole_passes_substring_match() {
+        let cdj = br#"{"type":"webauthn.get","challenge":"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q","origin":"https://evil.example","crossOrigin":true,"unknownExtension":{"origin":"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi"}}"#;
+        assert_eq!(
+            client_data_check(cdj, CHAL, ORIGIN),
+            ClientDataCheck::Ok,
+            "the substring matcher is known to accept a nested origin — Phase 1 must reject it"
+        );
+    }
+
+    /// KNOWN HOLE: duplicate top-level key; a real parser resolves one of the
+    /// two (implementation-defined), the substring matcher sees both.
+    #[test]
+    fn documents_duplicate_origin_key_passes_substring_match() {
+        let cdj = br#"{"type":"webauthn.get","challenge":"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q","origin":"https://evil.example","origin":"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi","crossOrigin":false}"#;
+        assert_eq!(client_data_check(cdj, CHAL, ORIGIN), ClientDataCheck::Ok);
+    }
+
+    /// KNOWN HOLE: `crossOrigin` is never examined.
+    #[test]
+    fn documents_cross_origin_true_passes_substring_match() {
+        let cdj = br#"{"type":"webauthn.get","challenge":"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q","origin":"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi","crossOrigin":true}"#;
+        assert_eq!(client_data_check(cdj, CHAL, ORIGIN), ClientDataCheck::Ok);
+    }
+
+    /// KNOWN FALSE REJECTION: a UA is free to escape `/` as `\/`; the value is
+    /// semantically identical and a real parser accepts it. We lock the user out.
+    #[test]
+    fn documents_escaped_origin_falsely_rejected() {
+        let cdj = br#"{"type":"webauthn.get","challenge":"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q","origin":"chrome-extension:\/\/maikadpaobbjkmaomnpnhjglpabllaoi","crossOrigin":false}"#;
+        assert_eq!(client_data_check(cdj, CHAL, ORIGIN), ClientDataCheck::OriginMismatch);
+    }
+
+    /// Sanity: a genuinely wrong origin with no nesting trick is still rejected.
+    #[test]
+    fn rejects_plain_wrong_origin() {
+        let cdj = br#"{"type":"webauthn.get","challenge":"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q","origin":"https://evil.example","crossOrigin":false}"#;
+        assert_eq!(client_data_check(cdj, CHAL, ORIGIN), ClientDataCheck::OriginMismatch);
+    }
 }

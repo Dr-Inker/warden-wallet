@@ -3952,6 +3952,7 @@ dependencies = [
  "hex",
  "litesvm",
  "serde_json",
+ "sha2 0.10.9",
  "solana-program",
  "solana-sdk",
  "solana-secp256r1-program",
