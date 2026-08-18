@@ -84,4 +84,6 @@ pub enum WardenError {
     RentFloor,
     #[msg("the destination token account is owned by the smart account itself")]
     VaultDestination,
+    #[msg("per-session day / 30-day caps are not supported in Phase 1A — set per_day = per_30d = 0")]
+    SessionDayCapsUnsupported,
 }

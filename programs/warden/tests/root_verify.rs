@@ -86,6 +86,7 @@ mod err {
     // Appended by Task 7 (`transfer`). Same append-only rule.
     pub const RENT_FLOOR: u32 = 6031;
     pub const VAULT_DESTINATION: u32 = 6032;
+    pub const SESSION_DAY_CAPS_UNSUPPORTED: u32 = 6033;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -94,7 +95,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 33] = [
+    let pairs: [(u32, WardenError, &str); 34] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -132,6 +133,11 @@ fn pinned_error_codes_match_the_enum_today() {
         (err::TIMELOCK_NOT_ELAPSED, WardenError::TimelockNotElapsed, "TimelockNotElapsed"),
         (err::RENT_FLOOR, WardenError::RentFloor, "RentFloor"),
         (err::VAULT_DESTINATION, WardenError::VaultDestination, "VaultDestination"),
+        (
+            err::SESSION_DAY_CAPS_UNSUPPORTED,
+            WardenError::SessionDayCapsUnsupported,
+            "SessionDayCapsUnsupported",
+        ),
     ];
     for (pinned, variant, name) in pairs {
         assert_eq!(

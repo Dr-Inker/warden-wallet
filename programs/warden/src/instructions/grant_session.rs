@@ -19,6 +19,17 @@
 //! `borsh(body)` literally the bytes that arrived, re-serialized from the
 //! deserialized struct: one encoding, no second source of truth.
 //!
+//! ## What a session cap bounds (Phase 1A)
+//!
+//! `per_tx` and `lifetime_cap`, and nothing else. A grant carrying a non-zero
+//! `per_day`/`per_30d` is REJECTED (`SessionDayCapsUnsupported`): day and
+//! rolling-30-day limits are account-wide (spec §4), shared by every session
+//! and by the root, and `SessionKey` has nowhere to accumulate a per-session
+//! day total. So the bound a session gives you is
+//! `per_tx x (number of calls) <= lifetime_cap`, under the account's day/30d
+//! ceiling. See `instructions::transfer` and
+//! docs/program/PHASE1A-MEASUREMENTS.md.
+//!
 //! ## Upsert semantics (`init_if_needed`)
 //!
 //! A grant for a session PDA that does not exist yet creates it. A grant for
@@ -236,6 +247,23 @@ fn validate_shape(b: &GrantBody) -> Result<()> {
         require!(c.mint != Pubkey::default(), WardenError::InvalidAccountData);
         let dup = b.caps[..i].iter().any(|other| other.mint == c.mint);
         require!(!dup, WardenError::InvalidAccountData);
+        // A session cap is `per_tx` + `lifetime_cap`, and NOTHING else, in
+        // Phase 1A. Day and rolling-30-day limits are ACCOUNT-WIDE (spec §4):
+        // they live in `SmartAccount.buckets` and every session plus the root
+        // debits the same ones (`instructions::transfer`). `SessionKey` has no
+        // bucket fields at all — no `day_start`, no ring — so a non-zero
+        // `per_day`/`per_30d` here would be stored, displayed to the user as
+        // if it bounded anything, and enforced by nothing. Rejecting is the
+        // only honest option: a cap that does not cap is worse than no cap.
+        //
+        // 1B: per-session day buckets need a bucket PDA (a 30-slot ring is
+        // 248 B — it does not fit `SessionKey._reserved`'s 64 B), at which
+        // point this check is replaced by real enforcement rather than
+        // relaxed.
+        require!(
+            c.per_day == 0 && c.per_30d == 0,
+            WardenError::SessionDayCapsUnsupported
+        );
     }
     Ok(())
 }
@@ -258,7 +286,9 @@ fn validate_shape(b: &GrantBody) -> Result<()> {
 ///   not by wire position — and every `per_*` must be at or below it
 ///   (`CapExceeded`). A mint with no ceiling entry is not grantable at all:
 ///   an absent ceiling means "sessions may not touch this mint", not
-///   "unlimited".
+///   "unlimited". (The `per_day`/`per_30d` comparisons are unreachable while
+///   `validate_shape` forces both to 0 — they are kept because the ceiling is
+///   what 1B's real per-session day buckets will be validated against.)
 fn validate_against_policy(account: &SmartAccount, b: &GrantBody, now: i64) -> Result<()> {
     require!(b.expiry_ts > now, WardenError::Expired);
     let max_expiry = now
@@ -334,8 +364,10 @@ mod tests {
         e.into()
     }
 
+    /// A Phase-1A-shaped session cap: `per_tx` only, day/30-day zeroed (see
+    /// `validate_shape`'s `SessionDayCapsUnsupported` rule).
     fn cap(mint: Pubkey, per_tx: u64) -> MintCap {
-        MintCap { mint, per_tx, per_day: per_tx, per_30d: per_tx }
+        MintCap { mint, per_tx, per_day: 0, per_30d: 0 }
     }
 
     fn body() -> GrantBody {
@@ -414,6 +446,28 @@ mod tests {
         b.caps.push(cap(Pubkey::default(), 1));
         b.lifetime_cap.push(1);
         assert_eq!(validate_shape(&b).unwrap_err(), err(WardenError::InvalidAccountData));
+    }
+
+    #[test]
+    fn shape_rejects_non_zero_session_day_caps() {
+        for (per_day, per_30d) in [(1u64, 0u64), (0, 1), (5, 5)] {
+            let mut b = body();
+            b.caps.push(MintCap { mint: Pubkey::new_unique(), per_tx: 1, per_day, per_30d });
+            b.lifetime_cap.push(1);
+            assert_eq!(
+                validate_shape(&b).unwrap_err(),
+                err(WardenError::SessionDayCapsUnsupported),
+                "per_day={per_day} per_30d={per_30d} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn shape_accepts_a_per_tx_only_cap() {
+        let mut b = body();
+        b.caps.push(cap(Pubkey::new_unique(), 5));
+        b.lifetime_cap.push(50);
+        assert!(validate_shape(&b).is_ok());
     }
 
     #[test]

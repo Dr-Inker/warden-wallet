@@ -16,7 +16,7 @@ verification cost is charged separately by the runtime and is not included in
 | `create_account` (all-defaults `PolicyArgs`, no mint caps used) | 8,777 | 472 B | `create_account::creates_with_defaults` | 235 B of instruction data (8 B discriminator + `CreateAccountArgs`). **Round-1 review fix: was 12,767 CU / 1,804 B** when `PolicyArgs` mirrored `Policy`'s fixed 8-slot arrays — see the fixed finding below. |
 | `create_account` (2 mints — SOL + USDC, each with a cap, session ceiling, and large-transfer threshold) | not separately measured (CU is dominated by fixed decode cost, not mint count) | 808 B | `create_account::realistic_two_mint_policy_transaction_fits_the_packet_limit` | Asserted `<= 1,232 B` in the test itself, not just printed. |
 | `create_account` (`MAX_MINTS_AT_CREATE` = 4 mints, each with a cap, session ceiling, and large-transfer threshold) | not separately measured | 1,144 B | `create_account::max_mints_at_create_transaction_fits_the_packet_limit` | Asserted `<= 1,232 B`; margin is 88 B — this is why `MAX_MINTS_AT_CREATE` is 4, not 8 (see below). |
-| `grant_session` (full root ceremony, `MAX_CAPS_PER_GRANT` = 2 caps) | 31,829 | 944 B | `sessions::grant_ok_and_readback` (CU) / `sessions::grant_tx_fits_1232_bytes_with_2_caps` (bytes) | 423 B of instruction data (8 B discriminator + 218 B `RootArgs` + 197 B `GrantBody`) plus a 182 B precompile instruction; 37 B `authenticatorData`, 164 B `clientDataJSON`. CU is ~2× `rotate_nonce` because the same root check is followed by a `system_program::create_account` CPI for the 751 B `SessionKey` PDA and a full Borsh write-back of it. **Asserted `<= 1,232 B` in the test** — margin is 288 B. |
+| `grant_session` (full root ceremony, `MAX_CAPS_PER_GRANT` = 2 caps) | 31,829 | 944 B | `sessions::grant_ok_and_readback` (CU) / `sessions::grant_tx_fits_1232_bytes_with_2_caps` (bytes) | 423 B of instruction data (8 B discriminator + 218 B `RootArgs` + 197 B `GrantBody`) plus a 182 B precompile instruction; 37 B `authenticatorData`, 164 B `clientDataJSON`. CU is ~2× `rotate_nonce` because the same root check is followed by a `system_program::create_account` CPI for the 751 B `SessionKey` PDA and a full Borsh write-back of it. **Asserted `<= 1,232 B` in the test** — margin is 288 B. Re-measured 31,842 CU after Task 7's round-1 review added the `SessionDayCapsUnsupported` check (+13 CU); size unchanged, since `MintCap` is fixed-width whether or not its day fields are zero. |
 | `revoke_session_root` (full root ceremony, closes the session PDA) | 20,774 | 778 B | `sessions::revoke_by_root_ok` | 8 B discriminator + 218 B `RootArgs` + 64 B `RevokeBody` (`session_pubkey` ‖ `refund_to`) of instruction data, plus the 182 B precompile instruction. Asserted `<= 1,232 B`. Round-1 review: was 20,505 CU / 746 B before `refund_to` was added to the signed body. |
 | `revoke_session_self` (session key signs; no root ceremony) | 7,323 | 341 B | `sessions::revoke_by_session_self_ok` | 8 B of instruction data and no precompile instruction at all — the cheapest authenticated path in the program. |
 | `freeze` (full root ceremony, root-only, 1A scope) | 15,697 | 680 B | `freeze::freeze_sets_state` (CU) / `freeze::freeze_tx_fits_1232_bytes` (bytes) | No arguments beyond `RootArgs` — same shape as `rotate_nonce`, so the size and CU are effectively identical (`rotate_nonce` measured 15,533–15,664 CU / 680 B across the two suites that measure it; the ~30–160 CU spread between runs is compilation/measurement noise, not a real cost difference). |
@@ -24,7 +24,7 @@ verification cost is charged separately by the runtime and is not included in
 | `transfer` (session key, native SOL) | 18,533 | 386 B | `transfer::session_sol_transfer_within_caps` (CU) / `transfer::session_sol_transfer_tx_fits_1232_bytes` (bytes) | No precompile instruction and no root ceremony at all — 8 B discriminator + 18 B `TransferArgs` (`root: None` 1 B, `mint: None` 1 B, `amount` 8 B, plus option tags) over 7 accounts. The CU is the account PDA re-derivation, the session checks, `buckets::debit` (day roll + 30-slot ring sum) and the direct lamport move. |
 | `transfer` (session key, SPL token) | 20,665 | 482 B | `transfer::session_spl_transfer_ok` (CU) / `transfer::session_spl_transfer_tx_fits_1232_bytes` (bytes) | +2,132 CU over the native path: two 165 B token-account parses plus the `spl_token::Transfer` CPI (the CPI's own cost is charged to this transaction). +96 B of accounts (source ATA + token program instead of two `None` placeholders). |
 | `transfer` (passkey root, native SOL) | 25,555 | 727 B | `transfer::root_transfer_within_threshold_debits_buckets` (CU) / `transfer::root_transfer_tx_fits_1232_bytes` (bytes) | 8 B discriminator + 218 B `RootArgs` + 10 B of own arguments, plus the 182 B precompile instruction. ~7,000 CU above the session path is exactly the root ceremony (cf. `rotate_nonce` at 15.5k, which does the ceremony and nothing else); the `large_threshold` lookup is negligible. Root payload budget (C7) is respected with room to spare: 10 B of own arguments against the 400 B allowance. |
-| `transfer` (passkey root, SPL token) | 27,692 | not separately measured (accounts differ from the native root row by the same +96 B as the session pair) | `transfer::root_spl_transfer_ok` | The root ceremony plus the SPL path, i.e. the most expensive shape Phase 1A has: still 14% of a default 200k-CU budget. |
+| `transfer` (passkey root, SPL token) | 27,692 | 823 B | `transfer::root_spl_transfer_ok` (CU) / `transfer::root_spl_transfer_tx_fits_1232_bytes` (bytes) | The root ceremony plus the SPL path — the most expensive shape Phase 1A has, still 14% of a default 200k-CU budget and 409 B under the packet limit. Asserted `<= 1,232 B` in the test, not merely printed (round-1 review). Worst case at `MAX_CLIENT_DATA_LEN` = 512 B of `clientDataJSON` would be ~1,171 B — inside the limit, but with only ~61 B to spare, which is the tightest margin of any 1A instruction. |
 
 ## Headroom
 
@@ -132,24 +132,36 @@ in effect lasts. This is not decided here — flagged for whoever implements
 
 ### `transfer`: what a session cap bounds in Phase 1A
 
-`SessionKey` carries a full `MintCap` per mint but has **no bucket fields**
-(no `day_start`, no 30-day ring), so there is nowhere to accumulate a
-per-session day or 30-day total. `instructions::transfer` therefore enforces,
-per session, only `caps[mint].per_tx` and `lifetime_cap[mint]` vs
-`lifetime_spent[mint]`; the day and rolling-30-day limits come from the
-**account-wide** `SmartAccount.buckets`, which every session AND the root
-debit through the same `buckets::debit` call
-(`transfer::two_sessions_share_account_day_cap`,
-`transfer::root_transfer_within_threshold_debits_buckets`). A session's
-`per_day`/`per_30d` are still validated against `policy.session_ceiling` at
-grant time and stored — they are simply not read by the 1A transfer path.
+**Bound statement: a session's bound is `per_tx x (calls) <= lifetime_cap`;
+the day / 30-day bound is account-wide.**
 
-This is the conservative direction (one shared budget, not one per delegate),
-but it does mean a session cannot today be given a *tighter* daily allowance
-than the account's. Phase 1B may carve per-session day buckets out of
-`SessionKey._reserved` (64 B — enough for `day_start: i64` + `spent_today: u64`
-+ a ring index, not for a full 30-slot ring, so a 1B design decision is owed
-there).
+`SessionKey` carries a `MintCap` per mint but has **no bucket fields** (no
+`day_start`, no 30-day ring), so there is nowhere to accumulate a per-session
+day or 30-day total. Per spec §4 those windows are ACCOUNT-WIDE and a session's
+own caps are `per_tx` + `lifetime_cap`. Phase 1A therefore:
+
+* **rejects** a grant that sets `per_day != 0 || per_30d != 0`
+  (`SessionDayCapsUnsupported`, error 6033 — `grant_session::validate_shape`,
+  proven by `sessions::grant_with_session_day_caps_rejected`). A stored-but-
+  unenforced cap is worse than no cap: it would be displayed to the user as if
+  it bounded something. Round-1 review ruling — the first pass stored those
+  fields and silently never read them.
+* enforces, per session, `caps[mint].per_tx` and `lifetime_spent + amount <=
+  lifetime_cap`;
+* enforces the day and rolling-30-day windows **only** through
+  `SmartAccount.buckets`, which every session AND the root debit via the same
+  `buckets::debit` call (`transfer::two_sessions_share_account_day_cap`,
+  `transfer::root_transfer_within_threshold_debits_buckets`).
+
+`instructions::transfer` carries a `debug_assert!` on the session cap's day
+fields, so the invariant is stated where it is relied upon and not only where
+it is enforced.
+
+**1B owes:** real per-session day buckets need a **bucket PDA** — a 30-slot
+ring is 8 + 8 + 8 + 240 = 264 B and does not fit `SessionKey._reserved`'s 64 B.
+When that lands, the check above becomes enforcement rather than being relaxed,
+and `policy.session_ceiling`'s `per_day`/`per_30d` comparisons (kept in
+`validate_against_policy`, currently unreachable) become live again.
 
 ### Runtime gotcha: a credited destination must stay rent-exempt
 
@@ -176,6 +188,25 @@ That is a separate concern from the runtime check above: without it a session
 could drain the vault's lamports to the point where the ~4.1 KB `SmartAccount`
 account itself became rent-collectible, taking the wallet's own state with it.
 Draining down to *exactly* the floor is allowed.
+
+### Error ABI added by Task 7
+
+Anchor derives the on-wire code from declaration order, so these are permanent
+once any client ships against them. Appended, never inserted (the enum's
+append-only rule); `root_verify::pinned_error_codes_match_the_enum_today` is
+the single test that pins all 34 variants against the enum.
+
+| Code | Variant | Raised when |
+| ---: | --- | --- |
+| 6031 | `RentFloor` | A native transfer would leave the **vault** below `Rent::minimum_balance(data_len)`. Distinct from the runtime's `InsufficientFundsForRent`, which is about the **destination** and is a transaction error no program can catch. |
+| 6032 | `VaultDestination` | The SPL destination token account is owned by the smart account itself (or is the source) — value would not leave the wallet while the caps were debited. |
+| 6033 | `SessionDayCapsUnsupported` | A `grant_session` cap sets `per_day` or `per_30d` (round-1 review; see the bound statement above). |
+
+Both `RentFloor` and `ChallengeMismatch` (6018, raised by `transfer` when a
+root ceremony's destination or amount is substituted) are deliberately reused
+rather than specialised further: `ChallengeMismatch` is what every other root
+instruction raises for a rebuilt-transcript mismatch, and splitting it per
+instruction would tell an attacker which field they got wrong.
 
 ## Update policy
 

@@ -20,8 +20,8 @@ use anchor_lang::AnchorSerialize;
 use common::passkey::{self, TestPasskey, FLAGS_UP_UV, TEST_ORIGIN};
 use common::token::{ata, set_mint, set_token_account, token_amount, token_program_id};
 use common::{
-    bump_generation, create_smart_account, read_session, read_smart_account, session_pda,
-    warp_clock, SmartAccountFixture,
+    bump_generation, clear_policy_cap, create_smart_account, read_session, read_smart_account,
+    session_pda, warp_clock, SmartAccountFixture,
 };
 use litesvm::LiteSVM;
 use sha2::{Digest, Sha256};
@@ -374,12 +374,16 @@ fn grant_body(session_pubkey: Pubkey, ops_mask: u16, caps: Vec<MintCap>, lifetim
     }
 }
 
+/// A session cap as Phase 1A allows it: `per_tx` only. `per_day`/`per_30d`
+/// MUST be 0 — `grant_session` rejects anything else
+/// (`SessionDayCapsUnsupported`), because the day and rolling-30-day bounds
+/// are the account-wide buckets every session and the root share.
 fn sol_cap() -> MintCap {
-    MintCap { mint: NATIVE_MINT, per_tx: SOL_SESSION_PER_TX, per_day: SOL_PER_DAY, per_30d: SOL_PER_30D }
+    MintCap { mint: NATIVE_MINT, per_tx: SOL_SESSION_PER_TX, per_day: 0, per_30d: 0 }
 }
 
 fn tok_cap() -> MintCap {
-    MintCap { mint: tok_mint(), per_tx: TOK_SESSION_PER_TX, per_day: TOK_PER_DAY, per_30d: TOK_PER_30D }
+    MintCap { mint: tok_mint(), per_tx: TOK_SESSION_PER_TX, per_day: 0, per_30d: 0 }
 }
 
 /// Grant `body` through a real root ceremony and return the session PDA.
@@ -681,8 +685,10 @@ fn session_of_another_account_rejected() {
     expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::UNAUTHORIZED);
 }
 
+/// The SESSION's own cap lookup: a mint this session was never granted is
+/// refused before the account policy is even consulted.
 #[test]
-fn session_mint_without_account_cap_rejected() {
+fn session_mint_without_session_cap_rejected() {
     let (mut svm, payer, pk, account) = live();
     let session_kp = Keypair::new();
     let session = grant_default_session(&mut svm, &payer, &account, &pk, &session_kp);
@@ -700,6 +706,39 @@ fn session_mint_without_account_cap_rejected() {
         &args,
     );
     expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::CAP_EXCEEDED);
+}
+
+/// The ACCOUNT-WIDE policy lookup, reached only when the session's own cap
+/// check has already passed: the session still holds a valid SOL cap, but the
+/// account's `policy.caps[SOL]` slot has been removed (1B's `set_policy` is
+/// the instruction that would do this for real). Without an account cap there
+/// is no bucket to debit, and "no cap configured" means **not spendable**, not
+/// "unlimited" — which is the property this test exists to pin, since it is
+/// the one that would silently invert if `find_cap`'s `None` were ever treated
+/// as "no limit".
+#[test]
+fn session_mint_without_account_cap_rejected() {
+    let (mut svm, payer, pk, account) = live();
+    let session_kp = Keypair::new();
+    let session = grant_default_session(&mut svm, &payer, &account, &pk, &session_kp);
+    let dest = funded_dest(&mut svm);
+
+    // Sanity: with the policy intact this exact transfer succeeds, so the
+    // rejection below can only come from the removed account cap.
+    let ix = session_sol_ix(&session_kp, account, session, dest, SOL_SESSION_PER_TX);
+    expect_ok(&mut svm, &[&payer, &session_kp], &[ix]);
+
+    // caps[0] is SOL (see `transfer_policy`); the session keeps its own cap.
+    clear_policy_cap(&mut svm, &account, 0);
+    assert_eq!(
+        read_session(&svm, &session).caps[0].per_tx,
+        SOL_SESSION_PER_TX,
+        "the session's own SOL cap is untouched — the account's is what is gone"
+    );
+
+    let ix = session_sol_ix(&session_kp, account, session, dest, SOL_SESSION_PER_TX);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::CAP_EXCEEDED);
+    assert_eq!(received(&svm, &dest), SOL_SESSION_PER_TX, "only the first transfer landed");
 }
 
 #[test]
@@ -852,6 +891,77 @@ fn spl_source_not_owned_by_the_vault_rejected() {
     expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::INVALID_ACCOUNT_DATA);
 }
 
+/// A token account that IS vault-owned but holds a different mint. Distinct
+/// from `spl_source_not_owned_by_the_vault_rejected` (right mint, wrong
+/// owner): without the source-side mint check, a session granted for a cheap
+/// mint could drain an expensive one while debiting the cheap mint's buckets.
+#[test]
+fn spl_wrong_source_mint_rejected() {
+    let (mut svm, payer, pk, account, _vault_ata, dest_ata) = live_spl();
+    let session_kp = Keypair::new();
+    let session = grant_default_session(&mut svm, &payer, &account, &pk, &session_kp);
+
+    let other_mint = Pubkey::new_from_array([17u8; 32]);
+    set_mint(&mut svm, &other_mint, 6, 1_000_000);
+    let other_vault_ata = ata(&account, &other_mint);
+    set_token_account(&mut svm, &other_vault_ata, &other_mint, &account, VAULT_TOKENS);
+
+    // `mint` argument (and therefore the caps debited) says `tok_mint`, the
+    // source holds `other_mint`.
+    let ix = session_spl_ix(&session_kp, account, session, other_vault_ata, dest_ata, tok_mint(), 1);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::INVALID_ACCOUNT_DATA);
+    assert_eq!(token_amount(&svm, &other_vault_ata), VAULT_TOKENS, "nothing moved");
+}
+
+/// Every Warden rule passes and the buckets are debited — then the token
+/// program refuses the CPI (the vault ATA holds less than the transfer). The
+/// whole transaction must roll back: no consumed nonce, no spent bucket, no
+/// `lifetime_spent`, no balance change.
+///
+/// Solana's runtime discards all account writes on a failed transaction, so
+/// this is not a claim about the handler's own bookkeeping — it is the proof
+/// that the handler does not do anything *outside* account state (log-then-act,
+/// a second transaction, an early commit) that could survive the failure.
+#[test]
+fn token_cpi_failure_leaves_state_unchanged() {
+    let (mut svm, payer, pk, account, vault_ata, dest_ata) = live_spl();
+    let session_kp = Keypair::new();
+    let session = grant_default_session(&mut svm, &payer, &account, &pk, &session_kp);
+
+    // The vault holds less than the (perfectly legal, within-caps) amount.
+    set_token_account(&mut svm, &vault_ata, &tok_mint(), &account, 100);
+
+    let before = read_smart_account(&svm, &account);
+    let session_before = read_session(&svm, &session);
+
+    let ix = session_spl_ix(&session_kp, account, session, vault_ata, dest_ata, tok_mint(), TOK_SESSION_PER_TX);
+    let e = send(&mut svm, &[&payer, &session_kp], &[ix]).expect_err("the token CPI must fail");
+    assert!(
+        matches!(e.err, TransactionError::InstructionError(0, _)),
+        "expected the CPI to fail inside our instruction, got {:?}; logs={:#?}",
+        e.err,
+        e.meta.logs
+    );
+    assert!(
+        !e.meta.logs.iter().any(|l| l.contains("panicked")),
+        "program panicked instead of propagating the CPI error: {:#?}",
+        e.meta.logs
+    );
+
+    let after = read_smart_account(&svm, &account);
+    assert_eq!(after.root_nonce, before.root_nonce, "no nonce consumed");
+    assert_eq!(after.buckets[1].spent_today, 0, "the token day bucket was rolled back");
+    assert_eq!(after.buckets[1].ring, before.buckets[1].ring, "the 30-day ring was rolled back");
+    assert_eq!(after.buckets[0].spent_today, 0, "SOL's bucket untouched");
+    assert_eq!(
+        read_session(&svm, &session).lifetime_spent,
+        session_before.lifetime_spent,
+        "lifetime_spent was rolled back"
+    );
+    assert_eq!(token_amount(&svm, &vault_ata), 100, "vault balance unchanged");
+    assert_eq!(token_amount(&svm, &dest_ata), 0, "destination balance unchanged");
+}
+
 #[test]
 fn spl_token_2022_rejected_in_phase_1a() {
     let (mut svm, payer, pk, account, vault_ata, dest_ata) = live_spl();
@@ -952,6 +1062,34 @@ fn root_spl_transfer_ok() {
 /// A mint the policy caps at the account level but gives NO `large_threshold`
 /// entry is not directly root-transferable at all — absent means "not
 /// allowed", never "unlimited".
+#[test]
+fn root_spl_transfer_tx_fits_1232_bytes() {
+    let (svm, payer, pk, account, vault_ata, dest_ata) = live_spl();
+    let body = TransferBody { native: false, mint: tok_mint(), destination: dest_ata, amount: 1 };
+    let mut body_bytes = Vec::new();
+    body.serialize(&mut body_bytes).unwrap();
+    let (precompile, root) = ceremony(&svm, &account, &pk, action_hash(OP_TRANSFER_ACTION, &body_bytes));
+    let args = TransferArgs { root: Some(root), mint: Some(tok_mint()), amount: 1 };
+    let ix = transfer_ix(
+        payer.pubkey(),
+        account,
+        None,
+        true,
+        dest_ata,
+        Some(vault_ata),
+        Some(token_program_id()),
+        &args,
+    );
+    let tx = Transaction::new(
+        &[&payer],
+        Message::new(&[precompile, ix], Some(&payer.pubkey())),
+        svm.latest_blockhash(),
+    );
+    let n = bincode::serialize(&tx).unwrap().len();
+    println!("transfer (root, SPL) tx bytes: {n}");
+    assert!(n <= PACKET_DATA_SIZE, "root SPL transfer must fit the packet limit: {n}");
+}
+
 #[test]
 fn root_transfer_of_mint_without_threshold_rejected() {
     let (mut svm, payer, pk, account) = live();

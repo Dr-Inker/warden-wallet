@@ -71,6 +71,7 @@ mod err {
     pub const INVALID_POLICY: u32 = 6027;
     pub const CHALLENGE_MISMATCH: u32 = 6018;
     pub const PROGRAM_ALLOWLIST_UNSUPPORTED: u32 = 6028;
+    pub const SESSION_DAY_CAPS_UNSUPPORTED: u32 = 6033;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,14 +115,20 @@ fn session_policy() -> PolicyArgs {
     }
 }
 
-/// The heaviest cap a session may be granted for each mint — exactly the
-/// policy ceiling, which is the realistic shape (and the largest one that
-/// must be accepted).
+/// The heaviest cap a session may be granted for each mint: `per_tx` exactly
+/// at the policy ceiling, with `per_day`/`per_30d` **zero**.
+///
+/// Phase 1A rejects a session cap that sets either
+/// (`SessionDayCapsUnsupported`, `grant_with_session_day_caps_rejected`):
+/// day and rolling-30-day limits are account-wide, so a per-session copy would
+/// be stored and enforced by nothing. The bound a session gives you is
+/// `per_tx x (calls) <= lifetime_cap`, under the account's own day/30d
+/// buckets.
 fn sol_cap() -> MintCap {
-    MintCap { mint: sol_mint(), per_tx: 1_000_000_000, per_day: 5_000_000_000, per_30d: 50_000_000_000 }
+    MintCap { mint: sol_mint(), per_tx: 1_000_000_000, per_day: 0, per_30d: 0 }
 }
 fn usdc_cap() -> MintCap {
-    MintCap { mint: usdc_mint(), per_tx: 500_000_000, per_day: 2_000_000_000, per_30d: 20_000_000_000 }
+    MintCap { mint: usdc_mint(), per_tx: 500_000_000, per_day: 0, per_30d: 0 }
 }
 
 fn label(s: &str) -> [u8; 16] {
@@ -537,7 +544,7 @@ fn grant_tx_fits_1232_bytes_with_2_caps() {
 fn grant_with_3_caps_rejected() {
     let session_key = Keypair::new();
     let mut body = two_cap_body(session_key.pubkey());
-    body.caps.push(MintCap { mint: ungranted_mint(), per_tx: 1, per_day: 1, per_30d: 1 });
+    body.caps.push(MintCap { mint: ungranted_mint(), per_tx: 1, per_day: 0, per_30d: 0 });
     body.lifetime_cap.push(1);
     assert!(body.caps.len() > MAX_CAPS_PER_GRANT);
     expect_grant_reject(body, err::BAD_INSTRUCTION_LAYOUT);
@@ -568,12 +575,25 @@ fn grant_over_ceiling_rejected() {
     expect_grant_reject(body, err::CAP_EXCEEDED);
 }
 
+/// Phase 1A stores no per-session day/30-day accounting, so a grant that
+/// *claims* one is refused outright rather than accepted and ignored. Both
+/// fields are covered, separately and together — an "only `per_30d` set" grant
+/// is exactly the shape a client would produce by copying the account policy
+/// wholesale.
+///
+/// This replaces the former `grant_over_ceiling_per_30d_rejected`: with both
+/// fields pinned to 0, "over the ceiling" is unreachable for them, and
+/// `grant_over_ceiling_rejected` (per_tx) still covers the ceiling rule
+/// itself.
 #[test]
-fn grant_over_ceiling_per_30d_rejected() {
-    let session_key = Keypair::new();
-    let mut body = one_cap_body(session_key.pubkey());
-    body.caps[0].per_30d = sol_cap().per_30d + 1;
-    expect_grant_reject(body, err::CAP_EXCEEDED);
+fn grant_with_session_day_caps_rejected() {
+    for (per_day, per_30d) in [(1u64, 0u64), (0, 1), (5_000_000_000, 50_000_000_000)] {
+        let session_key = Keypair::new();
+        let mut body = one_cap_body(session_key.pubkey());
+        body.caps[0].per_day = per_day;
+        body.caps[0].per_30d = per_30d;
+        expect_grant_reject(body, err::SESSION_DAY_CAPS_UNSUPPORTED);
+    }
 }
 
 /// A mint with an account-level cap but no `session_ceiling` entry is not
@@ -583,7 +603,7 @@ fn grant_over_ceiling_per_30d_rejected() {
 fn grant_mint_without_session_ceiling_rejected() {
     let session_key = Keypair::new();
     let mut body = one_cap_body(session_key.pubkey());
-    body.caps = vec![MintCap { mint: ungranted_mint(), per_tx: 1, per_day: 1, per_30d: 1 }];
+    body.caps = vec![MintCap { mint: ungranted_mint(), per_tx: 1, per_day: 0, per_30d: 0 }];
     body.lifetime_cap = vec![1];
     expect_grant_reject(body, err::CAP_EXCEEDED);
 }
@@ -658,7 +678,7 @@ fn regrant_merges_by_mint_and_preserves_spent() {
     let regrant = GrantBody {
         expiry_ts: NOW + 2 * 86_400,
         ops_mask: OP_TRANSFER,
-        caps: vec![MintCap { per_tx: 1, per_day: 2, per_30d: 3, ..sol_cap() }],
+        caps: vec![MintCap { per_tx: 1, per_day: 0, per_30d: 0, ..sol_cap() }],
         lifetime_cap: vec![123_000_000_000],
         program_allowlist_id: 0,
         label: label("relabelled"),
@@ -670,7 +690,11 @@ fn regrant_merges_by_mint_and_preserves_spent() {
     let s = read_session(&svm, &session);
     // SOL: replaced in place, spend preserved.
     assert_eq!(s.caps[0].mint, sol_mint());
-    assert_eq!((s.caps[0].per_tx, s.caps[0].per_day, s.caps[0].per_30d), (1, 2, 3));
+    assert_eq!(
+        (s.caps[0].per_tx, s.caps[0].per_day, s.caps[0].per_30d),
+        (1, 0, 0),
+        "per_tx replaced in place; day/30d stay 0 (SessionDayCapsUnsupported)"
+    );
     assert_eq!(s.lifetime_cap[0], 123_000_000_000);
     assert_eq!(s.lifetime_spent[0], 7_000_000_000, "a re-grant is not a spend reset");
     // USDC: untouched by a grant that did not mention it.

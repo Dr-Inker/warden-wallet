@@ -38,13 +38,13 @@
 //! - `caps[mint].per_tx` — the per-transaction ceiling, and
 //! - `lifetime_cap[mint]` vs `lifetime_spent[mint]` — the running total,
 //!
-//! and leaves the day / rolling-30-day limits to the **account-wide** buckets,
-//! which every session and the root share. A session's `per_day`/`per_30d`
-//! values are still validated against `policy.session_ceiling` at grant time
-//! (`grant_session`) and stored, but nothing reads them here. Phase 1B may add
-//! per-session day buckets to `SessionKey`'s `_reserved` space; until then the
-//! account-wide bucket is the only day-scale limit, and it is the conservative
-//! direction (shared, not per-delegate).
+//! i.e. **`per_tx x (calls) <= lifetime_cap`**, and leaves the day /
+//! rolling-30-day limits to the **account-wide** buckets, which every session
+//! and the root share. `grant_session` REFUSES a grant that sets a non-zero
+//! `per_day`/`per_30d` (`SessionDayCapsUnsupported`), so there is no stored
+//! session field that this handler silently fails to read — a cap that does
+//! not cap would be worse than no cap. 1B: per-session day buckets need a
+//! bucket PDA (a 30-slot ring is 248 B and does not fit `SessionKey._reserved`).
 //!
 //! ## Native SOL moves lamports directly
 //!
@@ -259,6 +259,16 @@ pub(crate) fn handler(ctx: Context<Transfer>, args: TransferArgs) -> Result<()> 
         // THIS session's slots is not movable by it, whatever the account
         // policy allows (absent means "not granted").
         let (slot, cap) = find_cap(&session.caps, &cap_mint).ok_or(WardenError::CapExceeded)?;
+        // A session cap is `per_tx` + `lifetime_cap` and NOTHING else in
+        // Phase 1A; `grant_session::validate_shape` refuses to store a
+        // non-zero `per_day`/`per_30d` (`SessionDayCapsUnsupported`) precisely
+        // so that no field here is silently unread. The day / rolling-30-day
+        // bound is the ACCOUNT-WIDE `buckets::debit` below, shared with every
+        // other session and with the root.
+        debug_assert!(
+            cap.per_day == 0 && cap.per_30d == 0,
+            "session day caps are rejected at grant time and never enforced here"
+        );
         let per_tx = cap.per_tx;
         require!(args.amount <= per_tx, WardenError::CapExceeded);
 

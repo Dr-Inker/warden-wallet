@@ -292,6 +292,37 @@ pub fn write_session(svm: &mut LiteSVM, pda: &Pubkey, session: &SessionKey) {
     .expect("set_account");
 }
 
+/// **TEST-ONLY back door.** Zero out `policy.caps[idx]` (and its parallel
+/// bucket) in place, leaving every other byte untouched.
+///
+/// Needed because Phase 1A has no `set_policy` instruction (it lands in 1B):
+/// there is no honest sequence of instructions that removes an account-level
+/// cap while a session still holds one for the same mint. That combination is
+/// exactly what `transfer::session_mint_without_account_cap_rejected` needs in
+/// order to reach the ACCOUNT-WIDE policy lookup — with an intact policy, a
+/// mint a session cannot spend is refused earlier, at the session's own cap
+/// lookup, and the policy lookup is never exercised.
+pub fn clear_policy_cap(svm: &mut LiteSVM, pda: &Pubkey, idx: usize) {
+    let existing = svm.get_account(pda).expect("account exists");
+    let mut acc = read_smart_account(svm, pda);
+    acc.policy.caps[idx] = warden::state::MintCap::default();
+    acc.buckets[idx] = warden::state::MintBuckets::default();
+    let mut data = SmartAccount::DISCRIMINATOR.to_vec();
+    data.extend_from_slice(bytemuck::bytes_of(&acc));
+    assert_eq!(data.len(), SmartAccount::LEN);
+    svm.set_account(
+        *pda,
+        Account {
+            lamports: existing.lamports,
+            data,
+            owner: existing.owner,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account");
+}
+
 /// **TEST-ONLY back door.** Advance a `SmartAccount`'s `generation` by
 /// `delta`, leaving every other byte untouched.
 ///
