@@ -4,4 +4,5 @@
 - Heavy Rust builds are serialized on this host; never run two cargo builds at once.
 - Amount math in Rust: checked_* only. TS: bigint for lamports/token amounts.
 - Design tokens come from Figma (docs/design/figma.md) → packages/ui-tokens; do not hand-edit tokens.css.
-- Codex reviews: spec, each program milestone, pre-deploy diff (see /opt/docs/CODEX-USAGE-DOCTRINE.md).
+- Two-model loop: every task is implemented by an isolated worker and adversarially reviewed by Codex before it counts as done; milestones get a security review; pre-deploy diff gets a recon.
+- Public repo: never commit keypairs, .env, or anything under .superpowers/; program keypair policy in docs/PROGRAM-KEYS.md.
