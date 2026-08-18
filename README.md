@@ -15,8 +15,9 @@ The property we build toward, stated exactly (spec §1): *if an attacker obtains
 |---|---|
 | **Design spec** (rev 7) | `docs/superpowers/specs/2026-08-18-warden-wallet-design.md` — threat model, key model, on-chain instruction set, conservation rules, recovery, rollout |
 | **Phase 0 — spikes** | Done, merged. Evidence-backed answers to the four questions that could have killed the design: passkey root verified on-chain (secp256r1 precompile + Instructions-sysvar binding), transaction byte budget on real Jupiter routes, conservation-snapshot CU cost, dApp compatibility inventory. Roll-up + decision: `docs/spikes/DECISION.md` |
-| **Phase 1A — program foundation** (branch `phase1a`) | `programs/warden` (Anchor): zero-copy `SmartAccount`, `SessionKey`, bucket accounting, `root_verify` (strict WebAuthn `clientDataJSON` scanner, consumed nonce), `create_account`, `grant_session`/`revoke_session`, root `freeze`/`unfreeze`, `transfer` (session within caps / root bounded, both debiting shared account-wide buckets). 292 Rust tests (LiteSVM + unit) + 50 TS tests; `./.claude/test-gate.sh` exit 0 at `c583dfe`. Measured costs + error ABI (6000–6035): `docs/program/PHASE1A-MEASUREMENTS.md` |
-| **Phase 1B** (next) | `execute` (allow-listed dApp CPI with before/after conservation checks), staged transactions, `swap` (Jupiter with platform fee), `queue`/pending timelock + policy lattice, guardians/recovery/guardian-freeze |
+| **Phase 1A — program foundation** | Done, merged to `main` (Codex `sol@max` final review MERGE-READY).  `programs/warden` (Anchor): zero-copy `SmartAccount`, `SessionKey`, bucket accounting, `root_verify` (strict WebAuthn `clientDataJSON` scanner, consumed nonce), `create_account`, `grant_session`/`revoke_session`, root `freeze`/`unfreeze`, `transfer` (session within caps / root bounded, both debiting shared account-wide buckets). 292 Rust tests (LiteSVM + unit) + 50 TS tests; `./.claude/test-gate.sh` exit 0 at `c583dfe`. Measured costs + error ABI (6000–6035): `docs/program/PHASE1A-MEASUREMENTS.md` |
+| **Phase 1B** (next, plan committed) | `execute` (allow-listed dApp CPI with before/after conservation checks), adapter registry, staged transactions, `swap` (Jupiter with platform fee), root-bound account address + proof-of-possession at create, and the measured pre-ship gate (end-to-end `execute` CU with real CPI, `is_native`, stage cap). Plan: `docs/superpowers/plans/2026-08-18-warden-phase1b-execute-swap.md` |
+| **Phase 1C** (after 1B) | `queue`/pending timelock + `set_policy` policy lattice, guardians / recovery / guardian-freeze |
 | **Design system** | Figma tokens + first screens (sign-request/intent, home, dust-only poison screen); CSS tokens in `packages/ui-tokens` — `docs/design/figma.md` |
 | **Extension / services** | Not started (Phases 2–4) |
 
@@ -26,6 +27,7 @@ Facts worth knowing before you read the code (all measured, all in the docs):
 - Solana's secp256r1 precompile requires **low-S** signatures; Chrome emits high-S sometimes — the client normalizes.
 - LiteSVM does **not** enforce the 1,232-byte transaction limit; every instruction test here asserts serialized transaction size explicitly.
 - `execute` payload account indices are **instruction-local**; compute-budget instructions stay top-level.
+- Account creation is **unauthenticated in the current code** (a front-runner could squat a client-chosen address); Phase 1B binds the address to the root key and requires proof-of-possession — until then nothing should be funded before a successful root round-trip. Known limitations live in `docs/spikes/DECISION.md`.
 - Session caps in 1A are per-transaction + lifetime; **day/30-day limits are account-wide** across all sessions *and* root direct actions.
 
 ## Repository layout
@@ -36,7 +38,7 @@ packages/core/            TypeScript SDK (transcript/challenge mirror, constants
 packages/ui-tokens/       Design tokens exported from Figma (CSS + JSON, constraint tests)
 spikes/                   THROWAWAY Phase-0 evidence (never imported by product code)
 docs/superpowers/specs/   Design spec (rev 7)
-docs/superpowers/plans/   Phase plans (0, 1A)
+docs/superpowers/plans/   Phase plans (0, 1A, 1B)
 docs/spikes/              DECISION.md (Phase-0 gate), Phase-0 + Phase-1A ledgers
 docs/program/             Measured CU / byte costs, design notes, error ABI
 docs/design/              Figma file map, screenshots
