@@ -31,6 +31,41 @@ sweep and the single-shape Marinade/Tensor table) reflect the PRE-FIX code and a
 kept only for audit trail.** The authoritative, post-fix numbers are in the "Post-fix
 re-measurement" subsections and the rewritten Conclusion.
 
+## Round 2 fix (2026-08-18) — read this too
+
+Re-review found round 1's index fix itself wrong in a different way, plus asked for a spec
+citation. Both addressed:
+
+1. **Critical (still open after round 1) — index space was wrong again, in the opposite
+   direction.** Round 1 "fixed" the round-0 bug by switching to indices into the *compiled
+   message's global* account-key list. Controller ruling: that's not this program's contract —
+   on-chain, the `execute` handler only ever sees ITS OWN instruction's account slice (Anchor
+   `remaining_accounts`, populated from that one instruction's own `accountKeyIndexes`, in that
+   instruction's own original key order), never the message's global key list. **The correct
+   contract is INSTRUCTION-LOCAL indices**: index i = position i in `outer.keys` = `[account,
+   sessionKey, ...order]`. Round 0's actual bug was simpler than round 1 diagnosed: `idx()`
+   searched a bare `order` array that omitted the `[account, sessionKey]` prefix, an off-by-2, not
+   a wrong-index-space problem. `wrapForExecute` now indexes `outerKeys` directly (no compile step
+   needed to learn indices at all — they're fixed the moment `outerKeys` is built) and, after
+   compiling, decompiles the result and **asserts** the execute instruction's resolved key order
+   equals `outerKeys` exactly (throws with a diagnostic otherwise) — a permanent regression guard
+   for this contract. The round-trip test now decodes indices against the **instruction-local**
+   key list (the decompiled execute instruction's own `.keys`), not the global message list. New
+   test: builds a source tx with its own `ComputeBudgetProgram.setComputeUnitLimit` instruction
+   and confirms it's hoisted to top level with its original value intact and not also referenced
+   anywhere inside the packed `execute` payload. Full contract now stated in `wrap.ts`'s header
+   comment. See Self-review → "Round 2 fix" for detail.
+2. **Important — stage_chunk account contract now cites spec §5.1** (payer signer / Stage PDA
+   writable / System Program; data = 8-byte header + payload) directly in `wrap.ts`'s code
+   comment. §5.1 fixes the signer and the header shape but not the Phase 1 program's exact account
+   list/order, so **the measured 985 B cap is PROVISIONAL**, not final, until that program exists
+   — marked as such wherever it's cited below. No new tests needed for this one (controller
+   ruling) — the existing chunk-count test already exercises the same code path.
+
+**Byte counts are unaffected by the index-space fix** (both instruction-local and global indices
+are single bytes — u8 either way — so no size difference), confirmed by 2 fresh post-round-2
+measure runs below.
+
 ## Results — Jupiter SOL→USDC (0.1 SOL, 50 bps slippage), 5 runs ≥130s apart — SUPERSEDED, pre-fix (see banner above)
 
 USER_PUBKEY was left at the script's default fallback,
@@ -119,9 +154,35 @@ instruction of its own so the default was added, per Important fix #2.)
 Tensor: unchanged, still blocked on the same API-key wall (see below).
 
 `maxStageChunkPayloadBytes()` (replacing the old unexplained `900` constant, see Important fix
-#3) measured **985 bytes** for a representative `stage_chunk` tx (1 signer/payer, 3 accounts:
+#3) measured **985 bytes** (PROVISIONAL — round 2 review: this is a spec §5.1-shaped account
+layout, not the actual Phase 1 program's; re-measure once that program's stage_chunk account
+list/order is fixed) for a representative `stage_chunk` tx (1 signer/payer, 3 accounts:
 payer/stage-PDA/System-Program, 8-byte offset+len header) on this run — close to but not the same
 as the old guess, which is exactly why deriving it was worth doing.
+
+## Post-fix re-measurement, round 2 (authoritative — supersedes nothing byte-wise, confirms round 1)
+
+2 fresh `pnpm measure` runs against the round-2-fixed `wrap.ts` (instruction-local indices +
+compile/decompile regression assertion; §5.1-cited, PROVISIONAL stage_chunk cap — no logic
+changes from round 1 that affect byte counts).
+
+| run | UTC timestamp | original bytes | wrapped bytes | fits inline? | chunks if staged | account count | hops |
+|---|---|---|---|---|---|---|---|
+| D | 2026-08-18T12:43:26Z (manual, immediately post-fix) | 618 | 711 | yes | 0 | 18 | 1 |
+| E | 2026-08-18T12:45:41Z | 682 | 786 | yes | 0 | 24 | 1 |
+
+Raw JSON:
+```
+{"name":"jupiter SOL→USDC 0.1","bytesOriginal":618,"bytesInline":711,"fitsInline":true,"stagedChunks":0,"writableAccounts":18,"hops":1}
+{"name":"jupiter SOL→USDC 0.1","bytesOriginal":682,"bytesInline":786,"fitsInline":true,"stagedChunks":0,"writableAccounts":24,"hops":1}
+{"name":"marinade deposit 1 SOL (attempt)","bytesOriginal":559,"bytesInline":702,"fitsInline":true,"stagedChunks":0,"writableAccounts":13}  (×2, byte-identical across both round-2 runs)
+```
+
+**Confirms the byte-size claim above: Marinade's wrapped size is 702 B, byte-identical to round
+1's post-fix measurement** (both rounds hoist the same default `setComputeUnitLimit(600_000)` and
+pack the same single deposit instruction; only the index *values* inside the packed payload
+differ between rounds — same byte count, different, now-correct, meaning). Tensor: unchanged,
+still blocked on the same API-key wall.
 
 ## Conclusion
 
@@ -160,7 +221,8 @@ barely didn't.
 
 **`stagedChunks` is no longer unvalidated arithmetic.** Round 1 flagged that the `900`-byte
 staging-payload constant was unexplained and the chunking path was never exercised end-to-end.
-Both are fixed: `maxStageChunkPayloadBytes()` now measures the real cap (985 B on this run, from
+Both are fixed: `maxStageChunkPayloadBytes()` now measures the real cap (985 B, PROVISIONAL — see
+"Round 2 fix" — on this run, from
 actually serializing a representative `stage_chunk` tx and binary-searching), and it's exercised
 both by a synthetic ~3,000-byte-payload unit test (`wrap.test.ts`) *and* by the real 43-account
 Jupiter overflow above (`stagedChunks: 1`), which is the first real-route confirmation that the
@@ -319,7 +381,7 @@ added) — see "Post-fix re-measurement" above.
 `maxStageChunkPayloadBytes(wardenProgram)` builds a representative `stage_chunk` instruction (1
 signer/payer, 3 accounts: payer / stage PDA / System Program, data = 8-byte `[offset:u32,
 len:u32]` header + payload) and binary-searches the largest payload that keeps the whole
-transaction ≤ `MAX_TX_BYTES`, memoized per program id. Measured **985 B** (see "Post-fix
+transaction ≤ `MAX_TX_BYTES`, memoized per program id. Measured **985 B, PROVISIONAL** (see "Post-fix
 re-measurement" above) — close to but not the same as the old guess, confirming it was worth
 deriving rather than assuming. `stagedChunks` now divides by this measured value instead of the
 literal `900`. One implementation wrinkle surfaced and handled: `@solana/web3.js`'s
@@ -343,6 +405,71 @@ the 35–43 account band, not safe to extrapolate past 43" given the post-fix 43
 and hop-count capture (`routePlan.length` from the Jupiter quote) was added to `measure.ts` for
 future runs (captured starting with post-fix run C: 1 hop for a 15-account/604 B route; runs A/B
 predate the capture).
+
+### Round 2 fix (2026-08-18) — task review findings, addressed
+
+**1. Critical (still open after round 1) — index space, corrected to instruction-local (FIXED).**
+Round 1's diagnosis was wrong: it treated the round-0 bug as "indices must be computed from the
+compiled MESSAGE's global account-key list" and rewrote `wrapForExecute` to do a two-pass compile
+purely to learn that global ordering. Controller ruling on re-review: that is not this program's
+account-resolution contract. On-chain, an instruction handler (Anchor's `remaining_accounts`
+included) only ever receives the accounts belonging to *that one instruction*, resolved from that
+instruction's own `accountKeyIndexes`, in that instruction's own original key order — it has no
+visibility into the transaction message's global, deduped, re-sorted key list. Round 0's actual
+bug, re-diagnosed correctly this time: `idx()` searched a bare `order` array (the deduped
+remaining-accounts list) that omitted the 2-slot `[account, sessionKey]` prefix actually baked
+into `outer.keys` — a plain off-by-2 into the wrong (too-short) array, not a "wrong index space
+entirely" problem.
+
+**Fix:** `wrapForExecute` now indexes `outerKeys = [account, sessionKey, ...order]` directly —
+`idx(p) = outerKeys.findIndex(k => k.pubkey.equals(p))`, still bounds-checked against u8. No
+compile step is needed to learn these indices at all (a simplification vs round 1's two-pass
+approach): they're fixed the instant `outerKeys` is constructed, because `compileToV0Message`'s
+per-instruction `accountKeyIndexes` preserve each instruction's own key ORDER even while
+re-mapping which global message slot each position resolves to — position j of `outer.keys`
+survives compilation as position j of the execute instruction's resolved key list, unconditionally.
+
+**New regression guard:** after compiling, `wrapForExecute` decompiles the result and **asserts**
+the execute instruction's resolved key list equals `outerKeys` exactly, pubkey-for-pubkey, in
+order — throwing a diagnostic (listing both the expected and actual key lists) if not. This turns
+"the instruction-local contract silently breaks" into a hard failure instead of a wrong-but-valid
+index, the same failure mode both round-0 and round-1's bugs shared.
+
+**Test changes:** the round-trip decode test now resolves indices against the **decompiled execute
+instruction's own `.keys`** (instruction-local), not the compiled message's global account-key
+list — this is what an on-chain consumer actually sees, so it's also a stronger test than round
+1's version (which validated against an index space the program never uses). New test: "hoists a
+ComputeBudget instruction already present in the source tx to top level, instead of CPI-wrapping
+it" — builds a source tx carrying its own `setComputeUnitLimit(314_159)` (a value distinct from
+the 600_000 default, so the test can't accidentally pass by observing the default instead of the
+hoisted original), wraps it, and asserts: exactly one top-level ComputeBudget instruction in the
+wrapped tx, decoding to the *original* 314,159 value (`ComputeBudgetInstruction
+.decodeSetComputeUnitLimit`); exactly one execute instruction; and the execute instruction's
+decoded packed payload contains exactly the transfer (not the ComputeBudget ix) and never
+references the ComputeBudget program among its accounts. `wrap.ts`'s header comment now states the
+full instruction-local contract explicitly, including the two prior wrong diagnoses (round 0's
+off-by-2, round 1's wrong index space) as documented history, so a future reader doesn't
+re-attempt either.
+
+**2. Important — stage_chunk cap, spec citation + provisional marking (FIXED).**
+`maxStageChunkPayloadBytes`'s doc comment now cites spec §5.1 directly for the account contract
+(payer signer / Stage PDA writable / System Program; data = 8-byte offset+len header + payload) —
+no logic change, the serialization this spike already built matches §5.1's shape. Per controller
+ruling, §5.1 fixes the signer and header shape but not the eventual Phase 1 program's exact
+account list/order, so the measured **985 B cap is marked PROVISIONAL** everywhere it's cited in
+this document (banner above, "Post-fix re-measurement," and here) — it should be re-measured once
+that program exists rather than treated as load-bearing for Phase 1 sizing today. No new test
+added for this item (controller ruling: the existing "~3000-byte payload forces staging" test
+already exercises the same `maxStageChunkPayloadBytes` code path; a spec-citation-only change
+doesn't need new coverage).
+
+**Byte-size impact of the index-space fix: none, confirmed.** Both instruction-local and
+compiled-global indices are single bytes (u8) regardless of numeric value, so switching index
+spaces cannot change `bytesInline`/`bytesOriginal`/`fitsInline`/`stagedChunks` for any case already
+measured — only the *correctness* of what the indices point to changes. 2 fresh
+`pnpm measure` runs post-round-2-fix confirm this holds (see "Post-fix re-measurement, round 2"
+above): sizes for a given account count land in the same range as round 1's post-fix numbers
+(e.g. Marinade: 702 B in both rounds, byte-identical).
 
 ## Part (b) — conservation snapshot CU
 

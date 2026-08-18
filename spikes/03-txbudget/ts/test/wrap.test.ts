@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { Keypair, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage } from "@solana/web3.js";
-import { wrapForExecute, decodeExecuteData, compiledAccountKeys, maxStageChunkPayloadBytes } from "../src/wrap.js";
+import { ComputeBudgetInstruction, ComputeBudgetProgram, Keypair, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage } from "@solana/web3.js";
+import { wrapForExecute, decodeExecuteData, maxStageChunkPayloadBytes } from "../src/wrap.js";
 
 describe("wrapForExecute", () => {
   it("wraps a small transfer inline", () => {
@@ -24,12 +24,13 @@ describe("wrapForExecute", () => {
     expect(r.bytesInline).toBeGreaterThan(r.bytesOriginal);
   });
 
-  it("round-trips: decoding the packed execute payload recovers the exact original inner-instruction keys, flags, and data", () => {
+  it("round-trips: decoding the packed execute payload (instruction-local indices) recovers the exact original inner-instruction keys, flags, and data", () => {
     // Two distinct instructions with overlapping AND distinct accounts, so `order` (the outer
     // execute ix's deduped remaining-accounts list) has non-trivial structure and compileToV0Message
-    // has real reordering to do (signer/writable sorting) — this is the scenario where indexing
-    // into the wrong array (the Critical bug, fixed 2026-08-18) would silently point at the wrong
-    // pubkey instead of throwing, so only a round-trip decode actually catches it.
+    // has real global reordering to do (signer/writable sorting) — this is the scenario where a
+    // wrong index space (either the round-0 off-by-2 bug, or round-1's incorrect "index the
+    // compiled message's global list" fix) would silently point at the wrong pubkey instead of
+    // throwing, so only a round-trip decode actually catches it.
     const acct = Keypair.generate().publicKey, sess = Keypair.generate(), prog = Keypair.generate().publicKey;
     const other1 = Keypair.generate().publicKey, other2 = Keypair.generate().publicKey;
     const otherProgram = Keypair.generate().publicKey;
@@ -48,23 +49,26 @@ describe("wrapForExecute", () => {
     expect(r.inline).not.toBeNull();
     const compiled = r.inline!.message;
 
-    // Find the execute instruction among the compiled top-level instructions (a default
-    // ComputeBudget.setComputeUnitLimit is also present at top level per the round-1 fix).
-    const orderedKeys = compiledAccountKeys(compiled);
-    const executeCi = compiled.compiledInstructions.find(ci => orderedKeys[ci.programIdIndex].equals(prog));
-    expect(executeCi).toBeDefined();
+    // Decode indices against the INSTRUCTION-LOCAL key list (controller ruling, round 2 review):
+    // decompile the compiled message and use the execute instruction's OWN `.keys` array — this
+    // is exactly what an on-chain consumer (Anchor's remaining_accounts) would see, not the
+    // message's global deduped/reordered account-key list.
+    const redecompiled = TransactionMessage.decompile(compiled);
+    const executeIx = redecompiled.instructions.find(ix => ix.programId.equals(prog));
+    expect(executeIx).toBeDefined();
+    const localKeys = executeIx!.keys.map(k => k.pubkey);
 
-    const decoded = decodeExecuteData(executeCi!.data);
+    const decoded = decodeExecuteData(executeIx!.data);
     expect(decoded).toHaveLength(2);
 
     const originalInner = [ix1, ix2];
     for (let i = 0; i < decoded.length; i++) {
       const orig = originalInner[i];
-      const resolvedProgram = orderedKeys[decoded[i].programIdx];
+      const resolvedProgram = localKeys[decoded[i].programIdx];
       expect(resolvedProgram.equals(orig.programId)).toBe(true);
       expect(decoded[i].accounts).toHaveLength(orig.keys.length);
       for (let j = 0; j < orig.keys.length; j++) {
-        const resolvedKey = orderedKeys[decoded[i].accounts[j].idx];
+        const resolvedKey = localKeys[decoded[i].accounts[j].idx];
         expect(resolvedKey.equals(orig.keys[j].pubkey)).toBe(true);
         expect(decoded[i].accounts[j].isWritable).toBe(orig.keys[j].isWritable);
         // The packed per-account isSigner flag intentionally mirrors the ORIGINAL inner
@@ -80,10 +84,39 @@ describe("wrapForExecute", () => {
       expect(Buffer.from(decoded[i].data).equals(orig.data)).toBe(true);
     }
   });
+
+  it("hoists a ComputeBudget instruction already present in the source tx to top level, instead of CPI-wrapping it", () => {
+    const acct = Keypair.generate().publicKey, sess = Keypair.generate(), prog = Keypair.generate().publicKey;
+    const cuIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 314_159 }); // distinctive, not the 600_000 default
+    const transferIx = SystemProgram.transfer({ fromPubkey: acct, toPubkey: Keypair.generate().publicKey, lamports: 1n });
+    const msg = new TransactionMessage({ payerKey: acct, recentBlockhash: "11111111111111111111111111111111", instructions: [cuIx, transferIx] }).compileToV0Message();
+    const r = wrapForExecute(msg, prog, acct, sess.publicKey);
+    expect(r.inline).not.toBeNull();
+
+    const redecompiled = TransactionMessage.decompile(r.inline!.message);
+    // Exactly one top-level ComputeBudget instruction (the hoisted original, not an extra default
+    // one added alongside it), and it must carry the SOURCE tx's own units value (314_159), proving
+    // it was hoisted rather than replaced by the 600_000 default.
+    const topLevelCu = redecompiled.instructions.filter(ix => ix.programId.equals(ComputeBudgetProgram.programId));
+    expect(topLevelCu).toHaveLength(1);
+    expect(ComputeBudgetInstruction.decodeSetComputeUnitLimit(topLevelCu[0]).units).toBe(314_159);
+
+    // Exactly one execute instruction, and it must NOT reference the ComputeBudget program
+    // anywhere in its packed payload (i.e. it wasn't also CPI-wrapped).
+    const executeIxs = redecompiled.instructions.filter(ix => ix.programId.equals(prog));
+    expect(executeIxs).toHaveLength(1);
+    const localKeys = executeIxs[0].keys.map(k => k.pubkey);
+    const decoded = decodeExecuteData(executeIxs[0].data);
+    expect(decoded).toHaveLength(1); // only the transfer — the ComputeBudget ix was excluded from wrapping
+    expect(localKeys[decoded[0].programIdx].equals(SystemProgram.programId)).toBe(true);
+    for (const acc of decoded[0].accounts) {
+      expect(localKeys[acc.idx].equals(ComputeBudgetProgram.programId)).toBe(false);
+    }
+  });
 });
 
 describe("maxStageChunkPayloadBytes / stagedChunks", () => {
-  it("derives a plausible stage_chunk payload cap (not a hardcoded magic number)", () => {
+  it("derives a plausible stage_chunk payload cap (not a hardcoded magic number) — PROVISIONAL, see result.md", () => {
     const prog = Keypair.generate().publicKey;
     const maxPayload = maxStageChunkPayloadBytes(prog);
     // Sanity bounds: a stage_chunk tx has ~1 signature (64B) + ~4 accounts (128B) + blockhash
