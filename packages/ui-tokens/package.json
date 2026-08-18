@@ -1,0 +1,16 @@
+{
+  "name": "@warden/ui-tokens",
+  "version": "0.0.1",
+  "type": "module",
+  "files": ["tokens.json", "tokens.css"],
+  "exports": {
+    "./tokens.json": "./tokens.json",
+    "./tokens.css": "./tokens.css"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}

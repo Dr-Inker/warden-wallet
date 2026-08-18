@@ -1,0 +1,30 @@
+[package]
+name = "spike-p256"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+solana-program = "3"
+
+[dev-dependencies]
+litesvm = { version = "0.12", features = ["precompiles"] }  # secp256r1/ed25519/secp256k1 precompiles are behind this non-default feature
+solana-sdk = "3"
+solana-secp256r1-program = "3"
+serde_json = "1"
+hex = "0.4"
+bincode = "1"
+sha2 = "0.10"
+
+[features]
+no-entrypoint = []
+
+# NOTE (spike 2b): the repo-root Cargo.toml now resolves on its own
+# (`members = []`, `exclude = ["spikes"]` — see docs/TOOLCHAIN.md). This empty
+# `[workspace]` table is what keeps this spike crate excluded from and
+# standalone of the root workspace, by design, not a stopgap — spike crates
+# are throwaway evidence and were never meant to join `programs/*`. See
+# spikes/02-webauthn/result.md.
+[workspace]

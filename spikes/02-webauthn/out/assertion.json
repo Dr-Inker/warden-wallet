@@ -1,0 +1,11 @@
+{
+  "pubkeyDerSpki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEJtXW53xiUt5nudmh0X8yGfC38QEIkIUcPEXlGCN9oj69Kfxd6ehW/c8exKrtBIuD0Bh+rIRvH5psv7tC9AByNA==",
+  "authenticatorData": "vlxK98up2TYOCUeXAktaOj3Z9DeqmFIpFlbntbXZ2jQFAAAAAg==",
+  "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiV1Bnb0htYzZLZUFGNHlZUktNcWw4bFYwLWh3OEdhNGJWNU5pYlJfN3RfUSIsIm9yaWdpbiI6ImNocm9tZS1leHRlbnNpb246Ly9tYWlrYWRwYW9iYmprbWFvbW5wbmhqZ2xwYWJsbGFvaSIsImNyb3NzT3JpZ2luIjpmYWxzZX0=",
+  "signatureDer": "MEYCIQDFg9AyRiNb47GnnoTduRBJi67KNlKqWHBpAweKNMRnagIhALWbP+PVGdCLgk3in5V5aWLYKCIT6N105Q5L/esdIIRm",
+  "challenge": "WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q",
+  "prfFirst": "muy2N5IEqGLFlcXViDVsIHE0nPxc+KP3uLKZ7bR3/hQ=",
+  "origin": "chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi",
+  "rpId": "maikadpaobbjkmaomnpnhjglpabllaoi",
+  "virtualAuthenticatorId": "f31366de-237e-456e-8b6b-fd97bb66b913"
+}
