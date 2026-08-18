@@ -138,6 +138,54 @@ function require32(bytes: Uint8Array, name: string): void {
   }
 }
 
+const U32_MAX = 0xffffffff;
+const U64_MAX = (1n << 64n) - 1n;
+const I64_MIN = -(1n << 63n);
+const I64_MAX = (1n << 63n) - 1n;
+
+/**
+ * Asserts `v` is an integer in `[0, 255]`. Used for `op_type`, which Rust
+ * encodes as `u8` — a JS `number` outside that range would otherwise
+ * silently narrow (e.g. `256 & 0xff` truncates to `0`) instead of throwing.
+ */
+function assertU8(v: number, name: string): void {
+  if (!Number.isInteger(v) || v < 0 || v > 0xff) {
+    throw new RangeError(`${name} must be an integer in [0, 255] (u8), got ${v}`);
+  }
+}
+
+/**
+ * Asserts `v` is an integer in `[0, 2^32 - 1]`. Used for `policy_version`,
+ * which Rust encodes as `u32`.
+ */
+function assertU32(v: number, name: string): void {
+  if (!Number.isInteger(v) || v < 0 || v > U32_MAX) {
+    throw new RangeError(`${name} must be an integer in [0, ${U32_MAX}] (u32), got ${v}`);
+  }
+}
+
+/**
+ * Asserts `v` is a `bigint` in `[0, 2^64 - 1]`. Used for `generation` and
+ * `root_nonce`, which Rust encodes as `u64` — these are `bigint`, not
+ * `number`, precisely because `number` cannot represent the full u64 range
+ * without precision loss.
+ */
+function assertU64(v: bigint, name: string): void {
+  if (typeof v !== "bigint" || v < 0n || v > U64_MAX) {
+    throw new RangeError(`${name} must be a bigint in [0, 2^64 - 1] (u64), got ${v}`);
+  }
+}
+
+/**
+ * Asserts `v` is a `bigint` in `[-2^63, 2^63 - 1]`. Used for `expiry_ts`,
+ * which Rust encodes as `i64`.
+ */
+function assertI64(v: bigint, name: string): void {
+  if (typeof v !== "bigint" || v < I64_MIN || v > I64_MAX) {
+    throw new RangeError(`${name} must be a bigint in [-2^63, 2^63 - 1] (i64), got ${v}`);
+  }
+}
+
 export interface TranscriptInput {
   /** `SmartAccount.cluster_tag` — client-attested domain separator, not a verified genesis binding. */
   clusterTag: Uint8Array;
@@ -162,6 +210,10 @@ export function transcriptHash(input: TranscriptInput): Uint8Array {
   require32(input.programId, "programId");
   require32(input.account, "account");
   require32(input.actionHash, "actionHash");
+  assertU64(input.generation, "generation");
+  assertU32(input.policyVersion, "policyVersion");
+  assertU64(input.rootNonce, "rootNonce");
+  assertI64(input.expiryTs, "expiryTs");
 
   const preimage = new Uint8Array(
     TRANSCRIPT_DOMAIN.length + 32 + 32 + 32 + 8 + 4 + 8 + 8 + 32,
@@ -195,6 +247,7 @@ export function transcriptHash(input: TranscriptInput): Uint8Array {
  * be swapped between the passkey ceremony and submission.
  */
 export function actionHash(opType: number, borshArgs: Uint8Array): Uint8Array {
+  assertU8(opType, "opType");
   const preimage = new Uint8Array(1 + borshArgs.length);
   preimage[0] = opType;
   preimage.set(borshArgs, 1);

@@ -39,6 +39,8 @@ const EXPIRY_TS = 1_760_000_000n;
 const EXPECTED_CHALLENGE = "LEt28FWyglI8y61Sh__dFRbKn6uk8PYmo8p7JDpSds4";
 
 describe("transcriptHash", () => {
+  it.todo("negative-expiry parity vector (needs Rust-pinned vector)");
+
   it("matches the Rust-pinned vector (transcript_hash_matches_pinned_vector)", () => {
     const t = transcriptHash({
       clusterTag: CLUSTER_TAG,
@@ -140,5 +142,58 @@ describe("op-type constants", () => {
     expect(OP_REVOKE_SESSION).toBe(0x02);
     expect(OP_FREEZE).toBe(0x03);
     expect(OP_UNFREEZE).toBe(0x04);
+  });
+});
+
+describe("integer range validation", () => {
+  const base = {
+    clusterTag: fill(32, 0x11),
+    programId: PROGRAM_ID,
+    account: fill(32, 0x22),
+    generation: GENERATION,
+    policyVersion: POLICY_VERSION,
+    rootNonce: ROOT_NONCE,
+    expiryTs: EXPIRY_TS,
+    actionHash: ACTION_HASH,
+  };
+
+  it("actionHash throws RangeError for opType 256 (out of u8 range)", () => {
+    expect(() => actionHash(256, new Uint8Array())).toThrow(RangeError);
+  });
+
+  it("actionHash throws RangeError for opType -1 (out of u8 range)", () => {
+    expect(() => actionHash(-1, new Uint8Array())).toThrow(RangeError);
+  });
+
+  it("actionHash throws RangeError for a non-integer opType", () => {
+    expect(() => actionHash(1.5, new Uint8Array())).toThrow(RangeError);
+  });
+
+  it("transcriptHash throws RangeError for generation >= 2^64", () => {
+    expect(() => transcriptHash({ ...base, generation: 2n ** 64n })).toThrow(RangeError);
+  });
+
+  it("transcriptHash throws RangeError for a negative generation", () => {
+    expect(() => transcriptHash({ ...base, generation: -1n })).toThrow(RangeError);
+  });
+
+  it("transcriptHash throws RangeError for policyVersion >= 2^32", () => {
+    expect(() => transcriptHash({ ...base, policyVersion: 2 ** 32 })).toThrow(RangeError);
+  });
+
+  it("transcriptHash throws RangeError for a non-integer policyVersion", () => {
+    expect(() => transcriptHash({ ...base, policyVersion: 1.5 })).toThrow(RangeError);
+  });
+
+  it("transcriptHash throws RangeError for expiryTs >= 2^63", () => {
+    expect(() => transcriptHash({ ...base, expiryTs: 2n ** 63n })).toThrow(RangeError);
+  });
+
+  it("transcriptHash throws RangeError for expiryTs < -2^63", () => {
+    expect(() => transcriptHash({ ...base, expiryTs: -(2n ** 63n) - 1n })).toThrow(RangeError);
+  });
+
+  it("transcriptHash throws RangeError for rootNonce >= 2^64", () => {
+    expect(() => transcriptHash({ ...base, rootNonce: 2n ** 64n })).toThrow(RangeError);
   });
 });
