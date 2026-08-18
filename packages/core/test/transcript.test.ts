@@ -1,0 +1,144 @@
+import { describe, it, expect } from "vitest";
+import {
+  transcriptHash,
+  actionHash,
+  challengeB64Url,
+  OP_ROTATE_NONCE,
+  OP_GRANT_SESSION,
+  OP_REVOKE_SESSION,
+  OP_FREEZE,
+  OP_UNFREEZE,
+} from "../src/index.js";
+
+const hex = (b: Uint8Array): string =>
+  Array.from(b)
+    .map((x) => x.toString(16).padStart(2, "0"))
+    .join("");
+
+const fromHex = (s: string): Uint8Array => {
+  const out = new Uint8Array(s.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
+  return out;
+};
+
+const fill = (n: number, byte: number): Uint8Array => new Uint8Array(n).fill(byte);
+
+// Pinned against programs/warden/src/root_verify/transcript.rs
+// `transcript_hash_matches_pinned_vector` (Task 3 vector; see task-3-report.md).
+// The program id is `crate::ID` = 017b5f72e2c074fa8555206db7ccf465c1db513c725913ca7ce685f135f8bd51
+// (pinned separately in Rust's `program_id_bytes_are_pinned`).
+const PROGRAM_ID = fromHex("017b5f72e2c074fa8555206db7ccf465c1db513c725913ca7ce685f135f8bd51");
+const CLUSTER_TAG = fill(32, 0x11);
+const ACCOUNT = fill(32, 0x22);
+const ACTION_HASH = fill(32, 0x33);
+const GENERATION = 7n;
+const POLICY_VERSION = 3;
+const ROOT_NONCE = 42n;
+const EXPIRY_TS = 1_760_000_000n;
+
+const EXPECTED_CHALLENGE = "LEt28FWyglI8y61Sh__dFRbKn6uk8PYmo8p7JDpSds4";
+
+describe("transcriptHash", () => {
+  it("matches the Rust-pinned vector (transcript_hash_matches_pinned_vector)", () => {
+    const t = transcriptHash({
+      clusterTag: CLUSTER_TAG,
+      programId: PROGRAM_ID,
+      account: ACCOUNT,
+      generation: GENERATION,
+      policyVersion: POLICY_VERSION,
+      rootNonce: ROOT_NONCE,
+      expiryTs: EXPIRY_TS,
+      actionHash: ACTION_HASH,
+    });
+    expect(hex(t)).toBe("2c4b76f055b282523ccbad5287ffdd1516ca9faba4f0f626a3ca7b243a5276ce");
+    expect(challengeB64Url(t)).toBe(EXPECTED_CHALLENGE);
+  });
+
+  it("changes when every field changes (mirrors every_transcript_field_changes_the_hash)", () => {
+    const base = transcriptHash({
+      clusterTag: CLUSTER_TAG,
+      programId: PROGRAM_ID,
+      account: ACCOUNT,
+      generation: GENERATION,
+      policyVersion: POLICY_VERSION,
+      rootNonce: ROOT_NONCE,
+      expiryTs: EXPIRY_TS,
+      actionHash: ACTION_HASH,
+    });
+
+    const clusterTag2 = new Uint8Array(CLUSTER_TAG);
+    clusterTag2[0] ^= 1;
+    const actionHash2 = new Uint8Array(ACTION_HASH);
+    actionHash2[31] ^= 1;
+    const otherPubkey = fill(32, 0x99);
+
+    const variants = [
+      transcriptHash({ clusterTag: clusterTag2, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: otherPubkey, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: otherPubkey, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION + 1n, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION + 1, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE + 1n, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS + 1n, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: actionHash2 }),
+    ];
+
+    for (const v of variants) {
+      expect(hex(v)).not.toBe(hex(base));
+    }
+  });
+});
+
+describe("actionHash", () => {
+  it("matches the Rust-pinned vectors (action_hash_matches_pinned_vectors)", () => {
+    expect(hex(actionHash(5, new TextEncoder().encode("hello")))).toBe(
+      "2beb245583b000d9052c7c9e84130b33accc05ab47ac43180743e302047ea29b",
+    );
+    expect(hex(actionHash(OP_ROTATE_NONCE, new Uint8Array()))).toBe(
+      "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a",
+    );
+  });
+
+  it("separates op_type from args (mirrors action_hash_separates_op_type_from_args)", () => {
+    expect(hex(actionHash(1, new Uint8Array([2])))).not.toBe(hex(actionHash(2, new Uint8Array([1]))));
+    expect(hex(actionHash(0, new Uint8Array()))).not.toBe(hex(actionHash(1, new Uint8Array())));
+  });
+});
+
+describe("challengeB64Url", () => {
+  // RFC 4648 §10 vectors minus padding, plus a value exercising both
+  // URL-safe alphabet substitutions — mirrors b64url_no_pad_matches_rfc4648_vectors.
+  it("matches RFC 4648 vectors with no padding", () => {
+    const cases: Array<[Uint8Array, string]> = [
+      [new Uint8Array(), ""],
+      [new TextEncoder().encode("f"), "Zg"],
+      [new TextEncoder().encode("fo"), "Zm8"],
+      [new TextEncoder().encode("foo"), "Zm9v"],
+      [new TextEncoder().encode("foob"), "Zm9vYg"],
+      [new TextEncoder().encode("fooba"), "Zm9vYmE"],
+      [new TextEncoder().encode("foobar"), "Zm9vYmFy"],
+      [new Uint8Array([0xfb, 0xff, 0xbe]), "-_--"],
+    ];
+    for (const [input, want] of cases) {
+      expect(challengeB64Url(input)).toBe(want);
+    }
+  });
+
+  it("encodes a 32-byte digest as exactly 43 unpadded chars", () => {
+    for (const b of [0x00, 0x01, 0x7f, 0xff]) {
+      const encoded = challengeB64Url(fill(32, b));
+      expect(encoded.length).toBe(43);
+      expect(encoded.includes("=")).toBe(false);
+    }
+  });
+});
+
+describe("op-type constants", () => {
+  it("mirror the Rust root_verify::transcript byte assignments", () => {
+    expect(OP_ROTATE_NONCE).toBe(0x00);
+    expect(OP_GRANT_SESSION).toBe(0x01);
+    expect(OP_REVOKE_SESSION).toBe(0x02);
+    expect(OP_FREEZE).toBe(0x03);
+    expect(OP_UNFREEZE).toBe(0x04);
+  });
+});

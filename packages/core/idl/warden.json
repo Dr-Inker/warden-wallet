@@ -1,0 +1,1492 @@
+{
+  "address": "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
+  "metadata": {
+    "name": "warden",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "create_account",
+      "docs": [
+        "Create a passkey- (or Ed25519-) rooted `SmartAccount` PDA. No root",
+        "signature required — see `instructions::create_account` for why."
+      ],
+      "discriminator": [
+        99,
+        20,
+        130,
+        119,
+        196,
+        235,
+        131,
+        149
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "smart_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  99,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "args.owner_seed"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "CreateAccountArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "freeze",
+      "docs": [
+        "Root-authorized emergency stop: sets `frozen = Root`, blocking every",
+        "outflow-enabling action until `unfreeze` lifts it. 1A scope — see",
+        "`instructions::freeze`."
+      ],
+      "discriminator": [
+        255,
+        91,
+        207,
+        84,
+        251,
+        194,
+        254,
+        63
+      ],
+      "accounts": [
+        {
+          "name": "smart_account",
+          "writable": true
+        },
+        {
+          "name": "ix_sysvar",
+          "docs": [
+            "`load_instruction_at_checked` / `load_current_index_checked`, which",
+            "re-check the address themselves."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "RootArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grant_session",
+      "docs": [
+        "Mint (or re-bless) a bounded, expiring session key under a root",
+        "passkey ceremony. Upserts the `[\"session\", account, pubkey]` PDA,",
+        "merging caps by mint — see `instructions::grant_session`."
+      ],
+      "discriminator": [
+        205,
+        196,
+        56,
+        227,
+        18,
+        85,
+        212,
+        61
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "smart_account",
+          "docs": [
+            "Canonicality of this PDA is re-proven in the handler from the",
+            "`owner_seed`/`bump` the account itself stores (same as `rotate_nonce`),",
+            "not by a `seeds` constraint here — a `seeds` expression would have to",
+            "`load()` the account a second time inside the generated constraint",
+            "code."
+          ],
+          "writable": true
+        },
+        {
+          "name": "session",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "smart_account"
+              },
+              {
+                "kind": "arg",
+                "path": "args.body.session_pubkey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "ix_sysvar",
+          "docs": [
+            "`load_instruction_at_checked` / `load_current_index_checked`, which",
+            "re-check the address themselves."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "GrantSessionArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ping",
+      "discriminator": [
+        173,
+        0,
+        94,
+        236,
+        73,
+        133,
+        225,
+        153
+      ],
+      "accounts": [],
+      "args": []
+    },
+    {
+      "name": "revoke_session_root",
+      "docs": [
+        "Close a session PDA under a root passkey ceremony."
+      ],
+      "discriminator": [
+        92,
+        253,
+        77,
+        55,
+        132,
+        142,
+        175,
+        63
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Rent destination and fee payer."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "smart_account",
+          "writable": true
+        },
+        {
+          "name": "session",
+          "docs": [
+            "The PDA address is re-derived in the handler (see `handler_root`),",
+            "not by a `seeds` constraint, because the derivation needs the bump",
+            "this very account stores."
+          ],
+          "writable": true
+        },
+        {
+          "name": "ix_sysvar",
+          "docs": [
+            "`load_instruction_at_checked` / `load_current_index_checked`, which",
+            "re-check the address themselves."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "RevokeSessionRootArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "revoke_session_self",
+      "docs": [
+        "Close a session PDA on the authority of the session key itself,",
+        "signing as a plain Ed25519 signer. No root ceremony involved."
+      ],
+      "discriminator": [
+        167,
+        54,
+        6,
+        230,
+        220,
+        243,
+        103,
+        238
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Rent destination and fee payer. May be the session signer itself, but",
+            "need not be — a session key with no lamports can still revoke itself",
+            "if someone else pays."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "session_signer",
+          "docs": [
+            "The session's own Ed25519 delegate key, signing this transaction."
+          ],
+          "signer": true
+        },
+        {
+          "name": "smart_account"
+        },
+        {
+          "name": "session",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "rotate_nonce",
+      "docs": [
+        "Consume the account's `root_nonce` under a root passkey assertion,",
+        "invalidating any outstanding (signed but unsubmitted) challenge."
+      ],
+      "discriminator": [
+        187,
+        255,
+        177,
+        190,
+        214,
+        29,
+        122,
+        154
+      ],
+      "accounts": [
+        {
+          "name": "smart_account",
+          "writable": true
+        },
+        {
+          "name": "ix_sysvar",
+          "docs": [
+            "`load_instruction_at_checked` / `load_current_index_checked`, which",
+            "re-check the address themselves."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "RootArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unfreeze",
+      "docs": [
+        "Root-authorized lift of a root-issued freeze, gated by",
+        "`policy.timelock_secs` since `frozen_at`. See `instructions::unfreeze`."
+      ],
+      "discriminator": [
+        133,
+        160,
+        68,
+        253,
+        80,
+        232,
+        218,
+        247
+      ],
+      "accounts": [
+        {
+          "name": "smart_account",
+          "writable": true
+        },
+        {
+          "name": "ix_sysvar",
+          "docs": [
+            "`load_instruction_at_checked` / `load_current_index_checked`, which",
+            "re-check the address themselves."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "RootArgs"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "SessionKey",
+      "discriminator": [
+        93,
+        186,
+        163,
+        139,
+        160,
+        255,
+        81,
+        112
+      ]
+    },
+    {
+      "name": "SmartAccount",
+      "discriminator": [
+        186,
+        83,
+        247,
+        224,
+        59,
+        95,
+        223,
+        112
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Overflow",
+      "msg": "arithmetic overflow"
+    },
+    {
+      "code": 6001,
+      "name": "Frozen",
+      "msg": "account is frozen"
+    },
+    {
+      "code": 6002,
+      "name": "Unauthorized",
+      "msg": "unauthorized signer"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidRootAssertion",
+      "msg": "invalid root assertion"
+    },
+    {
+      "code": 6004,
+      "name": "NonceMismatch",
+      "msg": "root nonce mismatch"
+    },
+    {
+      "code": 6005,
+      "name": "Expired",
+      "msg": "expired"
+    },
+    {
+      "code": 6006,
+      "name": "CapExceeded",
+      "msg": "cap exceeded"
+    },
+    {
+      "code": 6007,
+      "name": "SessionExpired",
+      "msg": "session expired"
+    },
+    {
+      "code": 6008,
+      "name": "OpNotAllowed",
+      "msg": "operation not allowed for this signer"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidAccountData",
+      "msg": "invalid account data"
+    },
+    {
+      "code": 6010,
+      "name": "BadInstructionLayout",
+      "msg": "bad instruction layout"
+    },
+    {
+      "code": 6011,
+      "name": "ClientDataTooLong",
+      "msg": "clientDataJSON exceeds MAX_CLIENT_DATA_LEN"
+    },
+    {
+      "code": 6012,
+      "name": "ClientDataMalformed",
+      "msg": "clientDataJSON is not well-formed JSON for the strict scanner"
+    },
+    {
+      "code": 6013,
+      "name": "ClientDataDuplicateKey",
+      "msg": "duplicate top-level key in clientDataJSON"
+    },
+    {
+      "code": 6014,
+      "name": "ClientDataMissingKey",
+      "msg": "clientDataJSON is missing a required top-level key"
+    },
+    {
+      "code": 6015,
+      "name": "ClientDataTypeMismatch",
+      "msg": "clientDataJSON.type is not webauthn.get"
+    },
+    {
+      "code": 6016,
+      "name": "CrossOriginNotAllowed",
+      "msg": "clientDataJSON.crossOrigin is true"
+    },
+    {
+      "code": 6017,
+      "name": "OriginMismatch",
+      "msg": "clientDataJSON.origin does not match the account origin"
+    },
+    {
+      "code": 6018,
+      "name": "ChallengeMismatch",
+      "msg": "clientDataJSON.challenge does not match the root transcript"
+    },
+    {
+      "code": 6019,
+      "name": "AuthDataTooShort",
+      "msg": "authenticatorData is shorter than 37 bytes"
+    },
+    {
+      "code": 6020,
+      "name": "RpIdHashMismatch",
+      "msg": "authenticatorData rpIdHash does not match the account rp_id_hash"
+    },
+    {
+      "code": 6021,
+      "name": "UserVerificationRequired",
+      "msg": "authenticatorData flags lack user-present and user-verified"
+    },
+    {
+      "code": 6022,
+      "name": "PrecompileNotFound",
+      "msg": "no secp256r1 precompile instruction at the named index before this one"
+    },
+    {
+      "code": 6023,
+      "name": "PrecompileBindingMismatch",
+      "msg": "secp256r1 precompile instruction does not bind this key and message"
+    },
+    {
+      "code": 6024,
+      "name": "RootKindUnsupported",
+      "msg": "root key kind is not supported by this instruction"
+    },
+    {
+      "code": 6025,
+      "name": "InvalidOrigin",
+      "msg": "origin is empty, too long, missing the chrome-extension:// prefix, contains a NUL byte, or has trailing whitespace"
+    },
+    {
+      "code": 6026,
+      "name": "ZeroClusterTag",
+      "msg": "cluster_tag must be non-zero"
+    },
+    {
+      "code": 6027,
+      "name": "InvalidPolicy",
+      "msg": "policy fails validation (timelock/recovery/session-life bounds or cap ordering)"
+    },
+    {
+      "code": 6028,
+      "name": "ProgramAllowlistUnsupported",
+      "msg": "program_allowlist_id must be 0 until the Phase 1B adapter registry exists"
+    },
+    {
+      "code": 6029,
+      "name": "AlreadyFrozen",
+      "msg": "account is already frozen by root"
+    },
+    {
+      "code": 6030,
+      "name": "TimelockNotElapsed",
+      "msg": "the unfreeze timelock has not yet elapsed"
+    }
+  ],
+  "types": [
+    {
+      "name": "CreateAccountArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner_seed",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "root",
+            "type": {
+              "defined": {
+                "name": "RootKey"
+              }
+            }
+          },
+          {
+            "name": "rp_id_hash",
+            "docs": [
+              "Recomputed on-chain as SHA-256(origin) and compared — this field only",
+              "lets the client show its work; the caller cannot short-circuit the",
+              "check by lying here (`rejects_rp_id_hash_not_sha256_of_origin`)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "origin",
+            "docs": [
+              "`chrome-extension://…`, 1..=64 bytes (`MAX_ORIGIN_LEN`)."
+            ],
+            "type": "bytes"
+          },
+          {
+            "name": "cluster_tag",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "policy",
+            "type": {
+              "defined": {
+                "name": "PolicyArgs"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "GrantBody",
+      "docs": [
+        "Everything the passkey signs for, and nothing else: `action_hash =",
+        "Keccak256(OP_GRANT_SESSION ‖ borsh(GrantBody))`.",
+        "",
+        "`caps[i]` and `lifetime_cap[i]` are parallel — same length, same mint",
+        "order — rather than one vector of `(MintCap, u64)` pairs, because",
+        "`MintCap` is the shared zero-copy type used by `Policy` and `SessionKey`",
+        "and the lifetime cap is a session-only concept that has no place in it."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "expiry_ts",
+            "docs": [
+              "When the *session* stops working (absolute unix seconds). Unrelated to",
+              "`root.expiry_ts`, which is the ≤ 600 s freshness window of the passkey",
+              "ceremony itself."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "session_pubkey",
+            "type": "pubkey"
+          },
+          {
+            "name": "kind",
+            "docs": [
+              "`SESSION_KIND_ED25519` (0) is the only value Phase 1A accepts."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "ops_mask",
+            "type": "u16"
+          },
+          {
+            "name": "caps",
+            "docs": [
+              "At most `MAX_CAPS_PER_GRANT` entries, each with a distinct, non-default",
+              "mint that the account's `policy.session_ceiling` configures."
+            ],
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "MintCap"
+                }
+              }
+            }
+          },
+          {
+            "name": "lifetime_cap",
+            "docs": [
+              "Exactly as long as `caps`; `lifetime_cap[i]` bounds total lifetime",
+              "spend for `caps[i].mint`."
+            ],
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "program_allowlist_id",
+            "docs": [
+              "spec §5.1 adapter-registry list id (0 = none until Phase 1B defines the",
+              "registry)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "label",
+            "docs": [
+              "Free-form display label; not interpreted on-chain."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "GrantSessionArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "root",
+            "type": {
+              "defined": {
+                "name": "RootArgs"
+              }
+            }
+          },
+          {
+            "name": "body",
+            "type": {
+              "defined": {
+                "name": "GrantBody"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "MintBuckets",
+      "docs": [
+        "Zero-copy `Pod` (embedded in `SmartAccount.buckets`). All four fields",
+        "are 8-byte-aligned (`i64`/`u64`/`[u64; 30]`) and declared back to back,",
+        "so no padding is needed anywhere in this struct."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "day_start",
+            "type": "i64"
+          },
+          {
+            "name": "spent_today",
+            "type": "u64"
+          },
+          {
+            "name": "ring_day_index",
+            "type": "i64"
+          },
+          {
+            "name": "ring",
+            "type": {
+              "array": [
+                "u64",
+                30
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "MintCap",
+      "docs": [
+        "Zero-copy `Pod` (embedded in `Policy`/`SmartAccount`) AND plain Borsh",
+        "(embedded in `SessionKey`, which stays a normal non-zero-copy",
+        "`#[account]` — see that struct). `mint: Pubkey` (32 B, alignment 1) is",
+        "followed directly by three `u64`s (8 B, alignment 8); 32 is already a",
+        "multiple of 8, so no explicit padding is needed here.",
+        "",
+        "`AnchorSerialize`/`AnchorDeserialize` are implemented **by hand** below",
+        "instead of derived: `#[zero_copy]` already derives `IdlBuild` (needed",
+        "under the `idl-build` feature that `anchor build`'s IDL-generation pass",
+        "enables), and anchor-derive-serde's `AnchorSerialize`/`AnchorDeserialize`",
+        "derive macros unconditionally derive `IdlBuild` too — stacking both on",
+        "one type is `E0119: conflicting implementations of trait IdlBuild`. A",
+        "hand-written impl gives the same Borsh wire format (field order,",
+        "identical to what `#[derive(AnchorSerialize, AnchorDeserialize)]` would",
+        "have produced) without emitting a second `IdlBuild` impl."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "per_tx",
+            "type": "u64"
+          },
+          {
+            "name": "per_day",
+            "type": "u64"
+          },
+          {
+            "name": "per_30d",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Policy",
+      "docs": [
+        "Embedded in `SmartAccount` (zero-copy `Pod`). `version: u32` is followed",
+        "by 4 explicit padding bytes to bring the 8-byte-aligned `caps` array",
+        "(each `MintCap` is internally 8-aligned) to an 8-byte boundary;",
+        "`session_ops_ceiling: u16` is followed by 6 explicit padding bytes for",
+        "the same reason before `_reserved`. Without these, `bytemuck`'s `Pod`",
+        "derive refuses to compile (implicit padding is unsound to treat as",
+        "plain data)."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u32"
+          },
+          {
+            "name": "_pad_version",
+            "type": {
+              "array": [
+                "u8",
+                4
+              ]
+            }
+          },
+          {
+            "name": "caps",
+            "docs": [
+              "`mint == Pubkey::default()` => unused slot; SOL uses the native mint id."
+            ],
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "MintCap"
+                  }
+                },
+                8
+              ]
+            }
+          },
+          {
+            "name": "session_ceiling",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "MintCap"
+                  }
+                },
+                8
+              ]
+            }
+          },
+          {
+            "name": "large_threshold",
+            "docs": [
+              "per_tx only used."
+            ],
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "MintCap"
+                  }
+                },
+                8
+              ]
+            }
+          },
+          {
+            "name": "timelock_secs",
+            "type": "i64"
+          },
+          {
+            "name": "recovery_delay_secs",
+            "type": "i64"
+          },
+          {
+            "name": "max_session_life_secs",
+            "type": "i64"
+          },
+          {
+            "name": "session_ops_ceiling",
+            "type": "u16"
+          },
+          {
+            "name": "_pad_ceiling",
+            "type": {
+              "array": [
+                "u8",
+                6
+              ]
+            }
+          },
+          {
+            "name": "_reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PolicyArgs",
+      "docs": [
+        "Instruction-argument mirror of `Policy` (`create_account`, Task 4) — plain",
+        "Borsh, sparse on the wire: `caps`/`session_ceiling`/`large_threshold` are",
+        "`Vec<MintCap>` (each at most `MAX_MINTS_AT_CREATE` entries) instead of",
+        "`Policy`'s fixed 8-slot arrays, which is what let a single `create_account`",
+        "carrying a handful of mints blow past Solana's 1,232 B transaction limit",
+        "when this was a plain `[MintCap; 8]` mirror (round-1 review finding,",
+        "fixed here — see docs/program/PHASE1A-MEASUREMENTS.md).",
+        "",
+        "`caps[i]` keeps its position (`Policy.caps[i]`); `session_ceiling`/",
+        "`large_threshold` entries are **not** positional — each is re-keyed by",
+        "`mint` onto the index of the `caps` entry with the same mint (see",
+        "`expand`). `create_account` additionally forces `policy.version` to 1",
+        "regardless of what's carried here, so this struct still declares",
+        "`version` only for symmetry with `Policy`'s field list."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u32"
+          },
+          {
+            "name": "caps",
+            "docs": [
+              "≤ `MAX_MINTS_AT_CREATE` entries; every `mint` non-default and",
+              "distinct within this vector."
+            ],
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "MintCap"
+                }
+              }
+            }
+          },
+          {
+            "name": "session_ceiling",
+            "docs": [
+              "≤ `MAX_MINTS_AT_CREATE` entries; every `mint` must match exactly one",
+              "`caps` entry (else `expand` rejects the whole policy) and be distinct",
+              "within this vector (two entries keying onto the same `caps` slot is",
+              "also rejected)."
+            ],
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "MintCap"
+                }
+              }
+            }
+          },
+          {
+            "name": "large_threshold",
+            "docs": [
+              "Same keying rules as `session_ceiling`, independently."
+            ],
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "MintCap"
+                }
+              }
+            }
+          },
+          {
+            "name": "timelock_secs",
+            "type": "i64"
+          },
+          {
+            "name": "recovery_delay_secs",
+            "type": "i64"
+          },
+          {
+            "name": "max_session_life_secs",
+            "type": "i64"
+          },
+          {
+            "name": "session_ops_ceiling",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RevokeBody",
+      "docs": [
+        "Everything the passkey signs for on the root revoke path:",
+        "`action_hash = Keccak256(OP_REVOKE_SESSION ‖ borsh(RevokeBody))`.",
+        "",
+        "`refund_to` is in the signed body, not merely an account, so the ceremony",
+        "authorizes *where the rent goes* as well as *what is revoked*. Without it,",
+        "an observer who saw a signed revoke before it landed could resubmit the",
+        "same assertion with themselves as `payer` and take the session's rent",
+        "(they could never change which session is closed — that has always been in",
+        "the hash — but the lamports were up for grabs)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "session_pubkey",
+            "docs": [
+              "The session's delegate pubkey — also the PDA seed."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "refund_to",
+            "docs": [
+              "Must equal the `payer` account, which is where `close` sends the rent."
+            ],
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RevokeSessionRootArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "root",
+            "type": {
+              "defined": {
+                "name": "RootArgs"
+              }
+            }
+          },
+          {
+            "name": "body",
+            "type": {
+              "defined": {
+                "name": "RevokeBody"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "RootArgs",
+      "docs": [
+        "Instruction-argument payload every root-authorized instruction carries, in",
+        "addition to its own arguments (which are hashed into `action_hash`).",
+        "",
+        "Budget (C7): `authenticator_data` is 37 B for a platform passkey and",
+        "`client_data_json` is capped at `MAX_CLIENT_DATA_LEN` = 512 B, so the worst",
+        "case is ~570 B on top of the ~180 B precompile instruction."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "precompile_ix_index",
+            "docs": [
+              "Index, within this transaction, of the secp256r1 precompile",
+              "instruction that verified the assertion. Must be < our own index."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "authenticator_data",
+            "type": "bytes"
+          },
+          {
+            "name": "client_data_json",
+            "type": "bytes"
+          },
+          {
+            "name": "expiry_ts",
+            "docs": [
+              "Absolute unix seconds; the ceremony is valid for at most",
+              "`MAX_ROOT_EXPIRY_SECS` into the future."
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RootKey",
+      "docs": [
+        "Instruction-argument type only (`create_account`, Task 4) — NOT how the",
+        "root signer is stored on-chain; see `SmartAccount::root_kind`/",
+        "`root_pubkey` and `SmartAccount::root()`/`set_root()`."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "P256Passkey",
+            "fields": [
+              {
+                "name": "pubkey",
+                "type": {
+                  "array": [
+                    "u8",
+                    33
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "Ed25519",
+            "fields": [
+              {
+                "name": "pubkey",
+                "type": "pubkey"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "SessionKey",
+      "docs": [
+        "A bounded, expiring delegate signer for a `SmartAccount`. Layout is FINAL",
+        "for Phase 1B (`_reserved` carved without realloc)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "account",
+            "type": "pubkey"
+          },
+          {
+            "name": "pubkey",
+            "type": "pubkey"
+          },
+          {
+            "name": "kind",
+            "docs": [
+              "0 = Ed25519."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "expiry_ts",
+            "type": "i64"
+          },
+          {
+            "name": "ops_mask",
+            "type": "u16"
+          },
+          {
+            "name": "generation_at_grant",
+            "type": "u64"
+          },
+          {
+            "name": "caps",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "MintCap"
+                  }
+                },
+                8
+              ]
+            }
+          },
+          {
+            "name": "lifetime_cap",
+            "type": {
+              "array": [
+                "u64",
+                8
+              ]
+            }
+          },
+          {
+            "name": "lifetime_spent",
+            "type": {
+              "array": [
+                "u64",
+                8
+              ]
+            }
+          },
+          {
+            "name": "program_allowlist_id",
+            "docs": [
+              "spec §5.1: adapter-registry list id (0 = none; 1B defines the registry)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "label",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "_reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SmartAccount",
+      "docs": [
+        "The passkey-rooted smart account, laid out as a `bytemuck`-`Pod`",
+        "zero-copy account (instruction handlers use `AccountLoader<'info,",
+        "SmartAccount>`, not `Account<'info, T>`): `SmartAccount` is ~4 KB of",
+        "account data, and Borsh (de)serialization builds the whole struct as a",
+        "stack local, which overflowed the SBF VM's 4096-byte-per-call-frame",
+        "limit — `anchor build` reported `try_deserialize_unchecked` at an",
+        "estimated 6144-byte frame before this change (see task-2-report.md,",
+        "\"Fix report — round 1\"). Zero-copy casts the raw account buffer",
+        "directly; no stack copy of the whole struct is ever made.",
+        "",
+        "Every field must be `bytemuck::Pod` (plain-old-data, no enums, no",
+        "padding — `bytemuck`'s `Pod` derive refuses to compile if any is",
+        "implicit). Enum-shaped state (`root`, `frozen`) is represented as an",
+        "explicit `u8` tag plus a fixed-size payload; `root()`/`set_root()` and",
+        "`frozen()`/`set_frozen()` bridge to/from the ergonomic `RootKey`/",
+        "`FrozenState` enums below, which remain plain-Borsh types — they are",
+        "what `create_account`/`grant`/`freeze` instructions carry as arguments",
+        "(Task 4+), not what's stored on-chain.",
+        "",
+        "Layout is FINAL for Phase 1B: every 1B/1C field (`guardians_config`,",
+        "`registry`, `_reserved`) is present now, carved from `_reserved` in",
+        "later versions without a realloc. `version` documents each carve.",
+        "",
+        "Field declaration order is deliberately NOT the brief's original order:",
+        "`#[repr(C)]` (which `#[account(zero_copy)]` applies) never reorders",
+        "fields, so to eliminate the implicit padding `Pod` would otherwise",
+        "reject, every 1-byte-aligned field (u8 tags and byte arrays) is grouped",
+        "first, padded once to an 8-byte boundary, and every 8-byte-aligned field",
+        "(u64/i64, and the nested `Policy`/`MintBuckets` — both internally",
+        "8-aligned) follows with no further padding needed anywhere."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "root_kind",
+            "docs": [
+              "0 = `RootKey::P256Passkey`, 1 = `RootKey::Ed25519`. See `root()`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "origin_len",
+            "type": "u8"
+          },
+          {
+            "name": "frozen_kind",
+            "docs": [
+              "0 = `FrozenState::None`, 1 = `Root`, 2 = `Guardian`. See `frozen()`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "frozen_guardian_idx",
+            "type": "u8"
+          },
+          {
+            "name": "owner_seed",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "root_pubkey",
+            "docs": [
+              "`P256Passkey`: the full 33-byte compressed point. `Ed25519`: the",
+              "32-byte pubkey in bytes `[0..32]`; byte 32 is unused (kept zero)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                33
+              ]
+            }
+          },
+          {
+            "name": "rp_id_hash",
+            "docs": [
+              "== SHA-256(origin[..origin_len]) — enforced at create (Task 4)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "origin",
+            "docs": [
+              "Canonical full origin \"chrome-extension://<32 chars>\"; bytes beyond",
+              "`origin_len` are zero; no NULs."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "cluster_tag",
+            "docs": [
+              "Client-attested domain separator (genesis hash by convention) — NOT",
+              "verified on-chain; bound into every root transcript."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "guardians_config",
+            "docs": [
+              "1B: PDA of the guardians/recovery config (`Pubkey::default()` until",
+              "set) — reserved now so no realloc later."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "registry",
+            "docs": [
+              "1B: adapter-registry PDA (default until set)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "_reserved",
+            "docs": [
+              "Forward-compat headroom; 1B/1C fields are carved from here without",
+              "realloc."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                256
+              ]
+            }
+          },
+          {
+            "name": "_pad_align8",
+            "docs": [
+              "Rounds the 1-byte-aligned field block above up to an 8-byte",
+              "boundary so nothing below needs further padding. Not addressable —",
+              "pure alignment filler."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                1
+              ]
+            }
+          },
+          {
+            "name": "generation",
+            "type": "u64"
+          },
+          {
+            "name": "root_nonce",
+            "type": "u64"
+          },
+          {
+            "name": "frozen_until",
+            "type": "i64"
+          },
+          {
+            "name": "frozen_at",
+            "type": "i64"
+          },
+          {
+            "name": "policy",
+            "type": {
+              "defined": {
+                "name": "Policy"
+              }
+            }
+          },
+          {
+            "name": "buckets",
+            "docs": [
+              "Parallel to `policy.caps`."
+            ],
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "MintBuckets"
+                  }
+                },
+                8
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
