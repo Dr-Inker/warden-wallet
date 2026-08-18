@@ -109,6 +109,23 @@ Both size-sensitive tests assert `tx_bytes <= 1232` directly (not just print
 it), so a future regression here fails the suite instead of only showing up
 in this file.
 
+## Design notes
+
+### `unfreeze` reads `policy.timelock_secs` LIVE, at lift time
+
+`instructions::unfreeze::handler` computes `unlock_at = frozen_at +
+policy.timelock_secs` using the account's CURRENT policy, not a value
+snapshotted when `freeze` ran. In Phase 1A this is a distinction without a
+difference — no 1A instruction ever changes `timelock_secs` after
+`create_account` sets it — but Phase 1B's `set_policy` will be able to. When
+it lands, `set_policy` must make a deliberate choice for an account that is
+currently frozen: either (a) preserve today's live-read behavior, so a
+shortened timelock also shortens the wait on an in-progress freeze, or (b)
+snapshot `timelock_secs` into `frozen_at`'s companion state at `freeze` time
+so a later `set_policy` cannot retroactively change how long a freeze already
+in effect lasts. This is not decided here — flagged for whoever implements
+`set_policy` in 1B.
+
 ## Update policy
 
 Append a row per measured path; do not delete rows — a regression is only

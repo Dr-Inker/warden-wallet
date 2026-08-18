@@ -401,3 +401,16 @@ fn op_bytes_are_distinct() {
         }
     }
 }
+
+/// `OP_FREEZE`/`OP_UNFREEZE` are permanent wire constants the instant any
+/// client signs a real ceremony against them (the op byte is part of the
+/// signed transcript — spec §4). Pinned as LITERALS, independent of
+/// `transcript.rs`'s own `OP_FREEZE`/`OP_UNFREEZE` declarations, the same
+/// reason `root_verify.rs`'s error-code table pins against literals rather
+/// than the enum: a silent renumber/swap must fail HERE, not just break
+/// every already-signed client silently.
+#[test]
+fn op_bytes_are_pinned() {
+    assert_eq!(OP_FREEZE, 0x03, "OP_FREEZE moved — every signed freeze ceremony breaks");
+    assert_eq!(OP_UNFREEZE, 0x04, "OP_UNFREEZE moved — every signed unfreeze ceremony breaks");
+}

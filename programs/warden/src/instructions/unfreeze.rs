@@ -89,6 +89,16 @@ pub(crate) fn handler(ctx: Context<Unfreeze>, args: RootArgs) -> Result<()> {
     // AUTHORIZE FIRST, then validate state (see module docs).
     match account.frozen()? {
         FrozenState::Root => {
+            // `account.policy.timelock_secs` is read LIVE, at lift time, not
+            // the value that was in force when `freeze` ran — deliberate: no
+            // instruction in 1A ever changes it after `create_account`, so
+            // today the two are always the same value, but this is the
+            // policy field a future `set_policy` (1B) would touch. If 1B
+            // shortens `timelock_secs` after a freeze is already in effect,
+            // that shorter window applies to unfreezing it too, because
+            // nothing here snapshotted the duration at freeze time. See
+            // docs/program/PHASE1A-MEASUREMENTS.md ("Design notes") for the
+            // decision `set_policy` owes this invariant.
             let unlock_at = account
                 .frozen_at
                 .checked_add(account.policy.timelock_secs)
