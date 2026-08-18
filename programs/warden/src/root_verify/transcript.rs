@@ -5,7 +5,7 @@
 //! ```text
 //! transcript = Keccak256(
 //!     "WARDEN/root/v1"
-//!   ‖ genesis_hash        (32 B)   <- see the note on `genesis` below
+//!   ‖ cluster_tag         (32 B)   <- see the note on `genesis` below
 //!   ‖ program_id          (32 B)
 //!   ‖ account             (32 B)
 //!   ‖ generation          u64 LE
@@ -188,6 +188,33 @@ mod tests {
         assert_eq!(
             String::from_utf8(b64url_no_pad(&t)).unwrap(),
             "LEt28FWyglI8y61Sh__dFRbKn6uk8PYmo8p7JDpSds4"
+        );
+    }
+
+    /// Companion vector with a NEGATIVE `expiry_ts`, pinned so the
+    /// TypeScript mirror can prove it encodes `i64` as two's-complement
+    /// little-endian rather than, say, a sign-magnitude or unsigned
+    /// reinterpretation — a bug the positive vector cannot catch, and one
+    /// that would only ever surface as an unverifiable ceremony against a
+    /// clock-skewed or pre-epoch timestamp. Inputs are `vector_inputs()`
+    /// with `expiry_ts = -1` (all bytes 0xff) and nothing else changed.
+    ///
+    /// Pinned against the same INDEPENDENT from-spec Keccak-256
+    /// implementation used for the positive vector (self-tested against the
+    /// published `keccak256("")` / `keccak256("abc")` digests, and re-checked
+    /// to reproduce the positive vector above before this one was taken), not
+    /// against this function's own output.
+    #[test]
+    fn transcript_hash_matches_pinned_negative_expiry_vector() {
+        let (g, pid, acct, gen, pv, nonce, _exp, ah) = vector_inputs();
+        let t = transcript_hash(&g, &pid, &acct, gen, pv, nonce, -1i64, &ah);
+        assert_eq!(
+            hex::encode(t),
+            "5469ceaeb4e6b2292539b3862bdf259712d5377174b00a43ea065f3de90127c0"
+        );
+        assert_eq!(
+            String::from_utf8(b64url_no_pad(&t)).unwrap(),
+            "VGnOrrTmsiklObOGK98llxLVN3F0sApD6gZfPekBJ8A"
         );
     }
 

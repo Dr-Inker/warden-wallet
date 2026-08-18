@@ -8,6 +8,7 @@ import {
   OP_REVOKE_SESSION,
   OP_FREEZE,
   OP_UNFREEZE,
+  OP_TRANSFER,
 } from "../src/index.js";
 
 const hex = (b: Uint8Array): string =>
@@ -39,7 +40,27 @@ const EXPIRY_TS = 1_760_000_000n;
 const EXPECTED_CHALLENGE = "LEt28FWyglI8y61Sh__dFRbKn6uk8PYmo8p7JDpSds4";
 
 describe("transcriptHash", () => {
-  it.todo("negative-expiry parity vector (needs Rust-pinned vector)");
+  // Pinned against the Rust
+  // `transcript_hash_matches_pinned_negative_expiry_vector` (Task 9). Same
+  // inputs as the positive vector below with `expiryTs = -1n` (all-0xff i64) and
+  // nothing else changed, so it proves this mirror encodes `expiry_ts` as
+  // two's-complement little-endian — a divergence the positive-only vector
+  // cannot catch, and one that would surface only against a clock-skewed or
+  // pre-epoch timestamp.
+  it("matches the Rust-pinned NEGATIVE-expiry vector (transcript_hash_matches_pinned_negative_expiry_vector)", () => {
+    const t = transcriptHash({
+      clusterTag: CLUSTER_TAG,
+      programId: PROGRAM_ID,
+      account: ACCOUNT,
+      generation: GENERATION,
+      policyVersion: POLICY_VERSION,
+      rootNonce: ROOT_NONCE,
+      expiryTs: -1n,
+      actionHash: ACTION_HASH,
+    });
+    expect(hex(t)).toBe("5469ceaeb4e6b2292539b3862bdf259712d5377174b00a43ea065f3de90127c0");
+    expect(challengeB64Url(t)).toBe("VGnOrrTmsiklObOGK98llxLVN3F0sApD6gZfPekBJ8A");
+  });
 
   it("matches the Rust-pinned vector (transcript_hash_matches_pinned_vector)", () => {
     const t = transcriptHash({
@@ -142,6 +163,9 @@ describe("op-type constants", () => {
     expect(OP_REVOKE_SESSION).toBe(0x02);
     expect(OP_FREEZE).toBe(0x03);
     expect(OP_UNFREEZE).toBe(0x04);
+    // Rust calls this one `OP_TRANSFER_ACTION` (it shares a name, not a
+    // value, with the `ops_mask` bit `state::session::OP_TRANSFER` = 1 << 0).
+    expect(OP_TRANSFER).toBe(0x05);
   });
 });
 

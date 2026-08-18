@@ -72,12 +72,36 @@ export const OP_FREEZE = 0x03;
 /** `op_type` byte for `unfreeze` (Task 6); same empty-payload shape as `OP_FREEZE`. */
 export const OP_UNFREEZE = 0x04;
 
-// NOTE: as of this task, `programs/warden/src/root_verify/transcript.rs`
-// defines only OP_ROTATE_NONCE..OP_UNFREEZE (0x00-0x04). A `transfer` op is
-// described prospectively in the spec but has no assigned op_type byte in
-// the Rust source yet, so no `OP_TRANSFER` constant is mirrored here —
-// inventing a value would risk pinning a byte the program never agreed to.
-// Add it here (and to the Rust source first) when that task lands.
+/**
+ * `op_type` byte for the ROOT path of `transfer` (Task 7); hashed over
+ * `borsh(TransferBody)`.
+ *
+ * Named `OP_TRANSFER_ACTION` in Rust
+ * (`programs/warden/src/root_verify/transcript.rs`) purely to avoid colliding
+ * with `state::session::OP_TRANSFER`, which is the session `ops_mask` BIT
+ * (`1 << 0`) — an unrelated number in an unrelated namespace. If a future task
+ * mirrors the `ops_mask` bits here, they MUST be exported under a distinct
+ * prefix (e.g. `OPS_MASK_TRANSFER`) rather than shadowing this constant.
+ *
+ * `TransferBody` field order (borsh, `programs/warden/src/instructions/transfer.rs`):
+ * `native: bool (1B, 0x00/0x01)`, `mint: Pubkey (32B)`,
+ * `destination: Pubkey (32B)`, `amount: u64 (8B LE)` — 73 B total, fixed
+ * width (no Option tags, no Vec length prefixes).
+ *
+ * Two field notes matter for building the ceremony client-side:
+ * - `native` is carried ALONGSIDE `mint`, not inferred from it: when
+ *   `native` is `true`, `mint` is the all-zero pubkey (`Pubkey::default()`),
+ *   even though the on-chain caps for native SOL are looked up under the
+ *   wrapped-SOL mint `So11111111111111111111111111111111111111112`. The
+ *   signed document says "no mint" so a client displaying a pending
+ *   assertion never has to know the zero pubkey is a sentinel.
+ * - `destination` is the DESTINATION ACCOUNT's key (a plain system account
+ *   for SOL, a token account for SPL) taken from the accounts actually
+ *   passed — `transfer` has no destination *argument* at all. The client must
+ *   therefore sign over exactly the account key it will submit, or the
+ *   on-chain rebuild fails with `ChallengeMismatch` (6018).
+ */
+export const OP_TRANSFER = 0x05;
 
 const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
