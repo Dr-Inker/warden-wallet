@@ -1,6 +1,6 @@
 # Warden — design spec (v1)
 
-**Date:** 2026-08-18 · **Status:** rev 4 (after Codex review rounds 1–3, see §16) · **Product:** drinkerlabs · **Working name:** Warden (rename = find/replace)
+**Date:** 2026-08-18 · **Status:** rev 5 (after Codex review rounds 1–4, see §16) · **Product:** drinkerlabs · **Working name:** Warden (rename = find/replace)
 **Predecessor:** `/opt/docs/pq-solana-wallet-research-2026-08-18.md` (feasibility study; the quantum root is out of scope here but every choice keeps its slot).
 
 ## 1. Purpose and the one property we promise
@@ -18,7 +18,7 @@ A Solana browser-extension wallet that is **more secure than Phantom against the
 | T3 | Malicious/updated extension | Root = **non-exportable P-256 passkey verified on-chain**; the extension never holds root secret material. A malicious extension can spend the session caps, and can *ask* the user to complete a passkey ceremony for a large action — that action is still timelocked and visible on the notifier/second device. Explicitly **not** defended: a malicious extension that lies about intent to a user with no second channel |
 | T4 | Device/passkey lost | Guardian recovery (threshold, delayed, root-cancellable) or the recovery-key path (also delayed) |
 | T5 | AI agent/bot with wallet access is prompt-injected | Agents get their own session key with tiny caps (on-chain in v1; UI in v1.1) |
-| T6 | Bug in our program | Small typed surface, adversarial + property tests, external audit and bug bounty **before any real funds**, per-account `frozen`, upgrade path with an exit window (§13) |
+| T6 | Bug in our program | Small typed surface, adversarial + property tests, external audit and bug bounty **before any real funds**, per-account `frozen`, upgrade path with a 7-day lock and an exit window (§5.5) |
 | — | Quantum signature forgery | Out of scope. Preserved: asset holder is a PDA; root/guardian kinds are typed → a hash-based/Falcon kind is additive |
 | — | Compromised OS/keylogger with unlocked session | Bounded by caps only |
 | — | Lying RPC | Cannot sign; can hide state. Intent view cross-checks simulation vs local pre-check and flags disagreement; user-selectable RPC |
@@ -114,7 +114,7 @@ Guaranteed: bounded token/lamport outflow from **vault-owned token accounts and 
 Fields and their *loosening* direction (must be queued + timelocked; tightening immediate): any cap ↑ (session, swap, ceiling); `large_threshold` ↑; `timelock` ↓; `recovery_delay` ↓; `guardian_threshold` ↓; remove guardian; add allowlisted recipient; add mint to `allowed_out_mints`; add program to any allowlist; enable a Token-2022 extension; `max_session_life` ↑; `guardian_freeze_max` ↓. Anything not listed is treated as loosening by default. `execute_pending` reclassifies against the policy in force at execution.
 
 ### 5.5 Upgrade authority (enforceable)
-Devnet: dev multisig. Mainnet: the BPF-loader upgrade authority **is** a Squads multisig (3-of-5) whose proposals carry an on-chain **7-day time lock enforced by the multisig program itself** — the loader authority cannot act faster than that. The extension watches the multisig's proposal accounts: a pending upgrade proposal opens the user's exit window (sweep to a fresh account/external address via the root path). **Waiver predicate (exact):** the program's `exit` instruction accepts the multisig's `Proposal` + `VaultTransaction` accounts and verifies (i) both are owned by the **pinned Squads program id**, (ii) the multisig key equals the **pinned upgrade-authority multisig** stored in the program's config PDA (set once at deployment, itself only changeable by that multisig through the same timelock), (iii) the proposal status is Active/Approved and not Executed/Cancelled, (iv) the vault transaction's instruction list contains a BPF Upgradeable Loader `Upgrade` (or `SetAuthority`) instruction whose program-data account is **this program's** program-data address; only then is the large-transfer timelock waived for a root-signed sweep. Anything else → normal timelock. Commit to immutability at v1.x once stable.
+Devnet: dev multisig. Mainnet: the BPF-loader upgrade authority **is** a Squads multisig (3-of-5) whose proposals carry an on-chain **7-day time lock enforced by the multisig program itself** — the loader authority cannot act faster than that. The extension watches the multisig's proposal accounts: a pending upgrade proposal is surfaced in the extension as an **exit window**. There is **no special `exit` instruction and no timelock waiver**: leaving is the ordinary root path — if needed, queue a policy loosening (raise the relevant caps; 12 h) then queue the sweep (12 h) — both bucketed, delayed and cancellable exactly like any other outflow, so a pending upgrade never opens a fast path for a root attacker. This is sufficient because the multisig's 7-day upgrade lock is ≫ 24 h; the extension additionally offers a one-click 'prepare exit' that queues both steps and reminds the user before the upgrade executes. Commit to immutability at v1.x once stable.
 
 ## 6. Extension (MV3)
 
@@ -168,6 +168,8 @@ Fee bps default (85) · cloud guardian in v1 (proposed yes) · working name.
 `SmartAccount`, `SessionKey`, `Stage`, `Pending`, `Recovery`, `Treasury(SmartAccount)`; policy = `{session_caps[], session_ceiling[], swap_caps[], allowed_out_mints[], recipient_allowlist[], program_allowlists[][], large_threshold[], timelock, recovery_delay, guardian_threshold, guardians[], guardian_freeze_max, guardian_freeze_cooldown, max_session_life, t22_allowed_ext, version}`.
 
 ## 16. Review log
+
+**Codex round 4 (gpt-5.6-terra@high, thread 01a01488…): REVISE** — root buckets CLOSED for listed paths but the new `exit` waiver was an unlisted fast path, and the Squads predicate lacked Proposal→VaultTransaction linkage. Fixed by **removing the waiver and the `exit` instruction**: exit = ordinary bucketed, delayed root path (loosen 12 h + queue 12 h ≪ 7-day upgrade lock); no Squads introspection needed on-chain.
 
 **Codex round 3 (gpt-5.6-terra@high, thread 01a01485…): REVISE** — nonce/precompile PARTIAL (fixed: `now ≤ expiry_ts`, canonical `action_hash` covering complete instruction inputs, recomputed on-chain); conflict model OPEN (fixed: account-wide day + 30-day buckets on **every** root path incl. execute/swap/queued execution; indefinite guardian freeze only once a proposal has reached threshold — a lone guardian cannot freeze forever); upgrade waiver predicate underdefined (fixed: pinned Squads program + pinned multisig in config PDA + proposal status + loader `Upgrade` targeting this program-data).
 
