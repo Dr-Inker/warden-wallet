@@ -98,11 +98,15 @@ program ids as `pubkey!()` literals instead of importing them. The two crates st
 
 Build facts:
 
-- `cargo-build-sbf` produced `spike_conserve.so` at **25,104 B** (both the default/`keccak` and
+- `cargo-build-sbf` produced `spike_conserve.so` at **26,160 B** (both the default/`keccak` and
   `sha256-tlv`-feature builds are this size; the two builds are binary-different — different file
-  hashes — but same size).
+  hashes — but same size). Grew from 25,104 B pre-round-1-fix (stricter COption parsing + fuller
+  field-by-field invariant comparison in `check_vault_invariants` — see result.md part (b) "Round
+  1 fix").
 - `cargo test` (host, debug profile, full dependency tree incl. the Agave 3.1.14 BPF loader/runtime
   crates pulled in by `litesvm`): first build ~1 m 38 s wall; incremental re-runs after a feature
-  flip: well under a second once cached.
-- See `spikes/03-txbudget/result.md` part (b) for the measured CU numbers and the keccak-vs-sha256
-  TLV-hash comparison.
+  flip: well under a second once cached. 16 tests total post-round-1-fix (12 new `#[cfg(test)]`
+  unit tests on `check_vault_invariants` in `src/lib.rs`, no SBF build needed — `cargo test --lib`
+  — plus the original 4 LiteSVM integration tests in `tests/cu.rs`).
+- See `spikes/03-txbudget/result.md` part (b) for the measured CU numbers (post-fix, authoritative)
+  and the keccak-vs-sha256 TLV-hash comparison.

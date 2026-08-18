@@ -8,11 +8,11 @@
 use litesvm::LiteSVM;
 use solana_sdk::{
     account::Account,
-    instruction::{AccountMeta, Instruction},
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::Message,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
-    transaction::Transaction,
+    transaction::{Transaction, TransactionError},
 };
 use std::{fs, path::PathBuf, str::FromStr};
 
@@ -131,7 +131,7 @@ fn add_token2022_account(h: &mut Harness) -> AccountMeta {
     AccountMeta::new(key, false)
 }
 
-fn send(h: &mut Harness, mut metas: Vec<AccountMeta>, data: Vec<u8>) -> Result<u64, String> {
+fn send(h: &mut Harness, mut metas: Vec<AccountMeta>, data: Vec<u8>) -> Result<u64, TransactionError> {
     let mut all = vec![AccountMeta::new_readonly(h.vault, false)];
     all.append(&mut metas);
     let ix = Instruction { program_id: h.pid, accounts: all, data };
@@ -141,7 +141,7 @@ fn send(h: &mut Harness, mut metas: Vec<AccountMeta>, data: Vec<u8>) -> Result<u
         Err(f) => {
             // LiteSVM reports CU consumed even on failure.
             println!("failed tx CU={} err={:?} logs={:#?}", f.meta.compute_units_consumed, f.err, f.meta.logs);
-            Err(format!("{:?}", f.err))
+            Err(f.err)
         }
     }
 }
@@ -187,15 +187,21 @@ fn cu_with_token2022_tlv_tail() {
 }
 
 // ---------------------------------------------------------------------------
-// Negative path: data[0] = 1 -> Custom(99), after snapshotting succeeds.
+// SYNTHETIC control path: data[0] = 1 -> Custom(99), after snapshotting
+// succeeds. This is NOT a real detected-mutation test — it's a caller flag
+// with no relation to `check_vault_invariants`, included only to measure the
+// reject-after-successful-snapshot CU cost. The actual reject-on-mutation
+// logic is unit tested directly in src/lib.rs (`check_vault_invariants`),
+// since producing a real mutation here would require an inner CPI this spike
+// deliberately doesn't have.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn negative_path_returns_custom_99() {
+fn synthetic_reject_flag_returns_custom_99_after_snapshot() {
     let mut h = setup();
     let metas = add_spl_accounts(&mut h, 10);
     let err = send(&mut h, metas, vec![1]).expect_err("data[0]=1 must fail");
-    assert!(err.contains("Custom(99)"), "expected Custom(99), got {err}");
+    assert_eq!(err, TransactionError::InstructionError(0, InstructionError::Custom(99)), "expected exact Custom(99)");
 }
 
 // ---------------------------------------------------------------------------
