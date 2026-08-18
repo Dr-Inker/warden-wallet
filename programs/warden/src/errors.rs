@@ -59,7 +59,7 @@ pub enum WardenError {
     // ---------------------------------------------------------------------
     // create_account (Task 4). APPEND ONLY — see the note above.
     // ---------------------------------------------------------------------
-    #[msg("origin is empty, too long, missing the chrome-extension:// prefix, contains a NUL byte, or has trailing whitespace")]
+    #[msg("origin is not exactly chrome-extension:// + a 32-char a..p extension id")]
     InvalidOrigin,
     #[msg("cluster_tag must be non-zero")]
     ZeroClusterTag,
@@ -86,4 +86,11 @@ pub enum WardenError {
     VaultDestination,
     #[msg("per-session day / 30-day caps are not supported in Phase 1A — set per_day = per_30d = 0")]
     SessionDayCapsUnsupported,
+    // ---------------------------------------------------------------------
+    // Phase 1A milestone security review (Task 9). APPEND ONLY — see above.
+    // ---------------------------------------------------------------------
+    #[msg("root key is not a canonical compressed secp256r1 (P-256) point")]
+    InvalidRootKey,
+    #[msg("prior_authority_hash does not match the session's current retained authority")]
+    SessionPriorStateMismatch,
 }

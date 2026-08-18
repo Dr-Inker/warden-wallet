@@ -1,5 +1,4 @@
-//! `create_account` — initializes a passkey- (or Ed25519-) rooted
-//! `SmartAccount` PDA.
+//! `create_account` — initializes a passkey-rooted `SmartAccount` PDA.
 //!
 //! No root signature is required to create an account: `payer` funds the PDA
 //! and every other field is exactly what the caller asserts. This is safe —
@@ -13,12 +12,27 @@ use anchor_lang::prelude::*;
 
 use crate::constants::{ACCOUNT_SEED, DAY_SECS, MAX_MINT_CAPS};
 use crate::errors::WardenError;
+use crate::state::session::OPS_MASK_KNOWN;
 use crate::state::{FrozenState, Policy, PolicyArgs, RootKey, SmartAccount};
 
 /// Matches `SmartAccount.origin`'s fixed storage width.
 pub const MAX_ORIGIN_LEN: usize = 64;
 /// v1 requires every origin to be a Chrome extension origin (spec §4).
 pub const ORIGIN_PREFIX: &[u8] = b"chrome-extension://";
+/// A Chrome extension id is exactly 32 characters drawn from `a..=p`
+/// (Chromium renders the id as base-16 over that alphabet), so the ONLY
+/// canonical origin shape is `chrome-extension://` + 32 such bytes.
+pub const EXTENSION_ID_LEN: usize = 32;
+/// `ORIGIN_PREFIX.len() + EXTENSION_ID_LEN` — the exact length every accepted
+/// origin has. `MAX_ORIGIN_LEN` (64) stays the *storage* width, deliberately
+/// wider so a future scheme can be admitted without a realloc.
+pub const CANONICAL_ORIGIN_LEN: usize = 19 + EXTENSION_ID_LEN;
+/// The secp256r1 (P-256) field prime `p`, big-endian — the bound a compressed
+/// point's x-coordinate must sit strictly below.
+pub const P256_FIELD_PRIME_BE: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+];
 /// Policy bound: root/guardian timelocks must be at least one hour.
 pub const MIN_TIMELOCK_SECS: i64 = 3600;
 /// Policy bound: `max_session_life_secs` may not exceed 30 days.
@@ -34,7 +48,9 @@ pub struct CreateAccountArgs {
     /// lets the client show its work; the caller cannot short-circuit the
     /// check by lying here (`rejects_rp_id_hash_not_sha256_of_origin`).
     pub rp_id_hash: [u8; 32],
-    /// `chrome-extension://…`, 1..=64 bytes (`MAX_ORIGIN_LEN`).
+    /// Exactly `chrome-extension://` + a 32-char `a..=p` extension id
+    /// (`CANONICAL_ORIGIN_LEN` = 51 bytes). Stored in a 64-byte
+    /// (`MAX_ORIGIN_LEN`) field, zero-padded.
     pub origin: Vec<u8>,
     pub cluster_tag: [u8; 32],
     pub policy: PolicyArgs,
@@ -62,6 +78,7 @@ pub struct CreateAccount<'info> {
 // `rotate_nonce`'s own `handler` (both would otherwise land in the crate
 // root's namespace under the same name).
 pub(crate) fn handler(ctx: Context<CreateAccount>, args: CreateAccountArgs) -> Result<()> {
+    validate_root(&args.root)?;
     validate_origin(&args.origin)?;
     require!(args.cluster_tag != [0u8; 32], WardenError::ZeroClusterTag);
 
@@ -107,17 +124,63 @@ pub(crate) fn handler(ctx: Context<CreateAccount>, args: CreateAccountArgs) -> R
     Ok(())
 }
 
-/// Origin rules (spec §4 / task-4 brief): 1..=64 bytes, must start with
-/// `chrome-extension://`, no embedded NUL, no trailing whitespace.
+/// Root-key rules. **Milestone-review finding (Important): creation used to
+/// accept a root that no root-authorized instruction can ever use**, which
+/// turns a funded account into a permanent loss.
+///
+/// - `RootKey::Ed25519` is refused (`RootKindUnsupported`, the same error
+///   `verify_root_assertion` raises for it). The kind exists in the layout for
+///   hardware/advanced users (spec §4) and 1B may implement its signature
+///   path; until then, storing it would create an account whose every root
+///   instruction aborts.
+/// - A P-256 root must at least be a **canonical compressed point encoding**:
+///   prefix `0x02`/`0x03` and `0 < x < p`. Values outside that range are
+///   rejected by the secp256r1 precompile itself, so accepting them here can
+///   only ever produce an unusable account.
+///
+/// **Honest boundary (carried to 1B):** this is an *encoding* check, not an
+/// on-curve check — proving `x³ - 3x + b` is a quadratic residue mod `p` needs
+/// 256-bit field arithmetic the program does not carry, and would cost far
+/// more CU than the whole rest of this instruction. A well-formed-but-not-
+/// on-curve x therefore still creates an account whose assertions the
+/// precompile will reject. The complete fix is **proof of possession at
+/// creation** (a real root ceremony over `generation = 0`, `root_nonce = 0`),
+/// which does not fit 1A's packet budget alongside a multi-mint policy — see
+/// docs/program/PHASE1A-MEASUREMENTS.md. Until it lands, the client MUST
+/// round-trip one real root instruction (`rotate_nonce`, 15.7k CU) against a
+/// newly created account BEFORE funding it.
+fn validate_root(root: &RootKey) -> Result<()> {
+    let pubkey = match root {
+        RootKey::P256Passkey { pubkey } => pubkey,
+        RootKey::Ed25519 { .. } => return Err(WardenError::RootKindUnsupported.into()),
+    };
+    require!(pubkey[0] == 0x02 || pubkey[0] == 0x03, WardenError::InvalidRootKey);
+    let x = &pubkey[1..33];
+    require!(x.iter().any(|b| *b != 0), WardenError::InvalidRootKey); // x != 0
+    require!(x < &P256_FIELD_PRIME_BE[..], WardenError::InvalidRootKey); // x < p
+    Ok(())
+}
+
+/// Origin rules (spec §4 / task-4 brief): the origin must be **exactly**
+/// `chrome-extension://` followed by a 32-character extension id drawn from
+/// `a..=p`, with no NUL and no whitespace anywhere.
+///
+/// Milestone-review finding (Important): the first pass only checked a prefix
+/// and a length range, so `chrome-extension://abc` — which no Chrome build can
+/// ever produce, and therefore no passkey can ever assert against — created a
+/// permanently unusable account. `rp_id_hash` is derived from this string and
+/// compared against what the authenticator signs, so an origin Chrome cannot
+/// emit is an account no assertion can satisfy.
 fn validate_origin(origin: &[u8]) -> Result<()> {
-    require!(!origin.is_empty() && origin.len() <= MAX_ORIGIN_LEN, WardenError::InvalidOrigin);
+    require!(origin.len() == CANONICAL_ORIGIN_LEN, WardenError::InvalidOrigin);
     require!(origin.starts_with(ORIGIN_PREFIX), WardenError::InvalidOrigin);
-    require!(!origin.contains(&0u8), WardenError::InvalidOrigin);
-    // `origin` is bytes, not a decoded string — trailing whitespace is
-    // judged on the raw ASCII whitespace byte set, matching the JSON
-    // scanner's own definition of a well-formed value.
-    let last = *origin.last().expect("non-empty, checked above");
-    require!(!last.is_ascii_whitespace(), WardenError::InvalidOrigin);
+    // Subsumes the NUL / whitespace / control-byte checks the length-range
+    // version made separately: `a..=p` admits none of them.
+    let id = origin.get(ORIGIN_PREFIX.len()..).ok_or(WardenError::InvalidOrigin)?;
+    require!(
+        id.iter().all(|c| (b'a'..=b'p').contains(c)),
+        WardenError::InvalidOrigin
+    );
     Ok(())
 }
 
@@ -136,7 +199,19 @@ fn validate_origin(origin: &[u8]) -> Result<()> {
 fn validate_policy(p: &Policy) -> Result<()> {
     require!(p.timelock_secs >= MIN_TIMELOCK_SECS, WardenError::InvalidPolicy);
     require!(p.recovery_delay_secs >= MIN_TIMELOCK_SECS, WardenError::InvalidPolicy);
+    // Milestone-review finding (Minor): only the upper bound was checked, so
+    // a zero or negative `max_session_life_secs` created an account for which
+    // `grant_session` can never accept any `expiry_ts` (it requires
+    // `now < expiry_ts <= now + max_session_life_secs`) — an account that can
+    // never delegate anything.
+    require!(p.max_session_life_secs > 0, WardenError::InvalidPolicy);
     require!(p.max_session_life_secs <= MAX_SESSION_LIFE_SECS, WardenError::InvalidPolicy);
+    // Milestone-review finding (Important): an unassigned `ops_mask` bit in
+    // the ceiling is a forward-activation hazard — see `OPS_MASK_KNOWN`.
+    require!(
+        (p.session_ops_ceiling & !OPS_MASK_KNOWN) == 0,
+        WardenError::InvalidPolicy
+    );
 
     for i in 0..MAX_MINT_CAPS {
         let c = p.caps[i];
@@ -183,7 +258,9 @@ mod tests {
 
     #[test]
     fn origin_accepts_the_canonical_shape() {
-        assert!(validate_origin(b"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi").is_ok());
+        let o = b"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi";
+        assert_eq!(o.len(), CANONICAL_ORIGIN_LEN);
+        assert!(validate_origin(o).is_ok());
     }
 
     #[test]
@@ -198,38 +275,131 @@ mod tests {
         assert_eq!(validate_origin(&o).unwrap_err(), err(WardenError::InvalidOrigin));
     }
 
+    /// Milestone-review finding: a 64-byte origin is not a Chrome origin. The
+    /// storage field is 64 B wide, but the only ACCEPTED length is 51.
     #[test]
-    fn origin_accepts_exactly_64_bytes() {
+    fn origin_rejects_a_64_byte_origin_that_is_not_an_extension_id() {
         let mut o = b"chrome-extension://".to_vec();
         o.extend(std::iter::repeat(b'a').take(MAX_ORIGIN_LEN - o.len()));
         assert_eq!(o.len(), MAX_ORIGIN_LEN);
-        assert!(validate_origin(&o).is_ok());
+        assert_eq!(validate_origin(&o).unwrap_err(), err(WardenError::InvalidOrigin));
     }
 
+    /// The whole point of the finding: `chrome-extension://abc` used to be
+    /// accepted and produces an account no assertion can ever satisfy.
     #[test]
-    fn origin_rejects_missing_prefix() {
+    fn origin_rejects_a_short_extension_id() {
         assert_eq!(
-            validate_origin(b"https://maikadpaobbjkmaomnpnhjglpabllaoi").unwrap_err(),
+            validate_origin(b"chrome-extension://abc").unwrap_err(),
             err(WardenError::InvalidOrigin)
         );
     }
 
+    /// Chromium ids are base-16 over `a..=p`; anything else (digits, `q..z`,
+    /// uppercase, `-`) is not an id Chrome can emit.
     #[test]
-    fn origin_rejects_embedded_nul() {
-        let o = b"chrome-extension://abc\0def".to_vec();
-        assert_eq!(validate_origin(&o).unwrap_err(), err(WardenError::InvalidOrigin));
+    fn origin_rejects_ids_outside_the_a_to_p_alphabet() {
+        for bad in [b'q', b'z', b'A', b'0', b'-', b'.'] {
+            let mut o = b"chrome-extension://".to_vec();
+            o.extend(std::iter::repeat(b'a').take(EXTENSION_ID_LEN - 1));
+            o.push(bad);
+            assert_eq!(o.len(), CANONICAL_ORIGIN_LEN);
+            assert_eq!(
+                validate_origin(&o).unwrap_err(),
+                err(WardenError::InvalidOrigin),
+                "byte {bad:?} must be rejected"
+            );
+        }
     }
 
     #[test]
-    fn origin_rejects_trailing_nul() {
-        let o = b"chrome-extension://abcdef\0".to_vec();
+    fn origin_rejects_missing_prefix() {
+        // Same length as the canonical shape, wrong scheme.
+        let o = b"https://xxxxx//maikadpaobbjkmaomnpnhjglpabllaoi.io";
+        assert_eq!(validate_origin(o).unwrap_err(), err(WardenError::InvalidOrigin));
+    }
+
+    #[test]
+    fn origin_rejects_embedded_nul() {
+        let mut o = b"chrome-extension://".to_vec();
+        o.extend(std::iter::repeat(b'a').take(EXTENSION_ID_LEN - 1));
+        o.insert(20, 0u8);
+        assert_eq!(o.len(), CANONICAL_ORIGIN_LEN);
         assert_eq!(validate_origin(&o).unwrap_err(), err(WardenError::InvalidOrigin));
     }
 
     #[test]
     fn origin_rejects_trailing_whitespace() {
-        let o = b"chrome-extension://abcdef ".to_vec();
+        let mut o = b"chrome-extension://".to_vec();
+        o.extend(std::iter::repeat(b'a').take(EXTENSION_ID_LEN - 1));
+        o.push(b' ');
+        assert_eq!(o.len(), CANONICAL_ORIGIN_LEN);
         assert_eq!(validate_origin(&o).unwrap_err(), err(WardenError::InvalidOrigin));
+    }
+
+    // -- validate_root ---------------------------------------------------
+
+    fn p256_root(pubkey: [u8; 33]) -> RootKey {
+        RootKey::P256Passkey { pubkey }
+    }
+
+    #[test]
+    fn root_accepts_a_canonical_compressed_point_encoding() {
+        for prefix in [0x02u8, 0x03] {
+            let mut pk = [0u8; 33];
+            pk[0] = prefix;
+            pk[32] = 1; // x = 1, well inside [1, p)
+            assert!(validate_root(&p256_root(pk)).is_ok());
+        }
+    }
+
+    #[test]
+    fn root_rejects_ed25519_in_phase_1a() {
+        let r = RootKey::Ed25519 { pubkey: Pubkey::new_unique() };
+        assert_eq!(validate_root(&r).unwrap_err(), err(WardenError::RootKindUnsupported));
+    }
+
+    #[test]
+    fn root_rejects_a_non_compressed_prefix() {
+        for prefix in [0x00u8, 0x01, 0x04, 0x05, 0xff] {
+            let mut pk = [0u8; 33];
+            pk[0] = prefix;
+            pk[32] = 1;
+            assert_eq!(
+                validate_root(&p256_root(pk)).unwrap_err(),
+                err(WardenError::InvalidRootKey),
+                "prefix {prefix:#04x} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn root_rejects_zero_x() {
+        let mut pk = [0u8; 33];
+        pk[0] = 0x02;
+        assert_eq!(validate_root(&p256_root(pk)).unwrap_err(), err(WardenError::InvalidRootKey));
+    }
+
+    #[test]
+    fn root_rejects_x_at_or_above_the_field_prime() {
+        // x == p, and x == all-ones (> p).
+        let mut at_p = [0u8; 33];
+        at_p[0] = 0x02;
+        at_p[1..33].copy_from_slice(&P256_FIELD_PRIME_BE);
+        let mut above = [0xffu8; 33];
+        above[0] = 0x03;
+        for pk in [at_p, above] {
+            assert_eq!(validate_root(&p256_root(pk)).unwrap_err(), err(WardenError::InvalidRootKey));
+        }
+    }
+
+    #[test]
+    fn root_accepts_x_exactly_one_below_the_field_prime() {
+        let mut pk = [0u8; 33];
+        pk[0] = 0x02;
+        pk[1..33].copy_from_slice(&P256_FIELD_PRIME_BE);
+        pk[32] -= 1;
+        assert!(validate_root(&p256_root(pk)).is_ok());
     }
 
     // -- validate_policy -------------------------------------------------
@@ -258,6 +428,44 @@ mod tests {
         let mut p = valid_policy();
         p.max_session_life_secs = MAX_SESSION_LIFE_SECS + 1;
         assert_eq!(validate_policy(&p).unwrap_err(), err(WardenError::InvalidPolicy));
+    }
+
+    /// Milestone-review finding (Minor): a non-positive session life is an
+    /// account that can never grant a session at all.
+    #[test]
+    fn policy_rejects_non_positive_max_session_life() {
+        for life in [0i64, -1, i64::MIN] {
+            let mut p = valid_policy();
+            p.max_session_life_secs = life;
+            assert_eq!(
+                validate_policy(&p).unwrap_err(),
+                err(WardenError::InvalidPolicy),
+                "max_session_life_secs = {life} must be rejected"
+            );
+        }
+    }
+
+    /// Milestone-review finding (Important): an unassigned `ops_mask` bit
+    /// stored in the ceiling silently becomes authority the day a later
+    /// program version assigns that bit.
+    #[test]
+    fn policy_rejects_unknown_ops_ceiling_bits() {
+        for bit in [1u16 << 4, 1 << 15] {
+            let mut p = valid_policy();
+            p.session_ops_ceiling = OPS_MASK_KNOWN | bit;
+            assert_eq!(
+                validate_policy(&p).unwrap_err(),
+                err(WardenError::InvalidPolicy),
+                "bit {bit:#06x} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn policy_accepts_every_assigned_ops_ceiling_bit() {
+        let mut p = valid_policy();
+        p.session_ops_ceiling = OPS_MASK_KNOWN;
+        assert!(validate_policy(&p).is_ok());
     }
 
     #[test]

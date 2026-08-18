@@ -371,6 +371,9 @@ fn grant_body(session_pubkey: Pubkey, ops_mask: u16, caps: Vec<MintCap>, lifetim
         lifetime_cap,
         program_allowlist_id: 0,
         label: [0u8; 16],
+        // Every session in this suite is granted exactly once, into a PDA
+        // that does not exist yet — the all-zero prior-state sentinel.
+        prior_authority_hash: [0u8; 32],
     }
 }
 

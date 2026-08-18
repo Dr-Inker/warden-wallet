@@ -36,6 +36,8 @@ mod err {
     pub const INVALID_ORIGIN: u32 = 6025;
     pub const ZERO_CLUSTER_TAG: u32 = 6026;
     pub const INVALID_POLICY: u32 = 6027;
+    pub const ROOT_KIND_UNSUPPORTED: u32 = 6024;
+    pub const INVALID_ROOT_KEY: u32 = 6034;
 }
 
 /// A realistic-looking, but not otherwise significant, mint pubkey — these
@@ -113,7 +115,10 @@ fn build_tx(payer: &solana_sdk::signature::Keypair, svm: &litesvm::LiteSVM, args
 fn honest_args(owner_seed: [u8; 32]) -> CreateAccountArgs {
     CreateAccountArgs {
         owner_seed,
-        root: RootKey::P256Passkey { pubkey: [0x11u8; 33] },
+        // A REAL compressed P-256 point, not a filler byte pattern: the
+        // milestone review's `validate_root` rejects any encoding the
+        // secp256r1 precompile would reject (`root_rejects_*` unit tests).
+        root: RootKey::P256Passkey { pubkey: passkey::TestPasskey::new(1).pubkey33() },
         rp_id_hash: passkey::rp_id_hash(TEST_ORIGIN),
         origin: TEST_ORIGIN.as_bytes().to_vec(),
         cluster_tag: [0x5Au8; 32],
@@ -228,6 +233,55 @@ fn rejects_origin_with_embedded_or_trailing_nul() {
     }
 }
 
+/// Milestone-review finding (Important): shapes Chrome can never emit used to
+/// create a permanently unusable account, because `rp_id_hash` is derived from
+/// this exact string and no authenticator will ever sign that hash.
+/// Milestone-review finding (Important): creation used to accept a root that
+/// no root-authorized instruction can ever use — an account that can be
+/// funded and never spent from.
+#[test]
+fn rejects_ed25519_root_in_phase_1a() {
+    let mut args = honest_args([70u8; 32]);
+    args.root = RootKey::Ed25519 { pubkey: Pubkey::new_unique() };
+    expect_reject(args, err::ROOT_KIND_UNSUPPORTED);
+}
+
+#[test]
+fn rejects_a_non_canonical_compressed_root_point() {
+    let real = passkey::TestPasskey::new(1).pubkey33();
+    // Uncompressed-point prefix; zero x; x == the field prime.
+    let mut bad_prefix = real;
+    bad_prefix[0] = 0x04;
+    let mut zero_x = real;
+    zero_x[1..33].copy_from_slice(&[0u8; 32]);
+    let mut at_prime = real;
+    at_prime[1..33].copy_from_slice(&warden::instructions::create_account::P256_FIELD_PRIME_BE);
+    for (i, pk) in [bad_prefix, zero_x, at_prime].into_iter().enumerate() {
+        let mut args = honest_args([(71 + i) as u8; 32]);
+        args.root = RootKey::P256Passkey { pubkey: pk };
+        expect_reject(args, err::INVALID_ROOT_KEY);
+    }
+}
+
+#[test]
+fn rejects_non_canonical_origin_shapes() {
+    for (i, origin) in [
+        b"chrome-extension://abc".to_vec(),                                     // too short
+        b"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoiz".to_vec(),        // 33 chars
+        b"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoZ".to_vec(),         // outside a..p
+        b"chrome-extension://maikadpaobbjkmaomnpnhjglpabllao9".to_vec(),         // digit
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut args = honest_args([(60 + i) as u8; 32]);
+        // rp_id_hash recomputed so the SHA-256 check cannot mask the shape check.
+        args.rp_id_hash = sha256_of(&origin);
+        args.origin = origin.clone();
+        expect_reject(args, err::INVALID_ORIGIN);
+    }
+}
+
 #[test]
 fn rejects_rp_id_hash_not_sha256_of_origin() {
     let mut args = honest_args([6u8; 32]);
@@ -246,13 +300,16 @@ fn rejects_rp_id_hash_of_bare_extension_id() {
     expect_reject(args, err::INVALID_ROOT_ASSERTION);
 }
 
+/// The stored `origin` field is 64 B wide but the only ACCEPTED origin is the
+/// canonical 51-byte one (milestone review), so the padding this asserts is
+/// the 13 bytes past a real extension origin — not the padding past an
+/// arbitrarily short string, which no longer creates an account at all
+/// (`rejects_non_canonical_origin_shapes`).
 #[test]
 fn stored_origin_zero_padded_and_len_exact() {
     let (mut svm, payer) = common::setup();
-    let short_origin = "chrome-extension://abc";
-    let mut args = honest_args([8u8; 32]);
-    args.origin = short_origin.as_bytes().to_vec();
-    args.rp_id_hash = passkey::rp_id_hash(short_origin);
+    let short_origin = TEST_ORIGIN;
+    let args = honest_args([8u8; 32]);
     let (pda, _) = account_pda(&args.owner_seed);
     send(&mut svm, &payer, &args).unwrap_or_else(|e| panic!("must succeed: {:?} {:#?}", e.err, e.meta.logs));
 
@@ -335,7 +392,8 @@ fn policy_version_is_forced_to_1_regardless_of_input() {
 #[test]
 fn pda_is_hash_of_seed_not_root() {
     let (mut svm, payer) = common::setup();
-    let root = RootKey::P256Passkey { pubkey: [0x22u8; 33] };
+    // A second REAL point (seed 2), distinct from `honest_args`'s.
+    let root = RootKey::P256Passkey { pubkey: passkey::TestPasskey::new(2).pubkey33() };
 
     let mut a1 = honest_args([15u8; 32]);
     a1.root = root.clone();

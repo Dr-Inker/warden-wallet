@@ -87,6 +87,9 @@ mod err {
     pub const RENT_FLOOR: u32 = 6031;
     pub const VAULT_DESTINATION: u32 = 6032;
     pub const SESSION_DAY_CAPS_UNSUPPORTED: u32 = 6033;
+    // Appended by the Task 9 milestone security review. Same append-only rule.
+    pub const INVALID_ROOT_KEY: u32 = 6034;
+    pub const SESSION_PRIOR_STATE_MISMATCH: u32 = 6035;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -95,7 +98,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 34] = [
+    let pairs: [(u32, WardenError, &str); 36] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -137,6 +140,12 @@ fn pinned_error_codes_match_the_enum_today() {
             err::SESSION_DAY_CAPS_UNSUPPORTED,
             WardenError::SessionDayCapsUnsupported,
             "SessionDayCapsUnsupported",
+        ),
+        (err::INVALID_ROOT_KEY, WardenError::InvalidRootKey, "InvalidRootKey"),
+        (
+            err::SESSION_PRIOR_STATE_MISMATCH,
+            WardenError::SessionPriorStateMismatch,
+            "SessionPriorStateMismatch",
         ),
     ];
     for (pinned, variant, name) in pairs {
@@ -290,6 +299,15 @@ fn build(case: Case) -> Built {
         )
         .unwrap();
         imposter
+    } else if !fixture.root_is_passkey {
+        // Milestone-review fix: `create_account` now REFUSES an Ed25519 root
+        // (`RootKindUnsupported`) rather than minting an account no root
+        // instruction can ever use, so this shape has to be planted. The
+        // check it exercises here — `verify_root_assertion` refusing to
+        // misread 32 of the 33 stored bytes as a compressed point — is
+        // defense in depth for a 1B that implements the Ed25519 signature
+        // path and reopens creation.
+        set_smart_account(&mut svm, &fixture)
     } else if fixture.generation != 0 || fixture.root_nonce != 0 {
         // No instruction advances `generation` yet, and reaching a
         // `root_nonce` other than 0 by replaying real ceremonies would only

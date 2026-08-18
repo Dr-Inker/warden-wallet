@@ -369,6 +369,16 @@ fn is_b64url_no_pad(v: &[u8]) -> bool {
 
 pub fn parse_strict(cdj: &[u8]) -> Result<ClientData> {
     require!(cdj.len() <= MAX_CLIENT_DATA_LEN, WardenError::ClientDataTooLong);
+    // JSON is defined over Unicode text, and `clientDataJSON` is by
+    // specification UTF-8. The scanner below works on bytes and would happily
+    // walk a document containing invalid UTF-8 inside a string, comparing the
+    // raw bytes against the stored origin — so a document this program calls
+    // "well-formed JSON" would be one no JSON parser accepts, and the
+    // extension's own view of `origin` (which necessarily decodes UTF-8)
+    // could differ from the bytes verified here. Milestone-review finding
+    // (Minor). Validated once, up front, over the whole document: it is a
+    // single linear pass over at most `MAX_CLIENT_DATA_LEN` bytes.
+    core::str::from_utf8(cdj).map_err(|_| error!(WardenError::ClientDataMalformed))?;
     let mut s = Scanner { b: cdj, i: 0 };
     s.skip_ws();
     s.expect(b'{')?;
@@ -465,6 +475,42 @@ mod tests {
             "the nested origin must never be surfaced as the top-level one"
         );
         assert_ne!(cd.origin, ORIGIN.to_vec());
+    }
+
+    /// Milestone-review finding (Minor): the byte scanner used to accept a
+    /// document that is not valid UTF-8 while calling it well-formed JSON.
+    #[test]
+    fn rejects_invalid_utf8_in_a_string_value() {
+        let mut cdj = br#"{"type":"webauthn.get","challenge":"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q","origin":"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoiX"}"#.to_vec();
+        let x = cdj.iter().rposition(|b| *b == b'X').unwrap();
+        cdj[x] = 0xff; // never valid in UTF-8
+        assert_eq!(parse_strict(&cdj).unwrap_err(), err(WardenError::ClientDataMalformed));
+    }
+
+    /// A lone continuation byte and a truncated multi-byte sequence are the
+    /// two shapes a naive byte walk is most likely to wave through.
+    #[test]
+    fn rejects_lone_continuation_and_truncated_sequences() {
+        for bad in [vec![0x80u8], vec![0xc3], vec![0xe2, 0x82]] {
+            let mut cdj = br#"{"type":"webauthn.get","challenge":"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q","origin":"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi","x":"#.to_vec();
+            cdj.push(b'"');
+            cdj.extend_from_slice(&bad);
+            cdj.extend_from_slice(br#""}"#);
+            assert_eq!(
+                parse_strict(&cdj).unwrap_err(),
+                err(WardenError::ClientDataMalformed),
+                "{bad:?} must be rejected"
+            );
+        }
+    }
+
+    /// Valid multi-byte UTF-8 in an ignored value must still be accepted —
+    /// the check rejects invalid encodings, not non-ASCII text.
+    #[test]
+    fn accepts_valid_multibyte_utf8_in_an_ignored_value() {
+        let cdj = "{\"type\":\"webauthn.get\",\"challenge\":\"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q\",\"origin\":\"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi\",\"note\":\"héllo→\"}";
+        let cd = parse_strict(cdj.as_bytes()).unwrap();
+        assert_eq!(cd.origin, ORIGIN.to_vec());
     }
 
     #[test]

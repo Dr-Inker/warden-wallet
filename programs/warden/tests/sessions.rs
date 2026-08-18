@@ -72,6 +72,7 @@ mod err {
     pub const CHALLENGE_MISMATCH: u32 = 6018;
     pub const PROGRAM_ALLOWLIST_UNSUPPORTED: u32 = 6028;
     pub const SESSION_DAY_CAPS_UNSUPPORTED: u32 = 6033;
+    pub const SESSION_PRIOR_STATE_MISMATCH: u32 = 6035;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +152,9 @@ fn two_cap_body(session_pubkey: Pubkey) -> GrantBody {
         lifetime_cap: vec![100_000_000_000, 40_000_000_000],
         program_allowlist_id: 0,
         label: label("trading-bot"),
+        // Default: a FRESH grant. Re-grant tests overwrite this with
+        // `prior_hash(&svm, &session)` — see `regrant_*`.
+        prior_authority_hash: [0u8; 32],
     }
 }
 
@@ -160,6 +164,13 @@ fn one_cap_body(session_pubkey: Pubkey) -> GrantBody {
         lifetime_cap: vec![100_000_000_000],
         ..two_cap_body(session_pubkey)
     }
+}
+
+/// The value `GrantBody.prior_authority_hash` must carry for a RE-grant: the
+/// retained authority of the session as it stands right now
+/// (milestone-review binding — see `grant_session`'s module docs).
+fn prior_hash(svm: &LiteSVM, session: &Pubkey) -> [u8; 32] {
+    read_session(svm, session).authority_hash()
 }
 
 // ---------------------------------------------------------------------------
@@ -682,6 +693,9 @@ fn regrant_merges_by_mint_and_preserves_spent() {
         lifetime_cap: vec![123_000_000_000],
         program_allowlist_id: 0,
         label: label("relabelled"),
+        // The USDC cap this body does not mention survives the merge, so the
+        // ceremony must bind the state it survives from.
+        prior_authority_hash: prior_hash(&svm, &session),
         ..two_cap_body(session_key.pubkey())
     };
     let ixs = grant_ixs(&svm, &payer, &account, &pk, regrant.clone());
@@ -727,7 +741,11 @@ fn regrant_lower_lifetime_than_spent_rejected() {
     s.lifetime_spent[0] = 500;
     write_session(&mut svm, &session, &s);
 
-    let body = GrantBody { lifetime_cap: vec![499], ..one_cap_body(session_key.pubkey()) };
+    let body = GrantBody {
+        lifetime_cap: vec![499],
+        prior_authority_hash: prior_hash(&svm, &session),
+        ..one_cap_body(session_key.pubkey())
+    };
     let ixs = grant_ixs(&svm, &payer, &account, &pk, body);
     expect_reject(&mut svm, &[&payer], &ixs, 1, err::CAP_EXCEEDED);
     // Untouched by the rejection.
@@ -748,6 +766,7 @@ fn regrant_new_mint_takes_the_next_empty_slot() {
     let body = GrantBody {
         caps: vec![usdc_cap()],
         lifetime_cap: vec![40_000_000_000],
+        prior_authority_hash: prior_hash(&svm, &session),
         ..one_cap_body(session_key.pubkey())
     };
     let ixs = grant_ixs(&svm, &payer, &account, &pk, body);
@@ -774,9 +793,115 @@ fn regrant_refreshes_generation_at_grant() {
     assert_eq!(read_session(&svm, &session).generation_at_grant, 0);
 
     let generation = bump_generation(&mut svm, &account, 3);
-    let ixs = grant_ixs(&svm, &payer, &account, &pk, one_cap_body(session_key.pubkey()));
+    let body = GrantBody {
+        prior_authority_hash: prior_hash(&svm, &session),
+        ..one_cap_body(session_key.pubkey())
+    };
+    let ixs = grant_ixs(&svm, &payer, &account, &pk, body);
     expect_ok(&mut svm, &[&payer], &ixs);
     assert_eq!(read_session(&svm, &session).generation_at_grant, generation);
+}
+
+/// Milestone-review finding (Important). THE attack the binding closes: the
+/// root signs a body naming SOL only, believing that is all the session
+/// holds, while the on-chain session also holds USDC — which the merge would
+/// keep, and the refreshed `generation_at_grant` would re-bless. The
+/// prior-state hash the signer computes from the session they *believe* in
+/// does not match the one on chain, so the ceremony is refused.
+#[test]
+fn regrant_cannot_silently_retain_caps_the_signer_never_saw() {
+    let (mut svm, payer, pk, account) = live();
+    let session_key = Keypair::new();
+    let (session, _) = session_pda(&account, &session_key.pubkey());
+
+    // Reality: SOL + USDC.
+    let ixs = grant_ixs(&svm, &payer, &account, &pk, two_cap_body(session_key.pubkey()));
+    expect_ok(&mut svm, &[&payer], &ixs);
+
+    // What the signer believes: SOL only. Same session, one fewer cap.
+    let mut believed = read_session(&svm, &session);
+    believed.caps[1] = MintCap::default();
+    believed.lifetime_cap[1] = 0;
+    assert_ne!(
+        believed.authority_hash(),
+        prior_hash(&svm, &session),
+        "the belief must actually differ from reality, or this test proves nothing"
+    );
+
+    let body = GrantBody {
+        prior_authority_hash: believed.authority_hash(),
+        ..one_cap_body(session_key.pubkey())
+    };
+    let ixs = grant_ixs(&svm, &payer, &account, &pk, body);
+    expect_reject(&mut svm, &[&payer], &ixs, 1, err::SESSION_PRIOR_STATE_MISMATCH);
+
+    // Nothing moved: the USDC cap is still exactly what it was.
+    let s = read_session(&svm, &session);
+    assert!(s.caps[1] == usdc_cap());
+    assert_eq!(s.lifetime_cap[1], 40_000_000_000);
+}
+
+/// The all-zero sentinel means "this PDA does not exist yet". Reusing it for
+/// a re-grant is the simplest form of the same attack.
+#[test]
+fn regrant_with_the_fresh_sentinel_rejected() {
+    let (mut svm, payer, pk, account) = live();
+    let session_key = Keypair::new();
+    let (session, _) = session_pda(&account, &session_key.pubkey());
+
+    let ixs = grant_ixs(&svm, &payer, &account, &pk, two_cap_body(session_key.pubkey()));
+    expect_ok(&mut svm, &[&payer], &ixs);
+
+    // `one_cap_body` defaults `prior_authority_hash` to the fresh sentinel.
+    let ixs = grant_ixs(&svm, &payer, &account, &pk, one_cap_body(session_key.pubkey()));
+    expect_reject(&mut svm, &[&payer], &ixs, 1, err::SESSION_PRIOR_STATE_MISMATCH);
+    assert_eq!(read_session(&svm, &session).expiry_ts, NOW + 6 * 86_400, "unchanged");
+}
+
+/// And the converse: a FIRST grant must carry the sentinel, not some
+/// invented digest.
+#[test]
+fn fresh_grant_with_a_non_zero_prior_hash_rejected() {
+    let (mut svm, payer, pk, account) = live();
+    let session_key = Keypair::new();
+    let body = GrantBody {
+        prior_authority_hash: [0x77u8; 32],
+        ..one_cap_body(session_key.pubkey())
+    };
+    let ixs = grant_ixs(&svm, &payer, &account, &pk, body);
+    expect_reject(&mut svm, &[&payer], &ixs, 1, err::SESSION_PRIOR_STATE_MISMATCH);
+}
+
+/// A re-grant that shows the signer the true prior state still works — the
+/// binding is a correctness gate, not a ban on re-granting.
+#[test]
+fn regrant_with_the_true_prior_hash_is_accepted() {
+    let (mut svm, payer, pk, account) = live();
+    let session_key = Keypair::new();
+    let (session, _) = session_pda(&account, &session_key.pubkey());
+
+    let ixs = grant_ixs(&svm, &payer, &account, &pk, two_cap_body(session_key.pubkey()));
+    expect_ok(&mut svm, &[&payer], &ixs);
+
+    let body = GrantBody {
+        expiry_ts: NOW + 3 * 86_400,
+        prior_authority_hash: prior_hash(&svm, &session),
+        ..one_cap_body(session_key.pubkey())
+    };
+    let ixs = grant_ixs(&svm, &payer, &account, &pk, body);
+    expect_ok(&mut svm, &[&payer], &ixs);
+    assert_eq!(read_session(&svm, &session).expiry_ts, NOW + 3 * 86_400);
+}
+
+/// Milestone-review finding (Important): an `ops_mask` bit this program has
+/// not assigned a meaning to would silently become authority the day a later
+/// version assigns it. Unreachable via the ceiling in 1A (`create_account`
+/// refuses such a ceiling outright), so this is the belt-and-braces half.
+#[test]
+fn grant_with_an_unassigned_ops_mask_bit_rejected() {
+    let session_key = Keypair::new();
+    let body = GrantBody { ops_mask: 1 << 4, ..one_cap_body(session_key.pubkey()) };
+    expect_grant_reject(body, err::OP_NOT_ALLOWED);
 }
 
 // ---------------------------------------------------------------------------

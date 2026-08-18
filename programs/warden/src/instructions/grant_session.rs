@@ -57,6 +57,23 @@
 //!   valid again the moment the *new* root signs for it — which is the only
 //!   way to re-authorize a delegate without first tearing its accounting
 //!   down.
+//!
+//! ## The merge is bound to the state it merges into (`prior_authority_hash`)
+//!
+//! Milestone-review finding (Important). Merge + generation refresh together
+//! meant the passkey could sign a one-mint body and produce a session that
+//! still holds every mint granted before it — authority that appears nowhere
+//! in the signed document. After a 1B generation bump (rotation / recovery),
+//! a minimal re-grant would have silently revived every capability of a
+//! session the bump had just invalidated.
+//!
+//! `GrantBody.prior_authority_hash` closes it: it is
+//! `SessionKey::authority_hash()` of the session **as it stands before this
+//! instruction** (all-zero for a PDA that does not exist yet), and the handler
+//! rejects a mismatch with `SessionPriorStateMismatch`. The merge is a pure
+//! function of `(pre-state, body)`, so signing both is signing the result.
+//! It is also a natural anti-TOCTOU guard: a grant prepared against a state
+//! another grant has since changed no longer applies.
 
 use anchor_lang::prelude::*;
 
@@ -67,6 +84,7 @@ use crate::constants::{
 use crate::errors::WardenError;
 use crate::root_verify::transcript::{action_hash, OP_GRANT_SESSION};
 use crate::root_verify::{verify_root_assertion, RootArgs};
+use crate::state::session::OPS_MASK_KNOWN;
 use crate::state::{FrozenState, MintCap, SessionKey, SmartAccount};
 
 /// Everything the passkey signs for, and nothing else: `action_hash =
@@ -99,6 +117,10 @@ pub struct GrantBody {
     pub program_allowlist_id: u16,
     /// Free-form display label; not interpreted on-chain.
     pub label: [u8; 16],
+    /// `SessionKey::authority_hash()` of the session PDA **before** this
+    /// instruction runs, or `[0u8; 32]` when it does not exist yet. Binds the
+    /// caps this grant does not mention but keeps — see the module docs.
+    pub prior_authority_hash: [u8; 32],
 }
 
 // No `Debug`: see `GrantBody`.
@@ -194,6 +216,19 @@ pub(crate) fn handler(ctx: Context<GrantSession>, args: GrantSessionArgs) -> Res
     // `version == 0` is exactly "this PDA did not exist before this
     // instruction" — `version` is set to 1 below and no other code path ever
     // writes a `SessionKey` back with `version == 0`.
+    // The signed body names the state this merge is allowed to merge INTO.
+    // Computed before any field below is written, and compared against the
+    // all-zero sentinel for a PDA `init_if_needed` has just created.
+    let prior = if session.version == 0 {
+        [0u8; 32]
+    } else {
+        session.authority_hash()
+    };
+    require!(
+        prior == args.body.prior_authority_hash,
+        WardenError::SessionPriorStateMismatch
+    );
+
     if session.version == 0 {
         session.version = 1;
         session.bump = session_bump;
@@ -296,6 +331,13 @@ fn validate_against_policy(account: &SmartAccount, b: &GrantBody, now: i64) -> R
         .ok_or(WardenError::Overflow)?;
     require!(b.expiry_ts <= max_expiry, WardenError::InvalidPolicy);
 
+    // Unassigned bits are refused outright, not merely bounded by the
+    // ceiling: an `ops_mask` holding `1 << 7` would silently gain whatever a
+    // later version assigns to `1 << 7`, with no second ceremony
+    // (milestone-review finding — see `OPS_MASK_KNOWN`). `create_account`
+    // refuses them in the ceiling too, so this is belt-and-braces for an
+    // account created by a future version with a wider constant.
+    require!((b.ops_mask & !OPS_MASK_KNOWN) == 0, WardenError::OpNotAllowed);
     require!(
         (b.ops_mask & !account.policy.session_ops_ceiling) == 0,
         WardenError::OpNotAllowed
@@ -380,6 +422,7 @@ mod tests {
             lifetime_cap: vec![],
             program_allowlist_id: 0,
             label: [0u8; 16],
+            prior_authority_hash: [0u8; 32],
         }
     }
 

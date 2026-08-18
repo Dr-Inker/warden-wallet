@@ -174,6 +174,9 @@ fn empty_grant_ixs(
         lifetime_cap: vec![],
         program_allowlist_id: 0,
         label: [0u8; 16],
+        // Fresh session PDA: the all-zero sentinel is the only accepted
+        // prior-state hash (`grant_session` module docs).
+        prior_authority_hash: [0u8; 32],
     };
     let mut body_bytes = Vec::new();
     body.serialize(&mut body_bytes).unwrap();
