@@ -1,9 +1,28 @@
 //! Spike 3b: measure the CU cost of a conservation-snapshot pass over N
-//! writable token accounts — the core of Phase 1's `execute` instruction,
-//! which snapshots every writable vault-owned token account before/after the
-//! inner CPI and rejects the transaction if one was mutated (owner changed,
-//! delegate/close-authority set, or — for Token-2022 — any TLV extension byte
-//! changed) or if SOL left the vault without being accounted for.
+//! writable **token** accounts — one piece of the core safety mechanism
+//! Phase 1's `execute` instruction needs, not the whole thing. This spike
+//! snapshots every writable vault-owned SPL Token / Token-2022 account
+//! before/after the inner CPI and rejects the transaction if one was mutated
+//! (owner changed, delegate/close-authority set, or — for Token-2022 — any
+//! TLV extension byte changed). **Scope, stated plainly (docs review, round
+//! 5, 2026-08-18): this spike is TOKEN-ACCOUNT-ONLY and CU-ONLY.** It does
+//! NOT implement PDA-lamport (SOL) conservation — spec §5.2's SOL/lamport
+//! equation (`outflow[SOL] = (pda_lamports_before − pda_lamports_after) +
+//! Σ_vault-WSOL(amount_before − amount_after)`) has no code path here:
+//! `Snap.lamports` is captured per-account below but is **never compared**
+//! before vs after, and the vault authority marker account passed in
+//! `accounts[0]` — the account whose *own* lamport balance the SOL equation
+//! needs — is itself never snapshotted at all (it is read-only and never
+//! initialized on-chain in this spike; see `process()` below). A vault could
+//! lose SOL directly (not via a token account) between the two passes and
+//! this program would not notice.
+//!
+//! ⚠ **DO NOT COPY THIS FILE AS-IS INTO PHASE 1.** Phase 1's real `execute`
+//! must additionally (a) snapshot the vault PDA's own `lamports` before and
+//! after the inner CPI and (b) implement spec §5.2's full SOL/lamport
+//! equation, not just the token-account field comparison this spike proves
+//! out. Copying this program unmodified would ship a wallet with no SOL
+//! conservation check at all.
 //!
 //! ## Dependency note (record for docs/TOOLCHAIN.md)
 //! `spl-token = "7"` and `spl-token-2022 = "7"` both resolve cleanly against

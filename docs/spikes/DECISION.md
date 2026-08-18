@@ -36,7 +36,7 @@ Products evaluated: Squads **Smart Account Program** (`SMRTzfY6…`, v0.1.0, the
 | 10 | Upgrade authority = timelocked multisig | **UNVERIFIED → treated as NO** | `:24` — programData authority `HT3Jknwuu…` is a System-owned 0-byte account; could not disambiguate keypair vs uninitialised vault PDA (Solscan 403) |
 | 11 | Reserved signer kinds (future hash-based/Falcon) | **NO** | `:25` — no kind tag/enum on `SmartAccountSigner` |
 
-**Score 3/11 clear YES (#2, #4, #5), 4/11 counting #3 generously** (`:29`). The mandatory gate — rows 4 **and** 6 both YES — fails on row 6 (`:31`), and the ≥9/11 threshold is nowhere near. **Verdict: `KEEP-OWN-PROGRAM`** (`:35`).
+**Score 3/11 clear YES (#2, #4, #5).** #3 does **not** count toward this — a periodic bucket reset is not a rolling cap and is not trivially configurable into one, stated plainly (`:29`, round-5 wording fix). The mandatory gate — rows 4 **and** 6 both YES — fails on row 6 (`:31`), and the ≥9/11 threshold is nowhere near. **Verdict unchanged: `KEEP-OWN-PROGRAM`** (`:35`).
 
 **Borrow list** (`:39-44`, carried into Phase 1 as design references, not dependencies): (1) permissions bitmask `Permission::{Initiate,Vote,Execute}`; (2) the `InstructionConstraint`/`DataConstraint` allowlist model for §5.2's adapter registry; (3) the `TimeConstraints`/`QuantityConstraints`/`UsageState` split for caps — **with a true rolling window**, unlike Squads' bucket reset; (4) the `evaluate_balance_changes` pre/post skeleton — **plus** the two gaps Squads has (`close_authority` immutability, WSOL canonicalization), both of which Warden's §5.2 already specifies; (5) the two-tier `Settings`-vs-`Policy` consensus split; (6) the timelock + threshold-cancel pattern, **plus** a distinct guardian actor.
 
@@ -77,7 +77,7 @@ Other carry-forwards: UV is required by the spike program and some synced/cross-
 
 Read the **post-fix** numbers; round 1's "100% inline, 45–47-account ceiling" headline was withdrawn by the spike itself (`spikes/03-txbudget/result.md:241-249`).
 
-| Case | Original | Wrapped | Inline? | Chunks | Accounts | Evidence |
+| Case | Original | Wrapped | Inline? | Chunks | totalKeys¹ | Evidence |
 |---|---|---|---|---|---|---|
 | Jupiter SOL→USDC run A | 1,085 | **1,235** | **no** (3 B over) | **1** | 43 | `:180` |
 | Jupiter SOL→USDC run B | 796 | 934 | yes | 0 | 35 | `:181` |
@@ -86,7 +86,9 @@ Read the **post-fix** numbers; round 1's "100% inline, 45–47-account ceiling" 
 | Marinade `deposit(1 SOL)` | 559 | **702** | yes | 0 | 13 | `:199-201` |
 | Tensor buy-now | — | — | — | — | — | **not measured**: every endpoint 403s without `TENSOR_API_KEY` (`:308-320`) |
 
-**Headline: 2 of 3 fresh post-fix Jupiter routes fit inline; 1 needed exactly 1 staged chunk** (`:247-249`). Across all 8 Jupiter measurements accounts ranged 15–43 and the only overflow was the 43-account route; the honest breakpoint statement for this pair/size is **somewhere in the 35–43 account band**, not a validated ceiling (`:251-261`). Staging is therefore **not a rare edge case** — Phase 1/2 must ship `stage_chunk`/staged `execute` fully working, not as an untested fallback (`:277-286`).
+¹ Total original-message keys (static + LUT, signer or not, writable or not) — **not** a writable-only or `execute`-instruction-only count. The column was labeled "Accounts" pre-round-5; `spikes/03-txbudget/result.md`'s underlying `writableAccounts` field was mislabeled the same way and is renamed `totalKeys` there (round-5 docs fix). No writable-only count exists for these runs.
+
+**Headline: 2 of 3 fresh post-fix Jupiter routes fit inline; 1 needed exactly 1 staged chunk** (`:247-249`). Across all 8 Jupiter measurements `totalKeys` ranged 15–43 and the only overflow was the 43-key case; the honest breakpoint statement for this pair/size is **somewhere in the 35–43 `totalKeys` band**, not a validated ceiling (`:251-261`). Staging is therefore **not a rare edge case** — Phase 1/2 must ship `stage_chunk`/staged `execute` fully working, not as an untested fallback (`:277-286`).
 
 Three contract facts fall out of the fixes and bind the spec:
 
@@ -95,6 +97,13 @@ Three contract facts fall out of the fixes and bind the spec:
 3. **The 985-B `stage_chunk` payload cap is PROVISIONAL and stays PROVISIONAL.** It was *measured*, not guessed — `maxStageChunkPayloadBytes()` binary-searches the largest payload keeping a representative `stage_chunk` tx ≤ 1,232 B (`:431-437`) — but the account shape (payer / Stage PDA / System Program) and the 8-byte `[offset:u32, len:u32]` header are an **assumed** layout: spec rev 5 §5.1 fixed only the signer ("any payer") (`:58-65`, `:207-210`). Spec rev 6 §5.1 now fixes the layout, which makes the number deterministically re-measurable — it does **not** retroactively make 985 B correct for that encoding: the measured instruction carried no program discriminator, so the cap under §5.1 is at most ≈977 B. Phase 1 measures it against the built program and records the exact value.
 
 ## Spike 3b — conservation snapshot CU
+
+⚠ **Scope, stated plainly (docs review, round 5): this spike is TOKEN-ACCOUNT-ONLY and CU-ONLY.
+PDA-lamport (SOL) conservation — spec §5.2's SOL/lamport equation — is NOT implemented here.** The
+program's `Snap.lamports` field is captured per-account but never compared before vs after, and
+the vault authority marker account is itself never snapshotted at all. **DO NOT COPY
+`spikes/03-txbudget/onchain/src/lib.rs` AS-IS INTO PHASE 1** — it must additionally snapshot the
+vault PDA's own lamports and implement the full §5.2 SOL equation.
 
 | N vault-owned SPL token accounts | CU consumed |
 |---|---|
@@ -148,7 +157,7 @@ Each is a concrete edit; all are applied in `docs/superpowers/specs/2026-08-18-w
 | C1 | §4 | Define `rpIdHash` as **SHA-256(full extension origin string `chrome-extension://<id>`)**, with the matching/non-matching hash pair inline as evidence, and require it to be per-build configuration held in account state — never a literal, never SHA-256(id) | 2b `:221-242` |
 | C2 | §4 | **Low-S normalization is mandatory client-side** before every submission (not a later edge case) | 2b `:268` |
 | C3 | §4, §5.2 | `clientDataJSON` verification = **strict top-level scanner**, defined exactly: depth-0 keys only; **exactly one** top-level `type`, `challenge` and `origin`; any duplicate top-level key ⇒ reject; `crossOrigin` **absent or `false`** (present-and-true ⇒ reject — the spike requires the field be examined, not that it be present); JSON escapes decoded before comparison, else reject; hard length cap. Substring matching is explicitly forbidden, and the spike's six hole tests must flip | 2b `:348-394` |
-| C4 | §5.2 | `execute` payload account indices are **instruction-local**; compute-budget ixs are **top-level only** with a default `setComputeUnitLimit(600_000)`; **cap writable accounts in a session `execute` at 40** — a byte-limit-driven conservative choice, not a CU-driven one (see the justification note below) | 3a `:39-57`, `:180-182`, `:418-429`; 3b `:702-704` |
+| C4 | §5.2 | `execute` payload account indices are **instruction-local**; compute-budget ixs are **top-level only** with a default `setComputeUnitLimit(600_000)`; **cap accounts in a session `execute` at 40, PROVISIONAL** — a byte-limit-driven conservative choice, not a CU-driven one, evidenced by the 35–43 `totalKeys` band (i.e. total original-message keys — static + LUT — NOT a writable-only count; spike 3a's `writableAccounts` field was mislabeled and is renamed `totalKeys` in a round-5 docs fix), to be re-derived in Phase 1 once `writableKeys`/`executeAccountCount` are actually measured (see the justification note below) | 3a `:39-57`, `:180-182`, `:418-429`; 3b `:702-704` |
 | C5 | §5.1 | Define the `stage_chunk` account layout explicitly (payer signer, Stage PDA writable, System program; data = discriminator ‖ `offset:u32 LE` ‖ `len:u32 LE` ‖ payload) so the cap becomes **deterministically re-measurable** instead of resting on an assumed shape. **The 985-B figure stays PROVISIONAL** and is not a spec-derived cap: it was measured against a representative tx whose data was header+payload with **no program discriminator**, so the cap for §5.1's encoding is ≈8 B lower (≤ 977 B). Phase 1 measures the real number against the built program | 3a `:58-65`, `:431-437` |
 | C6 | §5.2.2 | Conservation = **before/after field-by-field** compare over the named field list **including `is_native`**, with strict COption decoding; the §5.2.2 "UNVERIFIED" tag is replaced by the measured numbers | 3b `:648-653`, progress `:49` |
 | C7 | §6 | Root-verify tx budget note: 788 B baseline with **no payload** ⇒ root instructions carry ≤ ~400 B of payload or use the staged path | 2b `:281-291` |
@@ -157,7 +166,7 @@ Each is a concrete edit; all are applied in `docs/superpowers/specs/2026-08-18-w
 | C10 | §12 | A "Result:" line under each of the four spikes, recording verdict + the numbers that now constrain Phase 1 | all |
 | C11 | §5 (no change) | Squads is **not** adopted; the six borrowed patterns are design references only. Spec §5.5's use of a Squads multisig as the *upgrade authority* is unaffected — that is Squads v4 as a governance tool, not as the vault | 1 `:35` |
 
-**Justification note for C4's cap of 40.** What is measured is the *snapshot* cost: ≈900 CU/account over a ≈1,400 CU base, so 40 accounts ≈ 37k CU of snapshot work (3b `:697-704`). What is **not** measured is the inner CPI's own CU, because spike 3b contains no CPI at all (`:643-646`, `:792-794`) — so "37k CU fits in the 200k limit" is a statement about the snapshot alone, not about a whole `execute`. The cap is therefore chosen off the **byte** budget, which is the constraint that actually bit: a real 43-account Jupiter route serialized to 1,235 B against a 1,232-B limit, and a 35-account route fit (3a `:180-182`). 40 sits just below the observed 35–43 breakpoint band. Phase 1 must measure a full `execute` — snapshot + real CPI + compute-budget instruction — and lower the cap if the combined CU, not the bytes, turns out to bind first.
+**Justification note for C4's cap of 40 — PROVISIONAL.** What is measured is the *snapshot* cost: ≈900 CU/account over a ≈1,400 CU base, so 40 accounts ≈ 37k CU of snapshot work (3b `:697-704`). What is **not** measured is the inner CPI's own CU, because spike 3b contains no CPI at all (`:643-646`, `:792-794`) — so "37k CU fits in the 200k limit" is a statement about the snapshot alone, not about a whole `execute`. The cap is therefore chosen off the **byte** budget, which is the constraint that actually bit: a real 43-account Jupiter route serialized to 1,235 B against a 1,232-B limit, and a 35-account route fit (3a `:180-182`). 40 sits just below the observed 35–43-`totalKeys` breakpoint band — **`totalKeys` is every original-message key (static + LUT, signer or not, writable or not), not a writable-only count** (spike 3a's `writableAccounts` field was mislabeled — it never filtered on writability — and is renamed `totalKeys` in result.md's round-5 docs fix). No writable-only or execute-instruction-only account count was captured for any of these runs. **The cap therefore stays explicitly PROVISIONAL until Phase 1 re-derives it with the corrected metrics** (`writableKeys`, `executeAccountCount` — both now exposed by `measure.ts`/`wrap.ts` but unmeasured) and measures a full `execute` — snapshot + real CPI + compute-budget instruction — lowering the cap if the combined CU, rather than bytes, turns out to bind first.
 
 Deliberately **not** changed: §6's unsupported-flows list (spike 4 confirms it), §5.2.7's swap conservation rules (unaffected by any measurement), and §5.4's loosening lattice.
 
@@ -172,7 +181,7 @@ The two questions that could have killed the design are both answered affirmativ
 1. **Can a passkey be the on-chain root?** Yes. A real assertion from a real `chrome-extension://` origin was bound on-chain through the secp256r1 precompile + Instructions-sysvar introspection for **5,055 CU**, with eight negative tests proving each check bites (2b `:214-219`, `:267`, `:310-323`). The two things that would have silently broken it — the rpIdHash preimage and high-S signatures — were both found *now*, in Phase 0, rather than in Phase 1 debugging.
 2. **Does the wrap-into-`execute` model fit real dApp traffic?** Yes, with staging as a first-class path, not a fallback: real Jupiter routes land at 604–1,235 B against a 1,232-B limit, and the conservation mechanism costs ~900 CU/account against a 200,000 CU budget (3a `:180-182`; 3b `:697-699`).
 
-Squads cannot host the vault (3–4/11, and the mandatory row-4-**and**-6 gate fails), so there is no cheaper path (1 `:29-35`).
+Squads cannot host the vault (3/11, and the mandatory row-4-**and**-6 gate fails), so there is no cheaper path (1 `:29-35`).
 
 Phase 1 entry conditions, all met: root `cargo metadata` resolves (this document's workspace fix), the spec is at rev 6 with every measured constraint written into it, and the design foundation covers the screens Phase 1's flows surface.
 

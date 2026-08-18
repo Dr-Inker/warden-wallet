@@ -116,12 +116,41 @@ re-measurement" and "Post-fix re-measurement, round 2") had the same overclaim i
 spec §5.1-shaped account layout" / "§5.1-cited... stage_chunk cap") and are fixed too. No code
 change — `wrap.ts` was already correct since round 3; this was a result.md-only residual.
 
+## Round 5 fix (2026-08-18) — metric relabeling, read this too
+
+Final-review found an **Important** defect: the `writableAccounts` field logged by `measure.ts`
+(and reproduced in every table/JSON block below) never actually counted writable accounts. It
+summed `tx.message.staticAccountKeys.length` (every static key, signer or not, writable or not)
+plus every LUT index of **both** `writableIndexes` and `readonlyIndexes` — i.e. it counted **every
+key in the original message**, full stop. It also was not a count of the wrapped `execute`
+instruction's own account list (a different, later-compiled message).
+
+**Fix (measure.ts / wrap.ts, no result.md numbers changed):** `measure.ts` now reports three
+honest, distinct metrics per run instead of one mislabeled one:
+- **`totalKeys`** — exactly what the old `writableAccounts` field computed (static keys + all LUT
+  indexes, writable and readonly). This is a straight rename, not a new measurement — every number
+  in the tables/JSON below under the old `writableAccounts` label is a `totalKeys` value.
+- **`writableKeys`** — payer + writable static accounts (derived from the compiled message
+  header's `numRequiredSignatures` / `numReadonlySignedAccounts` / `numReadonlyUnsignedAccounts`
+  split) plus writable LUT indexes only. **Not captured for any run below** — the field didn't
+  exist yet when these runs were made, and re-running them is out of scope for a docs-only fix.
+- **`executeAccountCount`** — the wrapped `execute` instruction's own account-list length
+  (`outerKeys.length` from `wrapForExecute`'s return value, now exposed there). **Also not
+  captured for any run below**, same reason.
+
+**Consequence for every table/JSON block in this document below this point:** the column/field
+previously labeled "writable+readonly account count" / "account count" / `writableAccounts` is
+relabeled **`totalKeys`** in place — the numbers are unchanged (this was always what they measured
+), only the name was wrong. `writableKeys` and `executeAccountCount` are new metrics with no
+historical data; Phase 1 re-derives the writable-account cap (spec §5.2, DECISION.md C4) once
+those are actually measured. See spike 03's `ts/src/wrap.ts` / `ts/src/measure.ts` for the code.
+
 ## Results — Jupiter SOL→USDC (0.1 SOL, 50 bps slippage), 5 runs ≥130s apart — SUPERSEDED, pre-fix (see banner above)
 
 USER_PUBKEY was left at the script's default fallback,
 `11111111111111111111111111111112` — see "USER_PUBKEY note" below.
 
-| run | UTC timestamp | original bytes | wrapped bytes | fits inline? | chunks if staged | writable+readonly account count |
+| run | UTC timestamp | original bytes | wrapped bytes | fits inline? | chunks if staged | totalKeys (all original-message keys — NOT writable-only; see "Round 5 fix" above) |
 |---|---|---|---|---|---|---|
 | 1 | 2026-08-18T12:06:45Z | 842 | 976 | yes | 0 | 34 |
 | 2 | 2026-08-18T12:08:57Z | 670 | 776 | yes | 0 | 24 |
@@ -143,7 +172,7 @@ owner; each run ≥130s after the previous one's output, per script
 
 ## Results — Marinade deposit (1 SOL) and Tensor buy-now (attempted) — SUPERSEDED, pre-fix (see banner above)
 
-| case | original bytes | wrapped bytes | fits inline? | chunks if staged | writable+readonly account count |
+| case | original bytes | wrapped bytes | fits inline? | chunks if staged | totalKeys (all original-message keys — NOT writable-only; see "Round 5 fix" above) |
 |---|---|---|---|---|---|
 | Marinade deposit (1 SOL, `deposit()`) — 5/5 runs identical | 559 | 662 | yes | 0 | 13 |
 | Tensor buy-now (attempted) — 5/5 runs | not measured | not measured | not measured | not measured | not measured |
@@ -175,7 +204,7 @@ message; ComputeBudget hoisted/defaulted top-level; `stagedChunks` from a measur
 not a hardcoded constant). The first run predates the spaced-run harness (manual sanity check
 right after the fix, timestamp approximate); the other two are spaced ~130s apart as before.
 
-| run | UTC timestamp | original bytes | wrapped bytes | fits inline? | chunks if staged | account count | hops |
+| run | UTC timestamp | original bytes | wrapped bytes | fits inline? | chunks if staged | totalKeys (all original-message keys — NOT writable-only; see "Round 5 fix" above) | hops |
 |---|---|---|---|---|---|---|---|
 | A | ~2026-08-18T12:30:15Z (approx, manual) | 1085 | 1235 | **no** | 1 | 43 | n/a (not captured yet) |
 | B | 2026-08-18T12:30:39Z | 796 | 934 | yes | 0 | 35 | n/a (not captured yet) |
@@ -217,7 +246,7 @@ exactly why deriving it was worth doing.
 compile/decompile regression assertion; PROVISIONAL stage_chunk cap — assumed layout, only the
 signer is from §5.1 — no logic changes from round 1 that affect byte counts).
 
-| run | UTC timestamp | original bytes | wrapped bytes | fits inline? | chunks if staged | account count | hops |
+| run | UTC timestamp | original bytes | wrapped bytes | fits inline? | chunks if staged | totalKeys (all original-message keys — NOT writable-only; see "Round 5 fix" above) | hops |
 |---|---|---|---|---|---|---|---|
 | D | 2026-08-18T12:43:26Z (manual, immediately post-fix) | 618 | 711 | yes | 0 | 18 | 1 |
 | E | 2026-08-18T12:45:41Z | 682 | 786 | yes | 0 | 24 | 1 |
@@ -259,16 +288,22 @@ in this spike (pre- and post-fix), account counts ranged 15–43 and the only ov
 2. It was extrapolated from a straight-line fit through only 2 data points in a 5-point sample
    that never actually observed an overflow. With an overflow now observed at 43 accounts and a
    fit observed at 35 accounts (post-fix), the honest statement is: **the breakpoint for this
-   input/output pair, at this trade size, is somewhere in the 35–43 account band** — no tighter
-   than that without more samples, and not safe to extrapolate past 43 without new data.
+   input/output pair, at this trade size, is somewhere in the 35–43 `totalKeys` band** — no
+   tighter than that without more samples, and not safe to extrapolate past 43 without new data.
+   **This is a TOTAL-key count (every original-message key, static + LUT), not a writable-only
+   count** — see "Round 5 fix" above; `writableKeys` was never captured for these runs, so the
+   true writable-account breakpoint is still unmeasured and may sit at a different account count.
 
-**What actually explains the byte cost** (mechanism, still valid post-fix): `wrapForExecute`'s
-outer `execute` instruction spends ~4 bytes of fixed overhead plus 2 bytes per referenced account
-(1-byte index into the *compiled* outer message's account-key list + 1-byte signer/writable
-flags) rather than re-embedding 32-byte pubkeys, and reuses whatever Address Lookup Tables the
-inner route already carries — both of these keep the marginal cost per account far below a naive
-32-byte-per-account scheme, which is why 15–38-account routes fit while a 43-account one just
-barely didn't.
+**What actually explains the byte cost** (mechanism, still valid post-fix; wording corrected round
+5 — this paragraph previously described the wrong index space): `wrapForExecute`'s outer `execute`
+instruction spends ~4 bytes of fixed overhead plus 2 bytes per referenced account (1-byte
+INSTRUCTION-LOCAL index — position in the execute instruction's own account list, `outerKeys` =
+`[account, sessionKey, ...order]`, 0 = smart account, 1 = session key, 2.. = order — never an
+index into the compiled message's global account-key list, see the contract comment in `wrap.ts`
+and round 2's fix above — plus 1-byte signer/writable flags) rather than re-embedding 32-byte
+pubkeys, and reuses whatever Address Lookup Tables the inner route already carries — both of these
+keep the marginal cost per account far below a naive 32-byte-per-account scheme, which is why
+15–38-account routes fit while a 43-account one just barely didn't.
 
 **`stagedChunks` is no longer unvalidated arithmetic.** Round 1 flagged that the `900`-byte
 staging-payload constant was unexplained and the chunking path was never exercised end-to-end.
@@ -621,6 +656,16 @@ mutually consistent. No code change — `wrap.ts`'s comment was already correct 
 was purely a result.md wording gap.
 
 ## Part (b) — conservation snapshot CU
+
+⚠ **Scope, stated plainly (docs review, round 5, 2026-08-18): this spike is TOKEN-ACCOUNT-ONLY and
+CU-ONLY. PDA-lamport (SOL) conservation — spec §5.2's SOL/lamport equation — is NOT implemented
+here.** `onchain/src/lib.rs`'s `Snap.lamports` field is captured per-account but never compared
+before vs after, and the vault authority marker account (`accounts[0]`) — whose own lamport
+balance the §5.2 SOL equation needs — is itself never snapshotted at all. **DO NOT COPY
+`onchain/src/lib.rs` AS-IS INTO PHASE 1** — Phase 1 must additionally snapshot the vault PDA's own
+lamports and implement the full §5.2 SOL/lamport equation; this spike only proves out the
+token-account field-comparison half and its CU cost. See the matching warning in
+`onchain/src/lib.rs`'s header comment.
 
 **Round 1 fix (2026-08-18):** task review found a **Critical** defect in the invariant check (it
 only ever inspected the AFTER snapshot's booleans, so a pre-existing delegate/close_authority that

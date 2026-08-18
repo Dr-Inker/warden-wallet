@@ -63,15 +63,14 @@ Build facts:
   (`unexpected cfg condition value: custom-heap / custom-panic / solana`); they
   are upstream noise, not a code defect.
 
-⚠ **Workspace caveat (OPEN — deferred to the Task 5/6 decision gate):** the repo-root `Cargo.toml` lists members that do not
-exist yet (`programs/*`, `spikes/03-txbudget/onchain`), which makes the root
-workspace unresolvable. The spike crate therefore carries its own empty
-`[workspace]` table so it can build standalone; that table must be removed (or
-the spike moved to the root workspace's `exclude` list) as soon as the root
-workspace resolves, otherwise cargo fails with *multiple workspace roots found
-in the same workspace*. Per the coordinator the table stays for now and the
-layout is settled once Task 5/6 lands `spikes/03-txbudget/onchain`. See
-`spikes/02-webauthn/result.md`.
+**Workspace caveat — RESOLVED (2026-08-18, Phase 0 decision gate).** The repo-root `Cargo.toml`
+now resolves on its own: `members = []` (empty until Phase 1 adds `programs/warden`) and
+`exclude = ["spikes"]` (spikes are throwaway evidence, each carrying its own `[workspace]` table
+by design, not members of the root workspace). `cargo metadata --no-deps` against the root
+manifest succeeds. Each spike crate's own empty `[workspace]` table is **intentional and
+permanent**, not a stopgap to be deleted later — spike crates remain standalone by design so they
+can build independently of whatever the root workspace's `programs/*` glob resolves to. See
+`docs/spikes/DECISION.md` ("Phase 1 entry conditions") and the root `Cargo.toml`'s own comments.
 
 ## Spike 3b crates (`spikes/03-txbudget/onchain`)
 
@@ -110,3 +109,18 @@ Build facts:
   — plus the original 4 LiteSVM integration tests in `tests/cu.rs`).
 - See `spikes/03-txbudget/result.md` part (b) for the measured CU numbers (post-fix, authoritative)
   and the keccak-vs-sha256 TLV-hash comparison.
+
+## Verification provenance
+
+For each Rust spike, the exact command that was run and the commit SHA it last passed on:
+
+| Spike | Command | Tests | Commit SHA |
+| --- | --- | --- | --- |
+| spike-p256 (`spikes/02-webauthn/onchain`) | `cargo test --manifest-path spikes/02-webauthn/onchain/Cargo.toml -- --nocapture` | 21 passed (6 unit + 15 LiteSVM integration) | `c345090` |
+| spike-conserve (`spikes/03-txbudget/onchain`) | `cargo test --manifest-path spikes/03-txbudget/onchain/Cargo.toml -- --nocapture` | 16 passed (12 unit on `check_vault_invariants` + 4 LiteSVM integration) | `e0990ea` |
+
+**No Rust runs in the global test gate today.** `.claude/test-gate.sh` (the hook `git commit`/`git push`
+check for this repo) only runs `pnpm test` — it does not invoke `cargo test` or `cargo-build-sbf`
+for any spike or for the (currently empty) root workspace. The table above is a point-in-time
+record from when each spike was last built and tested by hand; re-run the commands above to
+re-verify before relying on these numbers, especially after any dependency or toolchain change.

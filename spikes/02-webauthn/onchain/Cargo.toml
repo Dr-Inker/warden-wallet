@@ -21,13 +21,10 @@ sha2 = "0.10"
 [features]
 no-entrypoint = []
 
-# NOTE (spike 2b): the repo-root Cargo.toml lists workspace members that do not
-# exist yet (`programs/*` and `spikes/03-txbudget/onchain`), so the root
-# workspace cannot be resolved at all right now and even
-# `cargo --manifest-path spikes/02-webauthn/onchain/Cargo.toml` fails on it.
-# This empty `[workspace]` table makes the spike crate its own workspace root so
-# it can be built and tested standalone. It MUST be deleted (or the spike moved
-# to the root workspace's `exclude` list) the moment the root workspace becomes
-# resolvable — otherwise cargo fails with "multiple workspace roots found in the
-# same workspace". Verified empirically, see spikes/02-webauthn/result.md.
+# NOTE (spike 2b): the repo-root Cargo.toml now resolves on its own
+# (`members = []`, `exclude = ["spikes"]` — see docs/TOOLCHAIN.md). This empty
+# `[workspace]` table is what keeps this spike crate excluded from and
+# standalone of the root workspace, by design, not a stopgap — spike crates
+# are throwaway evidence and were never meant to join `programs/*`. See
+# spikes/02-webauthn/result.md.
 [workspace]

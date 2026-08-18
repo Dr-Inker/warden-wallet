@@ -232,5 +232,10 @@ export function wrapForExecute(msg: VersionedMessage, wardenProgram: PublicKey, 
   }
   const inline = bytesInline <= MAX_TX_BYTES ? tx : null;
   const stagedChunks = inline ? 0 : Math.ceil(Buffer.from(parts).length / maxStageChunkPayloadBytes(wardenProgram));
-  return { inline, stagedChunks, bytesInline, bytesOriginal };
+  // executeAccountCount = outerKeys.length, i.e. the wrapped `execute` instruction's OWN account
+  // list length (round 5 review — Important): this is the honest "how many accounts does the
+  // execute instruction itself carry" number, distinct from the original message's total key
+  // count (`totalKeys` in measure.ts) and from any writable-only subset of either. See result.md
+  // "Round 5 fix" for why the previous `writableAccounts` metric in measure.ts was mislabeled.
+  return { inline, stagedChunks, bytesInline, bytesOriginal, executeAccountCount: outerKeys.length };
 }

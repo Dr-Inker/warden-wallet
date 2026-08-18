@@ -27,6 +27,7 @@ no-entrypoint = []
 sha256-tlv = []
 
 # NOTE (spike 3b): same reasoning as spikes/02-webauthn/onchain/Cargo.toml —
-# the repo-root Cargo.toml lists workspace members that do not exist yet, so
-# this crate carries its own empty [workspace] table to build standalone.
+# the repo-root Cargo.toml now resolves on its own (members = [], exclude =
+# ["spikes"] — see docs/TOOLCHAIN.md); this crate carries its own empty
+# [workspace] table by design, to stay standalone/excluded, not as a stopgap.
 [workspace]

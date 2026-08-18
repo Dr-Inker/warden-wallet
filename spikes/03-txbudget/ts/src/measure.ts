@@ -69,7 +69,26 @@ async function main() {
       const luts = await Promise.all(tx.message.addressTableLookups.map(async l => (await conn.getAddressLookupTable(l.accountKey)).value!));
       const r = wrapForExecute(tx.message, wardenProgram, account, session, luts);
       const hops = name.startsWith("jupiter") ? lastJupiterHops : undefined;
-      console.log(JSON.stringify({ name, bytesOriginal: r.bytesOriginal, bytesInline: r.bytesInline, fitsInline: !!r.inline, stagedChunks: r.stagedChunks, writableAccounts: tx.message.staticAccountKeys.length + tx.message.addressTableLookups.reduce((a, l) => a + l.writableIndexes.length + l.readonlyIndexes.length, 0), ...(hops !== undefined ? { hops } : {}) }));
+      // Three honest, distinct metrics over the ORIGINAL (pre-wrap) message (round 5 review —
+      // Important; the old single `writableAccounts` field actually counted every key regardless
+      // of writability, and wasn't the wrapped `execute` instruction's own account count either):
+      //   - totalKeys: every original-message key — static account keys plus every LUT index
+      //     (writable + readonly). This is exactly what the old `writableAccounts` field computed
+      //     despite its name — kept as `totalKeys` now that it's honestly labeled.
+      //   - writableKeys: payer + writable static accounts (derived from the message header's
+      //     numRequiredSignatures/numReadonlySignedAccounts/numReadonlyUnsignedAccounts split) plus
+      //     writable LUT indexes only.
+      //   - executeAccountCount: the length of the WRAPPED `execute` instruction's own account
+      //     list (`outerKeys`, from `wrapForExecute`'s return value) — a different message
+      //     entirely (the outer/wrapped one, not the original dApp-built one).
+      const header = tx.message.header;
+      const numStatic = tx.message.staticAccountKeys.length;
+      const writableSignedStatics = header.numRequiredSignatures - header.numReadonlySignedAccounts;
+      const writableUnsignedStatics = (numStatic - header.numRequiredSignatures) - header.numReadonlyUnsignedAccounts;
+      const writableLutKeys = tx.message.addressTableLookups.reduce((a, l) => a + l.writableIndexes.length, 0);
+      const totalKeys = numStatic + tx.message.addressTableLookups.reduce((a, l) => a + l.writableIndexes.length + l.readonlyIndexes.length, 0);
+      const writableKeys = writableSignedStatics + writableUnsignedStatics + writableLutKeys;
+      console.log(JSON.stringify({ name, bytesOriginal: r.bytesOriginal, bytesInline: r.bytesInline, fitsInline: !!r.inline, stagedChunks: r.stagedChunks, totalKeys, writableKeys, executeAccountCount: r.executeAccountCount, ...(hops !== undefined ? { hops } : {}) }));
     } catch (e: any) {
       console.log(JSON.stringify({ name, error: String(e?.message ?? e) }));
     }
