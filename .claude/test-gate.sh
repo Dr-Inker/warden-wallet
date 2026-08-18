@@ -8,7 +8,13 @@ if ls programs/*/Cargo.toml >/dev/null 2>&1; then
   # LiteSVM harnesses read target/deploy/warden.so at test runtime (gitignored,
   # not committed) — build it first if missing or stale so a clean clone /
   # fresh checkout reproduces green without a manual `anchor build` step.
-  if [ ! -f target/deploy/warden.so ] || [ -n "$(find programs/warden/src -newer target/deploy/warden.so -name '*.rs' | head -1)" ]; then
+  # Stale = any source, manifest, lockfile, or Anchor config is newer than the .so.
+  if [ ! -f target/deploy/warden.so ] \
+    || [ -n "$(find programs/warden/src -newer target/deploy/warden.so -name '*.rs' | head -1)" ] \
+    || [ programs/warden/Cargo.toml -nt target/deploy/warden.so ] \
+    || [ Cargo.toml -nt target/deploy/warden.so ] \
+    || [ Cargo.lock -nt target/deploy/warden.so ] \
+    || [ Anchor.toml -nt target/deploy/warden.so ]; then
     if command -v anchor >/dev/null 2>&1; then
       nice -n 10 anchor build
     else

@@ -82,6 +82,9 @@ does either, so it never depends on the keypair.
   retired/burned going forward — never reuse it, even though (like the new
   one) it was only ever a localnet/devnet-only id with no funds, no mainnet
   authority, and no program ever deployed under it outside this repo's own
-  (keypair-independent) LiteSVM tests. `phase1a`'s local git history still
-  contains the old key at `687c5e8`; the branch has not been pushed, and the
-  controller has said it will squash the branch history before any push.
+  (keypair-independent) LiteSVM tests. The original commit that briefly held
+  the first keypair was squashed out of `phase1a`'s history before any push
+  (verified: `git cat-file -e 687c5e8` now fails — the commit no longer
+  exists in this repo); the first keypair is retired regardless, since a
+  committed private key is treated as burned the moment it's committed, not
+  only if/when history containing it is later pushed.
