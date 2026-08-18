@@ -1,6 +1,6 @@
 # Warden — design spec (v1)
 
-**Date:** 2026-08-18 · **Status:** rev 5 (after Codex review rounds 1–4, see §16) · **Product:** drinkerlabs · **Working name:** Warden (rename = find/replace)
+**Date:** 2026-08-18 · **Status:** rev 5 (after Codex review rounds 1–4, see §16) · **Product:** drinkerlabs · **Name:** Warden Wallet (confirmed by owner 2026-08-18)
 **Predecessor:** `/opt/docs/pq-solana-wallet-research-2026-08-18.md` (feasibility study; the quantum root is out of scope here but every choice keeps its slot).
 
 ## 1. Purpose and the one property we promise
@@ -122,7 +122,7 @@ Devnet: dev multisig. Mainnet: the BPF-loader upgrade authority **is** a Squads 
 - **Provider**: `registerWallet()` exposing `standard:connect/disconnect/events`, `solana:signTransaction`, `solana:signAndSendTransaction`, `solana:signMessage`, `solana:signIn`; legacy `window.solana` shim.
 - **Intent view** (the most important screen): balance diffs per token from simulation, authority/delegate changes (always red, always blocked for sessions anyway), recipient trust (known / first-time / seen-only-via-dust = poison warning), and the policy verdict: *within limits* / *needs passkey + delay* / *blocked (why)*.
 - **dApp transactions — the honest boundary.** Warden advertises the SmartAccount PDA as the account. A dApp-built tx is **rewritten**: fee payer = session key; dApp instructions are wrapped into `execute` (inline if the whole serialized transaction ≤ 1,232 B; else staged in as many `stage_chunk` transactions as needed, then one `execute` — shown as one flow); ALTs preserved. Because the signed bytes change, the following are **unsupported and rejected with a clear message**: transactions with other required signers/partial signatures, durable-nonce transactions, transactions that need the PDA as a *top-level* signer, instructions that inspect the Instructions sysvar for adjacency, and dApps whose target program is not on the session allowlist (offered: root path). `signMessage`/`signIn` are signed by the session key; dApps that verify against the account address (Sign-In-With-Solana) **will fail** — no Solana-native ERC-1271 exists; Warden publishes a measured per-dApp compatibility list (§12.4) and does not claim Phantom parity.
-- **Swap**: `/quote?platformFeeBps=FEE_BPS` → `/swap-instructions` → `swap`; `feeAccount` = treasury ATA; quote sanity vs a second source; `FEE_BPS` = 85 default (owner decision).
+- **Swap**: `/quote?platformFeeBps=FEE_BPS` → `/swap-instructions` → `swap`; `feeAccount` = treasury ATA; quote sanity vs a second source; `FEE_BPS` = 85 (0.85%, Phantom parity — owner decision 2026-08-18); a gasless tier at 150 bps only if gasless swaps are added later.
 - **Address book & poison guard**: first-seen provenance; dust-only senders flagged; first-time recipients require typed confirmation of first/last 4 chars.
 - **Passkeys/PRF**: root ceremony = WebAuthn `get()` with challenge = action transcript hash; PRF (if available) derives the keyring key; otherwise Argon2id password. Root never touches the extension's memory.
 
@@ -159,9 +159,9 @@ devnet internal → devnet public beta (test funds) → **audit + bounty** → m
 
 Mobile · agent-key UI · quantum root · multi-chain · hardware wallets · NFT gallery beyond a list · fiat on-ramp · staking UI · plain-keypair accounts inside Warden · vault-owned stake/nonce/program-state accounts (positions live in external programs' accounts).
 
-## 14. Open decisions for the owner
+## 14. Owner decisions (2026-08-18)
 
-Fee bps default (85) · cloud guardian in v1 (proposed yes) · working name.
+Fee = Phantom parity: 85 bps standard (150 bps gasless if ever added) · cloud guardian ships in v1 · name = Warden Wallet.
 
 ## 15. Glossary of on-chain accounts (for the plan)
 
