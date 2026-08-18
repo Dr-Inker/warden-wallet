@@ -70,6 +70,16 @@ mod err {
     pub const PRECOMPILE_NOT_FOUND: u32 = 6022;
     pub const PRECOMPILE_BINDING_MISMATCH: u32 = 6023;
     pub const ROOT_KIND_UNSUPPORTED: u32 = 6024;
+    // Appended by Task 4 (`create_account`) and Task 5 (sessions). They are
+    // pinned here — the one table this suite's
+    // `pinned_error_codes_match_the_enum_today` checks against the enum — even
+    // though this file never raises them, so an insertion anywhere in
+    // `WardenError` is caught by ONE test rather than by whichever suite
+    // happens to assert on the renumbered variant.
+    pub const INVALID_ORIGIN: u32 = 6025;
+    pub const ZERO_CLUSTER_TAG: u32 = 6026;
+    pub const INVALID_POLICY: u32 = 6027;
+    pub const PROGRAM_ALLOWLIST_UNSUPPORTED: u32 = 6028;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -78,7 +88,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 25] = [
+    let pairs: [(u32, WardenError, &str); 29] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -104,6 +114,14 @@ fn pinned_error_codes_match_the_enum_today() {
         (err::PRECOMPILE_NOT_FOUND, WardenError::PrecompileNotFound, "PrecompileNotFound"),
         (err::PRECOMPILE_BINDING_MISMATCH, WardenError::PrecompileBindingMismatch, "PrecompileBindingMismatch"),
         (err::ROOT_KIND_UNSUPPORTED, WardenError::RootKindUnsupported, "RootKindUnsupported"),
+        (err::INVALID_ORIGIN, WardenError::InvalidOrigin, "InvalidOrigin"),
+        (err::ZERO_CLUSTER_TAG, WardenError::ZeroClusterTag, "ZeroClusterTag"),
+        (err::INVALID_POLICY, WardenError::InvalidPolicy, "InvalidPolicy"),
+        (
+            err::PROGRAM_ALLOWLIST_UNSUPPORTED,
+            WardenError::ProgramAllowlistUnsupported,
+            "ProgramAllowlistUnsupported",
+        ),
     ];
     for (pinned, variant, name) in pairs {
         assert_eq!(

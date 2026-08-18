@@ -65,4 +65,9 @@ pub enum WardenError {
     ZeroClusterTag,
     #[msg("policy fails validation (timelock/recovery/session-life bounds or cap ordering)")]
     InvalidPolicy,
+    // ---------------------------------------------------------------------
+    // sessions (Task 5). APPEND ONLY — see the note above.
+    // ---------------------------------------------------------------------
+    #[msg("program_allowlist_id must be 0 until the Phase 1B adapter registry exists")]
+    ProgramAllowlistUnsupported,
 }

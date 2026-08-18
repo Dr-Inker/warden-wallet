@@ -16,8 +16,8 @@ verification cost is charged separately by the runtime and is not included in
 | `create_account` (all-defaults `PolicyArgs`, no mint caps used) | 8,777 | 472 B | `create_account::creates_with_defaults` | 235 B of instruction data (8 B discriminator + `CreateAccountArgs`). **Round-1 review fix: was 12,767 CU / 1,804 B** when `PolicyArgs` mirrored `Policy`'s fixed 8-slot arrays — see the fixed finding below. |
 | `create_account` (2 mints — SOL + USDC, each with a cap, session ceiling, and large-transfer threshold) | not separately measured (CU is dominated by fixed decode cost, not mint count) | 808 B | `create_account::realistic_two_mint_policy_transaction_fits_the_packet_limit` | Asserted `<= 1,232 B` in the test itself, not just printed. |
 | `create_account` (`MAX_MINTS_AT_CREATE` = 4 mints, each with a cap, session ceiling, and large-transfer threshold) | not separately measured | 1,144 B | `create_account::max_mints_at_create_transaction_fits_the_packet_limit` | Asserted `<= 1,232 B`; margin is 88 B — this is why `MAX_MINTS_AT_CREATE` is 4, not 8 (see below). |
-| `grant_session` (full root ceremony, `MAX_CAPS_PER_GRANT` = 2 caps) | 30,325 | 944 B | `sessions::grant_ok_and_readback` (CU) / `sessions::grant_tx_fits_1232_bytes_with_2_caps` (bytes) | 423 B of instruction data (8 B discriminator + 218 B `RootArgs` + 197 B `GrantBody`) plus a 182 B precompile instruction; 37 B `authenticatorData`, 164 B `clientDataJSON`. CU is ~2× `rotate_nonce` because the same root check is followed by a `system_program::create_account` CPI for the 751 B `SessionKey` PDA and a full Borsh write-back of it. **Asserted `<= 1,232 B` in the test** — margin is 288 B. |
-| `revoke_session_root` (full root ceremony, closes the session PDA) | 20,505 | 746 B | `sessions::revoke_by_root_ok` | 8 B discriminator + 218 B `RootArgs` + 32 B `session_pubkey` of instruction data, plus the 182 B precompile instruction. Asserted `<= 1,232 B`. |
+| `grant_session` (full root ceremony, `MAX_CAPS_PER_GRANT` = 2 caps) | 31,829 | 944 B | `sessions::grant_ok_and_readback` (CU) / `sessions::grant_tx_fits_1232_bytes_with_2_caps` (bytes) | 423 B of instruction data (8 B discriminator + 218 B `RootArgs` + 197 B `GrantBody`) plus a 182 B precompile instruction; 37 B `authenticatorData`, 164 B `clientDataJSON`. CU is ~2× `rotate_nonce` because the same root check is followed by a `system_program::create_account` CPI for the 751 B `SessionKey` PDA and a full Borsh write-back of it. **Asserted `<= 1,232 B` in the test** — margin is 288 B. |
+| `revoke_session_root` (full root ceremony, closes the session PDA) | 20,774 | 778 B | `sessions::revoke_by_root_ok` | 8 B discriminator + 218 B `RootArgs` + 64 B `RevokeBody` (`session_pubkey` ‖ `refund_to`) of instruction data, plus the 182 B precompile instruction. Asserted `<= 1,232 B`. Round-1 review: was 20,505 CU / 746 B before `refund_to` was added to the signed body. |
 | `revoke_session_self` (session key signs; no root ceremony) | 7,323 | 341 B | `sessions::revoke_by_session_self_ok` | 8 B of instruction data and no precompile instruction at all — the cheapest authenticated path in the program. |
 
 ## Headroom
@@ -35,7 +35,7 @@ verification cost is charged separately by the runtime and is not included in
   carries 8 B of discriminator + 215 B of `RootArgs`; `grant_session`, the
   heaviest root instruction in Phase 1A, carries 197 B of its own arguments
   beyond `RootArgs` — about half the 400 B C7 allows.
-* CU: `grant_session` is 30.3k of the 200k default budget (15%), and the
+* CU: `grant_session` is 31.8k of the 200k default budget (16%), and the
   create-the-PDA CPI is a one-off — a re-grant into an existing PDA skips it.
 
 ### `grant_session` transaction-size gate — why `MAX_CAPS_PER_GRANT` = 2

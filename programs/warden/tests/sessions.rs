@@ -41,7 +41,7 @@ use std::str::FromStr;
 use warden::constants::{MAX_CAPS_PER_GRANT, MAX_MINT_CAPS, SESSION_KIND_ED25519};
 use warden::instructions::create_account::MIN_TIMELOCK_SECS;
 use warden::instructions::grant_session::{GrantBody, GrantSessionArgs};
-use warden::instructions::revoke_session::RevokeSessionRootArgs;
+use warden::instructions::revoke_session::{RevokeBody, RevokeSessionRootArgs};
 use warden::root_verify::transcript::{
     action_hash, b64url_no_pad, transcript_hash, OP_GRANT_SESSION, OP_REVOKE_SESSION,
 };
@@ -69,6 +69,8 @@ mod err {
     pub const INVALID_ACCOUNT_DATA: u32 = 6009;
     pub const BAD_INSTRUCTION_LAYOUT: u32 = 6010;
     pub const INVALID_POLICY: u32 = 6027;
+    pub const CHALLENGE_MISMATCH: u32 = 6018;
+    pub const PROGRAM_ALLOWLIST_UNSUPPORTED: u32 = 6028;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +263,25 @@ fn ceremony(svm: &LiteSVM, account: &Pubkey, pk: &TestPasskey, ah: [u8; 32]) -> 
     (passkey::precompile_ix(&a, &pk.pubkey33()), args)
 }
 
+/// Sign `signed` but SUBMIT `submitted`. The session account is derived from
+/// the submitted body so Anchor's own `seeds` constraint is satisfied and the
+/// rejection has to come from the challenge binding, not from the PDA check.
+fn grant_ixs_tampered(
+    svm: &LiteSVM,
+    payer: &Keypair,
+    account: &Pubkey,
+    pk: &TestPasskey,
+    signed: &GrantBody,
+    submitted: GrantBody,
+) -> Vec<Instruction> {
+    let mut body_bytes = Vec::new();
+    signed.serialize(&mut body_bytes).unwrap();
+    let (precompile, root) = ceremony(svm, account, pk, action_hash(OP_GRANT_SESSION, &body_bytes));
+    let (session, _) = session_pda(account, &submitted.session_pubkey);
+    let args = GrantSessionArgs { root, body: submitted };
+    vec![precompile, grant_ix(payer.pubkey(), *account, session, &args)]
+}
+
 fn grant_ixs(
     svm: &LiteSVM,
     payer: &Keypair,
@@ -268,16 +289,33 @@ fn grant_ixs(
     pk: &TestPasskey,
     body: GrantBody,
 ) -> Vec<Instruction> {
-    let mut body_bytes = Vec::new();
-    body.serialize(&mut body_bytes).unwrap();
-    let (precompile, root) = ceremony(svm, account, pk, action_hash(OP_GRANT_SESSION, &body_bytes));
-    let (session, _) = session_pda(account, &body.session_pubkey);
-    let args = GrantSessionArgs { root, body };
-    vec![precompile, grant_ix(payer.pubkey(), *account, session, &args)]
+    grant_ixs_tampered(svm, payer, account, pk, &body.clone(), body)
 }
 
-/// `session_account` is passed separately so one test can point the
-/// instruction at a *different* session than the one the ceremony authorized.
+/// `session_account` and `submitted_payer` are passed separately from the
+/// SIGNED `session_pubkey`/`refund_to` so the adversarial tests can point the
+/// instruction at a different session, or at a different rent destination,
+/// than the ceremony authorized.
+#[allow(clippy::too_many_arguments)]
+fn revoke_root_ixs_with(
+    svm: &LiteSVM,
+    account: &Pubkey,
+    pk: &TestPasskey,
+    signed_session_pubkey: Pubkey,
+    signed_refund_to: Pubkey,
+    session_account: Pubkey,
+    submitted_payer: Pubkey,
+) -> Vec<Instruction> {
+    let body = RevokeBody { session_pubkey: signed_session_pubkey, refund_to: signed_refund_to };
+    let mut payload = Vec::new();
+    body.serialize(&mut payload).unwrap();
+    let (precompile, root) = ceremony(svm, account, pk, action_hash(OP_REVOKE_SESSION, &payload));
+    let args = RevokeSessionRootArgs { root, body };
+    vec![precompile, revoke_root_ix(submitted_payer, *account, session_account, &args)]
+}
+
+/// The honest shape: the ceremony names the session being closed and the
+/// payer as the rent destination.
 fn revoke_root_ixs(
     svm: &LiteSVM,
     payer: &Keypair,
@@ -286,11 +324,15 @@ fn revoke_root_ixs(
     session_pubkey: Pubkey,
     session_account: Pubkey,
 ) -> Vec<Instruction> {
-    let mut payload = Vec::new();
-    session_pubkey.serialize(&mut payload).unwrap();
-    let (precompile, root) = ceremony(svm, account, pk, action_hash(OP_REVOKE_SESSION, &payload));
-    let args = RevokeSessionRootArgs { root, session_pubkey };
-    vec![precompile, revoke_root_ix(payer.pubkey(), *account, session_account, &args)]
+    revoke_root_ixs_with(
+        svm,
+        account,
+        pk,
+        session_pubkey,
+        payer.pubkey(),
+        session_account,
+        payer.pubkey(),
+    )
 }
 
 fn send(svm: &mut LiteSVM, signers: &[&Keypair], ixs: &[Instruction]) -> litesvm::types::TransactionResult {
@@ -382,7 +424,7 @@ fn discriminators_are_sha256_of_the_global_names() {
                 client_data_json: vec![],
                 expiry_ts: 0,
             },
-            session_pubkey: Pubkey::new_unique(),
+            body: RevokeBody { session_pubkey: Pubkey::new_unique(), refund_to: Pubkey::new_unique() },
         },
     );
     assert_eq!(&revoke_root.data[..8], &Sha256::digest(b"global:revoke_session_root")[..8]);
@@ -618,7 +660,7 @@ fn regrant_merges_by_mint_and_preserves_spent() {
         ops_mask: OP_TRANSFER,
         caps: vec![MintCap { per_tx: 1, per_day: 2, per_30d: 3, ..sol_cap() }],
         lifetime_cap: vec![123_000_000_000],
-        program_allowlist_id: 9,
+        program_allowlist_id: 0,
         label: label("relabelled"),
         ..two_cap_body(session_key.pubkey())
     };
@@ -640,7 +682,11 @@ fn regrant_merges_by_mint_and_preserves_spent() {
     // Scalars replaced.
     assert_eq!(s.expiry_ts, regrant.expiry_ts);
     assert_eq!(s.ops_mask, OP_TRANSFER);
-    assert_eq!(s.program_allowlist_id, 9);
+    // Still 0 — `program_allowlist_id` is pinned to 0 until the Phase 1B
+    // adapter registry exists (`grant_with_unknown_allowlist_id_rejected`);
+    // that the field is genuinely *replaced* from the signed body is covered
+    // by `grant_body_tamper_rejected_field_by_field`.
+    assert_eq!(s.program_allowlist_id, 0);
     assert_eq!(s.label, label("relabelled"));
 }
 
@@ -831,4 +877,94 @@ fn revoke_close_then_regrant_gets_current_generation() {
     assert_eq!(s.caps[0].mint, sol_mint());
     assert_eq!(s.caps[1].mint, Pubkey::default(), "a closed-and-recreated session starts empty");
     assert!(s.lifetime_spent.iter().all(|v| *v == 0));
+}
+
+// ---------------------------------------------------------------------------
+// Round-1 review fixes
+// ---------------------------------------------------------------------------
+
+/// `program_allowlist_id` names an entry in an adapter registry that does not
+/// exist yet, so the only value Phase 1A can honour is 0 ("no allowlist").
+/// Accepting any other id would silently store a dangling reference that
+/// Phase 1B would then have to interpret.
+#[test]
+fn grant_with_unknown_allowlist_id_rejected() {
+    let session_key = Keypair::new();
+    let body = GrantBody { program_allowlist_id: 1, ..one_cap_body(session_key.pubkey()) };
+    expect_grant_reject(body, err::PROGRAM_ALLOWLIST_UNSUPPORTED);
+}
+
+/// The root ceremony authorizes WHERE THE RENT GOES as well as what is
+/// revoked: an otherwise-valid assertion resubmitted with a different `payer`
+/// (the `close` destination) must be turned away, so a signed-but-unlanded
+/// revoke cannot be front-run for its lamports.
+#[test]
+fn revoke_by_root_substituted_refund_rejected() {
+    let (mut svm, payer, pk, account) = live();
+    let session_key = Keypair::new();
+    let (session, _) = session_pda(&account, &session_key.pubkey());
+    let ixs = grant_ixs(&svm, &payer, &account, &pk, one_cap_body(session_key.pubkey()));
+    expect_ok(&mut svm, &[&payer], &ixs);
+
+    let thief = Keypair::new();
+    svm.airdrop(&thief.pubkey(), 1_000_000_000).unwrap();
+    // Ceremony says "refund to payer"; the submitted instruction says "refund
+    // to thief", and the thief signs as payer.
+    let ixs = revoke_root_ixs_with(
+        &svm,
+        &account,
+        &pk,
+        session_key.pubkey(),
+        payer.pubkey(),
+        session,
+        thief.pubkey(),
+    );
+    expect_reject(&mut svm, &[&thief], &ixs, 1, err::UNAUTHORIZED);
+    assert!(!is_closed(&svm, &session), "the session must survive a refund substitution");
+}
+
+/// EVERY field of `GrantBody` is inside the signed `action_hash`. For each one
+/// in turn: sign the honest body, submit with that ONE field altered, and
+/// require the program to reject it. A field accidentally left out of the hash
+/// would show up here as exactly one passing-through variant.
+#[test]
+fn grant_body_tamper_rejected_field_by_field() {
+    let session_key = Keypair::new();
+    let other_session = Keypair::new().pubkey();
+    let honest = two_cap_body(session_key.pubkey());
+
+    let variants: Vec<(&str, GrantBody)> = vec![
+        ("session_pubkey", GrantBody { session_pubkey: other_session, ..honest.clone() }),
+        ("kind", GrantBody { kind: 1, ..honest.clone() }),
+        ("expiry_ts", GrantBody { expiry_ts: honest.expiry_ts - 1, ..honest.clone() }),
+        ("ops_mask", GrantBody { ops_mask: OP_TRANSFER, ..honest.clone() }),
+        (
+            "caps",
+            GrantBody {
+                caps: vec![MintCap { per_tx: sol_cap().per_tx - 1, ..sol_cap() }, usdc_cap()],
+                ..honest.clone()
+            },
+        ),
+        (
+            "lifetime_cap",
+            GrantBody { lifetime_cap: vec![1, 40_000_000_000], ..honest.clone() },
+        ),
+        ("program_allowlist_id", GrantBody { program_allowlist_id: 1, ..honest.clone() }),
+        ("label", GrantBody { label: label("tampered"), ..honest.clone() }),
+    ];
+
+    for (field, tampered) in variants {
+        assert!(tampered != honest, "the {field} variant does not actually differ");
+        let (mut svm, payer, pk, account) = live();
+        let ixs = grant_ixs_tampered(&svm, &payer, &account, &pk, &honest, tampered);
+        let e = send(&mut svm, &[&payer], &ixs).err().unwrap_or_else(|| {
+            panic!("tampering with `{field}` was ACCEPTED — that field is outside the action hash")
+        });
+        assert_eq!(
+            e.err,
+            TransactionError::InstructionError(1, InstructionError::Custom(err::CHALLENGE_MISMATCH)),
+            "tampering with `{field}` must fail the challenge binding, not something else; logs={:#?}",
+            e.meta.logs
+        );
+    }
 }

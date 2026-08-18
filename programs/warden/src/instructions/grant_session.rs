@@ -149,12 +149,15 @@ pub(crate) fn handler(ctx: Context<GrantSession>, args: GrantSessionArgs) -> Res
     // deliberately is NOT — see `revoke_session`.
     require!(matches!(account.frozen()?, FrozenState::None), WardenError::Frozen);
 
-    // Shape checks first: they are pure argument validation, cost a handful of
-    // CU, and their verdict cannot depend on account state — so there is no
-    // reason to pay for a full root ceremony verification before finding out
-    // the arguments are unusable.
-    validate_shape(&args.body)?;
-
+    // AUTHORIZE FIRST, then validate. The ceremony binds every byte of
+    // `GrantBody` through `action_hash`, so running argument validation before
+    // it would mean a *tampered* body could surface a validation error instead
+    // of the challenge mismatch that actually describes what went wrong — and
+    // would let an unauthenticated caller probe the validation logic for free.
+    // Round-1 review fix: `grant_body_tamper_rejected_field_by_field` asserts
+    // exactly one failure mode (`ChallengeMismatch`) for a change to ANY field,
+    // which is only true with this ordering.
+    //
     // The passkey signed `Keccak256(0x01 ‖ borsh(body))` — re-serialized here
     // from the deserialized struct, never taken from raw instruction data.
     let mut body_bytes = Vec::new();
@@ -169,6 +172,7 @@ pub(crate) fn handler(ctx: Context<GrantSession>, args: GrantSessionArgs) -> Res
         now,
     )?;
 
+    validate_shape(&args.body)?;
     validate_against_policy(&account, &args.body, now)?;
 
     // ---- upsert -----------------------------------------------------------
@@ -212,7 +216,8 @@ pub(crate) fn handler(ctx: Context<GrantSession>, args: GrantSessionArgs) -> Res
     Ok(())
 }
 
-/// Pure argument validation — no account state consulted.
+/// Pure argument validation — no account state consulted. Runs AFTER the root
+/// ceremony (see the ordering note in `handler`).
 ///
 /// Error choice: "too many caps" / "the two parallel vectors disagree" are
 /// malformed *instruction layout* (`BadInstructionLayout`), while a
@@ -243,6 +248,11 @@ fn validate_shape(b: &GrantBody) -> Result<()> {
 ///   violation).
 /// - every bit set in `ops_mask` must be set in `policy.session_ops_ceiling`
 ///   (`OpNotAllowed`).
+/// - `program_allowlist_id` must be 0 (`ProgramAllowlistUnsupported`). It
+///   names an entry in the adapter registry that Phase 1B introduces; until
+///   that registry exists there is no id to name, and storing a non-zero one
+///   would persist a dangling reference that 1B would then have to guess the
+///   meaning of. Round-1 review finding.
 /// - every cap's mint must have a `policy.session_ceiling` entry — looked up
 ///   **by mint**, since `Policy`'s arrays are keyed by the `caps` slot index,
 ///   not by wire position — and every `per_*` must be at or below it
@@ -259,6 +269,14 @@ fn validate_against_policy(account: &SmartAccount, b: &GrantBody, now: i64) -> R
     require!(
         (b.ops_mask & !account.policy.session_ops_ceiling) == 0,
         WardenError::OpNotAllowed
+    );
+
+    // 1B: policy lookup — replace this with a check that the id names a live
+    // entry in the account's adapter registry (`SmartAccount.registry`), and
+    // that the registry is the one the policy points at.
+    require!(
+        b.program_allowlist_id == 0,
+        WardenError::ProgramAllowlistUnsupported
     );
 
     for c in b.caps.iter() {

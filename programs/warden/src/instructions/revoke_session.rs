@@ -29,6 +29,15 @@
 //! an arbitrary account: the rent is a refund to whoever is paying to submit
 //! the close, and letting the caller name a third-party destination would add
 //! a value-carrying account for no benefit in Phase 1A.
+//!
+//! On the ROOT path the ceremony additionally signs over `refund_to`, which
+//! the handler requires to equal `payer` (round-1 review finding). Without
+//! that binding, an observer who saw a signed revoke before it landed could
+//! resubmit the same assertion with themselves as `payer` and pocket the
+//! session's rent — they could never redirect *which* session is closed, but
+//! the lamports were unbound. The self path needs no such binding: it is
+//! authorized by a live transaction signature, so there is no
+//! signed-but-unlanded artifact to steal.
 
 use anchor_lang::prelude::*;
 
@@ -38,13 +47,27 @@ use crate::root_verify::transcript::{action_hash, OP_REVOKE_SESSION};
 use crate::root_verify::{verify_root_assertion, RootArgs};
 use crate::state::{SessionKey, SmartAccount};
 
+/// Everything the passkey signs for on the root revoke path:
+/// `action_hash = Keccak256(OP_REVOKE_SESSION ‖ borsh(RevokeBody))`.
+///
+/// `refund_to` is in the signed body, not merely an account, so the ceremony
+/// authorizes *where the rent goes* as well as *what is revoked*. Without it,
+/// an observer who saw a signed revoke before it landed could resubmit the
+/// same assertion with themselves as `payer` and take the session's rent
+/// (they could never change which session is closed — that has always been in
+/// the hash — but the lamports were up for grabs).
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RevokeBody {
+    /// The session's delegate pubkey — also the PDA seed.
+    pub session_pubkey: Pubkey,
+    /// Must equal the `payer` account, which is where `close` sends the rent.
+    pub refund_to: Pubkey,
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
 pub struct RevokeSessionRootArgs {
     pub root: RootArgs,
-    /// The session's delegate pubkey — the PDA seed, and the whole of the
-    /// signed action payload (`Keccak256(0x02 ‖ borsh(session_pubkey))`,
-    /// i.e. the bare 32 pubkey bytes).
-    pub session_pubkey: Pubkey,
+    pub body: RevokeBody,
 }
 
 #[derive(Accounts)]
@@ -100,7 +123,14 @@ pub(crate) fn handler_root(
     // account must be turned away regardless of how valid the assertion is.
     require_keys_eq!(
         ctx.accounts.session.pubkey,
-        args.session_pubkey,
+        args.body.session_pubkey,
+        WardenError::Unauthorized
+    );
+    // The ceremony authorized this rent destination, and `close = payer` is
+    // what actually pays it out — so the two must be the same account.
+    require_keys_eq!(
+        ctx.accounts.payer.key(),
+        args.body.refund_to,
         WardenError::Unauthorized
     );
     check_session_pda(
@@ -119,7 +149,7 @@ pub(crate) fn handler_root(
     require_keys_eq!(account_key, expected, WardenError::Unauthorized);
 
     let mut payload = Vec::new();
-    args.session_pubkey.serialize(&mut payload)?;
+    args.body.serialize(&mut payload)?;
     verify_root_assertion(
         &mut account,
         &ix_sysvar,
