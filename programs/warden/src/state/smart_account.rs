@@ -194,6 +194,45 @@ impl Policy {
     pub const LEN: usize = core::mem::size_of::<Policy>();
 }
 
+/// Instruction-argument mirror of `Policy` (`create_account`, Task 4) — plain
+/// Borsh, no padding/reserved fields (those exist only to satisfy `Pod`'s
+/// alignment rules on the zero-copy `Policy`, which callers never need to
+/// think about). `From<PolicyArgs> for Policy` zero-fills every padding/
+/// `_reserved` byte; `create_account` additionally forces `policy.version` to
+/// 1 regardless of what's carried here (see its handler), so this struct
+/// still declares `version` only for symmetry with `Policy`'s field list.
+// No `Debug`: `MintCap` (`#[zero_copy]`) doesn't derive it, and hand-writing
+// one just to satisfy a derive nobody calls isn't worth the upkeep.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub struct PolicyArgs {
+    pub version: u32,
+    pub caps: [MintCap; MAX_MINT_CAPS],
+    pub session_ceiling: [MintCap; MAX_MINT_CAPS],
+    pub large_threshold: [MintCap; MAX_MINT_CAPS],
+    pub timelock_secs: i64,
+    pub recovery_delay_secs: i64,
+    pub max_session_life_secs: i64,
+    pub session_ops_ceiling: u16,
+}
+
+impl From<PolicyArgs> for Policy {
+    fn from(a: PolicyArgs) -> Self {
+        Policy {
+            version: a.version,
+            _pad_version: [0u8; 4],
+            caps: a.caps,
+            session_ceiling: a.session_ceiling,
+            large_threshold: a.large_threshold,
+            timelock_secs: a.timelock_secs,
+            recovery_delay_secs: a.recovery_delay_secs,
+            max_session_life_secs: a.max_session_life_secs,
+            session_ops_ceiling: a.session_ops_ceiling,
+            _pad_ceiling: [0u8; 6],
+            _reserved: [0u8; 64],
+        }
+    }
+}
+
 /// Zero-copy `Pod` (embedded in `Policy`/`SmartAccount`) AND plain Borsh
 /// (embedded in `SessionKey`, which stays a normal non-zero-copy
 /// `#[account]` — see that struct). `mint: Pubkey` (32 B, alignment 1) is

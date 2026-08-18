@@ -30,7 +30,10 @@ pub struct RotateNonce<'info> {
     pub ix_sysvar: UncheckedAccount<'info>,
 }
 
-pub fn handler(ctx: Context<RotateNonce>, args: RootArgs) -> Result<()> {
+// Not `pub`: only `lib.rs`'s `#[program]` module calls this, by full path —
+// see the matching note on `create_account::handler` for why a bare `pub`
+// here would collide across the glob re-export in `instructions::mod.rs`.
+pub(crate) fn handler(ctx: Context<RotateNonce>, args: RootArgs) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let account_key = ctx.accounts.smart_account.key();
     let ix_sysvar = ctx.accounts.ix_sysvar.to_account_info();

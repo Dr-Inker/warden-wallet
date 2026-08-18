@@ -56,4 +56,13 @@ pub enum WardenError {
     PrecompileBindingMismatch,
     #[msg("root key kind is not supported by this instruction")]
     RootKindUnsupported,
+    // ---------------------------------------------------------------------
+    // create_account (Task 4). APPEND ONLY — see the note above.
+    // ---------------------------------------------------------------------
+    #[msg("origin is empty, too long, missing the chrome-extension:// prefix, contains a NUL byte, or has trailing whitespace")]
+    InvalidOrigin,
+    #[msg("cluster_tag must be non-zero")]
+    ZeroClusterTag,
+    #[msg("policy fails validation (timelock/recovery/session-life bounds or cap ordering)")]
+    InvalidPolicy,
 }

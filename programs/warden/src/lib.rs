@@ -20,6 +20,12 @@ pub mod warden {
         Ok(())
     }
 
+    /// Create a passkey- (or Ed25519-) rooted `SmartAccount` PDA. No root
+    /// signature required — see `instructions::create_account` for why.
+    pub fn create_account(ctx: Context<CreateAccount>, args: CreateAccountArgs) -> Result<()> {
+        instructions::create_account::handler(ctx, args)
+    }
+
     /// Consume the account's `root_nonce` under a root passkey assertion,
     /// invalidating any outstanding (signed but unsubmitted) challenge.
     pub fn rotate_nonce(ctx: Context<RotateNonce>, args: RootArgs) -> Result<()> {
