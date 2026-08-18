@@ -13,7 +13,7 @@ mod common;
 
 use anchor_lang::{AnchorSerialize, Discriminator};
 use common::passkey::{self, TestPasskey, FLAGS_UP_UV, TEST_ORIGIN};
-use common::{read_smart_account, set_smart_account, SmartAccountFixture};
+use common::{create_smart_account, read_smart_account, set_smart_account, SmartAccountFixture};
 use litesvm::LiteSVM;
 use sha2::{Digest, Sha256};
 use solana_sdk::{
@@ -238,7 +238,9 @@ fn build(case: Case) -> Built {
     fixture.root_pubkey33 = pk.pubkey33();
     let account = if case.account_at_wrong_address {
         // Plant a byte-identical account body at an address that is NOT the
-        // PDA for its own `owner_seed`.
+        // PDA for its own `owner_seed` — impossible through `create_account`
+        // itself (its `seeds` constraint derives the address), so this one
+        // test genuinely needs raw state (see `non_pda_account_rejected`).
         let pda = set_smart_account(&mut svm, &fixture);
         let raw = svm.get_account(&pda).unwrap();
         let imposter = Keypair::new().pubkey();
@@ -254,8 +256,18 @@ fn build(case: Case) -> Built {
         )
         .unwrap();
         imposter
-    } else {
+    } else if fixture.generation != 0 || fixture.root_nonce != 0 {
+        // No instruction advances `generation` yet, and reaching a
+        // `root_nonce` other than 0 by replaying real ceremonies would only
+        // duplicate what `consecutive_ceremonies_each_consume_one_nonce` and
+        // `replay_same_assertion_rejected` already prove (see
+        // `stale_generation_rejected` and
+        // `stale_nonce_far_in_the_past_rejected_as_challenge_mismatch`) — raw
+        // state is the more precise, lower-noise way to reach these two
+        // deliberately "impossible via any implemented instruction" shapes.
         set_smart_account(&mut svm, &fixture)
+    } else {
+        create_smart_account(&mut svm, &payer, &fixture)
     };
 
     let challenge = rotate_nonce_challenge(
@@ -393,7 +405,7 @@ fn live_account() -> (LiteSVM, Keypair, TestPasskey, SmartAccountFixture, Pubkey
     let pk = TestPasskey::new(3);
     let mut f = SmartAccountFixture::default();
     f.root_pubkey33 = pk.pubkey33();
-    let account = set_smart_account(&mut svm, &f);
+    let account = create_smart_account(&mut svm, &payer, &f);
     (svm, payer, pk, f, account)
 }
 
@@ -794,7 +806,7 @@ fn wrong_pubkey_rejected() {
     let (mut svm, payer) = common::setup();
     set_clock(&mut svm, NOW);
     fixture.root_pubkey33 = other.pubkey33();
-    let account = set_smart_account(&mut svm, &fixture);
+    let account = create_smart_account(&mut svm, &payer, &fixture);
 
     let signer = TestPasskey::new(3);
     let challenge = rotate_nonce_challenge(
@@ -878,7 +890,7 @@ fn message_mismatch_rejected() {
     let pk = TestPasskey::new(3);
     let mut fixture = SmartAccountFixture::default();
     fixture.root_pubkey33 = pk.pubkey33();
-    let account = set_smart_account(&mut svm, &fixture);
+    let account = create_smart_account(&mut svm, &payer, &fixture);
     let challenge = rotate_nonce_challenge(
         &fixture.cluster_tag,
         &account,
