@@ -1,3 +1,12 @@
-{ "name": "@warden-spike/webauthn", "private": true, "type": "module",
-  "scripts": { "test": "playwright test" },
-  "devDependencies": { "@playwright/test": "^1.50.0" } }
+{
+  "name": "@warden-spike/webauthn",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "@noble/curves": "^1.8.0"
+  }
+}

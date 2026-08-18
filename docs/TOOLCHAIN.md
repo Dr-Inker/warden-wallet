@@ -25,3 +25,43 @@ verbatim output of the listed command, run in sequence per Step 4 of Task 1
   the task context; the verbatim printed output above is authoritative.
 - All Step 4 commands were run one at a time (no concurrent cargo/avm
   invocations), several under `nice -n 10`, per host stability constraints.
+
+## Spike 2b crates (`spikes/02-webauthn/onchain`)
+
+Recorded 2026-08-18. The task brief suggested `solana-program = "2"` /
+`solana-sdk = "2"`; those do **not** line up with the host's Agave 3.1.10
+toolchain, so the 3.x line was pinned instead. Everything below is what
+`cargo generate-lockfile` actually resolved (`spikes/02-webauthn/onchain/Cargo.lock`),
+and the combination builds with `cargo-build-sbf 3.1.10` / platform-tools v1.52
+and passes 4/4 LiteSVM tests.
+
+| Crate | Requirement in `Cargo.toml` | Resolved version | Notes |
+| --- | --- | --- | --- |
+| `solana-program` | `"3"` | `3.0.0` | program-side only |
+| `solana-sdk` | `"3"` | `3.0.0` | dev-dependency (test harness) |
+| `solana-secp256r1-program` | `"3"` | `3.0.0` | dev-dependency; builds the precompile instruction. **Needs OpenSSL dev headers on the host** (`apt-get install libssl-dev` — installed 2026-08-18, `pkg-config --modversion openssl` → `3.0.13`) |
+| `litesvm` | `{ version = "0.12", features = ["precompiles"] }` | `0.12.0` | `precompiles` is **not** a default feature; without it the secp256r1 precompile account is never loaded and the transaction fails with `InvalidProgramForExecution`. 0.12.x is the newest litesvm line still on the Agave **3.x** runtime (0.13+ moves to Agave 4.x, which would diverge from the installed CLI) |
+| `agave-precompiles` / `agave-feature-set` / `solana-program-runtime` | transitive via litesvm | `3.1.14` | `enable_secp256r1_precompile` (SIMD-0075, `srremy31J5Y25FrAApwVb9kZcfXbusYMMsvTK9aWv5q`) is present in litesvm's mainnet-active feature list (snapshot dated 2026-04-26), so `LiteSVM::new()` activates it |
+| `serde_json` / `hex` / `bincode` | `"1"` / `"0.4"` / `"1"` | `1.0.151` / `0.4.3` / `1.3.3` | dev-dependencies |
+
+Build facts:
+
+- `cargo-build-sbf` default `--arch v0`; the produced `spike_p256.so` is 26,224 B.
+- First `cargo-build-sbf` run: **1 m 19 s** wall (18.9 s of actual compile, the
+  rest is the one-time platform-tools v1.52 download + rustup toolchain link).
+  Subsequent no-op builds: ~0.2 s.
+- First `cargo test` (host) build: **~2 m 01 s** (compiles the whole Agave 3.1.14
+  runtime + OpenSSL bindings). Test execution itself: 0.4 s.
+- `solana_program::hash::hash` is **SHA-256** (`solana-sha256-hasher`, `sol_sha256`
+  syscall on-chain), verified by reading the crate source — not keccak.
+- Two benign warnings come from `entrypoint!` in `solana-program` 3.0.0
+  (`unexpected cfg condition value: custom-heap / custom-panic / solana`); they
+  are upstream noise, not a code defect.
+
+⚠ **Workspace caveat:** the repo-root `Cargo.toml` lists members that do not
+exist yet (`programs/*`, `spikes/03-txbudget/onchain`), which makes the root
+workspace unresolvable. The spike crate therefore carries its own empty
+`[workspace]` table so it can build standalone; that table must be removed (or
+the spike moved to the root workspace's `exclude` list) as soon as the root
+workspace resolves, otherwise cargo fails with *multiple workspace roots found
+in the same workspace*. See `spikes/02-webauthn/result.md`.

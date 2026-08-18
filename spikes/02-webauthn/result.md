@@ -200,3 +200,151 @@ checked by hand:
 5. Report back whether `prfFirst` was non-null in each case. **If it does not
    arrive, Task 9 must mark PRF as "UNVERIFIED on real devices → Argon2id
    fallback stays in scope."**
+
+---
+
+# Spike 2b — on-chain verification of the assertion (secp256r1 precompile + Instructions sysvar)
+
+Task: `.superpowers/sdd/2026-08-18-warden-phase0-scaffold-spikes/task-4-brief.md`.
+Artefacts: `spikes/02-webauthn/ts/src/prep.ts`, `spikes/02-webauthn/out/raw.json`,
+`spikes/02-webauthn/onchain/{Cargo.toml,src/lib.rs,tests/verify.rs}`.
+
+## Part (c) — on-chain verification results
+
+**Result: PASS.** A native SBF program, running in LiteSVM, bound the *real*
+Task-3 WebAuthn assertion to a `Secp256r1SigVerify1111111111111111111111111`
+precompile instruction in the same transaction: it located the precompile
+instruction through the Instructions sysvar, matched `(pubkey, message)`
+byte-for-byte against its own expectations, and parsed `authenticatorData` /
+`clientDataJSON`.
+
+### Headline numbers
+
+| Question | Answer |
+| --- | --- |
+| secp256r1 precompile available in LiteSVM? | **Yes** — but only with litesvm's non-default `precompiles` cargo feature (`litesvm = { version = "0.12", features = ["precompiles"] }`). Without it the whole tx fails with `InvalidProgramForExecution` before any log is emitted. No `solana-test-validator` fallback was needed. |
+| CU consumed by our program | **5,397** of 400,000 (`Program … consumed 5397 of 400000 compute units`). Precompile signature verification is *not* charged to the CU meter — it is charged as an extra signature at the fee level. |
+| Low-S normalization needed on this sample? | **Yes.** The Chrome virtual authenticator emitted a **high-S** signature; `p256.Signature.hasHighS()` was `true` and `normalizeS()` was required. Sending the signature exactly as the authenticator produced it makes the precompile reject the tx with `InstructionError(0, Custom(2))`. This is not an edge case to plan for later — it happened on the very first sample, so the extension **must** normalize S before every submission. |
+| Byte layout confirmed? | **Yes**, against `solana-secp256r1-program` 3.0.0 source (`src/lib.rs`, `new_secp256r1_instruction_with_signature`): `[num_signatures u8][padding u8][14-byte offsets]` then payload `pubkey(33) ‖ signature(64) ‖ message(n)`. With one signature the concrete offsets are `public_key_offset = 16`, `signature_offset = 49`, `message_data_offset = 113`, and all three `*_instruction_index` fields are `0xFFFF` ("this instruction"). Total precompile instruction data for our sample: **182 B**. |
+| Exact `origin` string | `chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi` — no trailing slash, no port; the RP ID is the bare extension id. |
+| `authenticatorData` flags | `0x05` = UP (0x01) | UV (0x04) both set; the program requires both. |
+| `solana_program::hash::hash` | **SHA-256**, confirmed by reading the source: `solana-program` 3.0.0 `hash` module → `solana-sha256-hasher`, which uses the `sol_sha256` syscall on-chain and `sha2::Sha256` off-chain. Not keccak. |
+
+### Transaction size (input for spike 03 — tx budget)
+
+Measured in the passing test:
+
+```
+precompile ix data: 182 B, our ix data: 367 B, serialized tx: 788 B
+```
+
+788 B of the 1232 B packet limit is consumed by a *minimal* two-instruction
+root-verify transaction with no real payload, no ALT, and only two accounts.
+Phase 1 must treat this as a hard constraint: the actual wallet action
+(transfer, CPI, guardian logic) has ~440 B of headroom left, which is why the
+plan's session-key / delegated-signing path exists. Most of the 367 B is
+`clientDataJSON` (164 B) + `authenticatorData` (37 B) + origin (51 B) +
+challenge (43 B); those are unavoidable if the on-chain program must re-derive
+`SHA256(clientDataJSON)` itself.
+
+### What the tests actually prove
+
+`spikes/02-webauthn/onchain/tests/verify.rs`, 4 tests, all passing:
+
+1. `binds_real_assertion` — the happy path above; asserts CU < 100,000.
+2. `rejects_wrong_challenge` — swapping the challenge for `AAAA` fails with
+   exactly `InstructionError(1, InvalidArgument)` **and** the
+   `challenge mismatch` program log, so it cannot pass for the wrong reason
+   (an earlier iteration of this test passed while the precompile was not even
+   loaded — hence the stricter assertion).
+3. `precompile_rejects_tampered_signature` — flipping one bit of the signature
+   kills the tx at instruction 0 with `Custom(2)`. This is the control that
+   proves LiteSVM is *really running* the precompile rather than skipping it.
+4. `precompile_rejects_high_s_signature` — the un-normalized (high-S)
+   signature is rejected with `Custom(2)`, proving the SEC1 malleability guard
+   is enforced.
+
+### Honest caveat — the substring-match approach to `clientDataJSON`
+
+The program checks `clientDataJSON` with three raw byte-substring searches:
+`"type":"webauthn.get"`, `"challenge":"<b64url>"`, `"origin":"<origin>"`.
+This is **not a JSON parse**, and it is only sound because of properties that
+are not guaranteed by the WebAuthn spec:
+
+- **Duplicate keys are the real hole.** JSON permits
+  `{"origin":"https://evil.example", … ,"origin":"chrome-extension://<id>"}`.
+  A `contains` check passes; a real parser would resolve one of the two (which
+  one is parser-dependent). Any party that can influence *any* string field of
+  `clientDataJSON` could in principle inject a second, attacker-chosen key.
+  (Quote-smuggling *inside* a string value is blocked, because JSON escapes a
+  literal `"` as `\"`, so an injected `"origin":"…"` never matches byte-wise —
+  but that is a happy accident of escaping, not a designed defence.)
+- **Escaping breaks the legitimate case, not just the malicious one.** JSON
+  lets a UA write any character as an escape — `chrome-extension:\/\/…` or
+  `\u002f` for `/` are both legal and semantically identical. Our byte-compare
+  would then fail on a perfectly valid assertion (availability bug, silent
+  lockout).
+- **Ordering/whitespace**: `contains` happens to be order- and
+  extra-field-tolerant (e.g. a future `"topOrigin"` member is ignored), which
+  is a *virtue* here — but it means we also silently ignore fields we have not
+  audited. `crossOrigin` in particular is **not** checked by this spike; a
+  cross-origin assertion would pass. Phase 1 must check it.
+- **Cost is O(haystack × needle)**: fine at 164 B (5.4k CU total), but the
+  program does not bound `clientDataJSON` length, so a caller can inflate CU
+  and tx size at will. Phase 1 must impose a hard length cap.
+
+**Phase 1 requirement (carried forward):** replace `contains` with either
+(a) a strict, allocation-light, escape-aware scanner that walks the JSON
+object at the top level, rejects duplicate keys, and validates `type`,
+`challenge`, `origin` **and** `crossOrigin`; or (b) a canonical-template bind
+where the extension reconstructs the exact expected `clientDataJSON` bytes and
+the program does a single full-buffer equality check (cheapest in CU, but
+brittle across UA serialization changes — needs a UA-version gate). Option (a)
+is the recommendation; option (b) is worth measuring as a CU optimisation.
+
+### Other caveats worth carrying to Phase 1
+
+- **UV is required by this program** (`flags & 0x05 == 0x05`). Some synced /
+  cross-device passkey flows return UP-only assertions. Phase 1 must decide
+  whether UV is mandatory for a root-key action (recommended: yes for root,
+  configurable for lower-privilege actions) and must surface a clear error.
+- **`precompile_ix_index` comes from caller-supplied instruction data.** That
+  is safe here only because the program independently checks
+  `ix.program_id == SECP256R1_ID`, `num_signatures == 1`, all three
+  `*_instruction_index == 0xFFFF` (so the precompile cannot be made to verify
+  bytes living in a *different* instruction), and then compares pubkey and
+  message. Removing any one of those checks reopens a substitution attack.
+- **Signature counter is not checked.** `authenticatorData[33..37]` (signCount)
+  is ignored; replay protection comes entirely from the challenge, which the
+  Phase 1 program must bind to on-chain state (nonce/recent blockhash), not
+  just compare to a value it was handed.
+- **The root pubkey is passed in instruction data in this spike.** In Phase 1
+  it must come from the wallet account state, not from the caller.
+
+### Build/workspace note (blocking issue for whoever fixes the root manifest)
+
+The repo-root `Cargo.toml` lists workspace members that do not exist yet
+(`programs/*` and `spikes/03-txbudget/onchain`), so the root workspace cannot
+be resolved at all — even
+`cargo --manifest-path spikes/02-webauthn/onchain/Cargo.toml` fails with
+`failed to load manifest for workspace member /opt/warden/programs/*`. Per the
+task brief the root manifest was **not** edited. Instead the spike crate
+declares its own empty `[workspace]` table so it builds and tests standalone
+(its lockfile and `target/` therefore live under
+`spikes/02-webauthn/onchain/`). Verified empirically: once the missing members
+exist, that `[workspace]` table makes cargo fail with
+`multiple workspace roots found in the same workspace`. **Action for the next
+task that touches the root manifest: delete the `[workspace]` table from
+`spikes/02-webauthn/onchain/Cargo.toml`, or add the spikes to the root
+workspace's `exclude` list** (spikes are throwaway evidence per `CLAUDE.md`, so
+`exclude` is arguably the better long-term shape).
+
+### Reproduce
+
+```bash
+cd /opt/warden && pnpm install
+cd spikes/02-webauthn/ts && node --experimental-strip-types src/prep.ts   # → out/raw.json
+cd /opt/warden/spikes/02-webauthn/onchain
+cargo-build-sbf                    # ~19 s compile (+ ~1 min first-time platform-tools download)
+cargo test -- --nocapture          # 4 passed
+```

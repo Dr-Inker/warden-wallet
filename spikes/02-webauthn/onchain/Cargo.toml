@@ -1,0 +1,32 @@
+[package]
+name = "spike-p256"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+solana-program = "3"
+
+[dev-dependencies]
+litesvm = { version = "0.12", features = ["precompiles"] }  # secp256r1/ed25519/secp256k1 precompiles are behind this non-default feature
+solana-sdk = "3"
+solana-secp256r1-program = "3"
+serde_json = "1"
+hex = "0.4"
+bincode = "1"
+
+[features]
+no-entrypoint = []
+
+# NOTE (spike 2b): the repo-root Cargo.toml lists workspace members that do not
+# exist yet (`programs/*` and `spikes/03-txbudget/onchain`), so the root
+# workspace cannot be resolved at all right now and even
+# `cargo --manifest-path spikes/02-webauthn/onchain/Cargo.toml` fails on it.
+# This empty `[workspace]` table makes the spike crate its own workspace root so
+# it can be built and tested standalone. It MUST be deleted (or the spike moved
+# to the root workspace's `exclude` list) the moment the root workspace becomes
+# resolvable — otherwise cargo fails with "multiple workspace roots found in the
+# same workspace". Verified empirically, see spikes/02-webauthn/result.md.
+[workspace]
