@@ -931,8 +931,14 @@ fn token_cpi_failure_leaves_state_unchanged() {
     // The vault holds less than the (perfectly legal, within-caps) amount.
     set_token_account(&mut svm, &vault_ata, &tok_mint(), &account, 100);
 
+    // Snapshot BOTH accounts twice over: the raw on-chain bytes (the strongest
+    // statement — every field, including ones this test does not name and ones
+    // Phase 1B may add) and the decoded structs (so a failure says WHICH field
+    // moved instead of "byte arrays differ").
     let before = read_smart_account(&svm, &account);
+    let before_raw = svm.get_account(&account).expect("account exists").data;
     let session_before = read_session(&svm, &session);
+    let session_before_raw = svm.get_account(&session).expect("session exists").data;
 
     let ix = session_spl_ix(&session_kp, account, session, vault_ata, dest_ata, tok_mint(), TOK_SESSION_PER_TX);
     let e = send(&mut svm, &[&payer, &session_kp], &[ix]).expect_err("the token CPI must fail");
@@ -949,15 +955,48 @@ fn token_cpi_failure_leaves_state_unchanged() {
     );
 
     let after = read_smart_account(&svm, &account);
+    let session_after = read_session(&svm, &session);
+
+    // Every bucket, not just the mint that was being moved: all
+    // `MAX_MINT_CAPS` slots and all four fields of each (`day_start`,
+    // `spent_today`, `ring_day_index`, `ring`) — `MintBuckets` derives
+    // `PartialEq`, so this compares the whole array, and a debit that rolled
+    // the day/ring bookkeeping without spending would fail here too.
+    assert!(
+        after.buckets == before.buckets,
+        "every MintBuckets slot must be byte-identical after a failed CPI"
+    );
+    // The scalars a partial rollback would most plausibly leave behind.
     assert_eq!(after.root_nonce, before.root_nonce, "no nonce consumed");
+    assert_eq!(after.generation, before.generation, "generation untouched");
+    assert_eq!(after.frozen_kind, before.frozen_kind, "frozen state untouched");
     assert_eq!(after.buckets[1].spent_today, 0, "the token day bucket was rolled back");
-    assert_eq!(after.buckets[1].ring, before.buckets[1].ring, "the 30-day ring was rolled back");
     assert_eq!(after.buckets[0].spent_today, 0, "SOL's bucket untouched");
+
+    // The whole SessionKey, not only `lifetime_spent`.
     assert_eq!(
-        read_session(&svm, &session).lifetime_spent,
-        session_before.lifetime_spent,
+        session_after.lifetime_spent, session_before.lifetime_spent,
         "lifetime_spent was rolled back"
     );
+    assert_eq!(session_after.lifetime_cap, session_before.lifetime_cap);
+    assert!(session_after.caps == session_before.caps, "session caps unchanged");
+    assert_eq!(session_after.expiry_ts, session_before.expiry_ts);
+    assert_eq!(session_after.ops_mask, session_before.ops_mask);
+    assert_eq!(session_after.generation_at_grant, session_before.generation_at_grant);
+
+    // …and the raw bytes of both accounts, which subsumes every assertion
+    // above and covers any field they forgot (or that 1B adds).
+    assert_eq!(
+        svm.get_account(&account).expect("account exists").data,
+        before_raw,
+        "the SmartAccount's raw bytes must be unchanged"
+    );
+    assert_eq!(
+        svm.get_account(&session).expect("session exists").data,
+        session_before_raw,
+        "the SessionKey's raw bytes must be unchanged"
+    );
+
     assert_eq!(token_amount(&svm, &vault_ata), 100, "vault balance unchanged");
     assert_eq!(token_amount(&svm, &dest_ata), 0, "destination balance unchanged");
 }
