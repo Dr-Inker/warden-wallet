@@ -246,17 +246,20 @@ fn rejects_ed25519_root_in_phase_1a() {
     expect_reject(args, err::ROOT_KIND_UNSUPPORTED);
 }
 
+/// The ENCODING shapes a confused client actually produces. NOT an on-curve
+/// check — 1A does not have one (see `validate_root`'s deferral note and the
+/// unit test `root_accepts_an_off_curve_x_phase_1a_gap`).
 #[test]
-fn rejects_a_non_canonical_compressed_root_point() {
+fn rejects_a_malformed_compressed_root_point() {
     let real = passkey::TestPasskey::new(1).pubkey33();
-    // Uncompressed-point prefix; zero x; x == the field prime.
+    // Uncompressed-point prefix; x == the field prime; all-0xff filler.
     let mut bad_prefix = real;
     bad_prefix[0] = 0x04;
-    let mut zero_x = real;
-    zero_x[1..33].copy_from_slice(&[0u8; 32]);
     let mut at_prime = real;
     at_prime[1..33].copy_from_slice(&warden::instructions::create_account::P256_FIELD_PRIME_BE);
-    for (i, pk) in [bad_prefix, zero_x, at_prime].into_iter().enumerate() {
+    let mut filler = [0xffu8; 33];
+    filler[0] = 0x03;
+    for (i, pk) in [bad_prefix, at_prime, filler].into_iter().enumerate() {
         let mut args = honest_args([(71 + i) as u8; 32]);
         args.root = RootKey::P256Passkey { pubkey: pk };
         expect_reject(args, err::INVALID_ROOT_KEY);

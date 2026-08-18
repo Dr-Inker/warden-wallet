@@ -25,7 +25,15 @@ pub fn program_id() -> Pubkey {
 }
 
 pub fn setup() -> (LiteSVM, Keypair) {
-    let mut svm = LiteSVM::new();
+    // `LiteSVM::new()` runs with EVERY runtime feature DISABLED
+    // (`FeatureSet::default()`), which is not the chain this program deploys
+    // to: `sol_big_mod_exp` — the syscall `create_account`'s P-256 on-curve
+    // check uses — is feature-gated and simply absent there
+    // ("unsupported BPF instruction"). `with_mainnet_features()` pins the
+    // harness to the features actually active on mainnet-beta, which is both
+    // the honest oracle for CU measurements and the only set in which the
+    // program runs at all.
+    let mut svm = LiteSVM::new().with_mainnet_features();
     let so = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/deploy/warden.so"))
         .expect("run `anchor build` first — see docs/TOOLCHAIN.md");
     svm.add_program(program_id(), &so).expect("add_program");

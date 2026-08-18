@@ -124,6 +124,49 @@ pub(crate) fn handler(ctx: Context<CreateAccount>, args: CreateAccountArgs) -> R
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// secp256r1 (P-256) root-key encoding
+// ---------------------------------------------------------------------------
+//
+// **Why there is no on-curve check here, and what is carried to 1B.**
+//
+// The fix re-review (Codex thread 01a0164f) is right that an ENCODING check
+// is weaker than the property that matters: roughly half of all x values
+// below `p` are not on the curve, the secp256r1 precompile rejects every one
+// of them, and an account created around such a key is unusable.
+//
+// Deciding "is `x³ - 3x + b` a quadratic residue mod p" needs 256-bit field
+// arithmetic. Two ways to get it were tried and rejected, in this order:
+//
+// 1. `sol_big_mod_exp` (Euler's criterion in two syscalls, ~30 lines of
+//    modular add/sub around it). IMPLEMENTED AND THEN REVERTED: the syscall
+//    is gated behind `enable_big_mod_exp_syscall`, which litesvm 0.12's
+//    mainnet-active feature snapshot (2026-04-26) does NOT list — the
+//    program aborted with "unsupported BPF instruction" even under
+//    `with_mainnet_features()`. Shipping a program that calls a syscall whose
+//    activation on the target cluster cannot be verified would turn EVERY
+//    `create_account` into a hard failure: strictly worse than the defect it
+//    closes.
+// 2. Hand-rolled 256-bit modular multiplication in the program. Rejected on
+//    risk: new, unaudited field arithmetic written at the close of a
+//    milestone is a more likely source of a real defect than the one it
+//    removes.
+//
+// The complete property is **proof of possession at creation** — a real root
+// ceremony over `generation = 0`, `root_nonce = 0`, which makes the
+// precompile itself do the curve validation for free. It does not fit 1A's
+// packet budget (`RootArgs` + the precompile instruction are ~400 B, against
+// a `MAX_MINTS_AT_CREATE` transaction already at 1,144 B of 1,232), so it is
+// carried into Phase 1B's pre-ship gate alongside O11 — see
+// docs/spikes/DECISION.md and docs/program/PHASE1A-MEASUREMENTS.md.
+//
+// Residual risk, stated plainly: this is a self-inflicted-loss vector, not a
+// theft vector. A root nobody can sign for is a dead account, not a stolen
+// one, and reaching it requires a client that invents a root pubkey instead
+// of reading it out of the authenticator's SPKI. The client mitigation is
+// mandatory and documented: round-trip one real root instruction
+// (`rotate_nonce`) against a newly created account BEFORE funding it.
+
 /// Root-key rules. **Milestone-review finding (Important): creation used to
 /// accept a root that no root-authorized instruction can ever use**, which
 /// turns a funded account into a permanent loss.
@@ -133,31 +176,26 @@ pub(crate) fn handler(ctx: Context<CreateAccount>, args: CreateAccountArgs) -> R
 ///   hardware/advanced users (spec §4) and 1B may implement its signature
 ///   path; until then, storing it would create an account whose every root
 ///   instruction aborts.
-/// - A P-256 root must at least be a **canonical compressed point encoding**:
-///   prefix `0x02`/`0x03` and `0 < x < p`. Values outside that range are
-///   rejected by the secp256r1 precompile itself, so accepting them here can
-///   only ever produce an unusable account.
+/// - A P-256 root must be a well-formed compressed point ENCODING: prefix
+///   `0x02`/`0x03` and `x < p`. This catches the shapes a confused client
+///   actually produces (a 32-byte Ed25519 key with a junk prefix byte, an
+///   uncompressed `0x04` point, an all-`0xff` filler) but NOT an x that is
+///   simply off the curve — see the long note above this function for why
+///   the on-curve check is deferred to 1B and what the client must do
+///   meanwhile.
 ///
-/// **Honest boundary (carried to 1B):** this is an *encoding* check, not an
-/// on-curve check — proving `x³ - 3x + b` is a quadratic residue mod `p` needs
-/// 256-bit field arithmetic the program does not carry, and would cost far
-/// more CU than the whole rest of this instruction. A well-formed-but-not-
-/// on-curve x therefore still creates an account whose assertions the
-/// precompile will reject. The complete fix is **proof of possession at
-/// creation** (a real root ceremony over `generation = 0`, `root_nonce = 0`),
-/// which does not fit 1A's packet budget alongside a multi-mint policy — see
-/// docs/program/PHASE1A-MEASUREMENTS.md. Until it lands, the client MUST
-/// round-trip one real root instruction (`rotate_nonce`, 15.7k CU) against a
-/// newly created account BEFORE funding it.
+/// **1B: any instruction that SETS a root (recovery) must call
+/// `validate_root` too.**
 fn validate_root(root: &RootKey) -> Result<()> {
     let pubkey = match root {
         RootKey::P256Passkey { pubkey } => pubkey,
         RootKey::Ed25519 { .. } => return Err(WardenError::RootKindUnsupported.into()),
     };
     require!(pubkey[0] == 0x02 || pubkey[0] == 0x03, WardenError::InvalidRootKey);
-    let x = &pubkey[1..33];
-    require!(x.iter().any(|b| *b != 0), WardenError::InvalidRootKey); // x != 0
-    require!(x < &P256_FIELD_PRIME_BE[..], WardenError::InvalidRootKey); // x < p
+    // x must be a field element. `x == 0` is deliberately NOT excluded:
+    // P-256 has a valid point at x = 0, and the first fix pass rejected it
+    // wrongly (re-review finding).
+    require!(pubkey[1..33] < P256_FIELD_PRIME_BE[..], WardenError::InvalidRootKey);
     Ok(())
 }
 
@@ -343,14 +381,51 @@ mod tests {
         RootKey::P256Passkey { pubkey }
     }
 
+    /// The x-coordinate of the P-256 GENERATOR — a point that indisputably
+    /// exists, unlike a hand-picked small integer (fix re-review finding: the
+    /// first pass "accepted" x = 1 and x = p-1, both of which are OFF the
+    /// curve and would have been rejected by the precompile).
+    const GX_BE: [u8; 32] = [
+        0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40,
+        0xf2, 0x77, 0x03, 0x7d, 0x81, 0x2d, 0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98,
+        0xc2, 0x96,
+    ];
+
+    fn compressed(x: [u8; 32], prefix: u8) -> [u8; 33] {
+        let mut pk = [0u8; 33];
+        pk[0] = prefix;
+        pk[1..33].copy_from_slice(&x);
+        pk
+    }
+
     #[test]
-    fn root_accepts_a_canonical_compressed_point_encoding() {
+    fn root_accepts_the_generator_under_both_parities() {
         for prefix in [0x02u8, 0x03] {
-            let mut pk = [0u8; 33];
-            pk[0] = prefix;
-            pk[32] = 1; // x = 1, well inside [1, p)
-            assert!(validate_root(&p256_root(pk)).is_ok());
+            assert!(validate_root(&p256_root(compressed(GX_BE, prefix))).is_ok());
         }
+    }
+
+    /// x = 0 IS on P-256 (`0³ - 0 + b` is a quadratic residue — verified
+    /// independently). The first fix pass rejected it out of caution and was
+    /// wrong to; re-review finding.
+    #[test]
+    fn root_accepts_x_zero_which_is_a_real_point() {
+        assert!(validate_root(&p256_root(compressed([0u8; 32], 0x02))).is_ok());
+    }
+
+    /// **This test states the KNOWN GAP, it does not paper over it.** x = 1
+    /// is a well-formed encoding of a point that is NOT on P-256, and 1A
+    /// accepts it — see the deferral note above `validate_root`. When 1B adds
+    /// proof of possession (or an on-curve check), this test must flip to
+    /// asserting rejection.
+    #[test]
+    fn root_accepts_an_off_curve_x_phase_1a_gap() {
+        let mut x = [0u8; 32];
+        x[31] = 1; // off-curve, independently verified
+        assert!(
+            validate_root(&p256_root(compressed(x, 0x02))).is_ok(),
+            "1A checks the ENCODING only; flip this when 1B closes the gap"
+        );
     }
 
     #[test]
@@ -362,11 +437,8 @@ mod tests {
     #[test]
     fn root_rejects_a_non_compressed_prefix() {
         for prefix in [0x00u8, 0x01, 0x04, 0x05, 0xff] {
-            let mut pk = [0u8; 33];
-            pk[0] = prefix;
-            pk[32] = 1;
             assert_eq!(
-                validate_root(&p256_root(pk)).unwrap_err(),
+                validate_root(&p256_root(compressed(GX_BE, prefix))).unwrap_err(),
                 err(WardenError::InvalidRootKey),
                 "prefix {prefix:#04x} must be rejected"
             );
@@ -374,32 +446,16 @@ mod tests {
     }
 
     #[test]
-    fn root_rejects_zero_x() {
-        let mut pk = [0u8; 33];
-        pk[0] = 0x02;
-        assert_eq!(validate_root(&p256_root(pk)).unwrap_err(), err(WardenError::InvalidRootKey));
-    }
-
-    #[test]
     fn root_rejects_x_at_or_above_the_field_prime() {
         // x == p, and x == all-ones (> p).
-        let mut at_p = [0u8; 33];
-        at_p[0] = 0x02;
-        at_p[1..33].copy_from_slice(&P256_FIELD_PRIME_BE);
-        let mut above = [0xffu8; 33];
-        above[0] = 0x03;
-        for pk in [at_p, above] {
-            assert_eq!(validate_root(&p256_root(pk)).unwrap_err(), err(WardenError::InvalidRootKey));
+        let mut above = [0xffu8; 32];
+        above[31] = 0xff;
+        for x in [P256_FIELD_PRIME_BE, above] {
+            assert_eq!(
+                validate_root(&p256_root(compressed(x, 0x02))).unwrap_err(),
+                err(WardenError::InvalidRootKey)
+            );
         }
-    }
-
-    #[test]
-    fn root_accepts_x_exactly_one_below_the_field_prime() {
-        let mut pk = [0u8; 33];
-        pk[0] = 0x02;
-        pk[1..33].copy_from_slice(&P256_FIELD_PRIME_BE);
-        pk[32] -= 1;
-        assert!(validate_root(&p256_root(pk)).is_ok());
     }
 
     // -- validate_policy -------------------------------------------------
