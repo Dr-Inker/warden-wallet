@@ -1,0 +1,48 @@
+# Solana Wallet/Smart-Account Audit Landscape — Findings & Warden Readiness Checklist
+
+## Findings (bulleted, cited)
+
+**Squads v4** (multisig smart-account, Anchor) has four public audits in-repo: OtterSec, Neodyme, Trail of Bits, and Certora (formal verification) — [github.com/Squads-Protocol/v4/tree/main/audits](https://github.com/Squads-Protocol/v4/tree/main/audits).
+
+- **OtterSec** (commit 7d79e69→64af733): 0 critical/high/medium, 3 low + 3 informational, all resolved. Ran **Kani** formal verification and proved concrete invariants: multisig always has ≥1 proposer/executor/voter, no duplicate members, `threshold > 0`, `stale_transaction_index ≤ transaction_index`; `SpendingLimit` always valid (non-empty members, `remaining_amount ≤ amount`); **transaction non-malleability** (executor cannot alter accounts/permissions from the signed message); **signer-seed uniqueness** (every CPI signer-seed set must contain the multisig or transaction pubkey, preventing cross-multisig signature reuse) — full findings + Kani snippets: `ottersec_squads_v4_report_2024_final.pdf`.
+- **Trail of Bits** (same commit range): 1 **High** — `TOB-SQUADS-7`, unauthenticated `create_key` lets an attacker front-run `multisig_create` and squat the PDA with attacker-controlled members, later draining the vault; 1 **Medium** — `TOB-SQUADS-8`, ephemeral signer keys derived only from the batch key are reused across every tx in a batch, causing account-init collisions and stuck batches; plus informational findings on weak logging ("insufficient for off-chain monitoring to detect an ongoing attack") and no fuzzing performed (manual review only, time-boxed) — `trail_of_bits_squads_v4_security_audit.pdf`.
+- **Neodyme**: 1 Low — `ND-SQD3-LO-01`, `TransactionBuffer` PDAs seeded without the creator's pubkey (only a 1-byte index) let a malicious `Initiate`-permission member fill all 256 slots with unclosable garbage → DoS; fixed by adding the creator pubkey to the seeds — `neodyme_squads_v4_report.pdf`.
+- **Certora**: formal spec of access control, state consistency, vote-threshold enforcement, and fund-safety properties (WebFetch could not reliably extract this PDF's body — treat any granular claim beyond the invariant categories as **UNVERIFIED**).
+
+**LazorKit v2** ([lazor-kit/program-v2](https://github.com/lazor-kit/program-v2)) is a **P-256 passkey Solana smart wallet** — architecturally the closest public precedent to Warden — audited by **Accretion Labs, commissioned via the Solana Foundation** (report: `docs/audits/2026-accretion-solana-foundation-lazorkit-audit-A26SFR1.pdf`, engagement closed 2 Feb 2026, all 14 findings FIXED):
+
+- **ACC-C1 (Critical)**: the `execute` signed payload bound accounts **by index only, not pubkey** — an attacker could reorder the account list in the actual transaction while replaying a valid signature, swapping transfer recipients.
+- **ACC-C2 (Critical)**: `RemoveAuthority` skipped the "target belongs to this wallet" check whenever the caller's role was Owner (`role == 0`), enabling **cross-wallet authority deletion**.
+- **ACC-H1 (High)**: `target_auth_pda` and `refund_dest` were absent from the signed payload in authority removal → signature reuse to delete a different authority and steal the reclaimed rent.
+- **ACC-H2 (High)**: the secp256r1 authenticator's **write path** inserted 4 padding bytes the **read path** didn't account for, corrupting `rp_id_hash` parsing.
+- **ACC-M1 (Medium)**: nonce/anti-replay used a truncated slot index that wraps (~every 1000 slots), letting an old signature become valid again.
+- **ACC-M2 (Medium)**: no instruction discriminator/domain separator in the signed payload → a signature for one instruction could replay against another with the same payload shape.
+- **ACC-L1**: `system_program` account never checked against the hardcoded ID (spoofable). **ACC-I3**: wallet validation checked owner but not account discriminator. **ACC-I2**: unguarded self-reentrancy via CPI (mitigated even though not yet exploitable) — `program/src/processor/execute.rs#L184`.
+
+**Swig** ([anagrambuild/swig-wallet](https://github.com/anagrambuild/swig-wallet)) states it was "independently audited by Accretion" but the report is **not public** ("shared upon request") — UNVERIFIED beyond that claim. **Marinade** and **Jito** program repos were checked in this pass but yielded no in-repo audit artifacts beyond an Immunefi bug-bounty pointer (jito-programs `SECURITY.md`); Backpack, Fuse, and Solana Mobile Seed Vault audit reports were **not located** in this session (Solana Mobile's `seed-vault-sdk` explicitly disclaims security: "makes zero guarantees about security... never use with any Solana accounts other than test accounts") — treat this whole cluster as an **open gap**, not a clean bill of health.
+
+## What Warden should adopt / change
+
+1. **Bind full account pubkeys (not indices) into everything the passkey signs.** ACC-C1 is Warden's nearest-miss: the `execute` instruction rewrite must hash/sign the *exact* destination, adapter, and fee-recipient pubkeys, not positions in an account list. Add a negative test that reorders accounts under a captured signature and asserts failure.
+2. **Domain-separate every signed payload** (ACC-M2): embed instruction discriminator + program ID + expected chain/cluster in Warden's WebAuthn `clientDataJSON` challenge construction, not just the raw message bytes, so a session-key or passkey signature can never replay across instruction types.
+3. **Never let a privileged role short-circuit ownership checks** (ACC-C2): guardian/session-key revocation, threshold changes, and any admin path must *always* verify the target PDA's `wallet` field equals the caller's wallet PDA before applying role-based permission logic — write this as an explicit unit test per admin instruction, not just a spot check.
+4. **Treat the P-256/secp256r1 authenticator-data (de)serializer as a single source of truth.** ACC-H2 was a write/read layout drift. Warden should have one canonical struct with round-trip property tests (`write → read → assert equality`) and ideally the `dimensional-analysis`/`property-based-testing` skills applied to the WebAuthn clientDataJSON scanner.
+5. **Anti-replay must use full/monotonic state, not truncated indices** (ACC-M1): prefer a monotonically increasing on-chain nonce or the full slot-hash rather than a truncated slot that wraps.
+6. **PDA seeds for any per-user, per-session, or bounded-slot account must include the owner/creator pubkey** — the Neodyme `TransactionBuffer` DoS and the pattern in Warden's session-key slots are the same bug class: predictable shared seeds enable squatting/DoS by any co-permissioned actor.
+7. **Require a signature over `create_key`/wallet-init seeds** (TOB-SQUADS-7): Warden's initial passkey-registration PDA must not be creatable from an unauthenticated arbitrary seed — require the claimed owner to sign, or the wallet-creation flow is front-runnable.
+8. **Guard self-reentrancy explicitly** in the `execute`/adapter-CPI path (ACC-I2, and OtterSec's `ix.program_id == id()` discriminator-blocklist pattern) — Warden's adapter registry CPIs into arbitrary programs from inside its own program context, which is exactly the shape both audits flagged.
+9. **Check owner AND discriminator on every account**, including `system_program` (ACC-L1, ACC-I3) — a `require_keys_eq!(system_program.key(), system_program::ID)` and discriminator check on every PDA read, everywhere.
+10. **Adopt the LazorKit `AUDIT_PREP.md` pattern**: tag a frozen commit (`audit-frozen-vN`), record SBF binary SHA-256 + `solana-verify get-program-hash` attestations, ban `TODO`/`unimplemented!`/`#[ignore]`d tests on the audit branch via `git grep` CI gate, and produce a delta-brief for re-audits — this is a reusable checklist item, not just LazorKit-specific practice.
+11. **Improve on-chain logging** — Trail of Bits rated Squads' auditing/logging "Weak... not sufficient for off-chain monitoring." Warden's day/30-day bucket enforcement and timelock triggers should emit structured events an off-chain watcher can alert on.
+12. **State and prove Kani-style invariants before the audit, not during it**: no-duplicate-guardians/session-keys, threshold/cap > 0, monotonic spend buckets, and non-malleability of the rewritten `execute` instruction (OtterSec's approach is a template Warden can reuse directly since Anchor/Kani tooling is public).
+
+## Open questions
+
+- What does Certora's Squads v4 formal spec actually prove (PDF text extraction failed — needs a clean re-fetch or manual read)?
+- Are there non-public OtterSec/Neodyme audits of Swig, Fuse, or Backpack's smart-wallet program that a direct request (not web search) could surface?
+- Does Solana Mobile have any *production* Seed Vault security review, given the SDK's explicit "test accounts only" disclaimer?
+- Has Warden's adapter/CPI conservation-check design been tested against the exact TOB threat-model question set ("can funds leave a vault other than through the approval process?", "can spending limits be bypassed?")?
+
+## Confidence
+
+**High** for Squads v4 (four full-text primary PDFs extracted and quoted) and LazorKit v2 (full-text primary PDF, directly analogous passkey architecture — the single most load-bearing source for Warden). **Low/UNVERIFIED** for Swig (report not public), and **not established** for Fuse, Backpack, Solana Mobile, and Marinade/Jito CPI-audit specifics within this session's time/tool budget (WebSearch quota was exhausted early; GitHub API/`gh` and direct PDF `curl`+`pdftotext` were used as the fallback and worked well — recommend that path first in any follow-up).

@@ -1,0 +1,47 @@
+# Recovery & Guardian Designs in Production Smart-Contract Wallets — vs. Warden
+
+## Findings
+
+**Argent (Starknet/Ethereum).** Guardian majority (>50% of a chosen quorum) can rotate the signing key; a delay (documented as 24–48h in overview sources, and specifically **36h** in the incident writeup below) gives the owner a cancellation window. [eco.com](https://eco.com/support/en/articles/15254048-smart-wallet-recovery-2026-social-multisig-passkey-options) A 2020 OpenZeppelin-disclosed bug (`ceil(guardianCount/2)` returning 0 when `guardianCount==0`) let an attacker call `executeRecovery` on a **zero-guardian** wallet with *no signatures at all*, wait the 36h delay, then seize it; 329 wallets were immediately exposed (5,513 more on next upgrade), 0 funds lost, fixed by forcing a non-zero signature requirement. [openzeppelin.com/news/argent-vulnerability-report](https://www.openzeppelin.com/news/argent-vulnerability-report)
+
+**Safe.** Safe itself ships no native guardian layer; Candide Labs built a formally-reviewed **Social Recovery Module** as a plug-in: owner sets guardians + threshold, a guardian-initiated recovery request enters a **grace period** (Candide's default is **14 days**, vs. Argent's 36h), and the owner can call `cancelRecovery` any time before finalization. [docs.candide.dev](https://docs.candide.dev/wallet/plugins/recovery-with-guardians/) · [eco.com](https://eco.com/support/en/articles/15254048-smart-wallet-recovery-2026-social-multisig-passkey-options)
+
+**Coinbase Smart Wallet.** No guardian quorum at all: primary auth is a WebAuthn passkey (often cloud-synced via iCloud Keychain/Google Password Manager); backup is a single user-generated "recovery phrase" that acts as a **second full signer** capable of unilaterally adding a new passkey/owner — no threshold, no guardians, no documented delay. [help.coinbase.com](https://help.coinbase.com/en/wallet/getting-started/smart-wallet-recovery) This collapses the guardian model to a single point of failure functionally equivalent to a legacy seed phrase.
+
+**ZeroDev Kernel.** Guardian recovery is implemented as a special case of its modular **Weighted-ECDSA validator**: a `guardianSigner` is installed as a validator with a threshold, plus a dedicated recovery-executor contract. [docs.zerodev.app](https://docs.zerodev.app/advanced/account-recovery/sdk-recovery) Default delay/cancellation parameters were **not documented in what I could fetch — UNVERIFIED**, since Kernel leaves timelock policy to the integrator via its modular hook system.
+
+**Loopring.** Guardian majority (>50%) can execute recovery; one secondary source states this "takes effect immediately" per-network (no built-in delay described), and each deployed chain requires a separate guardian recovery + separate gas cost — the official docs page returned a DNS timeout so exact delay/veto mechanics are **UNVERIFIED**.
+
+**Squads (Solana).** Squads has **no dedicated guardian/recovery subsystem** distinct from its ordinary M-of-N multisig; "recovery" from a lost key is just a normal proposal by the remaining threshold members to remove/replace that signer. Docs explicitly warn operators to size threshold so a **single lost key doesn't strand the multisig** (e.g., 2-of-3 tolerates one loss). [Squads docs summary via search] v4 added general time-locks and per-member spending limits, but these are multisig-governance features, not a guardian-freeze/contest primitive. [squads.xyz/blog/v4-and-new-squads-app](https://squads.xyz/blog/v4-and-new-squads-app)
+
+**Backpack / Fuse.** Backpack appears to ship **plain seed-phrase self-custody with no social-recovery layer** (directionally supported, not exhaustively confirmed — UNVERIFIED absence). Fuse (Solana) uses up to 3 "Recovery Keys" combined with an active key rather than a majority-of-guardians quorum — a different, weaker-quorum topology.
+
+**Incident: Bybit, Feb 2025 ($1.5B).** Not a guardian-logic bug but the canonical *trust-boundary* failure for any co-signer/guardian model: attackers compromised Safe{Wallet}'s front-end (AWS S3 JS injection) so Bybit's multisig signers' hardware devices displayed a routine transfer while the actual signed payload swept funds via a hidden function — a pure WYSIWYS (what-you-sign-is-what-you-see) break, not an on-chain flaw. [NCC Group](https://www.nccgroup.com/research/in-depth-technical-analysis-of-the-bybit-hack/) · [Sygnia](https://www.sygnia.co/blog/sygnia-investigation-bybit-hack/)
+
+**Threat taxonomy (2026 SoK, arXiv:2608.07104).** Systematizes recurring guardian-recovery failure classes: guardian collusion/malicious helpers, coercion (pressure on user *or* guardian to approve/disclose), **liveness/availability failures** (16 of the corpus's failure rows — guardians, fees, or challenge windows simply unavailable when needed), on-chain metadata leaking distress/relationship graphs, and — critically — "uneven" post-recovery hygiene: guardian reset/cancellation/rollback/dispute handling is under-specified across most production systems. [arxiv.org/html/2608.07104v1](https://arxiv.org/html/2608.07104v1)
+
+**Cantina practitioner writeup.** Recurring attack patterns: guardian approvals without nonces (replayable), malicious guardian-set changes hidden inside otherwise-benign batched calls, and social-engineered guardian collusion. Core defenses: the timelock is the *primary* backstop even when guardians are deceived; pick guardians with **low mutual correlation** (hardware key + family contact + institutional service beats three friends in one group chat); rotate guardians before staleness; treat guardians as first-class on-chain attack surface in formal threat modeling. [cantina.xyz/blog/smart-wallet-social-recovery-risks]
+
+## Warden's current design (from repo spec, 2026-08-18 rev.)
+
+Guardian-threshold proposes a new root → **48h delay**; root can **contest**, extending the delay another 48h, repeatably. A 128-bit/12-word BIP-39 phrase encrypts (Argon2id, m=256MiB t=3 p=1, AAD = account+version) an Ed25519 **recovery key registered on-chain as a guardian with full threshold weight** — it cannot move funds and stays subject to the same delay/contest as any guardian. Guardians can also **freeze** (72h max, 7-day per-guardian cooldown), except that a freeze becomes **indefinite** once a recovery proposal hits threshold. Net property: root-only compromise is bounded by day/30-day spend caps; guardian-only compromise (even ≥threshold) cannot move funds, only freeze — total loss requires compromising *both* root and guardian-threshold simultaneously. This is structurally stronger than Argent/Loopring, where guardian-majority alone (post-delay) is sufficient to seize the account.
+
+## What Warden should adopt / change
+
+1. **Kill the Argent zero-guardian class at the type level**: on-chain instructions for freeze/recovery must hard-revert if `threshold==0 || guardian_count==0`, not merely rely on onboarding UX to prevent that state — this is the exact bug OpenZeppelin found, and it's a cheap, high-leverage Codex-review checklist item.
+2. **WYSIWYS for guardian approvals, not just root**: Bybit shows co-signer UIs are a live attack surface even when on-chain logic is sound. Extend the same clientDataJSON-scanning rigor already applied to the root passkey to guardian approval flows — structured, canonical action summaries, ideally cross-device, so a compromised extension can't feed a guardian a different payload than what gets hashed.
+3. **Surface guardian-correlation guidance in onboarding** (per Cantina): warn against homogeneous guardian sets; nudge toward hardware key + trusted contact + institutional/cloud guardian.
+4. **Explicitly discourage threshold=1-with-recovery-key-as-sole-guardian** configs, which degenerate to Coinbase's single-point-of-failure model — Warden's multi-guardian design is only as strong as its weakest common onboarding default.
+5. **Off-chain multi-channel notification** of any freeze/recovery-proposal event — Safe/Candide's own docs stress that delay windows only protect an owner who *learns about them in time*.
+6. **Document a coercion path**: the existing freeze mechanic can double as a duress response ("freeze, don't sign") — make this explicit user guidance, addressing the SoK's flagged open gap.
+7. **Add guardian-set liveness pings** to counter the SoK's #1 empirical failure mode (guardian/window unavailability) before a real recovery is needed.
+8. **Rate-limit round-robin freeze abuse** across *distinct* guardians (7-day cooldown only bounds a single guardian).
+
+## Open questions
+- Does Warden's guardian-approval UI have the same anti-spoofing guarantees as the root passkey path (Bybit-class defense)?
+- Is zero-guardian account creation *blocked* on-chain or only discouraged in UX?
+- Is the recovery-key ciphertext ever cloud-synced/backed up off-device, and if so what's the brute-force/leak model?
+- Is a hosted/institutional "cloud guardian" planned, and what's *its* compromise posture (mirrors Safe{Wallet}'s supply-chain exposure)?
+
+## Confidence
+**Medium-high** on cross-wallet comparisons (multiple independent primary/secondary sources per wallet); **high** on Argent's OpenZeppelin-documented bug and the Bybit root cause (multi-source agreement); **high** on Warden's own design (sourced directly from its spec); **low/UNVERIFIED** on exact Loopring and ZeroDev default delay/cancel parameters (fetch failures — flagged above).
