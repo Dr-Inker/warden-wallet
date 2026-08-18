@@ -35,15 +35,30 @@ mislabeled *both* Parcl and Photon as substitutes for the single defunct Zeta en
 one substitution (Photon), and a second attempt was made at a dated, fetchable public ranking
 (DefiLlama's protocols API) rather than relying solely on the brief's example list; (2) four
 verdicts that rested on "likely"/indirect evidence (Jito, Solend/Save, Magic Eden, Photon) were
-re-checked with direct Playwright inspection of the connect flow — two (Solend/Save, Magic
-Eden) now have firm, directly-observed evidence and firm verdicts; two (Jito, Photon) remained
-blocked after a second attempt and are now explicitly labeled **provisional** and excluded from
-the firm tally; (3) every "No" in the top-level-signer column, plus the Meteora and Helium
+re-checked with direct Playwright inspection of the connect flow. **Round 2 correction (see
+below): the initial re-check for Solend/Save and Magic Eden only reached the pre-signature-prompt
+UI (a wallet picker, a login modal) and not the signature request itself, so both were
+downgraded back to provisional** — all four provisional dApps (Jito, Solend/Save, Magic Eden,
+Photon) are now excluded from the firm tally; (3) every "No" in the top-level-signer column,
+plus the Meteora and Helium
 ephemeral-signer claims, now cites a `path:line@sha` (IDL account-meta array, `#[derive(Accounts)]`
 struct, or raw instruction builder) or is marked UNVERIFIED — no more bare assertions; (4) the
 summary now publishes exactly one firm-vs-provisional tally and separates the "SIWS at
 login/connect" list from the "signed-message subflow" list (Drift's Swift orders are a subflow,
 not a login gate, and are no longer mixed into the SIWS list).
+
+
+## Round-2 fixes applied
+
+Coordinator re-review found finding 2 still open: Magic Eden and Solend/Save were graded firm
+even though no wallet signature prompt was actually observed for either — Magic Eden's literal
+`signMessage` prompt was never captured (we stopped at wallet selection), and Solend/Save's
+evidence was only a *pre*-connection wallet picker. Both are now **provisional**, with the exact
+evidence gap stated in-row: connecting a real wallet extension is out of scope for this spike, so
+the post-wallet-selection step — where a `signMessage` call would actually fire, or provably not
+fire — is categorically unobservable here for any dApp, not specific to these two. The firm tally
+was recomputed: OK 10→9 (Solend/Save removed), unsupported 2→1 (Magic Eden removed), provisional
+2→4. The SIWS-login list and the caveats section were updated to match.
 
 ---
 
@@ -121,12 +136,12 @@ against the smart-account address.
 | 7 | **Jito** (JitoSOL staking) | **UNVERIFIED, site blocked.** `jito.network/staking/` returned HTTP 403 "Just a moment..." (Cloudflare challenge) to Playwright on 2026-08-18 — same result as the `jito-labs/jito-ts` searcher/bundle-client repo we cloned, which has no wallet-connect UI code to inspect either | Not found required — standard SPL Stake Pool `DepositSol` does not need extra signers per the public interface, but we did not clone `spl-stake-pool` source this round, so the exact account-meta signer list is UNVERIFIED | No — not found (no source inspected for this claim beyond general SPL Stake Pool knowledge) | SPL Stake Pool program `SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy`, pool `Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb` — `DepositSol`/`DepositStake`/`WithdrawStake` [7a] | UNVERIFIED (no account metas cited) | **OK (provisional — UI SIWS unverified, site blocked)** |
 | 8 | **Drift** | No at connect (not found in `wallet.ts`/`driftClient.ts` for the standard adapter path). **Caveat, separate subflow, not a login gate:** the opt-in "Swift" low-latency order flow signs the order message with `nacl.sign.detached` against the wallet key and is verified off-chain by Drift's matching engine [8a] | Not found required for core `deposit`/`placePerpOrder` | No — not found | Program `dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH` [8b] — `deposit`, `withdraw`, `place_perp_order`, `place_orders` | No — `Deposit` Accounts struct has exactly one `Signer<'info>` field, `authority` [8c] | **OK** for on-chain deposit/trade; the "Swift" signed-order subflow specifically is **unsupported** (see signed-message-subflow list below, not the SIWS list) |
 | 9 | **Tensor** | No — not found in `tensorswap-sdk` or `tensor-foundation/marketplace` | No user-side co-signer found. Legacy TensorSwap AMM pools use a protocol-owned `TSWAP_COSIGNER` (`6WQvG9Z6D1NZM76Ljz3WjgR7gGXRBJohHASdQxXyKi8q`) added server-side by Tensor itself, not a second required signature from the user [9a] | No — not found | Current marketplace `TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp` — `buy`, `list`, `delist`, `bid` [9b]; legacy AMM `TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN` [9c] | No — `buy`'s IDL account list has exactly one `isSigner:true` entry, `payer` [9d] | **root-only** (niche marketplace program, otherwise clean signer shape) |
-| 10 | **Magic Eden** | **Yes — directly observed 2026-08-18.** `magiceden.io`'s header shows a "Log In" button (`data-test-id="wallet-connect-button"` — Magic Eden's own code treats "log in" and "connect wallet" as the same action); clicking it opens a modal with an "Enter your email" textbox, an "OR" divider, and a "Continue with a wallet" button; clicking that opens a 158-wallet picker (Phantom/Solflare/Backpack/Coinbase/etc. — far more than a plain `@solana/wallet-adapter` list, consistent with the Dynamic.xyz-branded multi-wallet connector). Magic Eden's own `dynamic-742d17e752be8498.js` production chunk bundles Dynamic's `signPersonalMessage`/`signMessage` wallet-auth code [10a]. We did not complete the flow past wallet selection (no wallet extension installed, per task constraints), so the literal signMessage prompt itself was not captured — but the email-OR-wallet unified login UI plus the bundled Dynamic auth SDK is direct, dated evidence, not inference from docs alone | Not independently confirmed — closed-source frontend, no public on-chain SDK found for the current marketplace program | UNVERIFIED | Marketplace v2 `M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K` [10b] | UNVERIFIED | **unsupported** (firm — direct 2026-08-18 UI observation + bundled Dynamic auth SDK) |
+| 10 | **Magic Eden** | **Not directly observable; inferred, UNVERIFIED as a literal signature prompt.** `magiceden.io`'s header shows a "Log In" button (`data-test-id="wallet-connect-button"` — Magic Eden's own code treats "log in" and "connect wallet" as the same action); clicking it opens a modal with an "Enter your email" textbox, an "OR" divider, and a "Continue with a wallet" button; clicking that opens a 158-wallet picker (Phantom/Solflare/Backpack/Coinbase/etc. — far more than a plain `@solana/wallet-adapter` list, consistent with the Dynamic.xyz-branded multi-wallet connector). Magic Eden's own `dynamic-742d17e752be8498.js` production chunk bundles Dynamic's `signPersonalMessage`/`signMessage` wallet-auth code [10a]. **We could not go further: selecting a wallet from that picker requires a real installed wallet extension to respond, which the task explicitly forbids connecting — so the actual post-selection signature request (if any) is not observable in this environment at all, not just something we happened to stop short of.** The unified email-or-wallet UI plus the bundled Dynamic auth SDK is suggestive, dated, direct-observation evidence for the *shape* of the login system, but it is not a capture of the deciding fact itself (whether `signMessage` actually fires) | Not independently confirmed — closed-source frontend, no public on-chain SDK found for the current marketplace program | UNVERIFIED | Marketplace v2 `M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K` [10b] | UNVERIFIED | **unsupported (provisional — deciding cell is inferred, not observed; the post-wallet-selection step is structurally unobservable without connecting a real wallet, which is out of scope)** |
 | 11 | **Pump.fun** | Yes — Pump.fun uses Privy for wallet login; Privy's "Login with Wallet" implements SIWS [11a]; corroborated by `signMessage`/`signIn` strings in pump.fun's own production JS bundle [11b] | UNVERIFIED | UNVERIFIED | Bonding-curve program `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P` — `create`, `buy`, `sell` [11c] | No — the published IDL's `buy` instruction has exactly one `isSigner:true` entry, `user` [11d] | **unsupported** (SIWS required to log in) |
 | 12 | **Phoenix** | No — not found in phoenix-sdk (TS or Rust) | Not found required | No — not found | Program `PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY` [12a] — `Swap`, `PlaceLimitOrder`, `CancelAllOrders`, `WithdrawFunds` | UNVERIFIED — Phoenix's account-meta construction doesn't use the `isSigner: true`/`Signer<'info>` literals we grepped for elsewhere; not independently re-derived this round | **OK** (top-signer cell UNVERIFIED; nothing found that would make it unsupported) |
 | 13 | **Sanctum** | No — not found in `sanctum-lst-list` (rust/ts) | Not found required | No — not found | Sanctum Router `stkitrT1Uoy18Dk1fTrgPw8W6MVzoCfYoAFT4MLsmhq` [13a]; Infinity pool `5ocnV1qiCgaQR8Jb8xWnVbApfaygJ8tNoZfgPwsgx9kx` (per Sanctum docs — direct WebFetch of learn.sanctum.so returned 403; cited via WebSearch's synopsis of that same URL, not independently re-fetched this round) [13b] — swap / addLiquidity / removeLiquidity | UNVERIFIED — Infinity pool program source not cloned | **root-only** |
 | 14 | **marginfi** | No — not found in marginfi-v2 repo (program + tests, no frontend in this repo) | Not found required | No — not found | Program `MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA` [14a] — `lendingAccountDeposit`, `lendingAccountWithdraw`, `lendingAccountBorrow`, `lendingAccountRepay` | No — `LendingAccountDeposit` Accounts struct has exactly one `Signer<'info>` field, `authority` [14b] | **OK** |
-| 15 | **Solend / Save** | **No — directly observed 2026-08-18.** `save.finance` (page title "Save \| Lend and borrow crypto on Solana") loads a "Connect wallet" button; clicking it opens a plain wallet picker listing only "Phantom" and "Solflare" — no email/social option, no Dynamic/Privy branding, consistent with a standard `@solana/wallet-adapter` connect (contrast row 10/11 above) [15a] | Not found required | No — not found | Program `So1endDq2YkqhipRh3WViPa8hdiSpxWy6z3Z6tMCpAo` — rebrand to Save confirmed to use the same program [15b] — Borsh enum `LendingInstruction`, `DepositReserveLiquidity` is variant **#4** (comment-numbered in source, corrected from an earlier miscount) [15c] | No — `DepositReserveLiquidity`'s doc comment lists exactly one `[signer]` account of 10, "User transfer authority ($authority)" at index 7 [15c] | **OK** (firm) |
+| 15 | **Solend / Save** | **Not directly observable past the pre-connection picker; inferred, UNVERIFIED as an absence claim.** `save.finance` (page title "Save \| Lend and borrow crypto on Solana") loads a "Connect wallet" button; clicking it opens a plain wallet picker listing only "Phantom" and "Solflare" — no email/social option, no Dynamic/Privy branding, unlike Magic Eden/Pump.fun's modals (row 10/11) [15a]. **This only shows the pre-connection picker screen.** We did not select a wallet (no real extension installed, out of scope), so we never observed what happens *after* a wallet connects — a plain wallet-adapter picker does not rule out a follow-up `signMessage` call once a wallet responds, and that step is structurally unobservable here for the same reason as Magic Eden. The absence of Dynamic/Privy branding is suggestive but is not a capture of the deciding fact (whether `signMessage` fires post-connect) | Not found required | No — not found | Program `So1endDq2YkqhipRh3WViPa8hdiSpxWy6z3Z6tMCpAo` — rebrand to Save confirmed to use the same program [15b] — Borsh enum `LendingInstruction`, `DepositReserveLiquidity` is variant **#4** (comment-numbered in source, corrected from an earlier miscount) [15c] | No — `DepositReserveLiquidity`'s doc comment lists exactly one `[signer]` account of 10, "User transfer authority ($authority)" at index 7 [15c] | **OK (provisional — deciding cell is inferred, not observed; the post-wallet-connect step is structurally unobservable without connecting a real wallet, which is out of scope)** |
 | 16 | **Parcl** (v3, real-estate perps) | No — not found in `v3-sdk-ts` | Yes, ephemeral — `transactionBuilder.ts` `buildSigned(signers, ...)` calls `tx.partialSign(...signers)` for locally-generated signers before the wallet signs [16a] | No — not found | Program `3parcLrT7WnXAcyPfkCz49oofuuf2guUKkjuFkAhZW8Y` [16b] — `createMarginAccount`, `depositMargin`, `modifyPosition`, `withdrawMargin` | No — `depositMargin`'s instruction builder has exactly one `isSigner: true` key, `accounts.signer`, among 8 [16c] | **root-only** (small/niche perps program) |
 | 17 | **Helium** | No — not found in helium-program-library | Yes, ephemeral — `spl-utils/transaction.ts` `partialSign(...signers)` for locally-created accounts [17a] | No — not found | Lazy Distributor `1azyuavdMyvsivtNxPoz6SucD18eDHeXzFCUPq5XU7w` [17b] — `distributeRewardsV0`/`distributeCompressionRewardsV0` (claim HNT rewards, the common consumer flow); Entity Manager `hemjuPXBpNvggtaUnN1MwT3wrdhttKEfosTcc2P9Pg8` [17c] (hotspot/entity admin flows, less common for an end user) | No, and notably not even required as a signer at all — `DistributeRewardsCommonV0`'s only `Signer<'info>` field is `payer`; the reward beneficiary (`owner`) is an `UncheckedAccount`, and the source carries its own `/// TODO: Should this be permissioned? Should the owner have to sign to receive rewards?` [17d] | **root-only** |
 | 18 | **Realms** (governance-ui + Hub) | **Mixed.** Core governance app: No — `spl-governance` voting/proposal calls found no signMessage (the `@solana/spl-governance` instruction-builder package itself is an external dependency, not vendored in this repo, so its exact account list is UNVERIFIED this round). **Realms Hub** (forum/profile layer, same repo, separate sub-product): **Yes** — `verify-wallet/components/sign-in-with-solana.tsx` explicitly requests a server-issued claim, calls `signMessage(claimBlob)`, and posts the signature to mint a JWT — this is SIWS by name [18a] | Not found required for voting/proposal instructions | No — not found | `@solana/spl-governance` program `GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw` (well-known; referenced via `DEFAULT_GOVERNANCE_PROGRAM_ID` import, not hardcoded in this repo) [18b] — `castVote`, `createProposal`, `depositGoverningTokens` | UNVERIFIED — `@solana/spl-governance`'s account-meta list not independently verified this round (external package, not vendored) | **root-only** for voting/proposals; **unsupported** for the Realms Hub SIWS profile-verification flow (see SIWS-login list) |
@@ -196,28 +211,36 @@ repo was cloned.
 
 ## Step 3: Summary
 
-### Firm tally (one verdict per dApp, primary/most-common flow; excludes the 2 provisional rows)
+### Firm tally (one verdict per dApp, primary/most-common flow; excludes the 4 provisional rows)
 
 | Verdict | Count | dApps |
 |---|---|---|
-| **OK** | 10 | Jupiter, Raydium, Orca, Meteora, Kamino, Marinade, Drift (core deposit/trade flow), Phoenix, marginfi, Solend/Save |
+| **OK** | 9 | Jupiter, Raydium, Orca, Meteora, Kamino, Marinade, Drift (core deposit/trade flow), Phoenix, marginfi |
 | **root-only** | 6 | Tensor, Sanctum, Parcl, Helium, Realms (voting/proposals), Squads |
-| **unsupported** | 2 | Magic Eden, Pump.fun |
+| **unsupported** | 1 | Pump.fun |
 
-**18 dApps, firm.** Two dApps (Drift, Realms) additionally carry a caveated secondary
+**16 dApps, firm.** Two dApps (Drift, Realms) additionally carry a caveated secondary
 verdict for a *different, non-primary* sub-flow within the same dApp — Drift's opt-in "Swift"
 signed-order flow, and Realms Hub's separate SIWS-gated profile layer — both **unsupported**,
 listed under "signed-message subflow" / "SIWS-login" below rather than folded into the primary
 tally, since they are not what a user hits by default.
 
-### Provisional (excluded from the firm tally above — evidence blocked or indirect)
+### Provisional (excluded from the firm tally above — evidence blocked, indirect, or the deciding cell is inferred rather than observed)
 
 | dApp | Verdict | Why provisional |
 |---|---|---|
 | Jito | OK (provisional) | `jito.network/staking/` blocked automated access (Cloudflare 403); no SDK with connect-flow code was available to substitute |
+| Magic Eden | unsupported (provisional) | Round 2 correction: the connect UI (email-or-wallet modal, Dynamic-style 158-wallet picker) and the bundled Dynamic auth SDK were directly observed 2026-08-18, but the deciding fact — whether `signMessage` actually fires — sits *after* wallet selection, which requires a real wallet extension to respond and is therefore structurally unobservable in this environment (no wallet may be connected, per task constraints). The verdict is our best read of strong circumstantial evidence, not a captured signature prompt |
+| Solend / Save | OK (provisional) | Round 2 correction: only the *pre-connection* wallet picker (Phantom/Solflare, no email/Dynamic/Privy branding) was observed 2026-08-18. The same post-wallet-selection step is unobservable here, so we cannot confirm the absence of a follow-up `signMessage` call either — the lack of Dynamic/Privy branding is suggestive, not conclusive |
 | Photon | unsupported (provisional) | `photon-sol.tinyastro.io` blocked automated access on 3 attempts; verdict rests on third-party how-to-guide description of the product's architecture, not direct inspection |
 
-**20 dApps total = 18 firm + 2 provisional.**
+**20 dApps total = 16 firm + 4 provisional.** No row is marked firm while its deciding cell is
+UNVERIFIED or inferred — the two rows moved to provisional this round (Magic Eden, Solend/Save)
+were previously graded firm on the strength of *pre*-signature-prompt UI evidence (a login-modal
+shape, or a wallet-picker's branding) rather than a captured `signMessage` call itself; since a
+real wallet extension cannot be connected in this environment, the post-wallet-selection step is
+categorically unobservable for *any* dApp here, not just these two — so neither can ever be
+firmed up by more Playwright inspection alone without relaxing the no-real-wallet constraint.
 
 ### SIWS-login list — connect/login itself is gated behind a wallet signature
 
@@ -225,11 +248,13 @@ Ordered by confidence:
 
 1. **Pump.fun** — Privy-based "Login with Wallet" implements SIWS; confirmed via Privy's own
    docs plus signMessage/signIn strings in pump.fun's production bundle. High confidence, firm.
-2. **Magic Eden** — directly observed 2026-08-18: unified email-or-wallet login modal backed by
-   Dynamic.xyz's wallet-auth SDK. High confidence, firm.
-3. **Realms Hub** (a separate sub-product from the core governance-ui voting app, which is
+2. **Realms Hub** (a separate sub-product from the core governance-ui voting app, which is
    unaffected) — explicit `sign-in-with-solana.tsx` component, read directly from source. High
    confidence, firm.
+3. **Magic Eden** — provisional; unified email-or-wallet login modal + bundled Dynamic.xyz
+   wallet-auth SDK observed 2026-08-18, but the literal signMessage call itself sits behind a
+   wallet-selection step that cannot be exercised without connecting a real wallet, which is out
+   of scope here.
 4. **Photon** — provisional/indirect; listed here on the strength of third-party descriptions
    of a "connect Phantom once, then trade from a separately generated wallet" pattern, not a
    directly observed signMessage call.
@@ -296,11 +321,14 @@ rather than trust hand-computed values in this table.
 2. Several "not found" signMessage/nonce/partialSign results are grep-based over a shallow
    (`--depth 1`) clone of a *library* repo, not the full production frontend — a dApp's actual
    web app (often a separate closed-source repo) could still add a signMessage step that the
-   published SDK doesn't require. Two of these (Solend/Save, Magic Eden) were upgraded to direct
-   UI observation this round; the remaining OK/root-only rows with only an SDK citation (no UI
-   observation) should be read as "the on-chain SDK doesn't require it," not "the live site
-   definitely doesn't ask for it": Jupiter, Raydium, Orca, Meteora, Kamino, Marinade, Tensor,
-   Sanctum, marginfi, Parcl, Helium, Squads, Phoenix.
+   published SDK doesn't require. Solend/Save and Magic Eden got a Playwright look at their
+   actual connect UI (not just the SDK), but even that only reaches the pre-wallet-selection
+   screen — see the provisional-tally rationale above for why the deciding step is unobservable
+   without a real wallet extension, which is out of scope. The remaining OK/root-only rows with
+   only an SDK citation (no UI observation at all) should be read the same way, one level further
+   removed: "the on-chain SDK doesn't require it," not "the live site definitely doesn't ask for
+   it": Jupiter, Raydium, Orca, Meteora, Kamino, Marinade, Tensor, Sanctum, marginfi, Parcl,
+   Helium, Squads, Phoenix.
 3. Discriminator extraction remains intentionally partial (see caveat above).
 4. Jito had no frontend code in the repo cloned (`jito-labs/jito-ts` is the searcher/bundle
    client, not the staking UI) and its actual staking site is Cloudflare-blocked — its
