@@ -197,3 +197,152 @@ burning more of the request budget chasing an address that wouldn't change the r
   typically have 20–40 accounts, expect many to NOT fit inline"): the first half held for every
   real (non-toy) case measured (Jupiter, Marinade); the second half did **not** — every real route
   measured across 5 spaced runs fit inline. See Conclusion.
+
+## Part (b) — conservation snapshot CU
+
+**Goal:** the CU cost of `execute`'s core safety mechanism — snapshotting every writable
+vault-owned token account before/after the inner CPI and rejecting the transaction if one was
+mutated outside the CPI's declared effect — as a function of N accounts, to size Phase 1's compute
+budget.
+
+**Code:** `onchain/Cargo.toml`, `onchain/src/lib.rs` (`spike-conserve` program), `onchain/tests/cu.rs`
+(LiteSVM harness).
+
+**Method:** a native program takes `accounts[0]` = vault authority marker (read-only, never
+initialized on-chain), `accounts[1..]` = writable token accounts to snapshot. It reads every
+token account twice (before / after — a real `execute` would CPI into the target program between
+the two passes; this spike has no CPI, isolating the pure snapshot-and-compare cost), and for
+every account owned by the SPL Token or Token-2022 program whose *token-level* `owner` field is
+the vault, checks that owner/delegate/close_authority/state/data_len/TLV-tail-hash are unchanged
+and accumulates any net SOL (wrapped-SOL mint) decrease. `accounts[]` not owned by the vault at
+the token level are read but otherwise ignored (proves the ownership filter, since a real mutation
+can't be produced without a CPI). `data[0] = 1` short-circuits to `Custom(99)` after snapshotting,
+to measure the reject path.
+
+Token accounts are packed **by hand** at the fixed SPL Token 165-byte layout offsets (mint 0..32,
+owner 32..64, amount 64..72 LE, delegate COption 72..108, state 108, is_native COption 109..121,
+delegated_amount 121..129, close_authority COption 129..165) in both the program (`src/lib.rs`)
+and the test harness (`tests/cu.rs`) — see "Dependency conflict" below for why. A Token-2022
+account is the same 165 bytes plus a 100-byte TLV tail (byte 165 = `2` = `AccountType::Account`,
+then 99 bytes of filler), 265 bytes total, to exercise the TLV-hash comparison path.
+
+Built with `cargo-build-sbf --manifest-path spikes/03-txbudget/onchain/Cargo.toml`, tested with
+`cargo test --manifest-path spikes/03-txbudget/onchain/Cargo.toml -- --nocapture` (LiteSVM,
+`svm.set_account` to seed the token accounts, `svm.send_transaction` + `compute_units_consumed`).
+
+### Dependency conflict: `spl-token`/`spl-token-2022` vs `solana-program 3`
+
+`spl-token = "7"` and `spl-token-2022 = "7"` both resolve cleanly in Cargo's dependency graph
+against `solana-program = "3"` — but they pull `solana-program 2.3.0` (via `solana-pubkey 2.4.0`),
+a semver-major-different instance from the `solana-program 3.0.0` this crate uses for
+`AccountInfo`/`Pubkey`. `cargo tree -i solana-program` reports it explicitly:
+
+```
+error: specification `solana-program` is ambiguous
+help: re-run this command with one of the following specifications
+  solana-program@2.3.0
+  solana-program@3.0.0
+```
+
+`spl_token::state::Account::owner` is therefore a *different, non-interconvertible* `Pubkey` type
+than the one on `AccountInfo` (`if tb.1 == *vault` would not even compile across the two types).
+Per the task brief's documented fallback, both `src/lib.rs` and `tests/cu.rs` parse/pack the
+165-byte layout by hand instead, and hardcode the SPL Token / Token-2022 program ids and the
+native-mint id as `pubkey!()` literals (long-stable, publicly documented addresses) rather than
+importing them from the crates. `spl-token`/`spl-token-2022` remain declared `[dependencies]`
+purely so `cargo tree` records the majors that resolve.
+
+### Results — CU sweep, N ∈ {10, 20, 30} vault-owned SPL Token accounts (happy path)
+
+| N | compute_units_consumed |
+|---|---|
+| 10 | 8,688 |
+| 20 | 16,134 |
+| 30 | 23,254 |
+
+All well under the 200,000 default per-instruction CU limit (assertion `cu30 < 200_000` passes
+with ~8.6x headroom). Two-point linear fit (N=10 → N=30): **base ≈ 1,405 CU, ≈728 CU per
+additional vault-owned SPL Token account** (`(23254 − 8688) / 20 ≈ 728.3`; the N=10→20 segment is
+≈744.6 CU/account and N=20→30 is ≈712.0 CU/account — close enough to call it linear at this scale,
+with some per-account variance from unique-pubkey generation/compare overhead).
+
+**Extrapolation for Phase 1 budgeting:** at ~730 CU/account plus ~1,400 CU fixed overhead, a vault
+could snapshot roughly **270 writable token accounts** before exhausting a single 200,000 CU
+instruction budget (`(200,000 − 1,400) / 730 ≈ 272`) — far beyond any realistic `execute` account
+list (spike 3a saw 15–38 accounts on real Jupiter routes), so the conservation-snapshot mechanism
+itself is not expected to be Phase 1's binding CU constraint; the inner CPI's own cost will
+dominate.
+
+### Token-2022 TLV-tail account (265 B, 100-byte TLV tail)
+
+10 vault-owned SPL accounts + 1 Token-2022 account with a 100-byte TLV tail: **9,707 CU** — a delta
+of **1,019 CU** versus the 10-SPL-only baseline (8,688 CU) for one extra account whose data is
+2,065 bytes read across the before/after passes (present twice: once as raw read, once through the
+TLV-hash syscall) 265-byte account, i.e. hashing a 100-byte tail twice (before + after) plus
+reading/parsing 265 vs 165 bytes.
+
+### keccak vs sha256 for the TLV-tail hash
+
+Tried both via a Cargo feature (`sha256-tlv`, default off ⇒ `solana_program::keccak::hash`; on ⇒
+`solana_program::hash::hash`, which is SHA-256 — confirmed by reading `solana-sha256-hasher`
+source, same as noted in `docs/TOOLCHAIN.md`'s spike-2b entry). Built and ran the
+`cu_with_token2022_tlv_tail` test against both `.so` builds (confirmed genuinely different
+binaries — different file hashes, same 25,104-byte size):
+
+| hash syscall | compute_units_consumed |
+|---|---|
+| `keccak::hash` (default) | 9,707 |
+| `hash::hash` (SHA-256) | 9,707 |
+
+**No measurable difference at this size (100-byte tail, hashed twice per invocation) on this
+Agave 3.1.10 / LiteSVM 0.12.0 toolchain.** `keccak` was kept as the default (matches the task
+brief's original code skeleton); either is CU-equivalent for TLV tails in this size range, so
+Phase 1 is free to pick based on other criteria (e.g. `keccak` is what SPL Token-2022's own
+extensions ecosystem tends to use for content hashes). This is a smaller-than-expected finding —
+worth re-measuring at a larger TLV size (e.g. 1 KB, closer to a token account with several
+extensions) if Phase 1 needs a sharper answer, since the base syscall costs are likely to diverge
+more once the per-byte term dominates over fixed overhead.
+
+### Negative path
+
+`data[0] = 1`: transaction fails with `InstructionError(0, Custom(99))` after logging
+`"snapshots ok, sol_out=0"` — confirms the reject happens *after* a successful snapshot pass, not
+instead of one (8,697 CU consumed in the failing case, consistent with the 8,688 CU happy-path
+figure at N=10).
+
+### Mutation-detection path (cheap variant)
+
+No CPI exists in this spike to actually mutate a vault-owned account's on-chain state between the
+before/after snapshots (that's `execute`'s job in Phase 1, deliberately out of scope here — see
+the code comment `// (a real execute would CPI into the target program here)`), so the "reject on
+mutation" branch cannot be exercised end-to-end without one. What *is* cheap and included: a token
+account whose token-level `owner` field is **not** the vault (with `close_authority` deliberately
+set, which would trip the mutation check if the ownership filter were broken) is correctly
+**ignored**, not rejected — 9,327 CU for 10 vault-owned + 1 non-vault-owned account. This proves
+the ownership-filter branch works; a true CPI-mutation test is Phase 1 scope, not this spike's.
+
+### Reproduce
+
+```bash
+cd /opt/warden
+nice -n 10 cargo-build-sbf --manifest-path spikes/03-txbudget/onchain/Cargo.toml
+nice -n 10 cargo test --manifest-path spikes/03-txbudget/onchain/Cargo.toml -- --nocapture
+# keccak-vs-sha256 comparison:
+nice -n 10 cargo-build-sbf --manifest-path spikes/03-txbudget/onchain/Cargo.toml --features sha256-tlv
+nice -n 10 cargo test --manifest-path spikes/03-txbudget/onchain/Cargo.toml --test cu -- --nocapture cu_with_token2022_tlv_tail
+```
+
+### Open items / caveats
+
+- Same workspace caveat as spikes 2b/3a: this crate carries its own `[workspace]` table (root
+  `Cargo.toml`'s `spikes/03-txbudget/onchain` member now finally exists on disk, but `programs/*`
+  still doesn't, so the root workspace remains unresolvable on its own). Root `Cargo.toml` was not
+  edited, per the task brief.
+- CU numbers are LiteSVM-measured, release-profile SBF bytecode, no other instructions in the
+  transaction (no compute-budget instruction, no other program) — a real `execute` transaction
+  would add the inner CPI's own CU cost on top of these snapshot numbers, plus whatever priority-fee/compute-budget instructions Phase 1 chooses to include.
+  - The per-account cost includes `try_borrow_data()` + a fixed-offset byte parse + two `Pubkey`
+    equality checks + a `checked_sub`; no allocation beyond the two `Vec<Snap>` collects.
+- Only one Token-2022 account (not a sweep) was measured for the TLV path, per the task brief's
+  scope; if Phase 1 wallets are expected to hold many Token-2022 extension accounts, a small N
+  sweep on the TLV path (analogous to the SPL sweep) would be worth a follow-up.

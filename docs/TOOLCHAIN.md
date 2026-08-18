@@ -72,3 +72,37 @@ workspace resolves, otherwise cargo fails with *multiple workspace roots found
 in the same workspace*. Per the coordinator the table stays for now and the
 layout is settled once Task 5/6 lands `spikes/03-txbudget/onchain`. See
 `spikes/02-webauthn/result.md`.
+
+## Spike 3b crates (`spikes/03-txbudget/onchain`)
+
+Same toolchain as spike 2b (Agave 3.1.10 / rustc 1.97.1), own empty `[workspace]` table for the
+same reason (see that spike's entry above and `spikes/02-webauthn/result.md`).
+
+| Crate | Requirement in `Cargo.toml` | Resolved version | Notes |
+| --- | --- | --- | --- |
+| `solana-program` | `"3"` | `3.0.0` | program-side |
+| `solana-sdk` | `"3"` | `3.0.0` | dev-dependency (test harness) |
+| `litesvm` | `"0.12"` | `0.12.0` | `precompiles` feature **not** needed here (no precompile use) |
+| `spl-token` | `{ version = "7", features = ["no-entrypoint"] }` | `7.0.0` | declared but **not imported** — see below |
+| `spl-token-2022` | `{ version = "7", features = ["no-entrypoint"] }` | `7.0.0` | declared but **not imported** — see below |
+
+**`spl-token`/`spl-token-2022` conflict:** both resolve fine in the dependency *graph* against
+`solana-program = "3"`, but they pull a separate `solana-program 2.3.0` instance (via
+`solana-pubkey 2.4.0`) — `cargo tree -i solana-program` reports it ambiguous (`2.3.0` / `3.0.0`).
+`spl_token::state::Account::owner` is therefore a different, non-interconvertible `Pubkey` type
+than the `AccountInfo`/`Pubkey` this crate's program uses. Fell back to the task brief's documented
+alternative: hand-parse/pack the 165-byte SPL Token account layout at fixed offsets directly (both
+in the program and the LiteSVM test harness), and hardcode the SPL Token / Token-2022 / native-mint
+program ids as `pubkey!()` literals instead of importing them. The two crates stay declared in
+`Cargo.toml` purely so their resolved majors are on record here.
+
+Build facts:
+
+- `cargo-build-sbf` produced `spike_conserve.so` at **25,104 B** (both the default/`keccak` and
+  `sha256-tlv`-feature builds are this size; the two builds are binary-different — different file
+  hashes — but same size).
+- `cargo test` (host, debug profile, full dependency tree incl. the Agave 3.1.14 BPF loader/runtime
+  crates pulled in by `litesvm`): first build ~1 m 38 s wall; incremental re-runs after a feature
+  flip: well under a second once cached.
+- See `spikes/03-txbudget/result.md` part (b) for the measured CU numbers and the keccak-vs-sha256
+  TLV-hash comparison.
