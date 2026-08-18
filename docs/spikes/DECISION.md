@@ -208,7 +208,7 @@ Phase 1 entry conditions, all met: root `cargo metadata` resolves (this document
 | O7 | **Squads row 10** (Squads' own upgrade authority) | UNVERIFIED (1 `spikes/01-squads/result.md § "Concerns / caveats for Task 9" (l.56)`) | Informational only; does not affect the verdict or §5.5 |
 | O8 | **result.md bloat** — `spikes/03-txbudget/result.md` is an 874-line round-by-round changelog (progress `:55`); `spikes/02-webauthn/result.md` is 467 | cosmetic | Trim to the post-fix findings once Phase 1 no longer needs the fix history; this document is the durable summary |
 | O9 | **9 of 11 screens undesigned**, plus full-page variants and the §12.4 compat surface (`docs/design/figma.md § "Not yet designed" (l.190-195)`) | expected | Phase 3 |
-| O10 | **UV requirement vs UP-only synced passkeys** (2b `spikes/02-webauthn/result.md § "Other caveats worth carrying to Phase 1" (l.398-401)`) | decision owed | Phase 1: recommended UV mandatory for root, configurable below |
+| O10 | **UV requirement vs UP-only synced passkeys** (2b `spikes/02-webauthn/result.md § "Other caveats worth carrying to Phase 1" (l.398-401)`) | **CLOSED 2026-08-18 — UV MANDATORY, implemented** (see "Phase 1A outcome" below) | Done: `root_verify::auth_data` requires UP **and** UV on every root assertion (`UserVerificationRequired`, 6021), pinned by LiteSVM negatives at `programs/warden/tests/root_verify.rs`. Not configurable in 1A |
 | O11 | **End-to-end `execute` CU** (snapshot + real inner CPI + compute-budget ix) and the **reject-on-mutation branch exercised through a CPI** | not measured — spike 3b deliberately has no CPI (3b ``spikes/03-txbudget/result.md § "Part (b) — conservation snapshot CU" (l.689-691), § "Mutation-detection: unit tests on `check_vault_invariants` (round 1 — see below), plus the cheap ownership-filter LiteSVM case" (l.803-816)``) | Phase 1, before the 40-writable-account cap in §5.2 is treated as final |
 
 ---
@@ -229,3 +229,80 @@ Plus: the GO rationale downplayed that the conservation mutation path was never 
 **Round 2 — thread `01a014ff-ca58-7003-b2fa-1102f5697ec3`: GO.** "All three named gaps are now correctly closed… The added GO caveats and O11 accurately preserve the remaining unknowns. I found no material new overclaim introduced by these fixes."
 
 **Gate result: GO for Phase 1.**
+
+---
+
+## Phase 1A outcome (2026-08-18, branch `phase1a` @ `4b409f7`)
+
+Phase 1A shipped the program foundation: `create_account`, root verification
+(`rotate_nonce`), `grant_session`/`revoke_session`, `freeze`/`unfreeze`,
+`transfer` (native + SPL, session + root), account-wide buckets, and the TS
+transcript mirror. 292 Rust + 39 TS tests green; measured costs and the
+milestone security review are in `docs/program/PHASE1A-MEASUREMENTS.md`.
+Against the open items carried out of Phase 0:
+
+**Closed by 1A**
+
+* **O6 — strict `clientDataJSON` scanner.** Implemented as a real depth-0 JSON
+  validator (length cap, duplicate-key rejection, escape decoding, container
+  grammar, UTF-8 validation), with the spike's six "hole" tests flipped to
+  assert rejection. `root_verify.rs` + `client_data.rs` unit tests.
+* **O10 — UV requirement.** **DECIDED: user verification is MANDATORY for the
+  root in v1**, and implemented: an assertion whose `authenticatorData` flags
+  lack UP+UV is rejected (`UserVerificationRequired`, 6021). It is **not**
+  configurable in 1A. The consequence is deliberate and must be surfaced in
+  onboarding: an authenticator that can only do UP (some synced-passkey
+  configurations) cannot be a Warden root. Revisit only with a policy flag and
+  a timelocked loosening, never as a silent default.
+
+**Explicitly NOT closed by 1A — carried into Phase 1B's pre-ship gate**
+
+The 1B plan MUST carry these verbatim; none may be treated as done on the
+strength of 1A's numbers.
+
+* **O5 — `is_native` before/after comparison.** Still never measured. It is a
+  property of the conservation snapshot, which lives in `execute`/`swap`, and
+  Phase 1A implements neither. 1B must implement the field-by-field snapshot
+  **including `is_native`** and re-measure per-account CU with it included.
+* **O11 — end-to-end `execute` CU and the reject-on-mutation branch through a
+  real CPI.** Unchanged from Phase 0: spike 3b isolates the snapshot and
+  contains no CPI, and 1A adds no `execute`. Before §5.2's 40-account cap may
+  be treated as final, 1B must measure **a complete `execute` — snapshot +
+  real inner CPI + compute-budget instruction — end to end**, exercise
+  **mutation rejection through a CPI**, compare **`is_native`**, re-derive the
+  **corrected account metrics** (`totalKeys` / `writableKeys` /
+  `executeAccountCount`, the spike's mislabelled metric), and measure the
+  **`stage_chunk` payload cap** (O3) against the real instruction.
+  1A's measured budget is the constraint 1B designs against: the heaviest 1A
+  shape (root SPL `transfer`) is 27,886 CU and 823 B, leaving ~172k CU and
+  ~409 B on a root-authorized path before the compute-unit limit is raised
+  explicitly.
+* **NEW (milestone review, thread `01a0164f`) — P-256 root validation is an
+  ENCODING check only.** `create_account` verifies prefix `0x02`/`0x03` and
+  `x < p`, but not that `x` is on the curve, and does not prove the creator
+  holds the private key. Roughly half of all well-formed x values are
+  off-curve; the precompile rejects them, so such an account is unusable.
+  `sol_big_mod_exp` (Euler's criterion) was implemented and reverted — the
+  syscall is feature-gated and absent from litesvm's mainnet-active snapshot,
+  so calling it would fail *every* `create_account` — and hand-rolled 256-bit
+  field arithmetic was rejected on risk. **1B must add proof of possession at
+  creation** (a real root ceremony over `generation = 0`, `root_nonce = 0`,
+  which makes the precompile do the curve validation for free), re-derive
+  `MAX_MINTS_AT_CREATE` against the resulting byte budget, and flip
+  `create_account::tests::root_accepts_an_off_curve_x_phase_1a_gap` to assert
+  rejection. The real residual is broader than off-curve encoding: creation
+  is unauthenticated end to end — no root signature is required at all, and
+  `owner_seed` is visible in-flight — so a front-runner can install their own
+  root at the client-chosen PDA (squatting/DoS; theft if funds are sent
+  before a successful root round-trip). Mitigation until 1B proof-of-possession:
+  the extension MUST perform a `rotate_nonce` (root ceremony) and verify
+  on-chain root == its passkey BEFORE showing a receive address or funding
+  anything. Proof-of-possession at create is a HARD pre-deployment gate
+  (1B).
+* **O3 (stage cap), O1 (real-device PRF), O2, O4, O7, O8, O9** are unchanged by
+  1A.
+
+**Also true of 1A, and not a Phase-0 item:** per-session day/30-day caps are
+not implemented — 1A *rejects* them at grant rather than storing caps nothing
+enforces (spec §4: those windows are account-wide). Real per-session day
+buckets need a bucket PDA and are a 1B decision.

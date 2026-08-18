@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-# warden = "<program id set in Phase 1>"
+warden = "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2"
 
 [registry]
 url = "https://api.apr.dev"

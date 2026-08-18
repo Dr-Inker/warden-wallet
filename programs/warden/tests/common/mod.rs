@@ -1,0 +1,362 @@
+#![allow(dead_code)]
+
+pub mod passkey;
+pub mod token;
+
+use anchor_lang::{AccountDeserialize, AnchorSerialize, Discriminator};
+use litesvm::LiteSVM;
+use sha2::{Digest, Sha256};
+use solana_sdk::{
+    account::Account,
+    clock::Clock,
+    instruction::{AccountMeta, Instruction},
+    message::Message,
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+    transaction::Transaction,
+};
+use warden::constants::{ACCOUNT_SEED, SESSION_SEED};
+use warden::instructions::create_account::{CreateAccountArgs, MAX_SESSION_LIFE_SECS, MIN_TIMELOCK_SECS};
+use warden::state::{PolicyArgs, RootKey, SessionKey, SmartAccount};
+
+pub fn program_id() -> Pubkey {
+    warden::ID
+}
+
+pub fn setup() -> (LiteSVM, Keypair) {
+    // `LiteSVM::new()` runs with EVERY runtime feature DISABLED
+    // (`FeatureSet::default()`), which is not the chain this program deploys
+    // to: `sol_big_mod_exp` — the syscall `create_account`'s P-256 on-curve
+    // check uses — is feature-gated and simply absent there
+    // ("unsupported BPF instruction"). `with_mainnet_features()` pins the
+    // harness to the features actually active on mainnet-beta, which is both
+    // the honest oracle for CU measurements and the only set in which the
+    // program runs at all.
+    let mut svm = LiteSVM::new().with_mainnet_features();
+    let so = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/deploy/warden.so"))
+        .expect("run `anchor build` first — see docs/TOOLCHAIN.md");
+    svm.add_program(program_id(), &so).expect("add_program");
+    let payer = Keypair::new();
+    svm.airdrop(&payer.pubkey(), 10_000_000_000).unwrap();
+    (svm, payer)
+}
+
+pub fn account_pda(owner_seed: &[u8; 32]) -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[ACCOUNT_SEED, owner_seed], &program_id())
+}
+
+/// Set the SVM's `Clock` sysvar `unix_timestamp` — the only way `Clock::get()`
+/// on-chain observes a different "now" than wall-clock time. Every root
+/// ceremony and every `freeze`/`unfreeze` timelock check reads this, not
+/// slots (Global Constraints: "Time source"). Named `warp_clock` (not
+/// `set_clock`) because most calls are advancing time forward past a
+/// timelock, not merely pinning it once at setup — `freeze.rs` uses it for
+/// exactly that (advance past `policy.timelock_secs`, then `unfreeze`).
+pub fn warp_clock(svm: &mut LiteSVM, unix_timestamp: i64) {
+    let mut c: Clock = svm.get_sysvar();
+    c.unix_timestamp = unix_timestamp;
+    svm.set_sysvar(&c);
+}
+
+/// Fields a test wants to vary when planting a `SmartAccount`.
+///
+/// `generation`/`root_nonce` default to 0 because that is what the real
+/// `create_account` instruction actually produces (Task 4) — `0` is no
+/// longer an arbitrary test convenience, it's what `create_smart_account`
+/// below both asserts on input and gets back from LiteSVM. A test that needs
+/// a *different* generation/nonce (there is no instruction yet that advances
+/// `generation`, and reaching a given `root_nonce` other than 0 or 1 would
+/// mean replaying several real ceremonies first) still has `set_smart_account`
+/// for exactly that reason — see `root_verify.rs` for which tests do this and
+/// why.
+pub struct SmartAccountFixture {
+    pub owner_seed: [u8; 32],
+    pub root_pubkey33: [u8; 33],
+    /// `false` plants an Ed25519 root instead, to prove the passkey path
+    /// refuses to run for it.
+    pub root_is_passkey: bool,
+    pub origin: String,
+    /// Defaults to SHA-256(origin); a test can plant a deliberately wrong one
+    /// via `set_smart_account` (never via `create_smart_account`, which
+    /// always recomputes and enforces the real hash, same as the program).
+    pub rp_id_hash: Option<[u8; 32]>,
+    pub cluster_tag: [u8; 32],
+    pub generation: u64,
+    pub policy_version: u32,
+    pub root_nonce: u64,
+    /// The policy `create_account` is asked to install. Defaults to
+    /// `default_policy_args()` (no mints, `session_ops_ceiling = 0`), which is
+    /// what the root-verify suite wants; the sessions suite overrides it with
+    /// a policy that actually configures `session_ceiling` entries and an ops
+    /// ceiling, since `grant_session` validates against exactly those.
+    pub policy: PolicyArgs,
+}
+
+impl Default for SmartAccountFixture {
+    fn default() -> Self {
+        Self {
+            owner_seed: [7u8; 32],
+            root_pubkey33: [0u8; 33],
+            root_is_passkey: true,
+            origin: passkey::TEST_ORIGIN.to_string(),
+            rp_id_hash: None,
+            cluster_tag: [0x5Au8; 32],
+            generation: 0,
+            policy_version: 1,
+            root_nonce: 0,
+            policy: default_policy_args(),
+        }
+    }
+}
+
+/// A `Policy` that satisfies every `create_account` validation rule and uses
+/// no mint caps (every slot unused) — the shape most tests want, since
+/// they're exercising the root-verify path, not the policy lattice.
+pub fn default_policy_args() -> PolicyArgs {
+    PolicyArgs {
+        version: 1,
+        caps: vec![],
+        session_ceiling: vec![],
+        large_threshold: vec![],
+        timelock_secs: MIN_TIMELOCK_SECS,
+        recovery_delay_secs: MIN_TIMELOCK_SECS,
+        max_session_life_secs: MAX_SESSION_LIFE_SECS,
+        session_ops_ceiling: 0,
+    }
+}
+
+pub fn create_account_ix(payer: Pubkey, smart_account: Pubkey, args: &CreateAccountArgs) -> Instruction {
+    let mut data = Sha256::digest(b"global:create_account")[..8].to_vec();
+    args.serialize(&mut data).unwrap();
+    Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(payer, true),
+            AccountMeta::new(smart_account, false),
+            AccountMeta::new_readonly(anchor_lang::system_program::ID, false),
+        ],
+        data,
+    }
+}
+
+/// Create a `SmartAccount` through the real `create_account` instruction
+/// (Task 4) rather than by hand-writing bytes. Panics with the program's own
+/// error on failure — every caller of this helper wants an honest account.
+///
+/// Only `owner_seed`/`root_*`/`origin`/`cluster_tag` are honoured:
+/// `generation`/`root_nonce`/`policy_version` must be at the values
+/// `create_account` itself would produce (asserted below) — a fixture that
+/// needs anything else cannot be built through the instruction and must use
+/// `set_smart_account`.
+pub fn create_smart_account(svm: &mut LiteSVM, payer: &Keypair, f: &SmartAccountFixture) -> Pubkey {
+    assert_eq!(f.generation, 0, "create_account always sets generation = 0");
+    assert_eq!(f.root_nonce, 0, "create_account always sets root_nonce = 0");
+    assert_eq!(f.policy_version, 1, "create_account always forces policy.version = 1");
+    assert!(f.rp_id_hash.is_none(), "create_account recomputes rp_id_hash from origin itself");
+
+    let (pda, _bump) = account_pda(&f.owner_seed);
+    let root = if f.root_is_passkey {
+        RootKey::P256Passkey { pubkey: f.root_pubkey33 }
+    } else {
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(&f.root_pubkey33[..32]);
+        RootKey::Ed25519 { pubkey: Pubkey::from(pk) }
+    };
+    let origin = f.origin.as_bytes().to_vec();
+    let rp_id_hash = passkey::rp_id_hash(&f.origin);
+    let args = CreateAccountArgs {
+        owner_seed: f.owner_seed,
+        root,
+        rp_id_hash,
+        origin,
+        cluster_tag: f.cluster_tag,
+        policy: f.policy.clone(),
+    };
+    let ix = create_account_ix(payer.pubkey(), pda, &args);
+    let tx = Transaction::new(&[payer], Message::new(&[ix], Some(&payer.pubkey())), svm.latest_blockhash());
+    svm.send_transaction(tx)
+        .unwrap_or_else(|e| panic!("create_account must succeed: {:?} {:#?}", e.err, e.meta.logs));
+    pda
+}
+
+/// Plant a fully-formed `SmartAccount` directly into the SVM, bypassing
+/// `create_account` entirely.
+///
+/// KEPT DELIBERATELY (Task 4 retired most callers to `create_smart_account`
+/// above, which goes through the real instruction): three `root_verify.rs`
+/// cases still need this because no sequence of real instructions can
+/// produce their starting state —
+/// - `non_pda_account_rejected`: an account at an address that is NOT the
+///   PDA for its own `owner_seed`. `create_account`'s `seeds` constraint
+///   derives the address itself, so this is impossible through it by
+///   construction, not just inconvenient.
+/// - `stale_generation_rejected`: `generation != 0`. No instruction in this
+///   program advances `generation` yet (that lands with the policy/guardian
+///   work in Phase 1B).
+/// - `stale_nonce_far_in_the_past_rejected_as_challenge_mismatch`:
+///   `root_nonce == 5`. Reaching this via 5 real `rotate_nonce` ceremonies is
+///   *possible*, but would only re-prove what
+///   `consecutive_ceremonies_each_consume_one_nonce`/
+///   `replay_same_assertion_rejected` already cover; this test's whole point
+///   is the "stale by more than one, not just a replay" case, which planting
+///   the state directly demonstrates with far less incidental machinery.
+///
+/// Hand-building the bytes is exactly the `#[account(zero_copy)]` on-wire
+/// format: the 8-byte Anchor discriminator followed by the `Pod` bytes
+/// (`anchor_discriminator_is_sha256_of_account_name` pins that claim).
+pub fn set_smart_account(svm: &mut LiteSVM, f: &SmartAccountFixture) -> Pubkey {
+    let (pda, bump) = account_pda(&f.owner_seed);
+    let mut acc: SmartAccount = bytemuck::Zeroable::zeroed();
+    acc.version = 1;
+    acc.bump = bump;
+    acc.owner_seed = f.owner_seed;
+    if f.root_is_passkey {
+        acc.set_root(&RootKey::P256Passkey { pubkey: f.root_pubkey33 });
+    } else {
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(&f.root_pubkey33[..32]);
+        acc.set_root(&RootKey::Ed25519 { pubkey: Pubkey::from(pk) });
+    }
+    let ob = f.origin.as_bytes();
+    assert!(ob.len() <= 64, "origin too long for the fixed field");
+    acc.origin[..ob.len()].copy_from_slice(ob);
+    acc.origin_len = ob.len() as u8;
+    acc.rp_id_hash = f.rp_id_hash.unwrap_or_else(|| passkey::rp_id_hash(&f.origin));
+    acc.cluster_tag = f.cluster_tag;
+    acc.generation = f.generation;
+    acc.policy = f.policy.expand().expect("fixture policy must expand");
+    acc.policy.version = f.policy_version;
+    acc.root_nonce = f.root_nonce;
+
+    let mut data = SmartAccount::DISCRIMINATOR.to_vec();
+    data.extend_from_slice(bytemuck::bytes_of(&acc));
+    assert_eq!(data.len(), SmartAccount::LEN);
+
+    svm.set_account(
+        pda,
+        Account {
+            lamports: 10_000_000_000,
+            data,
+            owner: program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account");
+    pda
+}
+
+/// Read a planted account back out of the SVM.
+pub fn read_smart_account(svm: &LiteSVM, pda: &Pubkey) -> SmartAccount {
+    let raw = svm.get_account(pda).expect("account exists").data;
+    assert_eq!(&raw[..8], SmartAccount::DISCRIMINATOR, "discriminator");
+    *bytemuck::from_bytes::<SmartAccount>(&raw[8..])
+}
+
+// ---------------------------------------------------------------------------
+// Sessions (Task 5)
+// ---------------------------------------------------------------------------
+
+pub fn session_pda(smart_account: &Pubkey, session_pubkey: &Pubkey) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[SESSION_SEED, smart_account.as_ref(), session_pubkey.as_ref()],
+        &program_id(),
+    )
+}
+
+/// Read a `SessionKey` PDA back out of the SVM through Anchor's own
+/// deserializer (so the discriminator is checked, not assumed).
+pub fn read_session(svm: &LiteSVM, pda: &Pubkey) -> SessionKey {
+    let raw = svm.get_account(pda).expect("session account exists").data;
+    SessionKey::try_deserialize(&mut raw.as_slice()).expect("valid SessionKey")
+}
+
+/// **TEST-ONLY back door.** Overwrite a `SessionKey` PDA's bytes in place,
+/// keeping its lamports and owner.
+///
+/// Needed because Phase 1A has no instruction that *spends* from a session:
+/// `lifetime_spent` is only ever written by the transfer path, which lands in
+/// Task 6. The re-grant tests (`regrant_merges_by_mint_and_preserves_spent`,
+/// `regrant_lower_lifetime_than_spent_rejected`) must start from a session
+/// with a non-zero spend history, and planting it is the only way to reach
+/// that state today. Nothing in the program does this; when Task 6 lands, the
+/// same assertions could be re-derived from real transfers instead.
+pub fn write_session(svm: &mut LiteSVM, pda: &Pubkey, session: &SessionKey) {
+    let existing = svm.get_account(pda).expect("session account exists");
+    let mut data = SessionKey::DISCRIMINATOR.to_vec();
+    session.serialize(&mut data).unwrap();
+    assert_eq!(data.len(), SessionKey::LEN, "SessionKey::LEN must match the serialized size");
+    svm.set_account(
+        *pda,
+        Account {
+            lamports: existing.lamports,
+            data,
+            owner: existing.owner,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account");
+}
+
+/// **TEST-ONLY back door.** Zero out `policy.caps[idx]` (and its parallel
+/// bucket) in place, leaving every other byte untouched.
+///
+/// Needed because Phase 1A has no `set_policy` instruction (it lands in 1B):
+/// there is no honest sequence of instructions that removes an account-level
+/// cap while a session still holds one for the same mint. That combination is
+/// exactly what `transfer::session_mint_without_account_cap_rejected` needs in
+/// order to reach the ACCOUNT-WIDE policy lookup — with an intact policy, a
+/// mint a session cannot spend is refused earlier, at the session's own cap
+/// lookup, and the policy lookup is never exercised.
+pub fn clear_policy_cap(svm: &mut LiteSVM, pda: &Pubkey, idx: usize) {
+    let existing = svm.get_account(pda).expect("account exists");
+    let mut acc = read_smart_account(svm, pda);
+    acc.policy.caps[idx] = warden::state::MintCap::default();
+    acc.buckets[idx] = warden::state::MintBuckets::default();
+    let mut data = SmartAccount::DISCRIMINATOR.to_vec();
+    data.extend_from_slice(bytemuck::bytes_of(&acc));
+    assert_eq!(data.len(), SmartAccount::LEN);
+    svm.set_account(
+        *pda,
+        Account {
+            lamports: existing.lamports,
+            data,
+            owner: existing.owner,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account");
+}
+
+/// **TEST-ONLY back door.** Advance a `SmartAccount`'s `generation` by
+/// `delta`, leaving every other byte untouched.
+///
+/// Needed because no Phase 1A instruction bumps `generation` — the key
+/// rotation / recovery paths that do land in Phase 1B. Used by
+/// `revoke_close_then_regrant_gets_current_generation` to prove a re-grant
+/// picks up the *current* generation rather than the one baked in at first
+/// creation.
+pub fn bump_generation(svm: &mut LiteSVM, pda: &Pubkey, delta: u64) -> u64 {
+    let existing = svm.get_account(pda).expect("account exists");
+    let mut acc = read_smart_account(svm, pda);
+    acc.generation = acc.generation.checked_add(delta).unwrap();
+    let generation = acc.generation;
+    let mut data = SmartAccount::DISCRIMINATOR.to_vec();
+    data.extend_from_slice(bytemuck::bytes_of(&acc));
+    assert_eq!(data.len(), SmartAccount::LEN);
+    svm.set_account(
+        *pda,
+        Account {
+            lamports: existing.lamports,
+            data,
+            owner: existing.owner,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account");
+    generation
+}

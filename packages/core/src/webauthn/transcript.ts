@@ -1,0 +1,279 @@
+/**
+ * TypeScript mirror of `programs/warden/src/root_verify/transcript.rs`.
+ *
+ * This is the exact byte encoding the passkey signs over, and the
+ * base64url encoding the browser puts in `clientDataJSON.challenge`. Every
+ * value here MUST stay byte-for-byte identical to the Rust source — the
+ * pinned test vector in `test/transcript.test.ts` is copied verbatim from
+ * the Rust `transcript_hash_matches_pinned_vector` /
+ * `action_hash_matches_pinned_vectors` tests to prove cross-language parity.
+ * If the two ever disagree, one side has drifted and every root ceremony
+ * breaks.
+ *
+ * ```text
+ * transcript = Keccak256(
+ *     "WARDEN/root/v1"
+ *   ‖ cluster_tag         (32 B)   <- SmartAccount.cluster_tag, client-attested
+ *   ‖ program_id          (32 B)
+ *   ‖ account              (32 B)
+ *   ‖ generation           u64 LE
+ *   ‖ policy_version       u32 LE
+ *   ‖ root_nonce           u64 LE
+ *   ‖ expiry_ts            i64 LE
+ *   ‖ action_hash          (32 B)
+ * )
+ * action_hash = Keccak256(op_type:u8 ‖ borsh(op_args))
+ * challenge   = base64url_nopad(transcript)
+ * ```
+ *
+ * No `blockhash` is included, deliberately: a program cannot authenticate
+ * the outer message's blockhash, so binding one would be security theatre.
+ * Replay is prevented by `root_nonce` (consumed on every successful root
+ * instruction) plus the `expiry_ts` window. See `transcript.rs` for the full
+ * rationale, including the caveat that `cluster_tag` is a client-attested
+ * domain separator, not a verified genesis binding.
+ */
+
+import { keccak_256 } from "@noble/hashes/sha3";
+
+/** Domain separator. Bumping the `/v1` suffix invalidates every outstanding assertion. */
+export const TRANSCRIPT_DOMAIN: Uint8Array = new TextEncoder().encode("WARDEN/root/v1");
+
+/**
+ * `op_type` byte for `rotate_nonce` (Task 3). Further ops are appended below;
+ * the byte is part of the signed transcript, so values are permanent.
+ */
+export const OP_ROTATE_NONCE = 0x00;
+/**
+ * `op_type` byte for `grant_session` (Task 5); hashed over
+ * `borsh(GrantBody)` — every `grant_session` argument except `root`.
+ *
+ * `GrantBody` field order (borsh, `programs/warden/src/instructions/grant_session.rs`):
+ * `expiry_ts: i64`, `session_pubkey: Pubkey (32B)`, `kind: u8`,
+ * `ops_mask: u16`, `caps: Vec<MintCap>`, `lifetime_cap: Vec<u64>`,
+ * `program_allowlist_id: u16`, `label: [u8; 16]`.
+ */
+export const OP_GRANT_SESSION = 0x01;
+/**
+ * `op_type` byte for the root path of session revocation (Task 5); hashed
+ * over `borsh(RevokeBody)`. The session-self path carries no root assertion
+ * and therefore no action hash.
+ *
+ * `RevokeBody` field order (borsh, `programs/warden/src/instructions/revoke_session.rs`):
+ * `session_pubkey: Pubkey (32B)`, `refund_to: Pubkey (32B)`.
+ */
+export const OP_REVOKE_SESSION = 0x02;
+/**
+ * `op_type` byte for `freeze` (Task 6). Like `rotate_nonce`, it has no
+ * arguments of its own beyond `RootArgs`, so it is hashed over an empty
+ * borsh payload (`actionHash(OP_FREEZE, new Uint8Array())`).
+ */
+export const OP_FREEZE = 0x03;
+/** `op_type` byte for `unfreeze` (Task 6); same empty-payload shape as `OP_FREEZE`. */
+export const OP_UNFREEZE = 0x04;
+
+/**
+ * `op_type` byte for the ROOT path of `transfer` (Task 7); hashed over
+ * `borsh(TransferBody)`.
+ *
+ * Named `OP_TRANSFER_ACTION` in Rust
+ * (`programs/warden/src/root_verify/transcript.rs`) purely to avoid colliding
+ * with `state::session::OP_TRANSFER`, which is the session `ops_mask` BIT
+ * (`1 << 0`) — an unrelated number in an unrelated namespace. If a future task
+ * mirrors the `ops_mask` bits here, they MUST be exported under a distinct
+ * prefix (e.g. `OPS_MASK_TRANSFER`) rather than shadowing this constant.
+ *
+ * `TransferBody` field order (borsh, `programs/warden/src/instructions/transfer.rs`):
+ * `native: bool (1B, 0x00/0x01)`, `mint: Pubkey (32B)`,
+ * `destination: Pubkey (32B)`, `amount: u64 (8B LE)` — 73 B total, fixed
+ * width (no Option tags, no Vec length prefixes).
+ *
+ * Two field notes matter for building the ceremony client-side:
+ * - `native` is carried ALONGSIDE `mint`, not inferred from it: when
+ *   `native` is `true`, `mint` is the all-zero pubkey (`Pubkey::default()`),
+ *   even though the on-chain caps for native SOL are looked up under the
+ *   wrapped-SOL mint `So11111111111111111111111111111111111111112`. The
+ *   signed document says "no mint" so a client displaying a pending
+ *   assertion never has to know the zero pubkey is a sentinel.
+ * - `destination` is the DESTINATION ACCOUNT's key (a plain system account
+ *   for SOL, a token account for SPL) taken from the accounts actually
+ *   passed — `transfer` has no destination *argument* at all. The client must
+ *   therefore sign over exactly the account key it will submit, or the
+ *   on-chain rebuild fails with `ChallengeMismatch` (6018).
+ */
+export const OP_TRANSFER = 0x05;
+
+const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/**
+ * RFC 4648 §5 base64url **without** padding — the encoding WebAuthn uses for
+ * `clientDataJSON.challenge`. Hand-rolled (mirroring the Rust `b64url_no_pad`)
+ * rather than delegated to a platform API, so behaviour is identical in
+ * Node and browser/extension contexts and is pinned by the same vectors.
+ */
+export function challengeB64Url(bytes: Uint8Array): string {
+  let out = "";
+  let i = 0;
+  for (; i + 3 <= bytes.length; i += 3) {
+    const n = ((bytes[i] as number) << 16) | ((bytes[i + 1] as number) << 8) | (bytes[i + 2] as number);
+    out += B64URL[(n >>> 18) & 0x3f];
+    out += B64URL[(n >>> 12) & 0x3f];
+    out += B64URL[(n >>> 6) & 0x3f];
+    out += B64URL[n & 0x3f];
+  }
+  const rem = bytes.length - i;
+  if (rem === 1) {
+    const n = (bytes[i] as number) << 16;
+    out += B64URL[(n >>> 18) & 0x3f];
+    out += B64URL[(n >>> 12) & 0x3f];
+  } else if (rem === 2) {
+    const n = ((bytes[i] as number) << 16) | ((bytes[i + 1] as number) << 8);
+    out += B64URL[(n >>> 18) & 0x3f];
+    out += B64URL[(n >>> 12) & 0x3f];
+    out += B64URL[(n >>> 6) & 0x3f];
+  }
+  return out;
+}
+
+/** Little-endian byte encoding of an unsigned 64-bit `bigint`. */
+function u64le(v: bigint): Uint8Array {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigUint64(0, v, true);
+  return b;
+}
+
+/** Little-endian byte encoding of an unsigned 32-bit number. */
+function u32le(v: number): Uint8Array {
+  const b = new Uint8Array(4);
+  new DataView(b.buffer).setUint32(0, v, true);
+  return b;
+}
+
+/** Little-endian byte encoding of a signed 64-bit `bigint`. */
+function i64le(v: bigint): Uint8Array {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigInt64(0, v, true);
+  return b;
+}
+
+function require32(bytes: Uint8Array, name: string): void {
+  if (bytes.length !== 32) {
+    throw new Error(`${name} must be exactly 32 bytes, got ${bytes.length}`);
+  }
+}
+
+const U32_MAX = 0xffffffff;
+const U64_MAX = (1n << 64n) - 1n;
+const I64_MIN = -(1n << 63n);
+const I64_MAX = (1n << 63n) - 1n;
+
+/**
+ * Asserts `v` is an integer in `[0, 255]`. Used for `op_type`, which Rust
+ * encodes as `u8` — a JS `number` outside that range would otherwise
+ * silently narrow (e.g. `256 & 0xff` truncates to `0`) instead of throwing.
+ */
+function assertU8(v: number, name: string): void {
+  if (!Number.isInteger(v) || v < 0 || v > 0xff) {
+    throw new RangeError(`${name} must be an integer in [0, 255] (u8), got ${v}`);
+  }
+}
+
+/**
+ * Asserts `v` is an integer in `[0, 2^32 - 1]`. Used for `policy_version`,
+ * which Rust encodes as `u32`.
+ */
+function assertU32(v: number, name: string): void {
+  if (!Number.isInteger(v) || v < 0 || v > U32_MAX) {
+    throw new RangeError(`${name} must be an integer in [0, ${U32_MAX}] (u32), got ${v}`);
+  }
+}
+
+/**
+ * Asserts `v` is a `bigint` in `[0, 2^64 - 1]`. Used for `generation` and
+ * `root_nonce`, which Rust encodes as `u64` — these are `bigint`, not
+ * `number`, precisely because `number` cannot represent the full u64 range
+ * without precision loss.
+ */
+function assertU64(v: bigint, name: string): void {
+  if (typeof v !== "bigint" || v < 0n || v > U64_MAX) {
+    throw new RangeError(`${name} must be a bigint in [0, 2^64 - 1] (u64), got ${v}`);
+  }
+}
+
+/**
+ * Asserts `v` is a `bigint` in `[-2^63, 2^63 - 1]`. Used for `expiry_ts`,
+ * which Rust encodes as `i64`.
+ */
+function assertI64(v: bigint, name: string): void {
+  if (typeof v !== "bigint" || v < I64_MIN || v > I64_MAX) {
+    throw new RangeError(`${name} must be a bigint in [-2^63, 2^63 - 1] (i64), got ${v}`);
+  }
+}
+
+export interface TranscriptInput {
+  /** `SmartAccount.cluster_tag` — client-attested domain separator, not a verified genesis binding. */
+  clusterTag: Uint8Array;
+  /** The Warden program id (32 bytes). */
+  programId: Uint8Array;
+  /** The `SmartAccount` pubkey (32 bytes). */
+  account: Uint8Array;
+  generation: bigint;
+  policyVersion: number;
+  rootNonce: bigint;
+  expiryTs: bigint;
+  /** Output of {@link actionHash} (32 bytes). */
+  actionHash: Uint8Array;
+}
+
+/**
+ * Keccak256 over the canonical transcript encoding. Mirrors
+ * `root_verify::transcript::transcript_hash` byte-for-byte.
+ */
+export function transcriptHash(input: TranscriptInput): Uint8Array {
+  require32(input.clusterTag, "clusterTag");
+  require32(input.programId, "programId");
+  require32(input.account, "account");
+  require32(input.actionHash, "actionHash");
+  assertU64(input.generation, "generation");
+  assertU32(input.policyVersion, "policyVersion");
+  assertU64(input.rootNonce, "rootNonce");
+  assertI64(input.expiryTs, "expiryTs");
+
+  const preimage = new Uint8Array(
+    TRANSCRIPT_DOMAIN.length + 32 + 32 + 32 + 8 + 4 + 8 + 8 + 32,
+  );
+  let o = 0;
+  preimage.set(TRANSCRIPT_DOMAIN, o);
+  o += TRANSCRIPT_DOMAIN.length;
+  preimage.set(input.clusterTag, o);
+  o += 32;
+  preimage.set(input.programId, o);
+  o += 32;
+  preimage.set(input.account, o);
+  o += 32;
+  preimage.set(u64le(input.generation), o);
+  o += 8;
+  preimage.set(u32le(input.policyVersion), o);
+  o += 4;
+  preimage.set(u64le(input.rootNonce), o);
+  o += 8;
+  preimage.set(i64le(input.expiryTs), o);
+  o += 8;
+  preimage.set(input.actionHash, o);
+
+  return keccak_256(preimage);
+}
+
+/**
+ * Keccak256(`op_type` ‖ `borsh_args`). Mirrors
+ * `root_verify::transcript::action_hash` byte-for-byte. The caller
+ * re-serializes the *executing* instruction's arguments, so no argument can
+ * be swapped between the passkey ceremony and submission.
+ */
+export function actionHash(opType: number, borshArgs: Uint8Array): Uint8Array {
+  assertU8(opType, "opType");
+  const preimage = new Uint8Array(1 + borshArgs.length);
+  preimage[0] = opType;
+  preimage.set(borshArgs, 1);
+  return keccak_256(preimage);
+}

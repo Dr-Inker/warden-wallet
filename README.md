@@ -13,9 +13,9 @@ The property we build toward, stated exactly (spec §1): *if an attacker obtains
 
 | Area | State |
 |---|---|
-| **Design spec** (rev 6) | `docs/superpowers/specs/2026-08-18-warden-wallet-design.md` — threat model, key model, on-chain instruction set, conservation rules, recovery, rollout |
+| **Design spec** (rev 7) | `docs/superpowers/specs/2026-08-18-warden-wallet-design.md` — threat model, key model, on-chain instruction set, conservation rules, recovery, rollout |
 | **Phase 0 — spikes** | Done, merged. Evidence-backed answers to the four questions that could have killed the design: passkey root verified on-chain (secp256r1 precompile + Instructions-sysvar binding), transaction byte budget on real Jupiter routes, conservation-snapshot CU cost, dApp compatibility inventory. Roll-up + decision: `docs/spikes/DECISION.md` |
-| **Phase 1A — program foundation** (branch `phase1a`) | `programs/warden` (Anchor): zero-copy `SmartAccount`, `SessionKey`, bucket accounting, `root_verify` (strict WebAuthn `clientDataJSON` scanner, consumed nonce), `create_account`, `grant_session`/`revoke_session`, root `freeze`/`unfreeze`, `transfer` (session within caps / root bounded, both debiting shared account-wide buckets). 266 Rust tests (LiteSVM + unit) + 22 TS tests. Measured costs: `docs/program/PHASE1A-MEASUREMENTS.md` |
+| **Phase 1A — program foundation** (branch `phase1a`) | `programs/warden` (Anchor): zero-copy `SmartAccount`, `SessionKey`, bucket accounting, `root_verify` (strict WebAuthn `clientDataJSON` scanner, consumed nonce), `create_account`, `grant_session`/`revoke_session`, root `freeze`/`unfreeze`, `transfer` (session within caps / root bounded, both debiting shared account-wide buckets). 292 Rust tests (LiteSVM + unit) + 50 TS tests; `./.claude/test-gate.sh` exit 0 at `c583dfe`. Measured costs + error ABI (6000–6035): `docs/program/PHASE1A-MEASUREMENTS.md` |
 | **Phase 1B** (next) | `execute` (allow-listed dApp CPI with before/after conservation checks), staged transactions, `swap` (Jupiter with platform fee), `queue`/pending timelock + policy lattice, guardians/recovery/guardian-freeze |
 | **Design system** | Figma tokens + first screens (sign-request/intent, home, dust-only poison screen); CSS tokens in `packages/ui-tokens` — `docs/design/figma.md` |
 | **Extension / services** | Not started (Phases 2–4) |
@@ -35,9 +35,9 @@ programs/warden/          Anchor program (Rust) + LiteSVM tests
 packages/core/            TypeScript SDK (transcript/challenge mirror, constants, IDL)
 packages/ui-tokens/       Design tokens exported from Figma (CSS + JSON, constraint tests)
 spikes/                   THROWAWAY Phase-0 evidence (never imported by product code)
-docs/superpowers/specs/   Design spec (rev 6)
+docs/superpowers/specs/   Design spec (rev 7)
 docs/superpowers/plans/   Phase plans (0, 1A)
-docs/spikes/              DECISION.md (Phase-0 gate), Phase-0 ledger
+docs/spikes/              DECISION.md (Phase-0 gate), Phase-0 + Phase-1A ledgers
 docs/program/             Measured CU / byte costs, design notes, error ABI
 docs/design/              Figma file map, screenshots
 docs/TOOLCHAIN.md         Pinned toolchain + verification provenance
@@ -59,7 +59,7 @@ cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects
 
 ## Development process
 
-Every task is planned from the spec, implemented by an isolated worker, and **independently reviewed by a second model (OpenAI Codex) against the brief and the spec** before it counts as done; findings go through fix rounds with scoped re-reviews. Rulings taken along the way are recorded in ledgers (`docs/spikes/PHASE0-LEDGER.md`, and per-phase). Security-relevant claims are backed by tests that assert exact error codes and by measured numbers rather than assumptions.
+Every task is planned from the spec, implemented by an isolated worker, and **independently reviewed by a second model (OpenAI Codex) against the brief and the spec** before it counts as done; findings go through fix rounds with scoped re-reviews. Rulings taken along the way are recorded in the published ledgers: [Phase 0](docs/spikes/PHASE0-LEDGER.md) and [Phase 1A](docs/spikes/PHASE1A-LEDGER.md). Security-relevant claims are backed by tests that assert exact error codes and by measured numbers rather than assumptions.
 
 Contributions: see `CONTRIBUTING.md`. Security reports: see `SECURITY.md`.
 

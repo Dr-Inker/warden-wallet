@@ -1,10 +1,7 @@
 [workspace]
 resolver = "2"
-# Phase 1 adds `programs/warden` and changes this to `members = ["programs/*"]`.
-# It must stay empty until then: cargo rejects an unmatched `programs/*` glob
-# ("failed to load manifest for workspace member /opt/warden/programs/*"),
-# even with an empty `programs/` directory present — verified 2026-08-18.
-members = []
+# Phase 1: programs/warden landed, so the workspace glob now matches.
+members = ["programs/*"]
 # Spikes are throwaway evidence (CLAUDE.md) and each spike crate carries its own
 # [workspace] table, so they are excluded from the root workspace, not members of it.
 exclude = ["spikes"]

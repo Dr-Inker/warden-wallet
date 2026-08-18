@@ -1,0 +1,55 @@
+[package]
+name = "warden"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "warden"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+# `init-if-needed` is required by `grant_session`, which upserts the session
+# PDA: the same instruction both creates a new session and re-blesses an
+# existing one (see `instructions::grant_session`). Anchor's reinitialization
+# warning is addressed there — the handler distinguishes "fresh" from
+# "existing" via `version == 0` and never resets `lifetime_spent` on an
+# account that already exists.
+anchor-lang = { version = "1.1.2", features = ["init-if-needed"] }
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
+# Instruction introspection (`load_instruction_at_checked`, `load_current_index_checked`,
+# the sysvar `ID`). anchor-lang re-exports only the `Instructions` marker type, not these
+# loaders, so the crate is declared directly; it resolves to the same 3.0.1 anchor already
+# pulls in, so no second copy is linked.
+solana-instructions-sysvar = "3"
+# Keccak256 (root transcript) and SHA-256 (clientDataJSON digest bound into the precompile
+# message). Both compile to the `sol_keccak256`/`sol_sha256` syscalls on the Solana target;
+# the `sha3`/`sha2` features only affect non-Solana builds (host unit tests), where the
+# optional pure-Rust backend is needed instead of the syscall.
+solana-keccak-hasher = { version = "3", features = ["sha3"] }
+solana-sha256-hasher = { version = "3", features = ["sha2"] }
+
+[dev-dependencies]
+litesvm = { version = "0.12", features = ["precompiles"] }
+solana-sdk = "3"
+solana-secp256r1-program = "3"
+p256 = { version = "0.13", features = ["ecdsa"] }
+sha2 = "0.10"
+sha3 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+# Test fixtures only: `spl_token::state::{Account, Mint}::pack` is what
+# `tests/common/token.rs` plants token accounts with, and `spl_token::ID` is
+# what `constants::SPL_TOKEN_ID` is pinned against. v9 is the first line built
+# on the granular `solana-*` 3.x crates (v7 pulls `solana-program 2.3.x`,
+# whose `Pubkey` is a different, non-interconvertible type — spike 3b's
+# finding); see docs/TOOLCHAIN.md.
+spl-token = { version = "9", features = ["no-entrypoint"] }
+bincode = "1"
