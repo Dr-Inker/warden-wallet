@@ -1,0 +1,5 @@
+[workspace]
+resolver = "2"
+members = ["programs/*", "spikes/02-webauthn/onchain", "spikes/03-txbudget/onchain"]
+[profile.release]
+overflow-checks = true
