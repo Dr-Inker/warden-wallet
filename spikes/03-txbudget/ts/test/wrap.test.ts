@@ -113,6 +113,46 @@ describe("wrapForExecute", () => {
       expect(localKeys[acc.idx].equals(ComputeBudgetProgram.programId)).toBe(false);
     }
   });
+
+  it("dedups `order` when a dApp instruction references `account` itself — no duplicate meta, resolves to instruction-local index 0", () => {
+    // Round 3 review: `account` (or `sessionKey`) can legitimately show up again among an inner
+    // instruction's OWN keys (e.g. referenced as an informational/owner account by some dApp
+    // instruction that isn't the primary funding instruction) — without dedup this would produce
+    // a SECOND `account` entry in `order`, which `outerKeys` would then also carry, silently
+    // shifting every account after it by one index and corrupting the whole instruction-local
+    // index space.
+    const acct = Keypair.generate().publicKey, sess = Keypair.generate(), prog = Keypair.generate().publicKey;
+    const other = Keypair.generate().publicKey;
+    const dummyProgram = Keypair.generate().publicKey;
+    const ix = new TransactionInstruction({
+      programId: dummyProgram,
+      keys: [
+        { pubkey: other, isSigner: false, isWritable: true },
+        { pubkey: acct, isSigner: false, isWritable: false }, // references the wallet itself
+      ],
+      data: Buffer.from([1, 2, 3]),
+    });
+    const msg = new TransactionMessage({ payerKey: acct, recentBlockhash: "11111111111111111111111111111111", instructions: [ix] }).compileToV0Message();
+    const r = wrapForExecute(msg, prog, acct, sess.publicKey);
+    expect(r.inline).not.toBeNull();
+
+    const redecompiled = TransactionMessage.decompile(r.inline!.message);
+    const executeIx = redecompiled.instructions.find(i => i.programId.equals(prog));
+    expect(executeIx).toBeDefined();
+    const localKeys = executeIx!.keys.map(k => k.pubkey);
+
+    // Expected instruction-local key list: [account, sessionKey, dummyProgram, other] — `acct`
+    // must NOT appear a second time even though the inner instruction explicitly listed it.
+    expect(localKeys).toHaveLength(4);
+    expect(localKeys.filter(k => k.equals(acct))).toHaveLength(1);
+    expect(localKeys[0].equals(acct)).toBe(true);
+
+    const decoded = decodeExecuteData(executeIx!.data);
+    expect(decoded).toHaveLength(1);
+    // The inner instruction's 2nd account (acct itself) must decode to instruction-local index 0.
+    expect(decoded[0].accounts[1].idx).toBe(0);
+    expect(localKeys[decoded[0].accounts[1].idx].equals(acct)).toBe(true);
+  });
 });
 
 describe("maxStageChunkPayloadBytes / stagedChunks", () => {
@@ -141,5 +181,36 @@ describe("maxStageChunkPayloadBytes / stagedChunks", () => {
     const maxPayload = maxStageChunkPayloadBytes(prog);
     expect(r.stagedChunks).toBe(Math.ceil(expectedPartsLen / maxPayload));
     expect(r.stagedChunks).toBeGreaterThanOrEqual(3); // ~3000 B / <1200 B-per-chunk ⇒ at least 3
+  });
+});
+
+describe("u8 overflow guards (round 3 review)", () => {
+  it("throws rather than silently truncating when there are more than 255 inner instructions (n_ixs is a packed u8)", () => {
+    const acct = Keypair.generate().publicKey, sess = Keypair.generate(), prog = Keypair.generate().publicKey;
+    const dummyProgram = Keypair.generate().publicKey;
+    // 256 near-identical instructions sharing the same program + single account, so the OUTER
+    // account count stays tiny (well under the separate 256-account limit) — isolates the n_ixs
+    // guard specifically, rather than incidentally tripping the account-index guard too.
+    const instructions = Array.from({ length: 256 }, (_, i) =>
+      new TransactionInstruction({ programId: dummyProgram, keys: [{ pubkey: acct, isSigner: false, isWritable: false }], data: Buffer.from([i & 0xff]) })
+    );
+    const msg = new TransactionMessage({ payerKey: acct, recentBlockhash: "11111111111111111111111111111111", instructions }).compileToV0Message();
+    expect(() => wrapForExecute(msg, prog, acct, sess.publicKey)).toThrow(/256 inner instructions.*exceeds u8/);
+  });
+
+  it("throws rather than silently truncating when a single instruction has more than 255 accounts (n_accts is a packed u8)", () => {
+    const acct = Keypair.generate().publicKey, sess = Keypair.generate(), prog = Keypair.generate().publicKey;
+    const dummyProgram = Keypair.generate().publicKey;
+    // The `ix.keys.length > 0xff` guard being tested cares about this ONE instruction's raw key
+    // ARRAY LENGTH, not its unique-account count — so repeat just 2 unique pubkeys 128× each
+    // rather than using 256 distinct ones. That keeps the whole ORIGINAL message's unique account
+    // count tiny, staying well under @solana/web3.js's own separate ~256-unique-static-key cap
+    // (compileToV0Message throws "Max static account keys length exceeded" past that), which
+    // would otherwise fail while constructing this test's input, before wrapForExecute ever runs.
+    const keyA = Keypair.generate().publicKey, keyB = Keypair.generate().publicKey;
+    const manyKeys = Array.from({ length: 256 }, (_, i) => ({ pubkey: i % 2 === 0 ? keyA : keyB, isSigner: false, isWritable: false }));
+    const ix = new TransactionInstruction({ programId: dummyProgram, keys: manyKeys, data: Buffer.alloc(0) });
+    const msg = new TransactionMessage({ payerKey: acct, recentBlockhash: "11111111111111111111111111111111", instructions: [ix] }).compileToV0Message();
+    expect(() => wrapForExecute(msg, prog, acct, sess.publicKey)).toThrow(/256 accounts.*exceeds u8/);
   });
 });

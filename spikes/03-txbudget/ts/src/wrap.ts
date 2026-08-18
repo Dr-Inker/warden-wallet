@@ -74,13 +74,15 @@ const chunkPayloadCache = new Map<string, number>();
  *  that keeps the whole transaction ≤ MAX_TX_BYTES. Replaces the previous unexplained "900 B"
  *  constant with a measured number (round 1 review — was Important).
  *
- *  Account/data contract per spec §5.1 ("stage_open(hash,len) / stage_chunk(off,bytes) /
- *  stage_finalize / stage_close — any payer"): payer (signer), Stage PDA (writable), System
- *  Program; data = 8-byte header (offset:u32, len:u32) + payload. §5.1 fixes the *signer* and the
- *  header shape but not the full exact account list/order the eventual Phase 1 program will use —
- *  so the measured cap below is PROVISIONAL, not final, until that program exists (round 2
- *  review; see result.md). Memoized per program id since the result only depends on
- *  wardenProgram's pubkey (a fixed 32 bytes either way) and MAX_TX_BYTES. */
+ *  Spec §5.1 ("stage_open(hash,len) / stage_chunk(off,bytes) / stage_finalize / stage_close —
+ *  any payer") specifies ONLY the signer (any payer) — it does NOT specify the Stage PDA, the
+ *  System Program, or an 8-byte header. The account shape below (payer signer, Stage PDA
+ *  writable, System Program) and the 8-byte header (offset:u32, len:u32) + payload are an
+ *  ASSUMED layout per controller ruling (round 3 review, 2026-08-18), not something §5.1 actually
+ *  pins down — so the measured cap below is PROVISIONAL until Phase 1 fixes the real
+ *  `stage_chunk` account list/order and data layout (see result.md). Memoized per program id
+ *  since the result only depends on wardenProgram's pubkey (a fixed 32 bytes either way) and
+ *  MAX_TX_BYTES. */
 export function maxStageChunkPayloadBytes(wardenProgram: PublicKey): number {
   const cacheKey = wardenProgram.toBase58();
   const cached = chunkPayloadCache.get(cacheKey);
@@ -96,7 +98,7 @@ export function maxStageChunkPayloadBytes(wardenProgram: PublicKey): number {
   // section), so treat it as +Infinity rather than letting the search crash.
   const bytesFor = (payloadLen: number): number => {
     try {
-      const data = Buffer.alloc(8 + payloadLen); // u32 offset + u32 len header + payload (§5.1)
+      const data = Buffer.alloc(8 + payloadLen); // u32 offset + u32 len header + payload (assumed shape, not from §5.1 — see doc comment above)
       const ix = new TransactionInstruction({
         programId: wardenProgram,
         keys: [
@@ -148,12 +150,29 @@ export function wrapForExecute(msg: VersionedMessage, wardenProgram: PublicKey, 
       metas.set(key(k.pubkey), { pubkey: k.pubkey, isSigner, isWritable: cur?.isWritable || k.isWritable });
     }
   }
-  const order = [...metas.values()];
+  // A dApp instruction may itself reference `account` (e.g. as an owner/destination field) or
+  // `sessionKey` (coincidentally, or because the wrap-time session key happens to collide with
+  // some address the inner instruction cares about) — both already have fixed, always-present
+  // prefix entries below, so they're excluded from `order` here rather than kept and duplicated
+  // (round 3 review — a duplicate entry would silently shift every later account's index by one,
+  // corrupting the instruction-local index space this file's whole contract depends on). Their
+  // writable flags are merged into the prefix entries rather than assumed away — currently always
+  // a no-op since both prefix entries already claim the strongest permission (writable:true), but
+  // computed explicitly so this stays correct if that default ever changes. `account`'s isSigner
+  // stays forced false and `sessionKey`'s stays forced true regardless of what any inner
+  // instruction asked for, per the invoke_signed/session-key model above the metas loop.
+  const accountMeta = metas.get(key(account));
+  const sessionMeta = metas.get(key(sessionKey));
+  const order = [...metas.values()].filter(m => !m.pubkey.equals(account) && !m.pubkey.equals(sessionKey));
   // outerKeys IS the index space (see contract above): position 0 = account, 1 = sessionKey,
   // 2.. = order. No compilation step is needed to learn these indices — they're fixed the moment
   // this array is built, and stay valid regardless of how compileToV0Message reorders the
   // MESSAGE's global account-key list, because that reordering is per-instruction-index-preserving.
-  const outerKeys = [{ pubkey: account, isSigner: false, isWritable: true }, { pubkey: sessionKey, isSigner: true, isWritable: true }, ...order];
+  const outerKeys = [
+    { pubkey: account, isSigner: false, isWritable: true || !!accountMeta?.isWritable },
+    { pubkey: sessionKey, isSigner: true, isWritable: true || !!sessionMeta?.isWritable },
+    ...order,
+  ];
   const idx = (p: PublicKey): number => {
     const i = outerKeys.findIndex(k => k.pubkey.equals(p));
     if (i < 0) throw new Error(`wrapForExecute: account ${p.toBase58()} missing from outer.keys`);
@@ -161,6 +180,11 @@ export function wrapForExecute(msg: VersionedMessage, wardenProgram: PublicKey, 
     return i;
   };
 
+  // n_ixs is a single u8 byte in the packed header — silently truncating (256 wraps to 0 when
+  // Buffer.from() coerces each array element to a byte) would corrupt every instruction after the
+  // wrap point, so this must throw rather than truncate (round 3 review — the same class of bug
+  // as the account-index overflow check below, just for the instruction count instead).
+  if (inner.length > 0xff) throw new Error(`wrapForExecute: ${inner.length} inner instructions, exceeds u8 (255) — too many instructions to wrap with this scheme`);
   const parts: number[] = [2, inner.length];
   for (const ix of inner) {
     if (ix.keys.length > 0xff) throw new Error(`wrapForExecute: instruction has ${ix.keys.length} accounts, exceeds u8`);

@@ -66,6 +66,39 @@ citation. Both addressed:
 are single bytes — u8 either way — so no size difference), confirmed by 2 fresh post-round-2
 measure runs below.
 
+## Round 3 fix (2026-08-18) — read this too
+
+Re-review confirmed instruction-local indexing (round 2) is correct. Three small residuals, all
+fixed:
+
+1. **§5.1 comment overclaimed what the spec actually says.** Spec §5.1 only specifies the
+   *signer* for `stage_chunk` ("any payer") — it says nothing about a Stage PDA, a System Program
+   account, or an 8-byte header. Round 2's wording implied §5.1 "fixes the header shape," which is
+   wrong. Reworded in `wrap.ts` and here: the account shape (payer, Stage PDA, System Program) and
+   8-byte header are an **ASSUMED** layout per controller ruling, not derived from §5.1 — the
+   985 B cap was already marked PROVISIONAL and stays so, but now for the right reason (an
+   assumption, not an incomplete spec citation).
+2. **`order` could contain `account` or `sessionKey` again**, duplicating their already-fixed
+   prefix entries if some inner dApp instruction happened to reference the wallet or session key
+   pubkey directly (e.g. as an owner/destination field) — silently shifting every later account's
+   instruction-local index by one and corrupting the whole index space. Fixed: `order` now
+   excludes both, with their writable flags explicitly merged into the prefix entries (a no-op
+   today since both prefix entries already claim the strongest permission, but computed rather
+   than assumed). New test: an inner instruction that references `account` a second time, asserts
+   no duplicate key and that it resolves to instruction-local index 0.
+3. **`inner.length` (n_ixs, a packed u8) was never bounds-checked** — >255 inner instructions
+   would silently wrap (256 → 0 via `Buffer.from()`'s byte coercion), corrupting every instruction
+   after the wrap point. Added an explicit throw, symmetric with the existing per-instruction
+   account-count guard. New tests for both the 256-instruction case and (already-existing logic,
+   newly test-covered) the 256-account-in-one-instruction case.
+
+Unit tests: 8/8 pass (5 from rounds 1–2, plus the 3 new ones above). No re-measurement run this
+round — none of these three fixes touch the packed-payload byte count for any case already
+measured (comment wording, a dedup that only fires when an inner instruction references
+`account`/`sessionKey` directly — not the case in any Jupiter/Marinade route seen so far, and a
+bounds check that only fires past 255 instructions/accounts — also not hit by any real route so
+far); they only guard/correct edge cases this spike's real-route sample never happened to trigger.
+
 ## Results — Jupiter SOL→USDC (0.1 SOL, 50 bps slippage), 5 runs ≥130s apart — SUPERSEDED, pre-fix (see banner above)
 
 USER_PUBKEY was left at the script's default fallback,
@@ -451,17 +484,17 @@ full instruction-local contract explicitly, including the two prior wrong diagno
 off-by-2, round 1's wrong index space) as documented history, so a future reader doesn't
 re-attempt either.
 
-**2. Important — stage_chunk cap, spec citation + provisional marking (FIXED).**
-`maxStageChunkPayloadBytes`'s doc comment now cites spec §5.1 directly for the account contract
-(payer signer / Stage PDA writable / System Program; data = 8-byte offset+len header + payload) —
-no logic change, the serialization this spike already built matches §5.1's shape. Per controller
-ruling, §5.1 fixes the signer and header shape but not the eventual Phase 1 program's exact
-account list/order, so the measured **985 B cap is marked PROVISIONAL** everywhere it's cited in
-this document (banner above, "Post-fix re-measurement," and here) — it should be re-measured once
-that program exists rather than treated as load-bearing for Phase 1 sizing today. No new test
-added for this item (controller ruling: the existing "~3000-byte payload forces staging" test
-already exercises the same `maxStageChunkPayloadBytes` code path; a spec-citation-only change
-doesn't need new coverage).
+**2. Important — stage_chunk cap, spec citation + provisional marking (FIXED round 2; wording
+corrected round 3 — round 2's phrasing here overclaimed what §5.1 actually says, see "Round 3
+fix" below).** `maxStageChunkPayloadBytes`'s doc comment cites spec §5.1 for what it actually
+specifies — the *signer only* (`stage_chunk(off, bytes)` — "any payer") — no longer implying §5.1
+also fixes the account shape (Stage PDA / System Program) or the 8-byte offset+len header, which
+it does not; those are stated as an ASSUMED layout per controller ruling instead. The measured
+**985 B cap is marked PROVISIONAL** everywhere it's cited in this document (banner above, "Post-fix
+re-measurement," and here) — it should be re-measured once Phase 1's real program exists rather
+than treated as load-bearing for sizing today. No new test added for this item (controller ruling:
+the existing "~3000-byte payload forces staging" test already exercises the same
+`maxStageChunkPayloadBytes` code path; a comment-wording-only change doesn't need new coverage).
 
 **Byte-size impact of the index-space fix: none, confirmed.** Both instruction-local and
 compiled-global indices are single bytes (u8) regardless of numeric value, so switching index
@@ -470,6 +503,74 @@ measured — only the *correctness* of what the indices point to changes. 2 fres
 `pnpm measure` runs post-round-2-fix confirm this holds (see "Post-fix re-measurement, round 2"
 above): sizes for a given account count land in the same range as round 1's post-fix numbers
 (e.g. Marinade: 702 B in both rounds, byte-identical).
+
+### Round 3 fix (2026-08-18) — task review findings, addressed
+
+**1. §5.1 comment corrected to not overclaim the spec (FIXED).** The doc comment on
+`maxStageChunkPayloadBytes` (and the inline `data = Buffer.alloc(...)` comment) previously read as
+if spec §5.1 specified the Stage PDA / System Program accounts and the 8-byte header — it doesn't.
+§5.1's `stage_chunk(off, bytes)` row specifies only the *signer* ("any payer"). Reworded to state
+plainly: the account shape and header are an **assumed** layout per controller ruling (round 3
+review), not derived from §5.1. Same correction applied to the two places in this document that
+repeated the overclaim (the Round 1/2 fix summaries above). No logic change — the serialization
+this spike built already matched the assumed shape; only the comment was wrong about its
+provenance.
+
+**2. `order` deduplication for `account`/`sessionKey` self-references (FIXED).** `order` is built
+by iterating every inner instruction's `keys` and deduping by pubkey into a `Map` — but nothing
+previously excluded `account` or `sessionKey` from that map, even though both already have fixed,
+always-present prefix entries in `outerKeys` (`[account, sessionKey, ...order]`). If any dApp
+instruction happened to reference the wallet pubkey directly (plausible — e.g. as an
+owner/authority field on some non-primary account) or, less plausibly but still possible, the
+session key pubkey, `order` would carry a *second* entry for that pubkey, `outerKeys` would carry
+it a third time effectively (prefix + duplicate), and — critically — every other account's
+instruction-local index would be silently shifted, since index assignment is purely positional.
+This is the same failure class as rounds 0–2's index bugs: a corrupted index that's still
+in-range and still decodes to *some* valid account, just not the intended one.
+
+**Fix:** `order = [...metas.values()].filter(m => !m.pubkey.equals(account) &&
+!m.pubkey.equals(sessionKey))`. The excluded metas' `isWritable` flags are looked up
+(`accountMeta`/`sessionMeta`) and merged into the prefix entries via `true || !!accountMeta
+?.isWritable` (currently always reduces to `true`, since both prefix slots already claim the
+strongest permission — computed explicitly rather than assumed, so this stays correct if that
+default ever changes). `account`'s `isSigner` stays forced `false` and `sessionKey`'s stays forced
+`true` regardless of what any inner instruction's reference asked for, unchanged from the existing
+invoke_signed/session-key model.
+
+**New test:** an inner instruction whose own `keys` list includes `account` a second time (as an
+informational/non-primary reference, alongside an unrelated `other` account) — wraps successfully,
+decompiles the result, and asserts: the instruction-local key list has no duplicate `account`
+entry (length 4: `[account, sessionKey, dummyProgram, other]`, `account` appears exactly once at
+index 0), and the packed payload's reference to `account` decodes to index 0 specifically.
+
+**3. u8 overflow guard for `inner.length` (n_ixs) (FIXED).** `n_ixs` is packed as a single byte
+(`parts = [2, inner.length]`), but nothing previously checked `inner.length` against 255 before
+pushing it — `Buffer.from()` coerces each array element to a byte via truncation, so exactly 256
+inner instructions would silently become `n_ixs = 0` in the packed payload (256 mod 256), and any
+count above that wraps similarly, corrupting the payload rather than failing loudly. This is
+symmetric with the existing (already correct) `ix.keys.length > 0xff` guard for per-instruction
+account counts — that one already threw, this one didn't.
+
+**Fix:** `if (inner.length > 0xff) throw new Error(...)`, placed right before `parts` is
+initialized, mirroring the existing per-instruction guard's error style.
+
+**New tests:** (a) 256 near-identical instructions sharing one program + one account (keeping the
+*outer* account count tiny, isolating the n_ixs guard specifically) — asserts the throw and its
+message. (b) a single instruction with a 256-entry key array — asserts the pre-existing
+`ix.keys.length > 0xff` guard throws too, now with explicit test coverage (previously this guard
+existed but had no dedicated test). Note: this test had to repeat only 2 unique pubkeys 128× each
+across the 256 keys, not 256 distinct ones — @solana/web3.js's own `compileToV0Message` has a
+separate ~256-unique-static-account-key cap ("Max static account keys length exceeded") that would
+otherwise fail while constructing the test's *input* message, before `wrapForExecute` ever runs;
+repeating pubkeys keeps the array length at 256 (what the guard checks) while the unique-account
+count stays tiny (well under web3.js's own cap).
+
+**Byte-size impact: none for any case already measured, confirmed by inspection.** None of these
+three fixes changes behavior for any real Jupiter/Marinade route seen so far — the dedup only
+fires when an inner instruction references `account`/`sessionKey` directly (not observed in any
+measured route), and the two new bounds checks only fire past 255 instructions/accounts (far
+beyond the 15–43-account range this spike has measured). No re-measurement run was needed or
+performed this round.
 
 ## Part (b) — conservation snapshot CU
 
