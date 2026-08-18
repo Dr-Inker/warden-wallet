@@ -46,7 +46,12 @@ and passes 21/21 tests (6 unit + 15 LiteSVM integration).
 
 Build facts:
 
-- `cargo-build-sbf` default `--arch v0`; the produced `spike_p256.so` is 26,224 B.
+- `cargo-build-sbf` default `--arch v0`; the produced `spike_p256.so` is
+  **27,432 B**, built from `spikes/02-webauthn/onchain/src/lib.rs` as of commit
+  `5a0e334` (the round-1 review fixes; `src/lib.rs` is unchanged by round 2, so
+  this is also the current size). It was 26,224 B before the round-1 refactor
+  that extracted `client_data_check` — update this line whenever the program
+  source changes.
 - First `cargo-build-sbf` run: **1 m 19 s** wall (18.9 s of actual compile, the
   rest is the one-time platform-tools v1.52 download + rustup toolchain link).
   Subsequent no-op builds: ~0.2 s.

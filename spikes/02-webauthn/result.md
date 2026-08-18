@@ -268,7 +268,8 @@ derived independently:
 | Low-S normalization needed on this sample? | **Yes.** The Chrome virtual authenticator emitted a **high-S** signature; `p256.Signature.hasHighS()` was `true` and `normalizeS()` was required. Sending the signature exactly as the authenticator produced it makes the precompile reject the tx with `InstructionError(0, Custom(2))`. This is not an edge case to plan for later — it happened on the very first sample, so the extension **must** normalize S before every submission. |
 | Byte layout confirmed? | **Yes**, against `solana-secp256r1-program` 3.0.0 source (`src/lib.rs`, `new_secp256r1_instruction_with_signature`): `[num_signatures u8][padding u8][14-byte offsets]` then payload `pubkey(33) ‖ signature(64) ‖ message(n)`. With one signature the concrete offsets are `public_key_offset = 16`, `signature_offset = 49`, `message_data_offset = 113`, and all three `*_instruction_index` fields are `0xFFFF` ("this instruction"). Total precompile instruction data for our sample: **182 B**. |
 | `rpIdHash` preimage | **The full origin string** `chrome-extension://<id>` — *not* the bare extension id. See the correction above. |
-| Exact `origin` string | `chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi` — no trailing slash, no port; the RP ID is the bare extension id. |
+| Exact `origin` string | `chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi` — no trailing slash, no port. |
+| RP ID vs `rpIdHash` (do not conflate) | The **credential-request `rp.id` parameter** is the bare extension id `maikadpaobbjkmaomnpnhjglpabllaoi` (= `location.hostname`, what Task 3's harness passed to `navigator.credentials`). What Chrome actually **signs** into `authenticatorData[0..32]` is `SHA-256` of the **full origin** `chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi`. Both statements are true and they are about different things — the on-chain check needs the second. See the correction above. |
 | `authenticatorData` flags | `0x05` = UP (0x01) | UV (0x04) both set; the program requires both. |
 | `solana_program::hash::hash` | **SHA-256**, confirmed by reading the source: `solana-program` 3.0.0 `hash` module → `solana-sha256-hasher`, which uses the `sol_sha256` syscall on-chain and `sha2::Sha256` off-chain. Not keccak. |
 
@@ -326,12 +327,16 @@ the wrong reason:
 | Test | Asserts |
 | --- | --- |
 | `truncated_instruction_data_errors_without_panic` | 8 truncation lengths (0, 10, 33, 65, 67, 80, 120, 200 B) each give exactly `InstructionError(1, InvalidInstructionData)` with no `panicked` in the logs — i.e. the bounds guards return errors instead of aborting |
-| `malformed_precompile_offsets_error_without_panic` | `message_data_offset = 60000` → the **precompile** rejects first with `Custom(3)`, our program never runs (logs empty), nothing panics. Note: a case where the precompile *verifies* but our program then reads out of range is unconstructible — both read the same offsets, so the precompile always fails first |
+| `malformed_precompile_offsets_error_without_panic` | `message_data_offset = 60000` → asserts **exactly** `InstructionError(0, Custom(3))` = `PrecompileError::InvalidDataOffsets`, that our program never ran (logs empty), and that nothing panicked. Note: a case where the precompile *verifies* but our program then reads out of range is unconstructible — both read the same offsets, so the precompile always fails first |
 
 **Precompile controls (2)** — these prove LiteSVM is genuinely executing the
 precompile rather than skipping it. Both assert exactly
-`InstructionError(0, Custom(2))` **and** that instruction 1 never ran (empty
-logs, no `webauthn root assertion bound OK`):
+`InstructionError(0, Custom(2))` = `PrecompileError::InvalidSignature` **and**
+that instruction 1 never ran (empty logs, no
+`webauthn root assertion bound OK`), via the shared
+`assert_precompile_rejected(err, expected_code)` helper — the same helper the
+malformed-offsets test uses with code 3, so no precompile-level test can pass on
+a merely-nonzero error:
 
 | Test | Asserts |
 | --- | --- |

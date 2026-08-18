@@ -248,15 +248,22 @@ fn assert_our_program_rejected(
     );
 }
 
-/// Assert the PRECOMPILE (instruction index 0) rejected, and that our program
-/// never ran at all.
-fn assert_precompile_rejected(err: litesvm::types::FailedTransactionMetadata) {
-    match err.err {
-        TransactionError::InstructionError(0, ref e) => {
-            println!("precompile rejected with: {e:?}");
-        }
-        ref other => panic!("expected instruction 0 to fail, got {other:?} logs={:#?}", err.meta.logs),
-    }
+/// `PrecompileError` discriminants as they surface through
+/// `InstructionError::Custom`, from `solana-precompile-error` 3.x:
+/// 0 `InvalidPublicKey`, 1 `InvalidRecoveryId`, 2 `InvalidSignature`,
+/// 3 `InvalidDataOffsets`, 4 `InvalidInstructionDataSize`.
+const PRECOMPILE_INVALID_SIGNATURE: u32 = 2;
+const PRECOMPILE_INVALID_DATA_OFFSETS: u32 = 3;
+
+/// Assert the PRECOMPILE (instruction index 0) rejected with exactly
+/// `Custom(expected_code)`, and that our program never ran at all.
+fn assert_precompile_rejected(err: litesvm::types::FailedTransactionMetadata, expected_code: u32) {
+    assert_eq!(
+        err.err,
+        TransactionError::InstructionError(0, InstructionError::Custom(expected_code)),
+        "expected instruction 0 to fail with Custom({expected_code}), logs={:#?}",
+        err.meta.logs
+    );
     assert!(
         !err.meta.logs.iter().any(|l| l.contains("webauthn root assertion bound OK")),
         "our program must not have run: {:#?}",
@@ -265,6 +272,11 @@ fn assert_precompile_rejected(err: litesvm::types::FailedTransactionMetadata) {
     assert!(
         err.meta.logs.is_empty(),
         "instruction 1 should never have been reached, so no program logs are expected: {:#?}",
+        err.meta.logs
+    );
+    assert!(
+        !err.meta.logs.iter().any(|l| l.contains("panicked")),
+        "nothing may panic: {:#?}",
         err.meta.logs
     );
 }
@@ -463,8 +475,9 @@ fn rejects_foreign_instruction_index() {
 }
 
 /// Malformed precompile offsets (message offset past the end of the instruction
-/// data). The precompile reads the same offsets we do, so it rejects first —
-/// what matters is that nothing panics and our program never runs.
+/// data). The precompile reads the same offsets we do, so it rejects first,
+/// with exactly `PrecompileError::InvalidDataOffsets` — nothing panics and our
+/// program never runs.
 #[test]
 fn malformed_precompile_offsets_error_without_panic() {
     let (mut svm, tx, _r) = build(Case {
@@ -474,7 +487,7 @@ fn malformed_precompile_offsets_error_without_panic() {
     let err = svm
         .send_transaction(tx)
         .expect_err("out-of-range offsets must fail");
-    assert_precompile_rejected(err);
+    assert_precompile_rejected(err, PRECOMPILE_INVALID_DATA_OFFSETS);
 }
 
 /// Our program's own bounds guards: truncated instruction data must produce a
@@ -537,13 +550,7 @@ fn precompile_rejects_tampered_signature() {
     let err = svm
         .send_transaction(tx)
         .expect_err("tampered signature must fail");
-    assert_eq!(
-        err.err,
-        TransactionError::InstructionError(0, InstructionError::Custom(2)),
-        "logs={:#?}",
-        err.meta.logs
-    );
-    assert_precompile_rejected(err);
+    assert_precompile_rejected(err, PRECOMPILE_INVALID_SIGNATURE);
 }
 
 /// This authenticator emitted a high-S signature; the precompile must reject it
@@ -562,11 +569,5 @@ fn precompile_rejects_high_s_signature() {
     let err = svm
         .send_transaction(tx)
         .expect_err("high-S signature must be rejected by the precompile");
-    assert_eq!(
-        err.err,
-        TransactionError::InstructionError(0, InstructionError::Custom(2)),
-        "logs={:#?}",
-        err.meta.logs
-    );
-    assert_precompile_rejected(err);
+    assert_precompile_rejected(err, PRECOMPILE_INVALID_SIGNATURE);
 }
