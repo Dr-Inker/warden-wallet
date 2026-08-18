@@ -55,12 +55,14 @@ citation. Both addressed:
    and confirms it's hoisted to top level with its original value intact and not also referenced
    anywhere inside the packed `execute` payload. Full contract now stated in `wrap.ts`'s header
    comment. See Self-review → "Round 2 fix" for detail.
-2. **Important — stage_chunk account contract now cites spec §5.1** (payer signer / Stage PDA
-   writable / System Program; data = 8-byte header + payload) directly in `wrap.ts`'s code
-   comment. §5.1 fixes the signer and the header shape but not the Phase 1 program's exact account
-   list/order, so **the measured 985 B cap is PROVISIONAL**, not final, until that program exists
-   — marked as such wherever it's cited below. No new tests needed for this one (controller
-   ruling) — the existing chunk-count test already exercises the same code path.
+2. **Important — stage_chunk cap: §5.1 only fixes the signer.** Spec §5.1 fixes only the
+   *signer* for `stage_chunk` ("any payer") — it does **not** specify the Stage PDA, the System
+   Program account, or an 8-byte header. The account shape (payer, Stage PDA, System Program) and
+   the 8-byte header (offset:u32, len:u32) + payload are an **ASSUMED** layout per controller
+   ruling, cited as such in `wrap.ts`'s code comment (not attributed to §5.1 beyond the signer).
+   **The measured 985 B cap is PROVISIONAL** until Phase 1 fixes the real layout — marked as such
+   wherever it's cited below. No new tests needed for this one (controller ruling) — the existing
+   chunk-count test already exercises the same code path.
 
 **Byte counts are unaffected by the index-space fix** (both instruction-local and global indices
 are single bytes — u8 either way — so no size difference), confirmed by 2 fresh post-round-2
@@ -98,6 +100,21 @@ measured (comment wording, a dedup that only fires when an inner instruction ref
 `account`/`sessionKey` directly — not the case in any Jupiter/Marinade route seen so far, and a
 bounds check that only fires past 255 instructions/accounts — also not hit by any real route so
 far); they only guard/correct edge cases this spike's real-route sample never happened to trigger.
+
+## Round 4 fix (2026-08-18) — one residual
+
+Re-review caught that the Round 2 fix banner's own item 2 (immediately above) still had the
+overclaiming §5.1 wording round 3 was supposed to have eliminated — round 3's self-review detail
+section got corrected, but this banner paragraph did not (root cause: a python edit script
+crashed on a second, unrelated assertion before its first successful edit was ever written to
+disk — see "Fix report — round 4" for detail). Reworded to match `wrap.ts` exactly: **§5.1 only
+fixes the signer ("any payer"); the Stage PDA + System Program accounts and the 8-byte header are
+an ASSUMED layout per controller ruling; the 985 B cap is PROVISIONAL until Phase 1 fixes the
+layout.** Grepped the whole document for every remaining `§5.1` mention (10 total across 4
+sections) and confirmed all are now consistent with this wording — two more (in "Post-fix
+re-measurement" and "Post-fix re-measurement, round 2") had the same overclaim in miniature ("a
+spec §5.1-shaped account layout" / "§5.1-cited... stage_chunk cap") and are fixed too. No code
+change — `wrap.ts` was already correct since round 3; this was a result.md-only residual.
 
 ## Results — Jupiter SOL→USDC (0.1 SOL, 50 bps slippage), 5 runs ≥130s apart — SUPERSEDED, pre-fix (see banner above)
 
@@ -187,17 +204,18 @@ instruction of its own so the default was added, per Important fix #2.)
 Tensor: unchanged, still blocked on the same API-key wall (see below).
 
 `maxStageChunkPayloadBytes()` (replacing the old unexplained `900` constant, see Important fix
-#3) measured **985 bytes** (PROVISIONAL — round 2 review: this is a spec §5.1-shaped account
-layout, not the actual Phase 1 program's; re-measure once that program's stage_chunk account
-list/order is fixed) for a representative `stage_chunk` tx (1 signer/payer, 3 accounts:
-payer/stage-PDA/System-Program, 8-byte offset+len header) on this run — close to but not the same
-as the old guess, which is exactly why deriving it was worth doing.
+#3) measured **985 bytes** (PROVISIONAL — round 4 review: §5.1 fixes only the signer, "any payer";
+the Stage PDA + System Program accounts and the 8-byte header are an ASSUMED layout per controller
+ruling, not from §5.1; re-measure once Phase 1's real stage_chunk account list/order is fixed) for
+a representative `stage_chunk` tx (1 signer/payer, 3 accounts: payer/stage-PDA/System-Program,
+8-byte offset+len header) on this run — close to but not the same as the old guess, which is
+exactly why deriving it was worth doing.
 
 ## Post-fix re-measurement, round 2 (authoritative — supersedes nothing byte-wise, confirms round 1)
 
 2 fresh `pnpm measure` runs against the round-2-fixed `wrap.ts` (instruction-local indices +
-compile/decompile regression assertion; §5.1-cited, PROVISIONAL stage_chunk cap — no logic
-changes from round 1 that affect byte counts).
+compile/decompile regression assertion; PROVISIONAL stage_chunk cap — assumed layout, only the
+signer is from §5.1 — no logic changes from round 1 that affect byte counts).
 
 | run | UTC timestamp | original bytes | wrapped bytes | fits inline? | chunks if staged | account count | hops |
 |---|---|---|---|---|---|---|---|
@@ -571,6 +589,36 @@ fires when an inner instruction references `account`/`sessionKey` directly (not 
 measured route), and the two new bounds checks only fire past 255 instructions/accounts (far
 beyond the 15–43-account range this spike has measured). No re-measurement run was needed or
 performed this round.
+
+### Round 4 fix (2026-08-18) — task review findings, addressed
+
+**Residual: one §5.1 overclaim survived round 3's fix, in the Round 2 banner text near the top of
+this document.** Round 3 corrected the overclaiming wording in `wrap.ts`'s code comments and in
+the Self-review → "Round 2 fix" detail subsection, but missed the nearly-identical paragraph in
+the "Round 2 fix" *banner* (item 2, near the top of the file) — it still read as if §5.1 "fixes
+the signer and the header shape," which is wrong (§5.1 fixes only the signer).
+
+**Root cause:** the round-3 edit script ran two text replacements in one pass — the banner fix
+succeeded in memory, but the second replacement (targeting the self-review block) then failed its
+assertion (wrong expected text) and raised an exception, which aborted the script *before* it
+reached the `write()` call at the end. Nothing from that first pass was ever persisted to disk.
+The follow-up script that fixed the assertion only re-attempted the self-review replacement (the
+one that had actually failed), not realizing the banner replacement — despite reporting success —
+had never been saved either, since both were staged in the same in-memory string and lost together
+when the script crashed. Lesson: a multi-replacement script should persist each successful edit
+independently, or at minimum the failure should have been re-verified against the actual file
+state rather than assumed from the first script's (unpersisted) "success" print statement.
+
+**Fix:** reworded the Round 2 banner's item 2 to the coordinator's exact phrasing: "§5.1 only
+fixes the signer ('any payer'); the Stage PDA + System program accounts and the 8-byte header are
+an ASSUMED layout per controller ruling; the 985 B cap is PROVISIONAL until Phase 1 fixes the
+layout." Then grepped the entire document for every `§5.1` occurrence (10 total, spanning the
+Round 2/3/4 banners, "Post-fix re-measurement" ×2, and Self-review → Round 2/3 detail) and found
+two more with the same overclaim in compressed form: "a spec §5.1-shaped account layout" (Post-fix
+re-measurement, round 1) and "§5.1-cited... stage_chunk cap" (Post-fix re-measurement, round 2) —
+both reworded to state the signer-only/ASSUMED-layout split explicitly. All 10 mentions are now
+mutually consistent. No code change — `wrap.ts`'s comment was already correct since round 3; this
+was purely a result.md wording gap.
 
 ## Part (b) — conservation snapshot CU
 
