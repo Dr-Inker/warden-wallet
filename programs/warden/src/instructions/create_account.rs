@@ -78,7 +78,7 @@ pub(crate) fn handler(ctx: Context<CreateAccount>, args: CreateAccountArgs) -> R
     let computed_rp_id_hash = solana_sha256_hasher::hash(&args.origin).to_bytes();
     require!(computed_rp_id_hash == args.rp_id_hash, WardenError::InvalidRootAssertion);
 
-    let policy: Policy = args.policy.clone().into();
+    let policy: Policy = args.policy.expand()?;
     validate_policy(&policy)?;
 
     let mut account = ctx.accounts.smart_account.load_init()?;
@@ -300,28 +300,5 @@ mod tests {
         // not be rejected here either.
         p.caps[3] = MintCap { mint: Pubkey::default(), per_tx: 999, per_day: 1, per_30d: 0 };
         assert!(validate_policy(&p).is_ok());
-    }
-
-    // -- PolicyArgs -> Policy ---------------------------------------------
-
-    #[test]
-    fn policy_args_conversion_zero_fills_padding_and_reserved() {
-        let a = PolicyArgs {
-            version: 7,
-            caps: [MintCap::default(); MAX_MINT_CAPS],
-            session_ceiling: [MintCap::default(); MAX_MINT_CAPS],
-            large_threshold: [MintCap::default(); MAX_MINT_CAPS],
-            timelock_secs: MIN_TIMELOCK_SECS,
-            recovery_delay_secs: MIN_TIMELOCK_SECS,
-            max_session_life_secs: MAX_SESSION_LIFE_SECS,
-            session_ops_ceiling: 3,
-        };
-        let p: Policy = a.into();
-        assert_eq!(p.version, 7);
-        assert_eq!(p._pad_version, [0u8; 4]);
-        assert_eq!(p._pad_ceiling, [0u8; 6]);
-        assert_eq!(p._reserved, [0u8; 64]);
-        assert_eq!(p.timelock_secs, MIN_TIMELOCK_SECS);
-        assert_eq!(p.session_ops_ceiling, 3);
     }
 }

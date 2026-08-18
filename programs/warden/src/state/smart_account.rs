@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::{MAX_MINT_CAPS, RING_DAYS};
+use crate::constants::{MAX_MINT_CAPS, MAX_MINTS_AT_CREATE, RING_DAYS};
 use crate::errors::WardenError;
 
 /// The passkey-rooted smart account, laid out as a `bytemuck`-`Pod`
@@ -195,42 +195,121 @@ impl Policy {
 }
 
 /// Instruction-argument mirror of `Policy` (`create_account`, Task 4) — plain
-/// Borsh, no padding/reserved fields (those exist only to satisfy `Pod`'s
-/// alignment rules on the zero-copy `Policy`, which callers never need to
-/// think about). `From<PolicyArgs> for Policy` zero-fills every padding/
-/// `_reserved` byte; `create_account` additionally forces `policy.version` to
-/// 1 regardless of what's carried here (see its handler), so this struct
-/// still declares `version` only for symmetry with `Policy`'s field list.
+/// Borsh, sparse on the wire: `caps`/`session_ceiling`/`large_threshold` are
+/// `Vec<MintCap>` (each at most `MAX_MINTS_AT_CREATE` entries) instead of
+/// `Policy`'s fixed 8-slot arrays, which is what let a single `create_account`
+/// carrying a handful of mints blow past Solana's 1,232 B transaction limit
+/// when this was a plain `[MintCap; 8]` mirror (round-1 review finding,
+/// fixed here — see docs/program/PHASE1A-MEASUREMENTS.md).
+///
+/// `caps[i]` keeps its position (`Policy.caps[i]`); `session_ceiling`/
+/// `large_threshold` entries are **not** positional — each is re-keyed by
+/// `mint` onto the index of the `caps` entry with the same mint (see
+/// `expand`). `create_account` additionally forces `policy.version` to 1
+/// regardless of what's carried here, so this struct still declares
+/// `version` only for symmetry with `Policy`'s field list.
 // No `Debug`: `MintCap` (`#[zero_copy]`) doesn't derive it, and hand-writing
 // one just to satisfy a derive nobody calls isn't worth the upkeep.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
 pub struct PolicyArgs {
     pub version: u32,
-    pub caps: [MintCap; MAX_MINT_CAPS],
-    pub session_ceiling: [MintCap; MAX_MINT_CAPS],
-    pub large_threshold: [MintCap; MAX_MINT_CAPS],
+    /// ≤ `MAX_MINTS_AT_CREATE` entries; every `mint` non-default and
+    /// distinct within this vector.
+    pub caps: Vec<MintCap>,
+    /// ≤ `MAX_MINTS_AT_CREATE` entries; every `mint` must match exactly one
+    /// `caps` entry (else `expand` rejects the whole policy) and be distinct
+    /// within this vector (two entries keying onto the same `caps` slot is
+    /// also rejected).
+    pub session_ceiling: Vec<MintCap>,
+    /// Same keying rules as `session_ceiling`, independently.
+    pub large_threshold: Vec<MintCap>,
     pub timelock_secs: i64,
     pub recovery_delay_secs: i64,
     pub max_session_life_secs: i64,
     pub session_ops_ceiling: u16,
 }
 
-impl From<PolicyArgs> for Policy {
-    fn from(a: PolicyArgs) -> Self {
-        Policy {
-            version: a.version,
+impl PolicyArgs {
+    /// Expand the sparse wire representation into `Policy`'s fixed 8-slot
+    /// layout (zero-filling every unused slot). Purely structural/keying
+    /// validation lives here — `caps` positions are kept, `session_ceiling`/
+    /// `large_threshold` are re-keyed by mint onto the matching `caps`
+    /// index. Value-ordering validation (`per_tx <= per_day <= per_30d`,
+    /// ceilings `<=` caps, timelock/recovery/session-life bounds) is
+    /// `create_account::validate_policy`'s job, run on the `Policy` this
+    /// returns.
+    ///
+    /// All failures below are `WardenError::InvalidAccountData` — every one
+    /// of them is "the shape can't be resolved to a well-formed `Policy`",
+    /// as distinct from "the shape resolved fine but a value is out of
+    /// bounds" (`InvalidPolicy`, checked afterward):
+    /// - more than `MAX_MINTS_AT_CREATE` entries in `caps`, `session_ceiling`,
+    ///   or `large_threshold`;
+    /// - a `caps` entry with `mint == Pubkey::default()`;
+    /// - two `caps` entries sharing a `mint` (duplicate cap mint);
+    /// - a `session_ceiling`/`large_threshold` entry whose `mint` matches no
+    ///   `caps` entry (mismatched-mint / orphan ceiling or threshold);
+    /// - two `session_ceiling` (or two `large_threshold`) entries sharing a
+    ///   `mint` — they would collide on the same resolved `caps` index
+    ///   (duplicate ceiling/threshold mint).
+    pub fn expand(&self) -> Result<Policy> {
+        require!(self.caps.len() <= MAX_MINTS_AT_CREATE, WardenError::InvalidAccountData);
+        require!(
+            self.session_ceiling.len() <= MAX_MINTS_AT_CREATE,
+            WardenError::InvalidAccountData
+        );
+        require!(
+            self.large_threshold.len() <= MAX_MINTS_AT_CREATE,
+            WardenError::InvalidAccountData
+        );
+
+        let mut caps = [MintCap::default(); MAX_MINT_CAPS];
+        for (i, c) in self.caps.iter().enumerate() {
+            require!(c.mint != Pubkey::default(), WardenError::InvalidAccountData);
+            let dup = caps[..i].iter().any(|existing| existing.mint == c.mint);
+            require!(!dup, WardenError::InvalidAccountData);
+            caps[i] = *c;
+        }
+
+        let session_ceiling = key_by_mint(&self.session_ceiling, &caps, self.caps.len())?;
+        let large_threshold = key_by_mint(&self.large_threshold, &caps, self.caps.len())?;
+
+        Ok(Policy {
+            version: self.version,
             _pad_version: [0u8; 4],
-            caps: a.caps,
-            session_ceiling: a.session_ceiling,
-            large_threshold: a.large_threshold,
-            timelock_secs: a.timelock_secs,
-            recovery_delay_secs: a.recovery_delay_secs,
-            max_session_life_secs: a.max_session_life_secs,
-            session_ops_ceiling: a.session_ops_ceiling,
+            caps,
+            session_ceiling,
+            large_threshold,
+            timelock_secs: self.timelock_secs,
+            recovery_delay_secs: self.recovery_delay_secs,
+            max_session_life_secs: self.max_session_life_secs,
+            session_ops_ceiling: self.session_ops_ceiling,
             _pad_ceiling: [0u8; 6],
             _reserved: [0u8; 64],
-        }
+        })
     }
+}
+
+/// Re-key `entries` by `mint` onto the index of the matching slot in
+/// `caps[..used]` — see `PolicyArgs::expand`. Every entry must match exactly
+/// one cap (`.position` already guarantees "at most one" once `expand` has
+/// rejected duplicate cap mints; "at least one" is the `ok_or` below) and no
+/// two entries may resolve to the same index.
+fn key_by_mint(
+    entries: &[MintCap],
+    caps: &[MintCap; MAX_MINT_CAPS],
+    used: usize,
+) -> Result<[MintCap; MAX_MINT_CAPS]> {
+    let mut out = [MintCap::default(); MAX_MINT_CAPS];
+    for e in entries {
+        let idx = caps[..used]
+            .iter()
+            .position(|c| c.mint == e.mint)
+            .ok_or(WardenError::InvalidAccountData)?;
+        require!(out[idx].mint == Pubkey::default(), WardenError::InvalidAccountData);
+        out[idx] = *e;
+    }
+    Ok(out)
 }
 
 /// Zero-copy `Pod` (embedded in `Policy`/`SmartAccount`) AND plain Borsh
@@ -399,5 +478,163 @@ mod tests {
     #[test]
     fn mint_buckets_len_has_no_padding() {
         assert_eq!(MintBuckets::LEN, 8 + 8 + 8 + 8 * RING_DAYS);
+    }
+
+    // -- PolicyArgs::expand ------------------------------------------------
+
+    fn mint_cap(mint: Pubkey, per_tx: u64, per_day: u64, per_30d: u64) -> MintCap {
+        MintCap { mint, per_tx, per_day, per_30d }
+    }
+
+    fn err(e: WardenError) -> anchor_lang::error::Error {
+        e.into()
+    }
+
+    /// `Result<Policy>::unwrap_err()` would need `Policy: Debug`, which it
+    /// doesn't derive (matches `MintCap`'s own no-`Debug` note above) — this
+    /// sidesteps that instead of adding a derive nobody else needs.
+    fn expect_expand_err(a: &PolicyArgs, e: WardenError) {
+        match a.expand() {
+            Ok(_) => panic!("expand() must reject this PolicyArgs"),
+            Err(actual) => assert_eq!(actual, err(e)),
+        }
+    }
+
+    fn base_policy_args() -> PolicyArgs {
+        PolicyArgs {
+            version: 1,
+            caps: vec![],
+            session_ceiling: vec![],
+            large_threshold: vec![],
+            timelock_secs: 3600,
+            recovery_delay_secs: 3600,
+            max_session_life_secs: 2_592_000,
+            session_ops_ceiling: 0,
+        }
+    }
+
+    #[test]
+    fn expand_zero_fills_padding_and_reserved_and_keeps_scalars() {
+        let mut a = base_policy_args();
+        a.version = 7;
+        a.session_ops_ceiling = 3;
+        let p = a.expand().unwrap();
+        assert_eq!(p.version, 7);
+        assert_eq!(p._pad_version, [0u8; 4]);
+        assert_eq!(p._pad_ceiling, [0u8; 6]);
+        assert_eq!(p._reserved, [0u8; 64]);
+        assert_eq!(p.timelock_secs, 3600);
+        assert_eq!(p.session_ops_ceiling, 3);
+    }
+
+    #[test]
+    fn expand_keeps_caps_positional() {
+        let sol = Pubkey::new_unique();
+        let usdc = Pubkey::new_unique();
+        let mut a = base_policy_args();
+        a.caps = vec![mint_cap(sol, 1, 2, 3), mint_cap(usdc, 4, 5, 6)];
+        let p = a.expand().unwrap();
+        assert_eq!(p.caps[0].mint, sol);
+        assert_eq!(p.caps[1].mint, usdc);
+        for slot in p.caps[2..].iter() {
+            assert_eq!(slot.mint, Pubkey::default(), "unused slots must stay zero-filled");
+        }
+    }
+
+    #[test]
+    fn expand_rejects_too_many_caps() {
+        let mut a = base_policy_args();
+        a.caps = (0..(MAX_MINTS_AT_CREATE + 1))
+            .map(|_| mint_cap(Pubkey::new_unique(), 1, 1, 1))
+            .collect();
+        expect_expand_err(&a, WardenError::InvalidAccountData);
+    }
+
+    #[test]
+    fn expand_rejects_too_many_session_ceilings() {
+        let mint = Pubkey::new_unique();
+        let mut a = base_policy_args();
+        a.caps = vec![mint_cap(mint, 10, 10, 10)];
+        a.session_ceiling = (0..(MAX_MINTS_AT_CREATE + 1))
+            .map(|_| mint_cap(Pubkey::new_unique(), 1, 1, 1))
+            .collect();
+        expect_expand_err(&a, WardenError::InvalidAccountData);
+    }
+
+    #[test]
+    fn expand_rejects_default_mint_cap() {
+        let mut a = base_policy_args();
+        a.caps = vec![mint_cap(Pubkey::default(), 1, 1, 1)];
+        expect_expand_err(&a, WardenError::InvalidAccountData);
+    }
+
+    #[test]
+    fn expand_rejects_duplicate_cap_mint() {
+        let mint = Pubkey::new_unique();
+        let mut a = base_policy_args();
+        a.caps = vec![mint_cap(mint, 1, 2, 3), mint_cap(mint, 4, 5, 6)];
+        expect_expand_err(&a, WardenError::InvalidAccountData);
+    }
+
+    /// A ceiling whose mint matches no `caps` entry at all — no caps
+    /// configured at all, so the ceiling is entirely orphaned.
+    #[test]
+    fn expand_rejects_orphan_ceiling_with_no_caps() {
+        let mut a = base_policy_args();
+        a.session_ceiling = vec![mint_cap(Pubkey::new_unique(), 1, 1, 1)];
+        expect_expand_err(&a, WardenError::InvalidAccountData);
+    }
+
+    /// A ceiling whose mint differs from the one cap that IS configured —
+    /// mismatched, not merely absent.
+    #[test]
+    fn expand_rejects_mismatched_mint_ceiling() {
+        let sol = Pubkey::new_unique();
+        let usdc = Pubkey::new_unique();
+        let mut a = base_policy_args();
+        a.caps = vec![mint_cap(sol, 100, 200, 1000)];
+        a.session_ceiling = vec![mint_cap(usdc, 1, 1, 1)];
+        expect_expand_err(&a, WardenError::InvalidAccountData);
+    }
+
+    #[test]
+    fn expand_rejects_duplicate_ceiling_mint() {
+        let mint = Pubkey::new_unique();
+        let mut a = base_policy_args();
+        a.caps = vec![mint_cap(mint, 100, 200, 1000)];
+        a.session_ceiling = vec![mint_cap(mint, 1, 1, 1), mint_cap(mint, 2, 2, 2)];
+        expect_expand_err(&a, WardenError::InvalidAccountData);
+    }
+
+    #[test]
+    fn expand_rejects_orphan_large_threshold() {
+        let mut a = base_policy_args();
+        a.large_threshold = vec![mint_cap(Pubkey::new_unique(), 1, 0, 0)];
+        expect_expand_err(&a, WardenError::InvalidAccountData);
+    }
+
+    /// The core round-1 fix: `session_ceiling`/`large_threshold` land at the
+    /// matching `caps` INDEX, not at their own position in the wire vector.
+    #[test]
+    fn expand_stores_ceiling_and_threshold_at_the_caps_index_not_wire_position() {
+        let usdc = Pubkey::new_unique();
+        let sol = Pubkey::new_unique();
+        let mut a = base_policy_args();
+        // caps[0] = USDC, caps[1] = SOL.
+        a.caps = vec![mint_cap(usdc, 50, 100, 500), mint_cap(sol, 100, 200, 1000)];
+        // Both ceiling and threshold name SOL first (wire position 0) even
+        // though SOL is caps[1] — if re-keying were positional instead of
+        // by-mint, this would land at index 0 (USDC's slot) instead.
+        a.session_ceiling = vec![mint_cap(sol, 10, 20, 100)];
+        a.large_threshold = vec![mint_cap(sol, 5, 0, 0)];
+        let p = a.expand().unwrap();
+
+        assert_eq!(p.session_ceiling[1].mint, sol);
+        assert_eq!(p.session_ceiling[1].per_tx, 10);
+        assert_eq!(p.session_ceiling[0].mint, Pubkey::default(), "USDC's slot must stay unused");
+
+        assert_eq!(p.large_threshold[1].mint, sol);
+        assert_eq!(p.large_threshold[1].per_tx, 5);
+        assert_eq!(p.large_threshold[0].mint, Pubkey::default());
     }
 }

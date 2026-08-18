@@ -14,9 +14,9 @@ use solana_sdk::{
     signer::Signer,
     transaction::Transaction,
 };
-use warden::constants::{ACCOUNT_SEED, MAX_MINT_CAPS};
+use warden::constants::ACCOUNT_SEED;
 use warden::instructions::create_account::{CreateAccountArgs, MAX_SESSION_LIFE_SECS, MIN_TIMELOCK_SECS};
-use warden::state::{MintCap, PolicyArgs, RootKey, SmartAccount};
+use warden::state::{PolicyArgs, RootKey, SmartAccount};
 
 pub fn program_id() -> Pubkey {
     warden::ID
@@ -86,9 +86,9 @@ impl Default for SmartAccountFixture {
 pub fn default_policy_args() -> PolicyArgs {
     PolicyArgs {
         version: 1,
-        caps: [MintCap::default(); MAX_MINT_CAPS],
-        session_ceiling: [MintCap::default(); MAX_MINT_CAPS],
-        large_threshold: [MintCap::default(); MAX_MINT_CAPS],
+        caps: vec![],
+        session_ceiling: vec![],
+        large_threshold: vec![],
         timelock_secs: MIN_TIMELOCK_SECS,
         recovery_delay_secs: MIN_TIMELOCK_SECS,
         max_session_life_secs: MAX_SESSION_LIFE_SECS,
