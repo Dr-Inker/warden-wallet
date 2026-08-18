@@ -34,8 +34,85 @@ use warden::state::SmartAccount;
 
 const NOW: i64 = 1_760_000_000;
 
-fn code(e: WardenError) -> u32 {
-    u32::from(e)
+/// Anchor error codes as **literals**, independent of the program's enum.
+///
+/// Deriving the expected code from `WardenError` would mean the assertions
+/// re-derive the very thing under test: reordering the enum would silently
+/// renumber every code and every test would keep passing while every deployed
+/// client broke. These are the values as of commit `3db010a`
+/// (`6000 + declaration index`, Anchor's `ERROR_CODE_OFFSET`); Task 7's TS
+/// client must use the same numbers.
+/// `pinned_error_codes_match_the_enum_today` is the only place the enum is
+/// consulted, and it fails loudly on any reorder or insertion.
+mod err {
+    pub const OVERFLOW: u32 = 6000;
+    pub const FROZEN: u32 = 6001;
+    pub const UNAUTHORIZED: u32 = 6002;
+    pub const INVALID_ROOT_ASSERTION: u32 = 6003;
+    pub const NONCE_MISMATCH: u32 = 6004;
+    pub const EXPIRED: u32 = 6005;
+    pub const CAP_EXCEEDED: u32 = 6006;
+    pub const SESSION_EXPIRED: u32 = 6007;
+    pub const OP_NOT_ALLOWED: u32 = 6008;
+    pub const INVALID_ACCOUNT_DATA: u32 = 6009;
+    pub const BAD_INSTRUCTION_LAYOUT: u32 = 6010;
+    pub const CLIENT_DATA_TOO_LONG: u32 = 6011;
+    pub const CLIENT_DATA_MALFORMED: u32 = 6012;
+    pub const CLIENT_DATA_DUPLICATE_KEY: u32 = 6013;
+    pub const CLIENT_DATA_MISSING_KEY: u32 = 6014;
+    pub const CLIENT_DATA_TYPE_MISMATCH: u32 = 6015;
+    pub const CROSS_ORIGIN_NOT_ALLOWED: u32 = 6016;
+    pub const ORIGIN_MISMATCH: u32 = 6017;
+    pub const CHALLENGE_MISMATCH: u32 = 6018;
+    pub const AUTH_DATA_TOO_SHORT: u32 = 6019;
+    pub const RP_ID_HASH_MISMATCH: u32 = 6020;
+    pub const USER_VERIFICATION_REQUIRED: u32 = 6021;
+    pub const PRECOMPILE_NOT_FOUND: u32 = 6022;
+    pub const PRECOMPILE_BINDING_MISMATCH: u32 = 6023;
+    pub const ROOT_KIND_UNSUPPORTED: u32 = 6024;
+}
+
+/// The pinned table above must describe the enum as it stands today. If this
+/// fails, `WardenError` was reordered or a variant was inserted rather than
+/// appended — every already-shipped client's error handling just changed
+/// meaning, and the table (and the TS client) must be updated deliberately.
+#[test]
+fn pinned_error_codes_match_the_enum_today() {
+    let pairs: [(u32, WardenError, &str); 25] = [
+        (err::OVERFLOW, WardenError::Overflow, "Overflow"),
+        (err::FROZEN, WardenError::Frozen, "Frozen"),
+        (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
+        (err::INVALID_ROOT_ASSERTION, WardenError::InvalidRootAssertion, "InvalidRootAssertion"),
+        (err::NONCE_MISMATCH, WardenError::NonceMismatch, "NonceMismatch"),
+        (err::EXPIRED, WardenError::Expired, "Expired"),
+        (err::CAP_EXCEEDED, WardenError::CapExceeded, "CapExceeded"),
+        (err::SESSION_EXPIRED, WardenError::SessionExpired, "SessionExpired"),
+        (err::OP_NOT_ALLOWED, WardenError::OpNotAllowed, "OpNotAllowed"),
+        (err::INVALID_ACCOUNT_DATA, WardenError::InvalidAccountData, "InvalidAccountData"),
+        (err::BAD_INSTRUCTION_LAYOUT, WardenError::BadInstructionLayout, "BadInstructionLayout"),
+        (err::CLIENT_DATA_TOO_LONG, WardenError::ClientDataTooLong, "ClientDataTooLong"),
+        (err::CLIENT_DATA_MALFORMED, WardenError::ClientDataMalformed, "ClientDataMalformed"),
+        (err::CLIENT_DATA_DUPLICATE_KEY, WardenError::ClientDataDuplicateKey, "ClientDataDuplicateKey"),
+        (err::CLIENT_DATA_MISSING_KEY, WardenError::ClientDataMissingKey, "ClientDataMissingKey"),
+        (err::CLIENT_DATA_TYPE_MISMATCH, WardenError::ClientDataTypeMismatch, "ClientDataTypeMismatch"),
+        (err::CROSS_ORIGIN_NOT_ALLOWED, WardenError::CrossOriginNotAllowed, "CrossOriginNotAllowed"),
+        (err::ORIGIN_MISMATCH, WardenError::OriginMismatch, "OriginMismatch"),
+        (err::CHALLENGE_MISMATCH, WardenError::ChallengeMismatch, "ChallengeMismatch"),
+        (err::AUTH_DATA_TOO_SHORT, WardenError::AuthDataTooShort, "AuthDataTooShort"),
+        (err::RP_ID_HASH_MISMATCH, WardenError::RpIdHashMismatch, "RpIdHashMismatch"),
+        (err::USER_VERIFICATION_REQUIRED, WardenError::UserVerificationRequired, "UserVerificationRequired"),
+        (err::PRECOMPILE_NOT_FOUND, WardenError::PrecompileNotFound, "PrecompileNotFound"),
+        (err::PRECOMPILE_BINDING_MISMATCH, WardenError::PrecompileBindingMismatch, "PrecompileBindingMismatch"),
+        (err::ROOT_KIND_UNSUPPORTED, WardenError::RootKindUnsupported, "RootKindUnsupported"),
+    ];
+    for (pinned, variant, name) in pairs {
+        assert_eq!(
+            pinned,
+            u32::from(variant),
+            "WardenError::{name} moved: pinned {pinned}, enum says {}",
+            u32::from(variant)
+        );
+    }
 }
 
 fn rotate_nonce_ix(smart_account: Pubkey, args: &RootArgs) -> Instruction {
@@ -274,14 +351,74 @@ fn build(case: Case) -> Built {
     }
 }
 
-fn expect_reject(case: Case, expected: WardenError) {
+/// The two instructions of one honest ceremony against a planted account, at a
+/// given `root_nonce`. Used by the multi-step tests, which need to submit more
+/// than one transaction against a single live SVM.
+fn ceremony_ixs(
+    account: Pubkey,
+    pk: &TestPasskey,
+    f: &SmartAccountFixture,
+    root_nonce: u64,
+    expiry_ts: i64,
+) -> Vec<Instruction> {
+    let challenge = rotate_nonce_challenge(
+        &f.cluster_tag,
+        &account,
+        f.generation,
+        f.policy_version,
+        root_nonce,
+        expiry_ts,
+    );
+    let a = pk.assert_with_client_data(
+        passkey::client_data_json(&challenge, &f.origin),
+        passkey::rp_id_hash(&f.origin),
+        FLAGS_UP_UV,
+    );
+    let args = RootArgs {
+        precompile_ix_index: 0,
+        authenticator_data: a.authenticator_data.clone(),
+        client_data_json: a.client_data_json.clone(),
+        expiry_ts,
+    };
+    vec![
+        passkey::precompile_ix(&a, &pk.pubkey33()),
+        rotate_nonce_ix(account, &args),
+    ]
+}
+
+/// A live SVM with one planted, passkey-rooted account.
+fn live_account() -> (LiteSVM, Keypair, TestPasskey, SmartAccountFixture, Pubkey) {
+    let (mut svm, payer) = common::setup();
+    set_clock(&mut svm, NOW);
+    let pk = TestPasskey::new(3);
+    let mut f = SmartAccountFixture::default();
+    f.root_pubkey33 = pk.pubkey33();
+    let account = set_smart_account(&mut svm, &f);
+    (svm, payer, pk, f, account)
+}
+
+/// Wrap instructions in a transaction against a FRESH blockhash, so a repeat
+/// submission is a genuinely new transaction and cannot be turned away by the
+/// runtime's duplicate-signature cache — the rejection must come from the
+/// program.
+fn send_fresh(svm: &mut LiteSVM, payer: &Keypair, ixs: &[Instruction]) -> litesvm::types::TransactionResult {
+    svm.expire_blockhash();
+    let tx = Transaction::new(
+        &[payer],
+        Message::new(ixs, Some(&payer.pubkey())),
+        svm.latest_blockhash(),
+    );
+    svm.send_transaction(tx)
+}
+
+fn expect_reject(case: Case, expected: u32) {
     let mut b = build(case);
     let ix_index = b.our_ix_index;
     let before = read_smart_account(&b.svm, &b.account).root_nonce;
     let err = b.svm.send_transaction(b.tx).expect_err("must be rejected");
     assert_eq!(
         err.err,
-        TransactionError::InstructionError(ix_index, InstructionError::Custom(code(expected))),
+        TransactionError::InstructionError(ix_index, InstructionError::Custom(expected)),
         "wrong failure mode; logs={:#?}",
         err.meta.logs
     );
@@ -362,21 +499,18 @@ fn rotate_nonce_ok_and_nonce_increments() {
     );
 }
 
-/// Two ceremonies in a row against the same account, each over the nonce the
-/// previous one left behind.
+/// Two full ceremonies against ONE account on ONE live SVM: the first signs
+/// over nonce 0, the second over the nonce the first left behind. This is the
+/// property the extension depends on — a user can act twice in a row.
 #[test]
 fn consecutive_ceremonies_each_consume_one_nonce() {
-    for start in [0u64, 1] {
-        let mut b = build(Case {
-            fixture: SmartAccountFixture {
-                root_nonce: start,
-                ..Default::default()
-            },
-            challenge_nonce: Some(start),
-            ..Default::default()
-        });
-        b.svm.send_transaction(b.tx).expect("must succeed");
-        assert_eq!(read_smart_account(&b.svm, &b.account).root_nonce, start + 1);
+    let (mut svm, payer, pk, f, account) = live_account();
+    for n in 0..2u64 {
+        assert_eq!(read_smart_account(&svm, &account).root_nonce, n);
+        let ixs = ceremony_ixs(account, &pk, &f, n, NOW + 60);
+        send_fresh(&mut svm, &payer, &ixs)
+            .unwrap_or_else(|e| panic!("ceremony {n} must succeed: {:?} {:#?}", e.err, e.meta.logs));
+        assert_eq!(read_smart_account(&svm, &account).root_nonce, n + 1);
     }
 }
 
@@ -384,23 +518,36 @@ fn consecutive_ceremonies_each_consume_one_nonce() {
 // Replay / freshness
 // ---------------------------------------------------------------------------
 
-/// Re-submitting the very same transaction data against the account it already
-/// advanced. The nonce is inside the signed challenge, so the second attempt
-/// is reported as a replay of a consumed ceremony, not a bare mismatch.
+/// THE REAL REPLAY: one honest ceremony succeeds, then the byte-identical
+/// assertion is resubmitted against the same account on the same SVM under a
+/// fresh blockhash. The consumed nonce is what must turn it away — nothing
+/// else about the transaction has changed.
 #[test]
 fn replay_same_assertion_rejected() {
-    expect_reject(
-        Case {
-            fixture: SmartAccountFixture {
-                root_nonce: 5,
-                ..Default::default()
-            },
-            // Assertion signed for nonce 4; the account has already moved to 5.
-            challenge_nonce: Some(4),
-            ..Default::default()
-        },
-        WardenError::NonceMismatch,
+    let (mut svm, payer, pk, f, account) = live_account();
+    let ixs = ceremony_ixs(account, &pk, &f, 0, NOW + 60);
+
+    send_fresh(&mut svm, &payer, &ixs).expect("first submission must succeed");
+    assert_eq!(read_smart_account(&svm, &account).root_nonce, 1);
+
+    let e = send_fresh(&mut svm, &payer, &ixs).expect_err("replay must be rejected");
+    assert_eq!(
+        e.err,
+        TransactionError::InstructionError(1, InstructionError::Custom(err::NONCE_MISMATCH)),
+        "logs={:#?}",
+        e.meta.logs
     );
+    assert!(!e.meta.logs.iter().any(|l| l.contains("panicked")));
+    assert_eq!(
+        read_smart_account(&svm, &account).root_nonce,
+        1,
+        "a rejected replay must not consume a second nonce"
+    );
+
+    // And the account is still usable: a fresh ceremony over nonce 1 works.
+    let next = ceremony_ixs(account, &pk, &f, 1, NOW + 60);
+    send_fresh(&mut svm, &payer, &next).expect("a fresh ceremony must still succeed after a replay");
+    assert_eq!(read_smart_account(&svm, &account).root_nonce, 2);
 }
 
 /// A challenge over a nonce that is neither current nor the previous one is
@@ -416,7 +563,7 @@ fn stale_nonce_far_in_the_past_rejected_as_challenge_mismatch() {
             challenge_nonce: Some(0),
             ..Default::default()
         },
-        WardenError::ChallengeMismatch,
+        err::CHALLENGE_MISMATCH,
     );
 }
 
@@ -427,7 +574,7 @@ fn expired_rejected() {
             expiry_ts: NOW - 1,
             ..Default::default()
         },
-        WardenError::Expired,
+        err::EXPIRED,
     );
 }
 
@@ -438,7 +585,7 @@ fn future_expiry_beyond_600s_rejected() {
             expiry_ts: NOW + 601,
             ..Default::default()
         },
-        WardenError::Expired,
+        err::EXPIRED,
     );
 }
 
@@ -462,7 +609,7 @@ fn wrong_cluster_tag_rejected() {
             challenge_cluster_tag: Some([0xEEu8; 32]),
             ..Default::default()
         },
-        WardenError::ChallengeMismatch,
+        err::CHALLENGE_MISMATCH,
     );
 }
 
@@ -477,7 +624,7 @@ fn stale_generation_rejected() {
             challenge_generation: Some(3),
             ..Default::default()
         },
-        WardenError::ChallengeMismatch,
+        err::CHALLENGE_MISMATCH,
     );
 }
 
@@ -494,7 +641,7 @@ fn wrong_rp_id_hash_rejected() {
             signed_rp_id_hash: Some(wrong),
             ..Default::default()
         },
-        WardenError::RpIdHashMismatch,
+        err::RP_ID_HASH_MISMATCH,
     );
 }
 
@@ -508,7 +655,7 @@ fn rp_id_hash_of_bare_extension_id_rejected() {
             signed_rp_id_hash: Some(Sha256::digest(bare.as_bytes()).into()),
             ..Default::default()
         },
-        WardenError::RpIdHashMismatch,
+        err::RP_ID_HASH_MISMATCH,
     );
 }
 
@@ -519,7 +666,7 @@ fn up_only_rejected() {
             flags: 0x01,
             ..Default::default()
         },
-        WardenError::UserVerificationRequired,
+        err::USER_VERIFICATION_REQUIRED,
     );
 }
 
@@ -543,7 +690,7 @@ fn wrong_origin_rejected() {
             )),
             ..Default::default()
         },
-        WardenError::OriginMismatch,
+        err::ORIGIN_MISMATCH,
     );
 }
 
@@ -559,7 +706,7 @@ fn nested_origin_rejected_on_chain() {
             )),
             ..Default::default()
         },
-        WardenError::OriginMismatch,
+        err::ORIGIN_MISMATCH,
     );
 }
 
@@ -572,7 +719,7 @@ fn duplicate_origin_rejected_on_chain() {
             )),
             ..Default::default()
         },
-        WardenError::ClientDataDuplicateKey,
+        err::CLIENT_DATA_DUPLICATE_KEY,
     );
 }
 
@@ -585,7 +732,7 @@ fn cross_origin_true_rejected_on_chain() {
             )),
             ..Default::default()
         },
-        WardenError::CrossOriginNotAllowed,
+        err::CROSS_ORIGIN_NOT_ALLOWED,
     );
 }
 
@@ -598,7 +745,7 @@ fn webauthn_create_type_rejected_on_chain() {
             )),
             ..Default::default()
         },
-        WardenError::ClientDataTypeMismatch,
+        err::CLIENT_DATA_TYPE_MISMATCH,
     );
 }
 
@@ -612,7 +759,7 @@ fn oversized_client_data_rejected_on_chain() {
             )),
             ..Default::default()
         },
-        WardenError::ClientDataTooLong,
+        err::CLIENT_DATA_TOO_LONG,
     );
 }
 
@@ -686,7 +833,7 @@ fn wrong_pubkey_rejected() {
         err.err,
         TransactionError::InstructionError(
             1,
-            InstructionError::Custom(code(WardenError::PrecompileBindingMismatch))
+            InstructionError::Custom(err::PRECOMPILE_BINDING_MISMATCH)
         ),
         "logs={:#?}",
         err.meta.logs
@@ -703,7 +850,7 @@ fn two_signature_precompile_rejected() {
             num_signatures: 2,
             ..Default::default()
         },
-        WardenError::BadInstructionLayout,
+        err::BAD_INSTRUCTION_LAYOUT,
     );
 }
 
@@ -717,7 +864,7 @@ fn foreign_ix_index_rejected() {
             entry_instruction_index: 0,
             ..Default::default()
         },
-        WardenError::PrecompileBindingMismatch,
+        err::PRECOMPILE_BINDING_MISMATCH,
     );
 }
 
@@ -766,7 +913,7 @@ fn message_mismatch_rejected() {
         err.err,
         TransactionError::InstructionError(
             1,
-            InstructionError::Custom(code(WardenError::PrecompileBindingMismatch))
+            InstructionError::Custom(err::PRECOMPILE_BINDING_MISMATCH)
         ),
         "logs={:#?}",
         err.meta.logs
@@ -784,7 +931,7 @@ fn foreign_program_at_named_index_rejected() {
             precompile_ix_index: Some(0),
             ..Default::default()
         },
-        WardenError::PrecompileNotFound,
+        err::PRECOMPILE_NOT_FOUND,
     );
 }
 
@@ -795,7 +942,7 @@ fn precompile_ix_index_out_of_range_rejected() {
             precompile_ix_index: Some(9),
             ..Default::default()
         },
-        WardenError::PrecompileNotFound,
+        err::PRECOMPILE_NOT_FOUND,
     );
 }
 
@@ -808,7 +955,7 @@ fn precompile_after_our_ix_rejected() {
             precompile_after_ours: true,
             ..Default::default()
         },
-        WardenError::PrecompileNotFound,
+        err::PRECOMPILE_NOT_FOUND,
     );
 }
 
@@ -832,7 +979,7 @@ fn two_precompile_ixs_only_named_one_binds() {
             precompile_ix_index: Some(0),
             ..Default::default()
         },
-        WardenError::PrecompileBindingMismatch,
+        err::PRECOMPILE_BINDING_MISMATCH,
     );
 }
 
@@ -849,7 +996,7 @@ fn non_pda_account_rejected() {
             account_at_wrong_address: true,
             ..Default::default()
         },
-        WardenError::Unauthorized,
+        err::UNAUTHORIZED,
     );
 }
 
@@ -865,6 +1012,6 @@ fn ed25519_root_rejected_on_passkey_path() {
             },
             ..Default::default()
         },
-        WardenError::RootKindUnsupported,
+        err::ROOT_KIND_UNSUPPORTED,
     );
 }

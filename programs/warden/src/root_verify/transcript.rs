@@ -47,6 +47,10 @@ pub const OP_ROTATE_NONCE: u8 = 0x00;
 /// replayed against an account holding a different tag. What it does *not*
 /// guarantee is that the tag names the cluster the transaction lands on. Spec
 /// §4 wording is corrected in Task 9.
+// The argument list is the spec's transcript field list, one parameter per
+// signed field; bundling them into a struct would only move the same eight
+// values behind a name and make the call sites less obviously exhaustive.
+#[allow(clippy::too_many_arguments)]
 pub fn transcript_hash(
     genesis: &[u8; 32],
     program_id: &Pubkey,

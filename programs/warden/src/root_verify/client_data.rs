@@ -29,6 +29,14 @@
 //!   `crossOrigin`) live in `super::verify_root_assertion`; this module only
 //!   guarantees it returns the genuine, unique, decoded depth-0 values.
 //!
+//! Values under keys we ignore are **fully validated as JSON**, not merely
+//! bracket-skipped: strings reject control bytes and unknown escapes and must
+//! spell `\uXXXX` with four hex digits, numbers must match the JSON number
+//! grammar, and objects/arrays must be well-formed `key : value` / `value`
+//! lists with no leading or trailing commas. Accepting a document no
+//! conforming parser would accept means the program and the browser disagree
+//! about what was signed, so "we ignore it" is not a licence to accept it.
+//!
 //! The scanner is fully iterative — no recursion — so a deeply nested document
 //! cannot exhaust the 4 KB SBF stack frame; nesting deeper than
 //! `MAX_JSON_DEPTH` is rejected outright.
@@ -130,17 +138,33 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// Advance past a JSON string without decoding it. Escape-aware, so a
-    /// `\"` inside the string can never be mistaken for its terminator — the
-    /// property the bracket skipper depends on.
-    fn skip_string(&mut self) -> Result<()> {
+    /// Validate (but do not decode) a JSON string, leaving `i` on the byte
+    /// after the closing quote.
+    ///
+    /// This is the same grammar `parse_string` enforces — control bytes below
+    /// 0x20 rejected, only the nine legal escapes accepted, `\uXXXX` required
+    /// to be four hex digits — minus the allocation, because ignored values
+    /// are never read. Being escape-aware is also what stops a `\"` inside a
+    /// string from being mistaken for its terminator, which is what keeps the
+    /// container walk in `skip_value` synchronised.
+    ///
+    /// The one respect in which this is laxer than `parse_string`: a lone
+    /// `\uD800`-range surrogate half is accepted here (we do not decode, so we
+    /// do not pair them). It cannot affect any depth-0 value.
+    fn validate_string(&mut self) -> Result<()> {
         self.expect(b'"')?;
         loop {
-            match self.bump()? {
+            let c = self.bump()?;
+            match c {
                 b'"' => return Ok(()),
-                b'\\' => {
-                    self.bump()?;
-                }
+                b'\\' => match self.bump()? {
+                    b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => {}
+                    b'u' => {
+                        self.hex4()?;
+                    }
+                    _ => return Err(malformed()),
+                },
+                0x00..=0x1F => return Err(malformed()),
                 _ => {}
             }
         }
@@ -169,72 +193,139 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
-    /// Consume a JSON number. Charset-only (the value is never used), but it
-    /// must consume at least one byte so `{"a":}` cannot be silently accepted.
-    fn skip_number(&mut self) -> Result<()> {
-        let start = self.i;
-        while matches!(
-            self.b.get(self.i),
-            Some(b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
-        ) {
+    fn at_digit(&self) -> bool {
+        matches!(self.b.get(self.i), Some(b'0'..=b'9'))
+    }
+
+    /// Full JSON number grammar: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`.
+    ///
+    /// Charset-only scanning would accept `1e`, `01`, `-`, `.5`, `1.` and
+    /// `1e+`, none of which any JSON parser accepts — so a document a browser
+    /// could never have produced (and a real relying party would reject) would
+    /// have been accepted here.
+    fn validate_number(&mut self) -> Result<()> {
+        if matches!(self.b.get(self.i), Some(b'-')) {
             self.i = self.i.saturating_add(1);
         }
-        require!(self.i > start, WardenError::ClientDataMalformed);
+        // Integer part: a single 0, or a non-zero digit followed by digits.
+        match self.bump()? {
+            b'0' => {}
+            b'1'..=b'9' => {
+                while self.at_digit() {
+                    self.i = self.i.saturating_add(1);
+                }
+            }
+            _ => return Err(malformed()),
+        }
+        // Optional fraction: '.' then at least one digit.
+        if matches!(self.b.get(self.i), Some(b'.')) {
+            self.i = self.i.saturating_add(1);
+            require!(self.at_digit(), WardenError::ClientDataMalformed);
+            while self.at_digit() {
+                self.i = self.i.saturating_add(1);
+            }
+        }
+        // Optional exponent: e/E, optional sign, then at least one digit.
+        if matches!(self.b.get(self.i), Some(b'e' | b'E')) {
+            self.i = self.i.saturating_add(1);
+            if matches!(self.b.get(self.i), Some(b'+' | b'-')) {
+                self.i = self.i.saturating_add(1);
+            }
+            require!(self.at_digit(), WardenError::ClientDataMalformed);
+            while self.at_digit() {
+                self.i = self.i.saturating_add(1);
+            }
+        }
         Ok(())
     }
 
-    /// Skip a whole top-level value we do not care about, at any nesting.
+    /// Consume one whole JSON value that we do not care about, leaving `i` on
+    /// the byte after it — a **complete, allocation-free JSON validator**, not
+    /// a bracket counter.
     ///
-    /// Objects and arrays are skipped by matching brackets with an explicit
-    /// fixed-size stack (no recursion), stepping over strings so that braces
-    /// or brackets inside string literals cannot unbalance the count.
-    /// Mismatched or over-deep brackets are rejected. The *interior* grammar
-    /// of a skipped value is not validated beyond bracket balance and string
-    /// structure; that is sound because nothing inside is ever read, and the
-    /// skipper always lands exactly on the byte after the matching close, so
-    /// the depth-0 loop cannot be desynchronised.
+    /// Objects must be `{}` or `{ "key" : value (, "key" : value)* }`, arrays
+    /// must be `[]` or `[ value (, value)* ]`; leading and trailing commas,
+    /// bare keys, missing colons, and any byte that does not begin one of the
+    /// six JSON value kinds are rejected. Nesting is walked with an explicit
+    /// `[u8; MAX_JSON_DEPTH]` stack — no recursion, so a hostile document
+    /// cannot exhaust the 4 KB SBF stack frame — and exceeding the cap is
+    /// rejected rather than truncated.
+    ///
+    /// Ignored values are validated, not merely skipped, because accepting a
+    /// document that no conforming JSON parser would accept means this program
+    /// and the browser disagree about what was signed. Depth-0 semantics are
+    /// unaffected either way; this closes the gap between "we ignore it" and
+    /// "it is legal".
     fn skip_value(&mut self) -> Result<()> {
-        self.skip_ws();
-        match self.peek()? {
-            b'"' => self.skip_string(),
-            b'{' | b'[' => self.skip_container(),
-            b't' => self.expect_literal(b"true"),
-            b'f' => self.expect_literal(b"false"),
-            b'n' => self.expect_literal(b"null"),
-            b'-' | b'0'..=b'9' => self.skip_number(),
-            _ => Err(malformed()),
+        // Each entry is the opening byte of a container we are inside.
+        let mut stack = [0u8; MAX_JSON_DEPTH];
+        let mut depth: usize = 0;
+        loop {
+            // --- parse one value (which may open a container) --------------
+            self.skip_ws();
+            let c = self.peek()?;
+            match c {
+                b'{' | b'[' => {
+                    require!(depth < MAX_JSON_DEPTH, WardenError::ClientDataMalformed);
+                    *stack.get_mut(depth).ok_or_else(malformed)? = c;
+                    depth = depth.saturating_add(1);
+                    self.i = self.i.saturating_add(1);
+                    self.skip_ws();
+                    let close = if c == b'{' { b'}' } else { b']' };
+                    if self.peek()? == close {
+                        // Empty container: it *is* the value, so fall through
+                        // to the close/comma handling below.
+                        self.i = self.i.saturating_add(1);
+                        depth = depth.checked_sub(1).ok_or_else(malformed)?;
+                    } else {
+                        if c == b'{' {
+                            self.member_key_and_colon()?;
+                        }
+                        // Go parse the first element / member value.
+                        continue;
+                    }
+                }
+                b'"' => self.validate_string()?,
+                b't' => self.expect_literal(b"true")?,
+                b'f' => self.expect_literal(b"false")?,
+                b'n' => self.expect_literal(b"null")?,
+                b'-' | b'0'..=b'9' => self.validate_number()?,
+                _ => return Err(malformed()),
+            }
+
+            // --- a value just ended: close containers or take a comma ------
+            loop {
+                let Some(top) = depth.checked_sub(1) else {
+                    // Back at the outermost value: it is complete.
+                    return Ok(());
+                };
+                self.skip_ws();
+                let opener = *stack.get(top).ok_or_else(malformed)?;
+                let close = if opener == b'{' { b'}' } else { b']' };
+                let d = self.bump()?;
+                if d == close {
+                    // The container itself is now a completed value.
+                    depth = top;
+                    continue;
+                }
+                require!(d == b',', WardenError::ClientDataMalformed);
+                if opener == b'{' {
+                    self.member_key_and_colon()?;
+                }
+                break;
+            }
         }
     }
 
-    fn skip_container(&mut self) -> Result<()> {
-        let mut closers = [0u8; MAX_JSON_DEPTH];
-        let mut depth: usize = 0;
-        loop {
-            let c = self.peek()?;
-            match c {
-                b'"' => self.skip_string()?,
-                b'{' | b'[' => {
-                    require!(depth < MAX_JSON_DEPTH, WardenError::ClientDataMalformed);
-                    let slot = closers.get_mut(depth).ok_or_else(malformed)?;
-                    *slot = if c == b'{' { b'}' } else { b']' };
-                    depth = depth.saturating_add(1);
-                    self.i = self.i.saturating_add(1);
-                }
-                b'}' | b']' => {
-                    let top = depth.checked_sub(1).ok_or_else(malformed)?;
-                    require!(
-                        *closers.get(top).ok_or_else(malformed)? == c,
-                        WardenError::ClientDataMalformed
-                    );
-                    depth = top;
-                    self.i = self.i.saturating_add(1);
-                    if depth == 0 {
-                        return Ok(());
-                    }
-                }
-                _ => self.i = self.i.saturating_add(1),
-            }
-        }
+    /// `"key" :` — the only thing that may follow `{` or a comma inside an
+    /// object. A bare (unquoted) key or a missing colon is rejected.
+    fn member_key_and_colon(&mut self) -> Result<()> {
+        self.skip_ws();
+        require!(self.peek()? == b'"', WardenError::ClientDataMalformed);
+        self.validate_string()?;
+        self.skip_ws();
+        self.expect(b':')?;
+        Ok(())
     }
 
     fn parse_bool(&mut self) -> Result<bool> {
@@ -584,7 +675,8 @@ mod tests {
 
     #[test]
     fn rejects_nesting_deeper_than_the_limit() {
-        let deep = "[".repeat(MAX_JSON_DEPTH.saturating_add(1));
+        let d = MAX_JSON_DEPTH.saturating_add(1);
+        let deep = format!("{}1{}", "[".repeat(d), "]".repeat(d));
         let cdj = format!(
             r#"{{"type":"webauthn.get","challenge":"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q","origin":"b","deep":{deep}}}"#
         );
@@ -592,6 +684,141 @@ mod tests {
             parse_strict(cdj.as_bytes()).unwrap_err(),
             err(WardenError::ClientDataMalformed)
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Ignored values are validated as JSON, not merely bracket-skipped.
+    // Each of these is accepted by a bracket counter and rejected by any
+    // conforming parser.
+    // -----------------------------------------------------------------
+
+    /// A canonical, otherwise-valid document carrying `junk` under an ignored
+    /// top-level key, so these cases isolate the ignored-value validator.
+    fn with_junk(junk: &str) -> Vec<u8> {
+        let chal = std::str::from_utf8(CHAL).unwrap();
+        let origin = std::str::from_utf8(ORIGIN).unwrap();
+        format!(
+            r#"{{"type":"webauthn.get","challenge":"{chal}","origin":"{origin}","junk":{junk}}}"#
+        )
+        .into_bytes()
+    }
+
+    /// Sanity: the wrapper itself parses, so every rejection below is caused
+    /// by the junk and not by the scaffolding.
+    #[test]
+    fn with_junk_wrapper_is_itself_valid() {
+        let cd = parse_strict(&with_junk("1")).unwrap();
+        assert_eq!(cd.origin, ORIGIN.to_vec());
+        assert_eq!(cd.challenge, CHAL.to_vec());
+    }
+
+    #[test]
+    fn rejects_unknown_escape_in_ignored_string() {
+        for junk in [r#""a\q""#, r#"{"k":"a\q"}"#, r#"["a\x1"]"#] {
+            assert_eq!(
+                parse_strict(&with_junk(junk)).unwrap_err(),
+                err(WardenError::ClientDataMalformed),
+                "junk {junk} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_bad_unicode_escape_hex_in_ignored_string() {
+        for junk in [r#""a\u00zz""#, r#""a\u12""#, r#"{"k":"\uGGGG"}"#] {
+            assert_eq!(
+                parse_strict(&with_junk(junk)).unwrap_err(),
+                err(WardenError::ClientDataMalformed),
+                "junk {junk} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_control_byte_in_ignored_string() {
+        for b in [0x00u8, 0x01, 0x09, 0x0a, 0x1f] {
+            let mut cdj = with_junk(r#""aXb""#);
+            let pos = cdj.iter().position(|c| *c == b'X').unwrap();
+            cdj[pos] = b;
+            assert_eq!(
+                parse_strict(&cdj).unwrap_err(),
+                err(WardenError::ClientDataMalformed),
+                "raw control byte {b:#04x} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_number_in_ignored_value() {
+        for junk in [
+            "1e", "1e+", "1E-", "01", "-", "-.5", ".5", "1.", "+1", "1..2", "0x10", "1e1e1",
+        ] {
+            assert_eq!(
+                parse_strict(&with_junk(junk)).unwrap_err(),
+                err(WardenError::ClientDataMalformed),
+                "number {junk} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_bad_object_grammar_in_ignored_value() {
+        for junk in [
+            "{,,,}", r#"{"a"}"#, r#"{"a":}"#, r#"{"a":1,}"#, r#"{,"a":1}"#, "{a:1}",
+            r#"{"a" 1}"#, r#"{"a":1 "b":2}"#, r#"{"a":1,,"b":2}"#, r#"{"a":1"#,
+        ] {
+            assert_eq!(
+                parse_strict(&with_junk(junk)).unwrap_err(),
+                err(WardenError::ClientDataMalformed),
+                "object {junk} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_bad_array_grammar() {
+        for junk in ["[,]", "[1,]", "[,1]", "[1 2]", "[1,,2]", "[", "[1", "[}]"] {
+            assert_eq!(
+                parse_strict(&with_junk(junk)).unwrap_err(),
+                err(WardenError::ClientDataMalformed),
+                "array {junk} must be rejected"
+            );
+        }
+    }
+
+    /// BALANCED over-deep nesting: an unbalanced `[[[[...` would be rejected
+    /// by the end-of-input check instead, and the depth cap would never be
+    /// exercised (it silently was not, before this test was corrected).
+    #[test]
+    fn rejects_depth_over_cap() {
+        let d = MAX_JSON_DEPTH.saturating_add(1);
+        let deep = format!("{}1{}", "[".repeat(d), "]".repeat(d));
+        assert_eq!(
+            parse_strict(&with_junk(&deep)).unwrap_err(),
+            err(WardenError::ClientDataMalformed)
+        );
+    }
+
+    #[test]
+    fn accepts_depth_exactly_at_the_cap() {
+        let d = MAX_JSON_DEPTH;
+        let junk = format!("{}1{}", "[".repeat(d), "]".repeat(d));
+        parse_strict(&with_junk(&junk)).unwrap();
+    }
+
+    /// Every JSON value kind, nested, with all legal escapes and whitespace —
+    /// the validator must not have become a false-rejector.
+    #[test]
+    fn accepts_valid_nested_junk_of_every_value_kind() {
+        let junk = concat!(
+            r#"{ "s" : "a\"b\\c\/d\b\f\n\r\t\u00e9\uD83D" ,"#,
+            r#" "empties" : [ {} , [] ] ,"#,
+            r#" "nums" : [ 0 , -0 , 1 , -1 , 1.5 , -1.5e-3 , 2E+10 , 1234567890 ] ,"#,
+            r#" "lits" : [ true , false , null ] ,"#,
+            r#" "nested" : { "a" : [ { "b" : [ [ ] ] } ] }"#,
+            "\t\n }"
+        );
+        parse_strict(&with_junk(junk)).unwrap();
     }
 
     #[test]
