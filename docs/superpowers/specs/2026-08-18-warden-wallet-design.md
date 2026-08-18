@@ -1,150 +1,168 @@
 # Warden — design spec (v1)
 
-**Date:** 2026-08-18 · **Status:** draft for owner review · **Product:** drinkerlabs · **Working name:** Warden (rename is a find/replace; nothing below depends on it)
-**Predecessor:** `/opt/docs/pq-solana-wallet-research-2026-08-18.md` (feasibility study; the quantum root is *out of scope* here but every choice below keeps its slot).
+**Date:** 2026-08-18 · **Status:** rev 2 (after Codex review round 1, see §16) · **Product:** drinkerlabs · **Working name:** Warden (rename = find/replace)
+**Predecessor:** `/opt/docs/pq-solana-wallet-research-2026-08-18.md` (feasibility study; the quantum root is out of scope here but every choice keeps its slot).
 
-## 1. Purpose
+## 1. Purpose and the one property we promise
 
-A Solana wallet that is **more secure than Phantom against the losses that actually happen** — AI-scale phishing, fake dApps, drainers, seed-phrase scraping, poisoned addresses, prompt-injected agents — by moving the safety from *warnings the user can click through* to **limits the chain enforces**. It keeps Phantom's core feel: connect to dApps, send, receive, and an in-app swap (Jupiter) that earns a platform fee.
+A Solana browser-extension wallet that is **more secure than Phantom against the losses that actually happen** — AI-scale phishing, fake dApps, drainers, seed-phrase scraping, poisoned addresses, prompt-injected agents — by moving safety from *warnings the user can click through* to **limits the chain enforces**. It keeps the Phantom core: connect to dApps, send, receive, and an in-app Jupiter swap that earns a platform fee.
 
-Success for v1 = a Chrome/Brave extension a real user can install, onboard without ever seeing a seed phrase, use with mainstream Solana dApps, swap with a fee collected to our treasury, and — the point — **a phished user loses at most their session cap, never the wallet.**
+**The property (stated exactly, because it is the product):** *If an attacker obtains everything the extension holds while unlocked — the session key, the unlocked keyring, the ability to prompt the user — the value that can leave the account before the owner or a guardian can react is bounded by the account's session caps; anything larger is delayed and cancellable.* Bounded means **token/lamport value leaving the account's own token accounts and lamport balance**. It does **not** cover value the user has already placed under other programs' control (see §5.4) or a compromised OS that can defeat the passkey ceremony.
 
-## 2. Threat model (what v1 defends and what it doesn't)
+## 2. Threat model
 
 | # | Threat | v1 answer |
 |---|---|---|
-| T1 | User is talked into signing a draining tx (fake dApp, deepfake support, poisoned address) | Session key can only move ≤ per-tx cap and ≤ daily cap per mint; larger outflows need the root **and** a timelock with a cancel window |
-| T2 | Seed phrase scraped (malware, clipboard stealer, phishing page) | There is no seed phrase in the default path; the root secret lives only as an encrypted blob the user cannot paste into a website |
-| T3 | Malicious/updated extension steals the hot key | Hot key = session key, capped; root needs a fresh passkey ceremony (user-verification) per use; large moves are timelocked and visible |
-| T4 | Device lost / passkey lost | Guardian recovery (2-of-3, delayed, owner-cancellable) |
-| T5 | AI agent/bot with wallet access is prompt-injected | Agents get their own session key with its own tiny caps (on-chain support in v1; UI in v1.1) |
-| T6 | Bug in *our* program | Small typed surface, adversarial tests, external audit before mainnet, upgrade authority = timelocked 2-of-3 multisig, per-account `frozen` switch |
-| — | Quantum signature forgery | Out of scope for v1. Preserved: asset holder is a PDA (hash-derived, not a raw pubkey), authorities are typed → a hash-based/Falcon root signer is an additive signer type later, no address migration |
-| — | Compromised OS / keylogger with a live unlocked session | Bounded by caps; not prevented |
-| — | Compromised RPC/quote server | Simulation and intent are computed from an RPC we choose; a lying RPC can hide state but cannot sign; treated in §9 |
+| T1 | User is talked into approving a draining tx (fake dApp, deepfake support, poisoned address) | Session key: ≤ per-tx and ≤ daily caps per mint, account-wide across all sessions. Larger outflows — **including by the root** — go through a timelock with a cancel window and notifications |
+| T2 | Seed phrase scraped | No seed phrase exists in the default path; the recovery code is a 128-bit code that unlocks a *guardian key*, which cannot move funds and is itself subject to the recovery delay |
+| T3 | Malicious/updated extension | Root = **non-exportable P-256 passkey verified on-chain**; the extension never holds root secret material. A malicious extension can spend the session caps, and can *ask* the user to complete a passkey ceremony for a large action — that action is still timelocked and visible on the notifier/second device. Explicitly **not** defended: a malicious extension that lies about intent to a user with no second channel |
+| T4 | Device/passkey lost | Guardian recovery (threshold, delayed, root-cancellable) or the recovery-key path (also delayed) |
+| T5 | AI agent/bot with wallet access is prompt-injected | Agents get their own session key with tiny caps (on-chain in v1; UI in v1.1) |
+| T6 | Bug in our program | Small typed surface, adversarial + property tests, external audit and bug bounty **before any real funds**, per-account `frozen`, upgrade path with an exit window (§13) |
+| — | Quantum signature forgery | Out of scope. Preserved: asset holder is a PDA; root/guardian kinds are typed → a hash-based/Falcon kind is additive |
+| — | Compromised OS/keylogger with unlocked session | Bounded by caps only |
+| — | Lying RPC | Cannot sign; can hide state. Intent view cross-checks simulation vs local pre-check and flags disagreement; user-selectable RPC |
 
 ## 3. Architecture
 
 ```
-┌───────────────────────────── on-chain: warden program (Anchor/Rust) ─────────────────────────────┐
-│ SmartAccount (PDA ["account", owner_seed])   – holds SOL + SPL/Token-2022 via its ATAs           │
-│   root_key: Ed25519 pubkey (typed: RootKind::Ed25519 | ::Passkey_P256 | reserved for PQ kinds)   │
-│   policy:  large_tx_threshold per mint, timelock_secs, guardian set + threshold, recovery_delay │
-│   frozen:  bool (root or any guardian can freeze; only root can unfreeze after timelock)         │
-│ SessionKey (PDA ["session", account, pubkey]) – kind, expiry_slot, ops_mask, caps[mint]:        │
-│   {per_tx, per_day, day_start_slot, spent_today}, lifetime_cap/spent, label                    │
-│ StagedTx  (PDA ["staged", account, hash])   – content-addressed staged instruction bundle       │
-│ PendingTransfer (PDA ["pending", account, nonce]) – timelocked large outflow, cancellable       │
-│ RecoveryProposal (PDA ["recovery", account]) – new root, approvals bitmap, execute_after         │
-│ Treasury = another SmartAccount owned by the drinkerlabs multisig; fee ATAs belong to it        │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-        ▲ Wallet Standard / Jupiter / dApp txs (session-signed)          ▲ rare root ceremonies
+┌──────────────────────────── on-chain: warden program (Anchor/Rust) ────────────────────────────┐
+│ SmartAccount (PDA ["account", owner_seed])  – holds SOL + SPL/Token-2022 via its ATAs           │
+│   root: {kind: P256Passkey{cred_id_hash, pubkey} | Ed25519 | reserved}, generation: u64         │
+│   policy (versioned, §5.5), frozen: {by: None|Root|Guardian(idx), until_ts}, day buckets       │
+│ SessionKey (PDA ["session", account, pubkey]) – kind, expiry_ts, ops_mask, program_allowlist_id,│
+│   caps[mint]{per_tx, per_day}, lifetime{cap, spent}, generation_at_grant, label                │
+│ Stage (PDA ["stage", account, hash]) – chunk-uploaded, finalized, consume-once instruction set   │
+│ Pending (PDA ["pending", account, nonce]) – timelocked action: transfer | execute | policy |    │
+│   grant; content hash, execute_after_ts, created_by, generation                                │
+│ Recovery (PDA ["recovery", account, nonce]) – immutable proposal, approvals bitmap, ready_ts   │
+│ Treasury = a SmartAccount owned by the drinkerlabs multisig; fee ATAs belong to it              │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
+        ▲ session-signed txs (typed ops + allow-listed dApp execute)   ▲ root = passkey ceremony
 ┌────────────── apps/extension (MV3) ─────────────┐   ┌────────────── packages/core (TS SDK) ─────────────┐
-│ service worker: keyring (encrypted), tx builder,│   │ account model · instruction builders · policy      │
-│ policy pre-check, simulation, intent renderer,  │   │ pre-check (mirrors on-chain rules) · simulation +  │
-│ Wallet Standard provider bridge                 │   │ intent (balance diffs, authority changes) · Jupiter │
-│ popup/UI: onboarding, home, send, swap, sign,   │   │ client (quote/swap-instructions, platformFeeBps) ·  │
-│ policy, sessions, recovery, settings, connect   │   │ passkey/PRF + backup-blob crypto · address-poison  │
-│ passkey (WebAuthn, extension origin)            │   │ heuristics · no DOM, no chrome.* (testable in node)  │
+│ service worker: session keyring (encrypted),    │   │ account model · builders · policy pre-check        │
+│ tx builder/rewriter, policy pre-check, sim +    │   │ (mirrors on-chain rules) · simulation + intent      │
+│ intent renderer, Wallet Standard bridge, event  │   │ (balance diffs, authority changes) · Jupiter client  │
+│ watcher; popup/full-page React UI (§9)          │   │ · WebAuthn/PRF + backup envelope crypto · poison    │
+│ passkey (WebAuthn from extension origin)        │   │ heuristics · no DOM/chrome.* (node-testable)         │
 └─────────────────────────────────────────────────┘   └────────────────────────────────────────────────────┘
 ```
 
-Repo: `/opt/warden` monorepo — `programs/warden` (Anchor), `packages/core`, `apps/extension`, `docs/`. pnpm workspaces; Rust toolchain pinned; Anchor version pinned.
+Repo `/opt/warden`: `programs/warden` (Anchor), `packages/core`, `apps/extension`, `services/{treasury,guardian,notifier}`, `docs/`. pnpm workspaces; Rust/Anchor pinned.
 
-## 4. Key model (who can do what)
+## 4. Key model
 
-**Root key** — an Ed25519 keypair generated in the extension at onboarding. Its secret is encrypted at rest with a key derived from the user's **passkey via the WebAuthn PRF extension** (fallback: a strong local password through Argon2id if PRF is unavailable on the device — decided by a spike, §12). Every root use requires a fresh passkey ceremony with user verification. Root signs: session grants/revocations, policy changes, large (timelocked) transfers, guardian changes, recovery cancellation, unfreeze. Root kind is typed so a P-256 passkey (secp256r1 precompile) or, later, a hash-based key can be the root without changing accounts.
+**Root = passkey (default).** A platform passkey created from the extension's origin (RP ID = extension id), `userVerification: required`, algorithm restricted to ES256. The P-256 public key is the account root; the program verifies WebAuthn assertions on-chain via the secp256r1 precompile: `authenticatorData ‖ SHA256(clientDataJSON)`, with `rpIdHash` == our RP ID hash, `type == "webauthn.get"`, `challenge` == Keccak256(canonical action transcript ‖ recent blockhash), UP+UV flags set, `origin` == extension origin; sign counter advisory only. The private key never leaves the authenticator; the extension cannot export it. Ed25519 root kind exists for hardware/advanced users and is not the default.
 
-**Session key** — an Ed25519 keypair held in the service worker's encrypted keyring, unlocked for a session window (default 15 min idle / 8 h max; configurable). It signs everything routine: dApp transactions, sends, swaps, message signing. It has caps and expiry enforced **on-chain**; the extension additionally pre-checks so the user sees "this exceeds your session limit — confirm with your passkey to move it as a large transfer" instead of a failed tx.
+**Session key.** Ed25519 keypair in the service-worker keyring (AES-256-GCM; unlock secret from passkey PRF, fallback Argon2id password per spike §14.2), unlocked for a window (default 15 min idle / 8 h max). Signs routine actions within caps. Multiple sessions (devices, agents) share **account-wide** daily caps; each also has a lifetime cap.
 
-**Guardians** — up to 5 pubkeys with a threshold (default 2-of-3). Guardian types are just pubkeys: the user's second device (its own root key), a friend's wallet, and an optional **drinkerlabs cloud guardian** (a service key that only ever co-signs a recovery after email/2FA and a mandatory delay; it can never move funds). Guardians can *freeze* the account and *approve recovery*; nothing else.
+**Guardians.** Up to 5 typed pubkeys (Ed25519 or P-256 passkey of a second device) with threshold (default 2-of-3): second device, a friend's wallet, and the optional **drinkerlabs cloud guardian** (a service key that can only `approve_recovery` and `freeze`, after email magic-link + TOTP + 24 h cooling). Guardians can freeze (bounded, §5.3) and approve recovery; nothing else.
 
-**Default policy (v1 defaults; user-editable):**
-- Session per-tx cap: 0.5 SOL and 100 USDC-equivalent per stable; per-day: 2 SOL / 500 stables. Other mints: **no outflow via transfer or dApp** unless a cap is set — but **swaps of any held token are always allowed** because output returns to the vault (loss bounded by `min_out`).
-- Large-transfer threshold = anything over session caps → root + timelock (default 12 h; min 1 h; the user may pre-approve a specific recipient allowlist to skip the timelock for that recipient).
-- Recovery delay 48 h; owner can cancel any time in the window; a cancel does not consume anything.
+**Recovery key (replaces "backup blob").** At onboarding the extension generates an Ed25519 *recovery key*, registers it on-chain as a guardian with weight = threshold, encrypts it into a versioned envelope (Argon2id id=2, m=256 MiB, t=3, p=1; AAD = account address ‖ version) under a **128-bit recovery code** (12 BIP-39 words) shown once and exportable to file/QR. It can *only* propose+approve recovery — it cannot move funds and is subject to the same delay and root veto. Losing it loses nothing while guardians remain.
 
-## 5. On-chain program — instructions and invariants
+**Default policy (user-editable; loosening is timelocked):**
+- Session caps (account-wide/day; per-tx): SOL 0.5 / 2; USDC & USDT 100 / 500. Other mints: no transfer/execute outflow unless a cap is set.
+- Swap caps (input side, per mint per day, account-wide): SOL 5, stables 2,000, other mints 100% of holdings *only if* out_mint ∈ `allowed_out_mints` (default: SOL, USDC, USDT). Swaps into other mints require an explicit cap or the root.
+- Large threshold = anything above session caps → root ceremony **and** timelock (default 12 h, min 1 h). Recipient allowlist entries (added via timelocked loosening) skip the delay for that recipient only.
+- Recovery delay 48 h; guardian-freeze max 72 h.
 
-Anchor program `warden`, ~1.5k LOC target. All amounts `u64`; slots for time (Clock sysvar); every account carries `version: u8` for migrations.
+## 5. On-chain program
+
+### 5.1 Instructions
 
 | Instruction | Signer | Effect / invariants |
 |---|---|---|
-| `create_account(root_kind, root_key, policy)` | payer (any) | Creates SmartAccount; `owner_seed` = 32 random bytes chosen client-side so the address is a hash, not derivable from the root key |
-| `grant_session(pubkey, kind, expiry, ops_mask, caps[], label)` | root | Upserts SessionKey. Rejects expiry > policy.max_session_life |
-| `revoke_session(pubkey)` | root **or the session itself** | Closes SessionKey (a session may always self-revoke) |
-| `set_policy(policy)` | root; if it *loosens* limits it goes through PendingTransfer-style timelock (`policy_change` op) | Loosening = raising any cap, shortening timelock/recovery delay, removing a guardian |
-| `transfer(mint?, to, amount)` | session (within caps) or root (any) | Native SOL or SPL. Session: `amount ≤ per_tx`, `spent_today + amount ≤ per_day` (day resets on slot window), `to` not a vault ATA authority change; ATA creation for `to` allowed and paid by fee payer |
-| `execute(bundle)` | session or root | Runs a staged or inline instruction bundle by CPI with the SmartAccount PDA as signer. **Post-state invariants** (checked after all CPIs): for every writable token account owned by the account in the tx: `owner` unchanged, `delegate == None`, `close_authority == None`; per-mint net outflow ≤ session caps (root: unlimited); native lamport outflow (minus rent for created ATAs) ≤ SOL cap; no `SetAuthority`/`Approve`/`Revoke`/`CloseAccount` targeting vault-owned accounts (checked by post-state, not by parsing) |
-| `swap(route)` | session or root | Specialised `execute` for Jupiter: CPI target pinned to the Jupiter v6 program id + `route`/`shared_accounts_route` discriminators; source ATA = vault ATA of `in_mint`, destination = vault ATA of `out_mint`, `platform_fee_account` = treasury ATA of the fee mint (else reject); post-state: exactly one vault-owned token account decreases (in_mint, ≤ `max_in`), out_mint ATA increases ≥ `min_out`, all others unchanged; Token-2022 mints with transfer-hook or permanent-delegate extensions rejected unless allow-listed in policy. Swaps never count against `transfer` caps (value stays in the vault) but do count `in_mint` against a separate `swap_per_day` cap (default: unlimited for SOL/stables; sanity cap for others) |
-| `stage(hash, ixs)` / `unstage` | any payer | Content-addressed StagedTx for bundles that don't fit one tx; immutable; anyone can close after expiry (rent to creator) |
-| `queue_large_transfer(mint?, to, amount)` | root | Creates PendingTransfer with `execute_after = now + timelock`; emits event (extension + optional cloud notifier watch it) |
-| `cancel_pending(nonce)` | root **or any guardian** | Closes PendingTransfer |
-| `execute_pending(nonce)` | anyone (permissionless crank) after `execute_after` | Executes; refuses if account frozen |
-| `freeze` | root or any guardian | Sets `frozen`; blocks all outflows and session use |
-| `unfreeze` | root, after `timelock` | Clears |
-| `propose_recovery(new_root_kind, new_root_key)` | guardian | Creates/overwrites RecoveryProposal, approvals={proposer} |
-| `approve_recovery` | guardian | Adds approval; when threshold met sets `execute_after = now + recovery_delay` |
-| `execute_recovery` | anyone after `execute_after` | Replaces root, **revokes all sessions**, clears pending transfers, requires account not frozen by root within window (a root freeze during the window = "I'm still here", blocks execution) |
-| `cancel_recovery` | root | Closes proposal |
+| `create_account(root, policy, owner_seed)` | payer | `owner_seed` = 32 random bytes chosen client-side (address is a hash, not derived from root) |
+| `grant_session(...)` | root | Caps ≤ `policy.session_ceiling` per mint, expiry ≤ `policy.max_session_life`, `program_allowlist_id` must exist in policy. Sets `generation_at_grant = account.generation`. Grants above ceiling → must go through `queue(Grant)` |
+| `revoke_session(pubkey)` | root or that session | Closes |
+| `transfer(mint?, to, amount)` | session (within caps) or root (≤ `large_threshold`, else must be queued) | Native or SPL; day-bucket + lifetime accounting; `to` must not be a vault-owned token account; ATA creation for `to` funded by the outer fee payer, never the vault |
+| `swap(route)` | session or root | Jupiter CPI, §5.2 |
+| `execute(stage?, ixs?)` | session or root | Allow-listed dApp CPI with conservation checks, §5.2. Root execute above threshold must be queued |
+| `stage_open(hash, len)` / `stage_chunk(off, bytes)` / `stage_finalize` / `stage_close` | any payer | Chunked upload; finalize checks Keccak256(content) == hash and records `generation` + `policy_version`; consume-once (closed on use); expiry ts; anyone may close after expiry |
+| `queue(action)` → Pending | root | Content-hashed action (transfer/execute/policy/grant); `execute_after = now + timelock` |
+| `cancel_pending(nonce)` | root or any guardian | Closes |
+| `execute_pending(nonce)` | permissionless after `execute_after` | Re-validates against **current** policy and generation; refuses if frozen |
+| `set_policy(policy)` | root | Tightening applies immediately; any loosening (§5.5) rejected here → must be queued |
+| `freeze` | root or guardian | Root freeze: indefinite until root `unfreeze` (after timelock). Guardian freeze: `until = now + guardian_freeze_max`, one active guardian freeze at a time, a guardian may freeze at most once per `guardian_freeze_cooldown` (7 d) |
+| `unfreeze` | root | After timelock (root freeze) or immediately for a guardian freeze |
+| `propose_recovery(new_root, nonce)` | guardian | Immutable proposal; approvals bound to content hash |
+| `approve_recovery(nonce)` | guardian | At threshold: `ready_ts = now + recovery_delay` |
+| `execute_recovery(nonce)` | permissionless after `ready_ts` | Refused only if **root-frozen** (root veto = "I'm here"; guardian freeze does not block); replaces root, `generation += 1` (invalidates every session, stage, pending) |
+| `cancel_recovery(nonce)` | root | Closes. Stalemate note: an attacker holding root can veto/cancel forever, but guardians can freeze forever — funds stay put; documented outcome |
 
-Cross-cutting: `frozen` gates every outflow; every instruction re-derives PDAs from seeds (no trusted account passing); CPI depth: our `execute` → dApp program (→ its CPIs) keeps within Solana's max depth of 4 for all common cases (Jupiter routes are depth 2 under us); compute: `execute` requests its own budget via `SetComputeUnitLimit` in the outer tx.
+Cross-cutting: `frozen` gates every outflow and session use; every PDA re-derived from seeds; **checked arithmetic everywhere** (overflow = abort); every account `version: u8`; **self-CPI into the warden program is rejected**; time from `Clock.unix_timestamp` (not slots); day buckets are fixed UTC days — the honest bound across a boundary is 2× the daily cap and the UI says so; lifetime caps and per-tx caps are exact.
 
-Upgrade authority: 2-of-3 Squads multisig (drinkerlabs) with a 24 h timelock, published in docs; the extension shows the program id + upgrade authority under Settings → Trust.
+### 5.2 Conservation checks for `execute` and `swap` (the load-bearing part)
 
-## 6. Extension (MV3) — structure
+`execute` runs the CPIs itself, so it can snapshot before and after in one instruction. Rules:
+1. **Program allowlist.** Session `execute` may CPI only to programs in the session's `program_allowlist_id` (policy-defined lists; default list = well-known Solana programs, extendable only via timelocked loosening). Root `execute` may target any program (still conservation-checked and, above threshold, queued).
+2. **Snapshot every writable account** in the tx: existence, owner, lamports, data length, and for token accounts (SPL + Token-2022) the full `(mint, owner, amount, delegate, close_authority, state)`.
+3. **Vault-owned accounts** (owner == SmartAccount PDA, or token accounts whose authority is the PDA): after CPIs, `owner` unchanged, `delegate == None`, `close_authority == None`, `state == Initialized`, not closed, not realloc'd. The SmartAccount PDA itself may not be writable to any CPI target. **No other vault-owned account types are allowed to be writable** (stake accounts, nonce accounts, program-owned state with the vault as owner) — unsupported in v1, rejected.
+4. **Value accounting.** For each mint, `outflow = Σ decreases − Σ increases` over vault-owned token accounts; **WSOL is canonicalized to SOL** (WSOL amounts + native lamports counted together); native lamport decrease of the PDA counts as SOL outflow **with no rent exemption** (account creation is always funded by the outer fee payer). Session: `outflow[mint] ≤ per_tx[mint]` and day/lifetime buckets updated with checked math; a mint without a cap ⇒ outflow must be 0. Root: ≤ `large_threshold` or the action must have come from `execute_pending`.
+5. **Token-2022**: mints with transfer-hook, permanent-delegate, or confidential-transfer extensions rejected unless allow-listed in policy.
+6. **Stage binding**: staged content carries `generation` and `policy_version`; both must equal current at execution; consumed on use.
+7. **`swap`** = `execute` specialised: CPI pinned to the Jupiter v6 program id + `route`/`shared_accounts_route` discriminators; source = vault ATA(in_mint), destination = vault ATA(out_mint), `platform_fee_account` = treasury ATA (of in or out mint) else reject; post-state: exactly one vault-owned token account decreases (in_mint, ≤ `max_in` ≤ swap caps), out_mint ATA increases ≥ `min_out`, others unchanged; **`out_mint ∈ allowed_out_mints` for sessions** unless a cap exists for it. Swap input debits the swap buckets (per mint per day, account-wide, lifetime per session). *This bounds loss to the swap caps regardless of route quality; it does not check price* — the extension enforces quote sanity (Jupiter quote vs a second price source; > 3% deviation blocks the session path).
 
-- **Service worker** (ephemeral): keyring (AES-256-GCM vault; unlock secret from passkey-PRF or Argon2id password; sealed with `chrome.storage.session` for the unlock window and `chrome.alarms` for expiry), request queue, Wallet Standard handlers, simulation + policy pre-check, Jupiter client, event watcher (pending transfers, recovery proposals).
-- **Content script + injected provider**: `registerWallet()` (Wallet Standard) exposing `standard:connect/disconnect/events`, `solana:signTransaction`, `solana:signAndSendTransaction`, `solana:signMessage`, `solana:signIn`. Legacy `window.solana` shim for old dApps.
-- **Popup / full-page UI** (React + Vite): screens in §8. Every signing request renders **intent**: balance diffs per token (from simulation), authority/delegate changes (always red), recipient trust state (known / first-time / seen-only-via-incoming-dust = poison warning), and the policy verdict (within session limits / needs passkey + timelock / blocked).
-- **How a dApp tx becomes a Warden tx**: the dApp builds a tx believing our advertised address (the SmartAccount PDA) is the fee-payer/signer. The provider re-writes it: fee payer = session key; each dApp instruction is wrapped into `execute` (inline if the rewritten tx ≤ 1,232 B, else `stage` first, then `execute` — two txs, shown as one flow), account-index compaction, ALTs preserved. Instructions that require the PDA as a *transaction* signer are satisfied by `invoke_signed` inside `execute`. Known limitation: dApps that verify a **message** signature against the address (Sign-In-With-Solana) will not verify a session-key signature; v1 answers `signIn`/`signMessage` with the session key **and** includes the account address in the returned account metadata, documents the boundary, and tracks which major dApps break (see §12 spike). No Solana-native ERC-1271 analogue exists; not solved in v1.
-- **Passkeys**: WebAuthn from the extension's own origin (RP ID = extension id), platform authenticator, `userVerification: required`, PRF extension for key derivation. Backup of the root: an encrypted blob (root secret + account seed + metadata) wrapped with a 6-word recovery code (BIP-39 words, 66 bits + KDF) *and* the PRF key, exportable to file/Drive/iCloud/QR; the recovery code is shown once and is the only "phrase" a user ever sees, and it cannot move funds on its own (blob + code + on-chain policy still apply).
-- **Swap**: Jupiter Swap API `/quote?platformFeeBps=<FEE_BPS>` → `/swap-instructions` → wrapped in `swap`; `feeAccount` = treasury ATA for the input or output mint (created by our treasury job ahead of time for the top mints; on-demand creation paid by us for others). `FEE_BPS` default 85 (Phantom parity) — a single constant; owner decision.
-- **Address book & poison guard**: contacts with first-seen source; recipients that only ever appeared as senders of dust are flagged; first-time recipients require full-address confirmation of the last 4 + first 4 chars typed.
+### 5.3 What §5.2 does and does not guarantee (§1 boundary)
+Guaranteed: bounded token/lamport outflow from vault-owned accounts under session control; no durable authority/delegate can be created on vault-owned token accounts; no vault-owned account can be closed or repurposed. Not guaranteed: semantics inside external programs where the user already holds positions (a session may interact with an allow-listed protocol's position the vault is authority of; e.g. adjust a lending position). Mitigation is the program allowlist + per-op simulation intent; the honest product statement is "bounded loss of what's in your wallet".
 
-## 7. Guardian recovery flow (user-facing)
+### 5.4 Policy lattice (loosening definition, exhaustive)
+Fields and their *loosening* direction (must be queued + timelocked; tightening immediate): any cap ↑ (session, swap, ceiling); `large_threshold` ↑; `timelock` ↓; `recovery_delay` ↓; `guardian_threshold` ↓; remove guardian; add allowlisted recipient; add mint to `allowed_out_mints`; add program to any allowlist; enable a Token-2022 extension; `max_session_life` ↑; `guardian_freeze_max` ↓. Anything not listed is treated as loosening by default. `execute_pending` reclassifies against the policy in force at execution.
 
-1. Onboarding nudges to add guardians (second device via QR = its root key; a friend's wallet address; the cloud guardian by email). Not adding = a persistent, non-nagging "recovery not set" banner.
-2. Lost device: on a new device, install → "Recover" → enter account address (or scan a guardian's link) → the new device generates a new root and asks guardians to approve (deep-link/QR/email for cloud guardian). Threshold met → 48 h delay starts; the old device (if any) sees "recovery in progress — cancel?" and can cancel or freeze.
-3. After delay, anyone (the new device) executes: root replaced, sessions revoked, funds untouched. Backup blob + recovery code can bypass the guardians entirely (same root restored, nothing on-chain changes).
+### 5.5 Upgrade authority
+Devnet: upgradeable by the dev multisig. Mainnet: 3-of-5 drinkerlabs multisig with a **7-day timelock**; the extension surfaces any queued upgrade with a one-click "exit" (sweep to a fresh account or an external address via the root path, timelock waived when a program upgrade is pending — encoded on-chain by checking the BPF upgradeable loader's pending buffer authority state is not possible; instead the multisig must call `announce_upgrade(slot)` on the program first, which opens the exit window; upgrading without an announcement is a policy violation we publish). Commit to immutability at v1.x once stable.
 
-## 8. UI/brand — drinkerlabs surface playbook for Warden
+## 6. Extension (MV3)
 
-Material: **paper on `--bone` (light) / `--midnight` (dark)** — a wallet is an instrument, not a terminal; one accent `--indigo` (`oklch(50% 0.12 270)`); semantic states use fixed hues that don't count as accent (ok/warn/critical); type = **Inter (UI) + JetBrains Mono (addresses, amounts, hashes)**, cross-axis via one Tiempos italic phrase on the onboarding hero only. Hairlines, tabular numerals, three shadow tiers, one imperfection: asymmetric corner radius (`12px 12px 4px 12px`) on cards. Copy voice: sentence case, verbs an operator would say; no "seamless/empower".
+- **Service worker**: keyring, request queue, Wallet Standard handlers, simulation + policy pre-check, Jupiter client, event watcher.
+- **Provider**: `registerWallet()` exposing `standard:connect/disconnect/events`, `solana:signTransaction`, `solana:signAndSendTransaction`, `solana:signMessage`, `solana:signIn`; legacy `window.solana` shim.
+- **Intent view** (the most important screen): balance diffs per token from simulation, authority/delegate changes (always red, always blocked for sessions anyway), recipient trust (known / first-time / seen-only-via-dust = poison warning), and the policy verdict: *within limits* / *needs passkey + delay* / *blocked (why)*.
+- **dApp transactions — the honest boundary.** Warden advertises the SmartAccount PDA as the account. A dApp-built tx is **rewritten**: fee payer = session key; dApp instructions are wrapped into `execute` (inline if ≤ 1,232 B, else stage-and-execute across two txs shown as one flow); ALTs preserved. Because the signed bytes change, the following are **unsupported and rejected with a clear message**: transactions with other required signers/partial signatures, durable-nonce transactions, transactions that need the PDA as a *top-level* signer, instructions that inspect the Instructions sysvar for adjacency, and dApps whose target program is not on the session allowlist (offered: root path). `signMessage`/`signIn` are signed by the session key; dApps that verify against the account address (Sign-In-With-Solana) **will fail** — no Solana-native ERC-1271 exists; Warden publishes a measured per-dApp compatibility list (§14.4) and does not claim Phantom parity.
+- **Swap**: `/quote?platformFeeBps=FEE_BPS` → `/swap-instructions` → `swap`; `feeAccount` = treasury ATA; quote sanity vs a second source; `FEE_BPS` = 85 default (owner decision).
+- **Address book & poison guard**: first-seen provenance; dust-only senders flagged; first-time recipients require typed confirmation of first/last 4 chars.
+- **Passkeys/PRF**: root ceremony = WebAuthn `get()` with challenge = action transcript hash; PRF (if available) derives the keyring key; otherwise Argon2id password. Root never touches the extension's memory.
 
-Screens (Figma frames, popup 360×600 + full-page variants): 01 onboarding (create with passkey / recover / import advanced), 02 home (balances, pending timelocks, session status), 03 receive, 04 send (recipient trust, policy verdict), 05 swap (quote, fee line, route), 06 sign request (intent view — the most important screen), 07 connect (origin, permissions), 08 policy (caps, timelock, allowlist), 09 sessions & devices, 10 guardians & recovery, 11 settings/trust (program id, upgrade authority, backup export). Design tokens are produced first in Figma (variables), then components, then screens; the extension consumes the same tokens as CSS variables.
+## 7. Recovery flows
 
-## 9. Backend (minimal, none holds keys)
+1. **Onboarding** creates root passkey + recovery key (shows the 12-word code once, offers file/QR export) and nudges to add guardians (second device via QR = its passkey pubkey; friend; cloud guardian). Recovery-key alone already makes recovery possible; guardians make it robust to losing the code too.
+2. **Lost device**: new device → "Recover" → account address → new passkey → guardians (or the recovery key on the new device) propose+approve → 48 h → execute. Old device (if any) sees "recovery in progress" and can cancel or root-freeze.
+3. **Stalemate** (attacker holds root, user holds guardians): guardians freeze; nothing moves; documented.
 
-- **Fee treasury job**: pre-creates treasury ATAs for top mints; sweeps to the treasury SmartAccount; report.
-- **Cloud guardian service** (optional guardian): holds one key that can only call `approve_recovery` / `freeze`; requires email magic-link + TOTP + 24 h cooling before approving; audit log; rate limits. Runs on the /opt box as its own de-rooted systemd unit; key in a file readable only by its user.
-- **Notifier**: watches program events for a user's account (pending transfer, recovery proposal, freeze) → push (web push) and email if opted in.
-- **RPC**: paid RPC key lives in the extension config through our proxy with per-install rate limits; the extension allows a custom RPC. Simulation always runs against the same RPC that will send, and the intent view flags if simulation and the pre-check disagree.
+## 8. Backend (none holds spending keys)
+
+Treasury job (pre-create fee ATAs, sweep, report) · Cloud guardian service (one key: `approve_recovery` + `freeze` only; email + TOTP + 24 h cooling; audit log; de-rooted unit) · Notifier (program events → web push/email; the second channel that makes T3 survivable) · RPC proxy (per-install rate limits; custom RPC allowed; simulation and send use the same endpoint).
+
+## 9. UI/brand — drinkerlabs playbook
+
+Material: paper on `--bone`/`--midnight`; one accent `--indigo`; semantic ok/warn/critical hues separate from accent; Inter + JetBrains Mono, one Tiempos italic phrase on the onboarding hero; hairlines, tabular numerals, three shadow tiers, one imperfection (asymmetric corner radius). Sentence-case operator voice. Figma first (variables → components → frames), extension consumes the same tokens as CSS variables. Screens (popup 360×600 + full-page): 01 onboarding · 02 home (balances, pending, session status) · 03 receive · 04 send · 05 swap · 06 sign request/intent · 07 connect · 08 policy · 09 sessions & devices · 10 guardians & recovery · 11 settings/trust (program id, upgrade authority, pending upgrades, exports).
 
 ## 10. Testing & verification
 
-- **Program**: unit tests per instruction; LiteSVM/Bankrun integration tests including adversarial suites — cap bypass via CPI (Approve/SetAuthority/Close), replay of grants, expired sessions, day-window rollover, frozen-state gating, guardian collusion below threshold, recovery race with root freeze, Jupiter route with malicious accounts (wrong destination, wrong fee ATA, hook mints), stage/execute mismatch, compute exhaustion. Fuzz `execute` post-state checks with property tests (property-based-testing skill).
-- **SDK**: node tests for builders, policy pre-check parity with on-chain rules (same fixtures produce same verdicts), intent renderer snapshot tests, backup blob round-trip.
-- **Extension**: Playwright against a local validator (`solana-test-validator` with the program + a Jupiter mock program for CI; real Jupiter on devnet/mainnet-fork in a nightly job); dApp compatibility harness with 10 top dApps' connect/sign flows recorded.
-- **Gates**: `.claude/test-gate.sh` opted into the global commit hook; Codex reviews spec (this doc), each program milestone, and a pre-deploy recon of the full diff (CODEX-USAGE-DOCTRINE ladder); external audit before mainnet with real funds; devnet public beta first.
+Program: unit per instruction; LiteSVM integration; **adversarial suite** — cap bypass via CPI (Approve/SetAuthority/Close/realloc), rent-drain via vault-funded ATA creation, WSOL laundering, day-boundary burst, multi-session aggregate caps, expired/regenerated sessions, stale stages, replay of pending actions after policy tightening, guardian DoS (freeze spam/cooldown), recovery race with root veto, Jupiter route with wrong destination/fee ATA/hook mint, self-CPI, compute exhaustion; property tests on conservation (property-based-testing skill). SDK: builder/pre-check parity fixtures (same inputs → same verdicts on-chain and off), intent snapshots, envelope round-trip + Argon2id vectors. Extension: Playwright vs local validator with a Jupiter mock (nightly vs mainnet-fork); dApp compat harness for the top-20 list. Gates: `.claude/test-gate.sh` in the global commit hook; Codex reviews spec, each program milestone, and a pre-deploy recon; **independent audit + public bug bounty before any real-funds mainnet**.
 
 ## 11. Rollout
 
-devnet (internal) → devnet public beta with capped test funds → mainnet "guarded beta" (program frozen behind multisig, per-account default caps low, cloud guardian on) → audit → general availability. Chrome Web Store listing owned by the drinkerlabs org account with 2FA; reproducible build hash published in Settings → Trust.
+devnet internal → devnet public beta (test funds) → **audit + bounty** → mainnet guarded beta (low default caps, cloud guardian on, upgrade timelock + exit window live) → GA → immutability decision.
 
-## 12. Spikes that gate the plan (each ≤ 1 day, done first)
+## 12. Spikes (each ≤ 1 day, run first; results can change this spec)
 
-1. **Squads Smart Account API check** — does it already give typed signers + spending limits + single-tx execution good enough to host v1? If yes with < 20% compromise, switch to approach B for the vault and keep the rest of this spec.
-2. **WebAuthn PRF from an MV3 extension origin** on Chrome/Brave (desktop) with platform + synced passkeys — works? If not, root encryption falls back to Argon2id password and passkey stays UX-only.
-3. **Wrapped-tx byte budget** — rewrite three real dApp txs (Jupiter swap, Tensor buy, Marinade stake) through `execute`; measure inline fit rate; measure `stage`+`execute` UX.
-4. **SIWS breakage inventory** — which of the top 20 Solana dApps verify `signMessage` against the address (will break) vs only need `signTransaction`.
+1. **Squads Smart Account API** — typed signers + spending limits + single-tx execution good enough to host v1? (< 20% compromise → switch the vault to Squads, keep the rest.)
+2. **WebAuthn from an MV3 extension origin**: ES256 passkey creation/assertion + PRF on Chrome/Brave desktop with platform and synced passkeys; on-chain verification of a real assertion via secp256r1 precompile in LiteSVM.
+3. **Wrapped-tx byte budget**: rewrite three real dApp txs (Jupiter swap, Tensor buy, Marinade stake) through `execute`; inline-fit rate; stage+execute UX; CU of conservation checks with ~30 writable accounts.
+4. **Compatibility inventory**: top-20 dApps — which need SIWS/message verification, co-signers, durable nonces, or off-allowlist programs.
 
 ## 13. Non-goals (v1)
 
-Mobile app · agent-key UI · quantum root signer · multi-chain/EVM · hardware wallets · NFT gallery beyond a list · fiat on-ramp · staking UI (dApps work via connect) · legacy plain-keypair accounts inside Warden.
+Mobile · agent-key UI · quantum root · multi-chain · hardware wallets · NFT gallery beyond a list · fiat on-ramp · staking UI · plain-keypair accounts inside Warden · vault-owned stake/nonce/program-state accounts (positions live in external programs' accounts).
 
 ## 14. Open decisions for the owner
 
-- Fee bps default (85 proposed).
-- Whether the drinkerlabs cloud guardian ships in v1 or v1.1 (proposed v1: it's what makes "no seed phrase" survivable for a solo user).
-- Working name.
+Fee bps default (85) · cloud guardian in v1 (proposed yes) · working name.
+
+## 15. Glossary of on-chain accounts (for the plan)
+
+`SmartAccount`, `SessionKey`, `Stage`, `Pending`, `Recovery`, `Treasury(SmartAccount)`; policy = `{session_caps[], session_ceiling[], swap_caps[], allowed_out_mints[], recipient_allowlist[], program_allowlists[][], large_threshold[], timelock, recovery_delay, guardian_threshold, guardians[], guardian_freeze_max, guardian_freeze_cooldown, max_session_life, t22_allowed_ext, version}`.
+
+## 16. Review log
+
+**Codex round 1 (gpt-5.6-sol@xhigh, thread 01a01477…): REJECT** — 6 BLOCKER / 6 MAJOR. All folded into rev 2: swap caps + `allowed_out_mints` (was "swaps always safe"); `execute` restricted to allow-listed programs with full writable-account snapshots, WSOL canonicalization, no rent exemption, outer-payer-funded creation, no self-CPI, unsupported vault-owned account types rejected; root paths bound by `large_threshold` + queue; grant ceilings + aggregate account-wide caps; root = on-chain-verified P-256 passkey (extension never holds root secret) with the residual "lying extension" risk stated; guardian freeze bounded (max + cooldown), immutable nonce-addressed recovery proposals, root-only veto, generation bump invalidates sessions/stages/pending; exhaustive loosening lattice; honest dApp-compat boundary (rewrite = unsupported co-signers/nonces/SIWS); chunked consume-once staging bound to generation + policy version; recovery key (128-bit code, Argon2id params, AAD) replaces the contradictory backup blob; UTC-day buckets with the 2× boundary bound stated + lifetime caps + checked math; audit + bounty before real funds, upgrade timelock + announced exit window.
