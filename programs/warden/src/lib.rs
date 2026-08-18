@@ -52,6 +52,19 @@ pub mod warden {
     pub fn revoke_session_self(ctx: Context<RevokeSessionSelf>) -> Result<()> {
         instructions::revoke_session::handler_self(ctx)
     }
+
+    /// Root-authorized emergency stop: sets `frozen = Root`, blocking every
+    /// outflow-enabling action until `unfreeze` lifts it. 1A scope — see
+    /// `instructions::freeze`.
+    pub fn freeze(ctx: Context<Freeze>, args: RootArgs) -> Result<()> {
+        instructions::freeze::handler(ctx, args)
+    }
+
+    /// Root-authorized lift of a root-issued freeze, gated by
+    /// `policy.timelock_secs` since `frozen_at`. See `instructions::unfreeze`.
+    pub fn unfreeze(ctx: Context<Unfreeze>, args: RootArgs) -> Result<()> {
+        instructions::unfreeze::handler(ctx, args)
+    }
 }
 #[derive(Accounts)]
 pub struct Ping {}

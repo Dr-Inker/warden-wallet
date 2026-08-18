@@ -70,4 +70,11 @@ pub enum WardenError {
     // ---------------------------------------------------------------------
     #[msg("program_allowlist_id must be 0 until the Phase 1B adapter registry exists")]
     ProgramAllowlistUnsupported,
+    // ---------------------------------------------------------------------
+    // freeze / unfreeze (Task 6). APPEND ONLY — see the note above.
+    // ---------------------------------------------------------------------
+    #[msg("account is already frozen by root")]
+    AlreadyFrozen,
+    #[msg("the unfreeze timelock has not yet elapsed")]
+    TimelockNotElapsed,
 }

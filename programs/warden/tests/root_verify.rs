@@ -80,6 +80,9 @@ mod err {
     pub const ZERO_CLUSTER_TAG: u32 = 6026;
     pub const INVALID_POLICY: u32 = 6027;
     pub const PROGRAM_ALLOWLIST_UNSUPPORTED: u32 = 6028;
+    // Appended by Task 6 (`freeze`/`unfreeze`). Same append-only rule.
+    pub const ALREADY_FROZEN: u32 = 6029;
+    pub const TIMELOCK_NOT_ELAPSED: u32 = 6030;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -88,7 +91,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 29] = [
+    let pairs: [(u32, WardenError, &str); 31] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -122,6 +125,8 @@ fn pinned_error_codes_match_the_enum_today() {
             WardenError::ProgramAllowlistUnsupported,
             "ProgramAllowlistUnsupported",
         ),
+        (err::ALREADY_FROZEN, WardenError::AlreadyFrozen, "AlreadyFrozen"),
+        (err::TIMELOCK_NOT_ELAPSED, WardenError::TimelockNotElapsed, "TimelockNotElapsed"),
     ];
     for (pinned, variant, name) in pairs {
         assert_eq!(

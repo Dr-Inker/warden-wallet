@@ -7,6 +7,7 @@ use litesvm::LiteSVM;
 use sha2::{Digest, Sha256};
 use solana_sdk::{
     account::Account,
+    clock::Clock,
     instruction::{AccountMeta, Instruction},
     message::Message,
     pubkey::Pubkey,
@@ -34,6 +35,19 @@ pub fn setup() -> (LiteSVM, Keypair) {
 
 pub fn account_pda(owner_seed: &[u8; 32]) -> (Pubkey, u8) {
     Pubkey::find_program_address(&[ACCOUNT_SEED, owner_seed], &program_id())
+}
+
+/// Set the SVM's `Clock` sysvar `unix_timestamp` — the only way `Clock::get()`
+/// on-chain observes a different "now" than wall-clock time. Every root
+/// ceremony and every `freeze`/`unfreeze` timelock check reads this, not
+/// slots (Global Constraints: "Time source"). Named `warp_clock` (not
+/// `set_clock`) because most calls are advancing time forward past a
+/// timelock, not merely pinning it once at setup — `freeze.rs` uses it for
+/// exactly that (advance past `policy.timelock_secs`, then `unfreeze`).
+pub fn warp_clock(svm: &mut LiteSVM, unix_timestamp: i64) {
+    let mut c: Clock = svm.get_sysvar();
+    c.unix_timestamp = unix_timestamp;
+    svm.set_sysvar(&c);
 }
 
 /// Fields a test wants to vary when planting a `SmartAccount`.

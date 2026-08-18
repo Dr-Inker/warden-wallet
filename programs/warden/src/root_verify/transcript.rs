@@ -43,6 +43,15 @@ pub const OP_GRANT_SESSION: u8 = 0x01;
 /// over `borsh(session_pubkey)` (the bare 32 pubkey bytes). The session-self
 /// path carries no root assertion and therefore no action hash.
 pub const OP_REVOKE_SESSION: u8 = 0x02;
+/// `op_type` byte for `freeze` (Task 6). Like `rotate_nonce`, it has no
+/// arguments of its own beyond `RootArgs`, so it is hashed over an empty
+/// borsh payload (`action_hash(OP_FREEZE, &[])`) — the op byte alone still
+/// binds the ceremony to exactly this action, which is all "empty body" ever
+/// needs.
+pub const OP_FREEZE: u8 = 0x03;
+/// `op_type` byte for `unfreeze` (Task 6); same empty-payload shape as
+/// `OP_FREEZE`.
+pub const OP_UNFREEZE: u8 = 0x04;
 
 /// Keccak256 over the canonical transcript encoding.
 ///
