@@ -354,6 +354,97 @@
       ]
     },
     {
+      "name": "transfer",
+      "docs": [
+        "Move SOL or an SPL balance out of the vault — session key (within its",
+        "caps) or bounded passkey root. See `instructions::transfer`."
+      ],
+      "discriminator": [
+        163,
+        52,
+        200,
+        231,
+        140,
+        3,
+        69,
+        186
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "On the session path this MUST be the session's delegate key. On the",
+            "root path it is only a fee payer and is not bound to anything — the",
+            "ceremony already fixes destination and amount, so an unbound submitter",
+            "can neither redirect nor resize the transfer."
+          ],
+          "signer": true
+        },
+        {
+          "name": "smart_account",
+          "docs": [
+            "Canonicality is re-proven in the handler from the `owner_seed`/`bump`",
+            "the account itself stores (same as every other handler), not by a",
+            "`seeds` constraint that would have to `load()` a second time."
+          ],
+          "writable": true
+        },
+        {
+          "name": "session",
+          "docs": [
+            "Required on the session path; must be absent on the root path. Anchor's",
+            "convention for an omitted optional account is to pass the program id in",
+            "its place."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "ix_sysvar",
+          "docs": [
+            "`load_instruction_at_checked` / `load_current_index_checked`, which",
+            "re-check the address themselves. Required on the root path."
+          ],
+          "optional": true,
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "destination",
+          "docs": [
+            "credited — a program may credit any account); for SPL, a token account",
+            "of `mint` not owned by the vault. Both are validated in the handler,",
+            "which is also what the root ceremony binds."
+          ],
+          "writable": true
+        },
+        {
+          "name": "source_ata",
+          "docs": [
+            "owner must be the smart account PDA). Validated in the handler."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "rejection carries our own error rather than Anchor's."
+          ],
+          "optional": true
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "TransferArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "unfreeze",
       "docs": [
         "Root-authorized lift of a root-issued freeze, gated by",
@@ -552,7 +643,7 @@
     {
       "code": 6025,
       "name": "InvalidOrigin",
-      "msg": "origin is empty, too long, missing the chrome-extension:// prefix, contains a NUL byte, or has trailing whitespace"
+      "msg": "origin is not exactly chrome-extension:// + a 32-char a..p extension id"
     },
     {
       "code": 6026,
@@ -578,6 +669,31 @@
       "code": 6030,
       "name": "TimelockNotElapsed",
       "msg": "the unfreeze timelock has not yet elapsed"
+    },
+    {
+      "code": 6031,
+      "name": "RentFloor",
+      "msg": "a native transfer would leave the account below the rent-exempt minimum"
+    },
+    {
+      "code": 6032,
+      "name": "VaultDestination",
+      "msg": "the destination token account is owned by the smart account itself"
+    },
+    {
+      "code": 6033,
+      "name": "SessionDayCapsUnsupported",
+      "msg": "per-session day / 30-day caps are not supported in Phase 1A — set per_day = per_30d = 0"
+    },
+    {
+      "code": 6034,
+      "name": "InvalidRootKey",
+      "msg": "root key is not a canonical compressed secp256r1 (P-256) point"
+    },
+    {
+      "code": 6035,
+      "name": "SessionPriorStateMismatch",
+      "msg": "prior_authority_hash does not match the session's current retained authority"
     }
   ],
   "types": [
@@ -620,7 +736,9 @@
           {
             "name": "origin",
             "docs": [
-              "`chrome-extension://…`, 1..=64 bytes (`MAX_ORIGIN_LEN`)."
+              "Exactly `chrome-extension://` + a 32-char `a..=p` extension id",
+              "(`CANONICAL_ORIGIN_LEN` = 51 bytes). Stored in a 64-byte",
+              "(`MAX_ORIGIN_LEN`) field, zero-padded."
             ],
             "type": "bytes"
           },
@@ -723,6 +841,20 @@
               "array": [
                 "u8",
                 16
+              ]
+            }
+          },
+          {
+            "name": "prior_authority_hash",
+            "docs": [
+              "`SessionKey::authority_hash()` of the session PDA **before** this",
+              "instruction runs, or `[0u8; 32]` when it does not exist yet. Binds the",
+              "caps this grant does not mention but keeps — see the module docs."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
               ]
             }
           }
@@ -1484,6 +1616,43 @@
                 8
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "TransferArgs",
+      "docs": [
+        "`mint == None` means native SOL. There is deliberately **no destination",
+        "argument**: the destination is the account passed, and the root ceremony",
+        "binds that account's key (see the module docs)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "root",
+            "docs": [
+              "`Some` = root path (requires `ix_sysvar`), `None` = session path",
+              "(requires the `session` account)."
+            ],
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "RootArgs"
+                }
+              }
+            }
+          },
+          {
+            "name": "mint",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
           }
         ]
       }

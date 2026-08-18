@@ -21,5 +21,11 @@ if ls programs/*/Cargo.toml >/dev/null 2>&1; then
       nice -n 10 cargo-build-sbf --manifest-path programs/warden/Cargo.toml
     fi
   fi
+  # anchor build regenerates target/idl/warden.json from the program source;
+  # packages/core/idl/warden.json is the committed copy TS consumers read.
+  # Catch drift here rather than downstream in a stale-IDL bug.
+  if [ -f target/idl/warden.json ]; then
+    cmp -s target/idl/warden.json packages/core/idl/warden.json || { echo "IDL drift: copy target/idl/warden.json to packages/core/idl/"; exit 1; }
+  fi
   cargo test --workspace
 fi

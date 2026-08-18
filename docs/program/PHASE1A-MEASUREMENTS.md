@@ -392,14 +392,19 @@ check:
   milestone. The complete property is **proof of possession at creation** (the
   precompile then does the curve validation for free), which does not fit 1A's
   packet budget beside a 4-mint policy and is carried into 1B's pre-ship gate
-  (`docs/spikes/DECISION.md`). The residual is a **self-inflicted-loss vector,
-  not a theft vector** — a root nobody can sign for is a dead account, not a
-  stolen one, and reaching it requires a client that invents a root pubkey
-  instead of reading the authenticator's SPKI. The unit test
-  `root_accepts_an_off_curve_x_phase_1a_gap` states the gap in the suite and
-  must flip when 1B closes it. **Client requirement until then: round-trip one
-  real root instruction (`rotate_nonce`) against a new account BEFORE funding
-  it.**
+  (`docs/spikes/DECISION.md`). The residual is broader than off-curve
+  encoding: **creation is unauthenticated** — no root signature is required
+  at all, and `owner_seed` is visible in-flight, so a malicious RPC/leader
+  can front-run the PDA derivation and install its own root before the real
+  owner's transaction lands. That is squatting/DoS on the account, and theft
+  if a client pre-funds the PDA/ATA or otherwise proceeds without a
+  successful root round-trip. The unit test
+  `root_accepts_an_off_curve_x_phase_1a_gap` states the encoding-only gap in
+  the suite and must flip when 1B closes it. **Mitigation until 1B ships
+  proof-of-possession at creation: the extension MUST perform a
+  `rotate_nonce` (root ceremony) and verify on-chain root == its passkey
+  BEFORE showing a receive address or funding anything. Proof-of-possession
+  at create is a HARD pre-deployment gate (1B).**
 
 **What the reviewer considers PROVEN by tests** (round 1, verbatim in
 substance): nonce consumption and real replay rejection; expiry boundaries;

@@ -290,9 +290,15 @@ strength of 1A's numbers.
   which makes the precompile do the curve validation for free), re-derive
   `MAX_MINTS_AT_CREATE` against the resulting byte budget, and flip
   `create_account::tests::root_accepts_an_off_curve_x_phase_1a_gap` to assert
-  rejection. Until then the client MUST round-trip one real root instruction
-  against a new account before funding it. Residual risk is self-inflicted
-  loss, not theft.
+  rejection. The real residual is broader than off-curve encoding: creation
+  is unauthenticated end to end — no root signature is required at all, and
+  `owner_seed` is visible in-flight — so a front-runner can install their own
+  root at the client-chosen PDA (squatting/DoS; theft if funds are sent
+  before a successful root round-trip). Mitigation until 1B proof-of-possession:
+  the extension MUST perform a `rotate_nonce` (root ceremony) and verify
+  on-chain root == its passkey BEFORE showing a receive address or funding
+  anything. Proof-of-possession at create is a HARD pre-deployment gate
+  (1B).
 * **O3 (stage cap), O1 (real-device PRF), O2, O4, O7, O8, O9** are unchanged by
   1A.
 

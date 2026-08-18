@@ -1,12 +1,17 @@
 //! `create_account` — initializes a passkey-rooted `SmartAccount` PDA.
 //!
 //! No root signature is required to create an account: `payer` funds the PDA
-//! and every other field is exactly what the caller asserts. This is safe —
-//! an attacker who "creates" an account for someone else's passkey harms no
-//! one, since the PDA is derived from `owner_seed` (a value the real owner
-//! chooses) and every root-authorized instruction thereafter (Task 3's
-//! `root_verify`) demands a live, freshly signed passkey assertion regardless
-//! of who paid to bring the account into existence (spec §4, task-4 brief).
+//! and every other field is exactly what the caller asserts. Creation is
+//! therefore unauthenticated: `owner_seed` is visible in-flight, so a
+//! malicious RPC/leader can front-run the PDA derivation and install its own
+//! root before the real owner's transaction lands — squatting the account /
+//! denial of service, and outright theft if a client pre-funds the PDA or its
+//! ATA, or otherwise proceeds without a successful root round-trip first.
+//! Mitigation until 1B ships proof-of-possession at creation: the extension
+//! MUST perform a `rotate_nonce` (root ceremony) and verify on-chain
+//! `root == its passkey` BEFORE showing a receive address or funding
+//! anything. Proof-of-possession at create is a HARD pre-deployment gate for
+//! 1B (spec §4, §5.1, task-4 brief; docs/spikes/DECISION.md).
 
 use anchor_lang::prelude::*;
 
