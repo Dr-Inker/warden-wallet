@@ -39,6 +39,7 @@ packages/ui-tokens/       Design tokens exported from Figma (CSS + JSON, constra
 spikes/                   THROWAWAY Phase-0 evidence (never imported by product code)
 docs/superpowers/specs/   Design spec (rev 7)
 docs/superpowers/plans/   Phase plans (0, 1A, 1B)
+docs/research/            Security-assurance pipeline + Solana wallet landscape research (2026-08-18) + raw reports
 docs/spikes/              DECISION.md (Phase-0 gate), Phase-0 + Phase-1A ledgers
 docs/program/             Measured CU / byte costs, design notes, error ABI
 docs/design/              Figma file map, screenshots
