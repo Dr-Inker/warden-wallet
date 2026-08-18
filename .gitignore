@@ -8,3 +8,7 @@ test-ledger
 .env.*
 !.env.example
 .superpowers/
+
+# Program keypairs (private keys) — never commit. See docs/PROGRAM-KEYS.md.
+**/keypair.json
+target/deploy/*-keypair.json

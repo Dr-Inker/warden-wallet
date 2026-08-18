@@ -1,0 +1,28 @@
+[package]
+name = "warden"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "warden"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = "1.1.2"
+
+[dev-dependencies]
+litesvm = { version = "0.12", features = ["precompiles"] }
+solana-sdk = "3"
+solana-secp256r1-program = "3"
+p256 = { version = "0.13", features = ["ecdsa"] }
+sha2 = "0.10"
+sha3 = "0.10"
+base64 = "0.22"
