@@ -53,20 +53,56 @@ test("ES256 + PRF create/get from extension origin", async () => {
     }));
   }
 
+  if (!hasPrf) {
+    // Recorded-fallback branch (brief step 3 / result.md): CDP rejected
+    // hasPrf:true on this Chromium build, so PRF cannot be exercised by the
+    // virtual authenticator at all. Log clearly and record it for result.md;
+    // ES256 create/get evidence is still worth producing (that part doesn't
+    // depend on PRF), so the test does not abort here — it just skips the
+    // PRF-specific expectations below and annotates the run instead.
+    console.log("PRF not testable virtually — CDP rejected WebAuthn.addVirtualAuthenticator hasPrf:true on this Chromium build");
+    test.info().annotations.push({
+      type: "PRF",
+      description: "not testable virtually (CDP rejected hasPrf:true) — verify PRF on a real device per result.md part (b)",
+    });
+  }
+
   await page.goto(`chrome-extension://${extId}/popup.html`);
   await page.click("#create");
   await page.waitForFunction(() => (window as any).__spike);
   const created = JSON.parse((await page.textContent("#out")) ?? "{}");
   expect(created.alg).toBe(-7);
+  if (hasPrf) {
+    expect(created.prfEnabled).toBe(true);
+  }
 
   await page.click("#get");
   await page.waitForFunction(() => (window as any).__assertion);
   const assertion = await page.evaluate(() => (window as any).__assertion);
   expect(assertion.origin.startsWith("chrome-extension://")).toBe(true);
+  if (hasPrf) {
+    expect(assertion.prfFirst).not.toBeNull();
+  }
 
-  mkdirSync(resolve(import.meta.dirname, "../../out"), { recursive: true });
+  // clientDataJSON invariants: decode and check the fields Task 4's verifier
+  // will rely on, not just that the field is present.
+  const clientData = JSON.parse(Buffer.from(assertion.clientDataJSON, "base64").toString("utf-8"));
+  expect(clientData.type).toBe("webauthn.get");
+  expect(clientData.origin.startsWith("chrome-extension://")).toBe(true);
+  expect(clientData.challenge).toBe(assertion.challenge);
+
+  // Evidence write-out. The committed spikes/02-webauthn/out/assertion.json
+  // is consumed by Task 4 and must NOT be silently overwritten by every test
+  // run (each run mints a fresh random challenge/signature). By default this
+  // writes to out/assertion.latest.json (gitignored, scratch/inspection
+  // only); pass WRITE_ASSERTION=1 to intentionally regenerate the committed
+  // out/assertion.json evidence file.
+  const outDir = resolve(import.meta.dirname, "../../out");
+  mkdirSync(outDir, { recursive: true });
+  const writeCommitted = process.env.WRITE_ASSERTION === "1";
+  const outFile = writeCommitted ? "assertion.json" : "assertion.latest.json";
   writeFileSync(
-    resolve(import.meta.dirname, "../../out/assertion.json"),
+    resolve(outDir, outFile),
     JSON.stringify({ ...assertion, virtualAuthenticatorId: authenticatorId }, null, 2),
   );
 
@@ -75,6 +111,7 @@ test("ES256 + PRF create/get from extension origin", async () => {
   console.log("hasPrf accepted by CDP:", hasPrf);
   console.log("create prfEnabled:", created.prfEnabled);
   console.log("assertion prfFirst present:", assertion.prfFirst !== null);
+  console.log("wrote:", outFile, writeCommitted ? "(WRITE_ASSERTION=1 set)" : "(default — pass WRITE_ASSERTION=1 to regenerate the committed evidence file)");
 
   await ctx.close();
 });

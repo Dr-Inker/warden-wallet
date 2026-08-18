@@ -30,33 +30,72 @@ PRF extension included.
   synced Google Password Manager passkey) supports PRF from an extension
   origin.** That must be checked on real hardware — see the owner checklist
   in part (b) below.
-- **Exact `origin` string in `clientDataJSON`** (needed by Task 4):
+- **Exact `origin` string in `clientDataJSON`** (needed by Task 4; this is the
+  committed `out/assertion.json`'s actual decoded `clientDataJSON`):
   ```json
-  {"type":"webauthn.get","challenge":"-_m3j03gLOyF_VbZ-QSLy5ZDPLbDWNoc3lUIiHR8yFo","origin":"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi","crossOrigin":false}
+  {"type":"webauthn.get","challenge":"WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q","origin":"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi","crossOrigin":false}
   ```
   i.e. `origin` = `"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi"` — no
   trailing slash, no port. Task 4's on-chain/off-chain verifier must expect
   this exact non-HTTPS scheme string in `clientDataJSON.origin` (and match it
   against `rpId` = the extension id, not a domain).
-- **Full `out/assertion.json`:**
+- **`out/assertion.json`** (committed evidence file, byte-for-byte as
+  currently committed — do not confuse with any local re-run's output,
+  see "Evidence file discipline" below):
   ```json
-  {
-    "pubkeyDerSpki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAED74+mIYAAUqbVJMlzptEN2xrwWqsVYjaKNcGXuwhmi/rm9y+0rFnbzxBxgXIbGDYQ6e5pM0H8D7oUFfbuUrkVQ==",
-    "authenticatorData": "vlxK98up2TYOCUeXAktaOj3Z9DeqmFIpFlbntbXZ2jQFAAAAAg==",
-    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiLV9tM2owM2dMT3lGX1ZiWi1RU0x5NVpEUExiRFdOb2MzbFVJaUhSOHlGbyIsIm9yaWdpbiI6ImNocm9tZS1leHRlbnNpb246Ly9tYWlrYWRwYW9iYmprbWFvbW5wbmhqZ2xwYWJsbGFvaSIsImNyb3NzT3JpZ2luIjpmYWxzZX0=",
-    "signatureDer": "MEQCIGhzDn7bjCDl24UaXitT7KSYeNmWOWlEvzjvs6669BbfAiBNgW0qf77sTBnuXQ0DH0+Ybu+SCNfJwiv0YWGu9cyr9Q==",
-    "challenge": "-_m3j03gLOyF_VbZ-QSLy5ZDPLbDWNoc3lUIiHR8yFo",
-    "prfFirst": "sMJ2avSSpAAqmHP+QcsXhnb6SjCrGlOA0W6Xrqr3+HU=",
-    "origin": "chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi",
-    "rpId": "maikadpaobbjkmaomnpnhjglpabllaoi",
-    "virtualAuthenticatorId": "96750731-2188-449d-896c-b211038f98c1"
-  }
+{
+  "pubkeyDerSpki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEJtXW53xiUt5nudmh0X8yGfC38QEIkIUcPEXlGCN9oj69Kfxd6ehW/c8exKrtBIuD0Bh+rIRvH5psv7tC9AByNA==",
+  "authenticatorData": "vlxK98up2TYOCUeXAktaOj3Z9DeqmFIpFlbntbXZ2jQFAAAAAg==",
+  "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiV1Bnb0htYzZLZUFGNHlZUktNcWw4bFYwLWh3OEdhNGJWNU5pYlJfN3RfUSIsIm9yaWdpbiI6ImNocm9tZS1leHRlbnNpb246Ly9tYWlrYWRwYW9iYmprbWFvbW5wbmhqZ2xwYWJsbGFvaSIsImNyb3NzT3JpZ2luIjpmYWxzZX0=",
+  "signatureDer": "MEYCIQDFg9AyRiNb47GnnoTduRBJi67KNlKqWHBpAweKNMRnagIhALWbP+PVGdCLgk3in5V5aWLYKCIT6N105Q5L/esdIIRm",
+  "challenge": "WPgoHmc6KeAF4yYRKMql8lV0-hw8Ga4bV5NibR_7t_Q",
+  "prfFirst": "muy2N5IEqGLFlcXViDVsIHE0nPxc+KP3uLKZ7bR3/hQ=",
+  "origin": "chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi",
+  "rpId": "maikadpaobbjkmaomnpnhjglpabllaoi",
+  "virtualAuthenticatorId": "f31366de-237e-456e-8b6b-fd97bb66b913"
+}
   ```
   Byte lengths (decoded): `pubkeyDerSpki` 91B, `authenticatorData` 37B
   (32B rpIdHash + 1B flags + 4B signCount, no attested-credential-data — as
-  expected for a `.get()` assertion), `signatureDer` 70B (ASN.1 DER ECDSA
-  signature). Test re-run twice more after the first pass; extension id and
-  overall shape were stable across runs.
+  expected for a `.get()` assertion), `signatureDer` ~70-72B (ASN.1 DER
+  ECDSA signature, length varies slightly run-to-run per normal DER integer
+  encoding). Every field's *shape* (byte lengths, origin/rpId strings,
+  clientDataJSON structure) was stable and re-verified across multiple test
+  runs; the actual random challenge/signature/PRF bytes differ per run by
+  design (fresh `crypto.getRandomValues()` challenge each `.get()`).
+
+### Evidence file discipline (WRITE_ASSERTION gate)
+
+`spikes/02-webauthn/out/assertion.json` is committed evidence consumed by
+Task 4; every test run otherwise mints a fresh random challenge/signature and
+would silently overwrite it. The test now writes to
+`out/assertion.latest.json` by default (gitignored via `out/.gitignore`,
+scratch/inspection only) and only writes `out/assertion.json` when invoked as
+`WRITE_ASSERTION=1 pnpm test` — an explicit, intentional opt-in to regenerate
+the committed evidence file. Round-1 fix runs used the default path; the
+committed `out/assertion.json` was verified byte-identical (`git diff`
+empty) before and after every test run in this round.
+
+### PRF and clientDataJSON assertions (round-1 fix)
+
+The original test only *logged* `prfEnabled`/`prfFirst` — a build where CDP
+silently degrades or drops PRF would still pass. Fixed:
+`expect(created.prfEnabled).toBe(true)` and
+`expect(assertion.prfFirst).not.toBeNull()` now run whenever the CDP
+`hasPrf: true` call succeeded (the normal case on this Chromium build), plus
+new `clientDataJSON` invariant checks — decode the base64, then assert
+`type === "webauthn.get"`, `origin` starts with `chrome-extension://`, and
+`challenge` matches the assertion's recorded `challenge` field exactly (not
+just presence). If CDP instead *rejects* `hasPrf: true` (not observed on this
+build, but the brief's named fallback), the test takes the documented
+recorded-fallback branch: it logs `"PRF not testable virtually — CDP
+rejected WebAuthn.addVirtualAuthenticator hasPrf:true..."`, pushes a
+`test.info().annotations` entry so it shows up in the Playwright report, and
+skips only the PRF-specific `expect`s — ES256 create/get evidence is still
+produced and written, since that part is independent of PRF support. (A
+literal `test.skip()` was considered but rejected: it would abort the whole
+test before `out/assertion.json` could be written, which would silently stop
+producing the ES256 evidence Task 4 needs even when only PRF is unavailable.)
 
 ### Chromium version / caveats
 
@@ -131,11 +170,15 @@ PRF extension included.
 - `ext/background.js` — new, trivial, comment-only (id-discovery aid).
 - `ts/package.json`, `ts/playwright.config.ts` — as specified in the brief.
 - `ts/test/webauthn.spec.ts` — as specified in the brief, with the extension-
-  id-discovery block replaced by the service-worker method (point 1) and the
-  `headless: false` fix (point 3) plus the `hasPrf` try/catch fallback.
+  id-discovery block replaced by the service-worker method (point 1), the
+  `headless: false` fix (point 3), the `hasPrf` try/catch fallback, real
+  `expect`-based PRF and `clientDataJSON` assertions, and the
+  `WRITE_ASSERTION` evidence-file gate (round-1 fix — see above).
 - `ts/.gitignore` — local, ignores `node_modules/`, `test-results/`,
   `playwright-report/`.
-- `out/assertion.json` — committed; consumed by Task 4.
+- `out/.gitignore` — new (round-1 fix), ignores `assertion.latest.json` only.
+- `out/assertion.json` — committed; consumed by Task 4. **Not touched in
+  round 1** — verified `git diff` empty after every test run this round.
 
 ## Part (b) — manual real-device checklist (owner)
 
