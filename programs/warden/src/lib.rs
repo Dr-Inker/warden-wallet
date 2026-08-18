@@ -31,6 +31,27 @@ pub mod warden {
     pub fn rotate_nonce(ctx: Context<RotateNonce>, args: RootArgs) -> Result<()> {
         instructions::rotate_nonce::handler(ctx, args)
     }
+
+    /// Mint (or re-bless) a bounded, expiring session key under a root
+    /// passkey ceremony. Upserts the `["session", account, pubkey]` PDA,
+    /// merging caps by mint — see `instructions::grant_session`.
+    pub fn grant_session(ctx: Context<GrantSession>, args: GrantSessionArgs) -> Result<()> {
+        instructions::grant_session::handler(ctx, args)
+    }
+
+    /// Close a session PDA under a root passkey ceremony.
+    pub fn revoke_session_root(
+        ctx: Context<RevokeSessionRoot>,
+        args: RevokeSessionRootArgs,
+    ) -> Result<()> {
+        instructions::revoke_session::handler_root(ctx, args)
+    }
+
+    /// Close a session PDA on the authority of the session key itself,
+    /// signing as a plain Ed25519 signer. No root ceremony involved.
+    pub fn revoke_session_self(ctx: Context<RevokeSessionSelf>) -> Result<()> {
+        instructions::revoke_session::handler_self(ctx)
+    }
 }
 #[derive(Accounts)]
 pub struct Ping {}

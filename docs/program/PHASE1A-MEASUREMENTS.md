@@ -16,6 +16,9 @@ verification cost is charged separately by the runtime and is not included in
 | `create_account` (all-defaults `PolicyArgs`, no mint caps used) | 8,777 | 472 B | `create_account::creates_with_defaults` | 235 B of instruction data (8 B discriminator + `CreateAccountArgs`). **Round-1 review fix: was 12,767 CU / 1,804 B** when `PolicyArgs` mirrored `Policy`'s fixed 8-slot arrays — see the fixed finding below. |
 | `create_account` (2 mints — SOL + USDC, each with a cap, session ceiling, and large-transfer threshold) | not separately measured (CU is dominated by fixed decode cost, not mint count) | 808 B | `create_account::realistic_two_mint_policy_transaction_fits_the_packet_limit` | Asserted `<= 1,232 B` in the test itself, not just printed. |
 | `create_account` (`MAX_MINTS_AT_CREATE` = 4 mints, each with a cap, session ceiling, and large-transfer threshold) | not separately measured | 1,144 B | `create_account::max_mints_at_create_transaction_fits_the_packet_limit` | Asserted `<= 1,232 B`; margin is 88 B — this is why `MAX_MINTS_AT_CREATE` is 4, not 8 (see below). |
+| `grant_session` (full root ceremony, `MAX_CAPS_PER_GRANT` = 2 caps) | 30,325 | 944 B | `sessions::grant_ok_and_readback` (CU) / `sessions::grant_tx_fits_1232_bytes_with_2_caps` (bytes) | 423 B of instruction data (8 B discriminator + 218 B `RootArgs` + 197 B `GrantBody`) plus a 182 B precompile instruction; 37 B `authenticatorData`, 164 B `clientDataJSON`. CU is ~2× `rotate_nonce` because the same root check is followed by a `system_program::create_account` CPI for the 751 B `SessionKey` PDA and a full Borsh write-back of it. **Asserted `<= 1,232 B` in the test** — margin is 288 B. |
+| `revoke_session_root` (full root ceremony, closes the session PDA) | 20,505 | 746 B | `sessions::revoke_by_root_ok` | 8 B discriminator + 218 B `RootArgs` + 32 B `session_pubkey` of instruction data, plus the 182 B precompile instruction. Asserted `<= 1,232 B`. |
+| `revoke_session_self` (session key signs; no root ceremony) | 7,323 | 341 B | `sessions::revoke_by_session_self_ok` | 8 B of instruction data and no precompile instruction at all — the cheapest authenticated path in the program. |
 
 ## Headroom
 
@@ -29,7 +32,37 @@ verification cost is charged separately by the runtime and is not included in
   is capped at `MAX_CLIENT_DATA_LEN` = 512 B, which is the dominant variable;
   the worst case is ~1,030 B, still inside the limit but leaving little room
   for extra accounts. Root payload budget (C7) is respected: `rotate_nonce`
-  carries 8 B of discriminator + 215 B of `RootArgs`.
+  carries 8 B of discriminator + 215 B of `RootArgs`; `grant_session`, the
+  heaviest root instruction in Phase 1A, carries 197 B of its own arguments
+  beyond `RootArgs` — about half the 400 B C7 allows.
+* CU: `grant_session` is 30.3k of the 200k default budget (15%), and the
+  create-the-PDA CPI is a one-off — a re-grant into an existing PDA skips it.
+
+### `grant_session` transaction-size gate — why `MAX_CAPS_PER_GRANT` = 2
+
+The plan (rev 2) fixed the limit at 2 caps from an estimate; this is the
+measurement. A 2-cap grant is **944 B** of the 1,232 B packet limit, leaving
+288 B of margin. Each additional cap costs 64 B on the wire (56 B `MintCap` +
+8 B parallel `lifetime_cap`), so 3 caps would measure ~1,008 B and 4 caps
+~1,072 B — both nominally inside the limit *for this `clientDataJSON`*.
+
+The limit is nonetheless 2, because the variable that dominates is not the cap
+count but `clientDataJSON`, which the program accepts up to
+`MAX_CLIENT_DATA_LEN` = 512 B. A real browser's document is 164 B here, but a
+different origin length, a `crossOrigin` field ordering, or any UA that pads
+the document eats the margin directly: at 512 B of `clientDataJSON` a 2-cap
+grant is already ~1,292 B and would not fit at all. Two caps is the
+conservative choice that keeps a realistic-but-not-minimal ceremony inside the
+packet even with a materially larger `clientDataJSON`, and a session still
+accumulates up to `MAX_MINT_CAPS` (8) mints across several grants because
+`grant_session` merges by mint rather than replacing.
+
+`sessions::grant_tx_fits_1232_bytes_with_2_caps` asserts the measured length
+(it does not merely print it) **and** asserts the `clientDataJSON` really is a
+realistic Chrome-shaped document, because LiteSVM has no wire layer: it will
+happily execute a transaction a real validator would drop before execution.
+`sessions::grant_with_3_caps_rejected` proves the limit is enforced *by the
+program* (`BadInstructionLayout`), not merely advised by the constant.
 
 ### `create_account` transaction-size finding — FIXED, round-1 review
 

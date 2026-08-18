@@ -16,7 +16,13 @@ no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
-anchor-lang = "1.1.2"
+# `init-if-needed` is required by `grant_session`, which upserts the session
+# PDA: the same instruction both creates a new session and re-blesses an
+# existing one (see `instructions::grant_session`). Anchor's reinitialization
+# warning is addressed there — the handler distinguishes "fresh" from
+# "existing" via `version == 0` and never resets `lifetime_spent` on an
+# account that already exists.
+anchor-lang = { version = "1.1.2", features = ["init-if-needed"] }
 bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
 # Instruction introspection (`load_instruction_at_checked`, `load_current_index_checked`,
 # the sysvar `ID`). anchor-lang re-exports only the `Instructions` marker type, not these

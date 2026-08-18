@@ -36,6 +36,13 @@ pub const TRANSCRIPT_DOMAIN: &[u8] = b"WARDEN/root/v1";
 /// `op_type` byte for `rotate_nonce` (Task 3). Task 4+ append further ops;
 /// the byte is part of the signed transcript, so values are permanent.
 pub const OP_ROTATE_NONCE: u8 = 0x00;
+/// `op_type` byte for `grant_session` (Task 5); hashed over
+/// `borsh(GrantBody)` — every `grant_session` argument except `root`.
+pub const OP_GRANT_SESSION: u8 = 0x01;
+/// `op_type` byte for the root path of session revocation (Task 5); hashed
+/// over `borsh(session_pubkey)` (the bare 32 pubkey bytes). The session-self
+/// path carries no root assertion and therefore no action hash.
+pub const OP_REVOKE_SESSION: u8 = 0x02;
 
 /// Keccak256 over the canonical transcript encoding.
 ///
