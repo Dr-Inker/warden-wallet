@@ -52,6 +52,17 @@ pub const OP_FREEZE: u8 = 0x03;
 /// `op_type` byte for `unfreeze` (Task 6); same empty-payload shape as
 /// `OP_FREEZE`.
 pub const OP_UNFREEZE: u8 = 0x04;
+/// `op_type` byte for the ROOT path of `transfer` (Task 7); hashed over
+/// `borsh(TransferBody)` — see `instructions::transfer::TransferBody`, which
+/// the handler rebuilds from the accounts actually passed rather than from
+/// instruction data, so a substituted destination cannot ride a valid
+/// ceremony.
+///
+/// Deliberately named `OP_TRANSFER_ACTION`, not `OP_TRANSFER`:
+/// `state::session::OP_TRANSFER` is the `ops_mask` BIT (1 << 0) a session
+/// needs to transfer at all, an unrelated number in an unrelated namespace,
+/// and the two are imported side by side in `instructions::transfer`.
+pub const OP_TRANSFER_ACTION: u8 = 0x05;
 
 /// Keccak256 over the canonical transcript encoding.
 ///

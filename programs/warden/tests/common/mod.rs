@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod passkey;
+pub mod token;
 
 use anchor_lang::{AccountDeserialize, AnchorSerialize, Discriminator};
 use litesvm::LiteSVM;

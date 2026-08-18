@@ -21,6 +21,10 @@ verification cost is charged separately by the runtime and is not included in
 | `revoke_session_self` (session key signs; no root ceremony) | 7,323 | 341 B | `sessions::revoke_by_session_self_ok` | 8 B of instruction data and no precompile instruction at all — the cheapest authenticated path in the program. |
 | `freeze` (full root ceremony, root-only, 1A scope) | 15,697 | 680 B | `freeze::freeze_sets_state` (CU) / `freeze::freeze_tx_fits_1232_bytes` (bytes) | No arguments beyond `RootArgs` — same shape as `rotate_nonce`, so the size and CU are effectively identical (`rotate_nonce` measured 15,533–15,664 CU / 680 B across the two suites that measure it; the ~30–160 CU spread between runs is compilation/measurement noise, not a real cost difference). |
 | `unfreeze` (full root ceremony, timelock elapsed) | 15,717 | 680 B | `freeze::unfreeze_after_timelock_ok` (CU) / `freeze::unfreeze_tx_fits_1232_bytes` (bytes) | Same shape as `freeze`/`rotate_nonce` — no arguments beyond `RootArgs`. The `checked_add(frozen_at, policy.timelock_secs)` comparison is negligible CU on top of the shared root-verify cost. |
+| `transfer` (session key, native SOL) | 18,533 | 386 B | `transfer::session_sol_transfer_within_caps` (CU) / `transfer::session_sol_transfer_tx_fits_1232_bytes` (bytes) | No precompile instruction and no root ceremony at all — 8 B discriminator + 18 B `TransferArgs` (`root: None` 1 B, `mint: None` 1 B, `amount` 8 B, plus option tags) over 7 accounts. The CU is the account PDA re-derivation, the session checks, `buckets::debit` (day roll + 30-slot ring sum) and the direct lamport move. |
+| `transfer` (session key, SPL token) | 20,665 | 482 B | `transfer::session_spl_transfer_ok` (CU) / `transfer::session_spl_transfer_tx_fits_1232_bytes` (bytes) | +2,132 CU over the native path: two 165 B token-account parses plus the `spl_token::Transfer` CPI (the CPI's own cost is charged to this transaction). +96 B of accounts (source ATA + token program instead of two `None` placeholders). |
+| `transfer` (passkey root, native SOL) | 25,555 | 727 B | `transfer::root_transfer_within_threshold_debits_buckets` (CU) / `transfer::root_transfer_tx_fits_1232_bytes` (bytes) | 8 B discriminator + 218 B `RootArgs` + 10 B of own arguments, plus the 182 B precompile instruction. ~7,000 CU above the session path is exactly the root ceremony (cf. `rotate_nonce` at 15.5k, which does the ceremony and nothing else); the `large_threshold` lookup is negligible. Root payload budget (C7) is respected with room to spare: 10 B of own arguments against the 400 B allowance. |
+| `transfer` (passkey root, SPL token) | 27,692 | not separately measured (accounts differ from the native root row by the same +96 B as the session pair) | `transfer::root_spl_transfer_ok` | The root ceremony plus the SPL path, i.e. the most expensive shape Phase 1A has: still 14% of a default 200k-CU budget. |
 
 ## Headroom
 
@@ -125,6 +129,53 @@ snapshot `timelock_secs` into `frozen_at`'s companion state at `freeze` time
 so a later `set_policy` cannot retroactively change how long a freeze already
 in effect lasts. This is not decided here — flagged for whoever implements
 `set_policy` in 1B.
+
+### `transfer`: what a session cap bounds in Phase 1A
+
+`SessionKey` carries a full `MintCap` per mint but has **no bucket fields**
+(no `day_start`, no 30-day ring), so there is nowhere to accumulate a
+per-session day or 30-day total. `instructions::transfer` therefore enforces,
+per session, only `caps[mint].per_tx` and `lifetime_cap[mint]` vs
+`lifetime_spent[mint]`; the day and rolling-30-day limits come from the
+**account-wide** `SmartAccount.buckets`, which every session AND the root
+debit through the same `buckets::debit` call
+(`transfer::two_sessions_share_account_day_cap`,
+`transfer::root_transfer_within_threshold_debits_buckets`). A session's
+`per_day`/`per_30d` are still validated against `policy.session_ceiling` at
+grant time and stored — they are simply not read by the 1A transfer path.
+
+This is the conservative direction (one shared budget, not one per delegate),
+but it does mean a session cannot today be given a *tighter* daily allowance
+than the account's. Phase 1B may carve per-session day buckets out of
+`SessionKey._reserved` (64 B — enough for `day_start: i64` + `spent_today: u64`
++ a ring index, not for a full 30-slot ring, so a 1B design decision is owed
+there).
+
+### Runtime gotcha: a credited destination must stay rent-exempt
+
+Solana's runtime rejects any transaction that leaves a **credited** account
+below the rent-exempt minimum for its size — `InsufficientFundsForRent`,
+raised *after* the instruction returns `Ok`, so it is a transaction error, not
+a program error, and no on-chain check can convert it into a friendlier one.
+For a 0-byte system account that minimum is 890,880 lamports, which means a
+transfer of (say) 600,000 lamports to a brand-new address fails as a whole
+transaction even though every Warden rule passed.
+
+`tests/transfer.rs` funds its destinations (`funded_dest`) rather than scaling
+every cap in the suite above 890,880 lamports, because a real destination is an
+existing wallet. **The extension must surface this**: "send 0.0006 SOL to an
+address that has never been used" is not a valid Solana transaction at all, and
+the failure will look like a Warden rejection if the client does not check the
+destination's balance first.
+
+### `RentFloor` (error 6031) is about the VAULT, not the destination
+
+`transfer` refuses to leave the smart account itself below
+`Rent::minimum_balance(data_len)` (`transfer::sol_transfer_cannot_breach_rent_floor`).
+That is a separate concern from the runtime check above: without it a session
+could drain the vault's lamports to the point where the ~4.1 KB `SmartAccount`
+account itself became rent-collectible, taking the wallet's own state with it.
+Draining down to *exactly* the floor is allowed.
 
 ## Update policy
 

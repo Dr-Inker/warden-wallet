@@ -1,3 +1,5 @@
+use anchor_lang::prelude::Pubkey;
+
 pub const ACCOUNT_SEED: &[u8] = b"account";
 pub const SESSION_SEED: &[u8] = b"session";
 pub const MAX_CLIENT_DATA_LEN: usize = 512;
@@ -38,3 +40,43 @@ pub const MAX_CAPS_PER_GRANT: usize = 2;
 
 /// The only `SessionKey::kind` Phase 1A supports: an Ed25519 delegate signer.
 pub const SESSION_KIND_ED25519: u8 = 0;
+
+// ---------------------------------------------------------------------------
+// Token constants (Task 7, `transfer`)
+// ---------------------------------------------------------------------------
+
+/// SPL Token program id (`TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`) — the
+/// ONLY token program Phase 1A's `transfer` will CPI into. Token-2022
+/// (`TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb`) lands in Phase 1B, where
+/// the transfer-fee / transfer-hook / confidential-transfer extensions each
+/// need their own rule before the vault may move a balance under them.
+///
+/// Hardcoded rather than imported: `spl-token` (v7) resolves
+/// `solana-program 2.3.x`, whose `Pubkey` is a different, non-interconvertible
+/// type from the `solana-program 3.x` one Anchor 1.1.2 uses — the same
+/// finding spike 3b recorded. `transfer::token_program_id_matches_spl_token`
+/// (a test, with the real `spl-token` crate as a dev-dependency) pins this
+/// literal against `spl_token::ID`.
+pub const SPL_TOKEN_ID: Pubkey = Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+
+/// SPL Token-2022 program id — declared only so `transfer` can reject it with
+/// an honest error instead of "not the token program".
+pub const SPL_TOKEN_2022_ID: Pubkey = Pubkey::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+
+/// Wrapped-SOL mint (`So11111111111111111111111111111111111111112`) — the key
+/// a native-SOL transfer looks its caps up under.
+///
+/// `Policy.caps` / `SessionKey.caps` are keyed by mint and `Pubkey::default()`
+/// is `buckets::find_cap`'s unused-slot sentinel, so native SOL needs *some*
+/// real key: the native mint is the conventional one (it is what every Solana
+/// client already uses to mean "SOL" in a mint-keyed table). Note this is the
+/// **cap lookup key only** — a native transfer moves lamports directly and
+/// never touches the wrapped-SOL mint account.
+pub const NATIVE_MINT: Pubkey = Pubkey::from_str_const("So11111111111111111111111111111111111111112");
+
+/// Fixed-layout length of an SPL Token `Account`.
+pub const TOKEN_ACCOUNT_LEN: usize = 165;
+/// `spl_token::state::AccountState::Initialized` discriminant.
+pub const TOKEN_STATE_INITIALIZED: u8 = 1;
+/// `spl_token::instruction::TokenInstruction::Transfer` tag.
+pub const TOKEN_IX_TRANSFER: u8 = 3;

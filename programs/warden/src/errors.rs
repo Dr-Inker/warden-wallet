@@ -77,4 +77,11 @@ pub enum WardenError {
     AlreadyFrozen,
     #[msg("the unfreeze timelock has not yet elapsed")]
     TimelockNotElapsed,
+    // ---------------------------------------------------------------------
+    // transfer (Task 7). APPEND ONLY — see the note above.
+    // ---------------------------------------------------------------------
+    #[msg("a native transfer would leave the account below the rent-exempt minimum")]
+    RentFloor,
+    #[msg("the destination token account is owned by the smart account itself")]
+    VaultDestination,
 }

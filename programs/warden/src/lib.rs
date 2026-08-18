@@ -60,6 +60,12 @@ pub mod warden {
         instructions::freeze::handler(ctx, args)
     }
 
+    /// Move SOL or an SPL balance out of the vault — session key (within its
+    /// caps) or bounded passkey root. See `instructions::transfer`.
+    pub fn transfer(ctx: Context<Transfer>, args: TransferArgs) -> Result<()> {
+        instructions::transfer::handler(ctx, args)
+    }
+
     /// Root-authorized lift of a root-issued freeze, gated by
     /// `policy.timelock_secs` since `frozen_at`. See `instructions::unfreeze`.
     pub fn unfreeze(ctx: Context<Unfreeze>, args: RootArgs) -> Result<()> {

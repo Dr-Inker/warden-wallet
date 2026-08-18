@@ -193,8 +193,9 @@ pub(crate) fn handler_self(ctx: Context<RevokeSessionSelf>) -> Result<()> {
 ///
 /// Anchor has already proven program ownership and the discriminator; this is
 /// what stops a `SessionKey` belonging to smart account A from being closed in
-/// a transaction that names smart account B.
-fn check_session_pda(
+/// a transaction that names smart account B — or, via `transfer` (Task 7,
+/// which shares this function), from spending A's caps against B's buckets.
+pub(crate) fn check_session_pda(
     session: &SessionKey,
     session_key: &Pubkey,
     account_key: &Pubkey,

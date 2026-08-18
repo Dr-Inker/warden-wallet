@@ -194,3 +194,30 @@ keypair.
   exact code, not `.unwrap()`'d) — left as specified; it will surface loudly as
   a panic-free no-op only if `add_program` ever fails, which the smoke test's
   passing `ping_succeeds` result rules out for this run.
+
+## `spl-token` dev-dependency (`programs/warden`, Task 7 — 2026-08-18)
+
+`transfer` (Task 7) moves SPL balances, so the test suite needs to plant mints
+and token accounts. The crate is a **dev-dependency only**.
+
+| Crate | Requirement in `programs/warden/Cargo.toml` | Resolved version | Notes |
+| --- | --- | --- | --- |
+| `spl-token` | `{ version = "9", features = ["no-entrypoint"] }` (dev-dep) | `9.0.0` | Pulls `spl-token-interface 2.0.0`; both build on the granular `solana-*` **3.x** crates (`solana-pubkey 3.0.0`, the same instance anchor-lang 1.1.2 uses), so `spl_token::ID` and `spl_token::state::Account`'s `Pubkey` are the *same type* as `solana_sdk::pubkey::Pubkey` in the tests. Adding it changed nothing else in `Cargo.lock` — 49 inserted lines, zero modified. |
+
+**Why not v7** (what spike 3b declared): `spl-token` 7.0.0 requires
+`solana-program ^2.1`, whose `Pubkey` is a different, non-interconvertible type
+from `solana-program 3.x`'s — spike 3b hit exactly this and hand-rolled its
+parser rather than fight it (`spikes/03-txbudget/onchain/src/lib.rs`, module
+docs). v8 is `solana-* 2.2`; **v9 is the first line on 3.x**.
+
+**The program still does not import it.** `warden::constants::SPL_TOKEN_ID` /
+`NATIVE_MINT` are `Pubkey::from_str_const` literals and
+`instructions::transfer::parse_token_account` reads the 165-byte SPL layout at
+fixed offsets, because a program-side `spl-token` dependency would drag the
+token program's own entrypoint machinery into the SBF artifact for the sake of
+two struct definitions. The dev-dependency is what *pins* those choices:
+`transfer::token_program_id_matches_spl_token` asserts the hardcoded ids equal
+`spl_token::ID` / `spl_token::native_mint::ID`, and every fixture in
+`tests/common/token.rs` is packed by the real crate's `Account::pack` /
+`Mint::pack`, so an SPL layout change breaks the tests loudly instead of
+silently drifting from what the program parses.
