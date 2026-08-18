@@ -15,7 +15,23 @@ inner instructions (deduped, PDA forced to non-signer since it signs via `invoke
 the program, not as an ed25519 signature). Compare serialized byte length against the 1,232-byte
 `MAX_TX_BYTES` limit.
 
-## Results — Jupiter SOL→USDC (0.1 SOL, 50 bps slippage), 5 runs ≥130s apart
+## Round 1 fix (2026-08-18) — read this first
+
+Task review found a **Critical** defect in `wrap.ts` (the account-index scheme the packed
+`execute` payload used was wrong — it indexed a local, pre-compile account list instead of the
+actual compiled outer message's account-key list) plus two **Important** gaps (no top-level
+compute-budget instructions; an unexplained `900`-byte staging constant) and a **Minor**
+overclaim in the Conclusion. All four are fixed; full detail is in "Self-review → Round 1 fix"
+below. **Consequence for the numbers:** every byte count in this document changed —
+`bytesInline` grew (compute-budget instructions now really are counted) and the account-index
+bug fix doesn't change byte counts by itself (wrong-but-same-length indices vs right ones cost
+the same bytes) but it changes *correctness* (a pre-fix wrapped tx would have executed against
+the wrong accounts). **The tables and Conclusion immediately below (the original 5-run Jupiter
+sweep and the single-shape Marinade/Tensor table) reflect the PRE-FIX code and are superseded —
+kept only for audit trail.** The authoritative, post-fix numbers are in the "Post-fix
+re-measurement" subsections and the rewritten Conclusion.
+
+## Results — Jupiter SOL→USDC (0.1 SOL, 50 bps slippage), 5 runs ≥130s apart — SUPERSEDED, pre-fix (see banner above)
 
 USER_PUBKEY was left at the script's default fallback,
 `11111111111111111111111111111112` — see "USER_PUBKEY note" below.
@@ -40,7 +56,7 @@ owner; each run ≥130s after the previous one's output, per script
 {"name":"jupiter SOL→USDC 0.1","bytesOriginal":914,"bytesInline":1059,"fitsInline":true,"stagedChunks":0,"writableAccounts":38}
 ```
 
-## Results — Marinade deposit (1 SOL) and Tensor buy-now (attempted)
+## Results — Marinade deposit (1 SOL) and Tensor buy-now (attempted) — SUPERSEDED, pre-fix (see banner above)
 
 | case | original bytes | wrapped bytes | fits inline? | chunks if staged | writable+readonly account count |
 |---|---|---|---|---|---|
@@ -67,45 +83,95 @@ attempts" below for the full explanation and verbatim HTTP probe):
 ```
 (×5, byte-identical each run; full untruncated error text is in `ts/src/measure.ts`'s `tensor()`.)
 
+## Post-fix re-measurement (authoritative)
+
+3 fresh `pnpm measure` runs against the fixed `wrap.ts` (indices computed from the real compiled
+message; ComputeBudget hoisted/defaulted top-level; `stagedChunks` from a measured payload cap,
+not a hardcoded constant). The first run predates the spaced-run harness (manual sanity check
+right after the fix, timestamp approximate); the other two are spaced ~130s apart as before.
+
+| run | UTC timestamp | original bytes | wrapped bytes | fits inline? | chunks if staged | account count | hops |
+|---|---|---|---|---|---|---|---|
+| A | ~2026-08-18T12:30:15Z (approx, manual) | 1085 | 1235 | **no** | 1 | 43 | n/a (not captured yet) |
+| B | 2026-08-18T12:30:39Z | 796 | 934 | yes | 0 | 35 | n/a (not captured yet) |
+| C | 2026-08-18T12:32:51Z | 518 | 604 | yes | 0 | 15 | 1 |
+
+Raw JSON lines:
+```
+{"name":"jupiter SOL→USDC 0.1","bytesOriginal":1085,"bytesInline":1235,"fitsInline":false,"stagedChunks":1,"writableAccounts":43}
+{"name":"jupiter SOL→USDC 0.1","bytesOriginal":796,"bytesInline":934,"fitsInline":true,"stagedChunks":0,"writableAccounts":35}
+{"name":"jupiter SOL→USDC 0.1","bytesOriginal":518,"bytesInline":604,"fitsInline":true,"stagedChunks":0,"writableAccounts":15,"hops":1}
+```
+(hop-count capture — `routePlan.length` from the Jupiter quote — was added to `measure.ts` between
+runs A/B and run C, per Minor fix #4's ask to record hop counts; runs A and B predate it.)
+
+**Run A is the headline new finding: a real Jupiter route that does NOT fit inline** (1235 B, 3 B
+over the 1,232 B limit, 43 accounts) and needs exactly **1 staged chunk** — the first real
+staging case this spike has produced across 8 total Jupiter measurements (5 pre-fix + 3 post-fix).
+Marinade, all 3 post-fix runs, byte-identical as before:
+```
+{"name":"marinade deposit 1 SOL (attempt)","bytesOriginal":559,"bytesInline":702,"fitsInline":true,"stagedChunks":0,"writableAccounts":13}
+```
+(702 B vs the pre-fix 662 B — the +40 B is the added top-level `ComputeBudgetProgram
+.setComputeUnitLimit(600_000)` instruction, Marinade's deposit tx carries no compute-budget
+instruction of its own so the default was added, per Important fix #2.)
+
+Tensor: unchanged, still blocked on the same API-key wall (see below).
+
+`maxStageChunkPayloadBytes()` (replacing the old unexplained `900` constant, see Important fix
+#3) measured **985 bytes** for a representative `stage_chunk` tx (1 signer/payer, 3 accounts:
+payer/stage-PDA/System-Program, 8-byte offset+len header) on this run — close to but not the same
+as the old guess, which is exactly why deriving it was worth doing.
+
 ## Conclusion
 
-**5/5 (100%) of real Jupiter SOL→USDC routes fit inline** in this sample (wrapped size 599–1059
-bytes against the 1,232-byte limit, 15–38 accounts touched), and Marinade's 1-SOL deposit also fit
-comfortably (662 bytes, 13 accounts) — **0 staged/chunked transactions were needed for any real
-route measured in this spike.** This is a smaller sample than the brief anticipated (the
-"expect many to NOT fit inline" sanity note assumed 20–40-account routes would commonly overflow),
-so it's worth being precise about *why* the inline-fit rate came out much higher than expected,
-not just reporting the headline number:
+**Scope of this conclusion, exactly:** 8 total real Jupiter SOL→USDC (0.1 SOL, 50 bps slippage)
+builds (5 pre-fix + 3 post-fix, byte counts not comparable 1:1 across the fix but fitInline/account
+counts still directly comparable) and Marinade's 1-SOL `deposit()` shape (identical instructions
+every run, measured 4 times total — 1 pre-fix table + 3 post-fix). That's it. This is **not** a
+claim about Jupiter routes in general, other input/output pairs, other trade sizes, other dApps,
+or Tensor (unmeasured). Round 1 of this spike overclaimed here (a "100% inline, 45–47-account
+extrapolated ceiling" conclusion drawn from only 5 same-pair runs, computed against
+since-corrected buggy byte accounting) — this section replaces that claim rather than patching it.
 
-1. **The wrapper is byte-efficient.** `wrapForExecute`'s outer `execute` instruction spends only
-   ~4 bytes of fixed overhead plus 2 bytes per referenced account (1-byte index + 1-byte
-   signer/writable flags) — it does **not** re-embed full 32-byte pubkeys for accounts already
-   present in the outer compiled message's account list, since Warden's account-index scheme
-   (`u8 acct_idx` referring to the outer message's `staticAccountKeys`/LUT-resolved list) avoids
-   that duplication. That's a ~16x saving per account versus naively copying pubkeys, and it's the
-   main reason routes with almost 40 accounts still came in under budget.
-2. **Signature-count reduction offsets instruction overhead.** As found while fixing the unit test
-   (see Self-review below), wrapping *removes* the account's own ed25519 signature (64 bytes) from
-   the tx, since the smart-account PDA now authorizes via the program's `invoke_signed` instead of
-   signing the transaction directly. That 64-byte credit is "spent" against the added
-   remaining-accounts/instruction-data overhead before the net size grows.
-3. **Address Lookup Tables (LUTs) keep the *outer* message's account list short even when the
-   *inner* route touches many accounts.** Jupiter routes use LUTs extensively; `wrapForExecute`
-   compiles the outer message with the same LUTs (`compileToV0Message(luts)`), so accounts already
-   in a lookup table cost ~1 byte (an index) in the outer message's compact-array, not 32 bytes —
-   this is doing a lot of the heavy lifting for the ~30-40 account cases.
+**Post-fix result: 2 of 3 fresh Jupiter runs fit inline; 1 of 3 needed exactly 1 staged chunk**
+(43-account route, 1235 B — 3 B over the 1,232 B limit). Across all 8 Jupiter measurements taken
+in this spike (pre- and post-fix), account counts ranged 15–43 and the only overflow was the
+43-account case. Marinade's fixed deposit shape fit inline in all 4 measurements (662 B pre-fix /
+702 B post-fix, 13 accounts, no routing variance since it's not order-book/route-dependent).
 
-**Extrapolated headroom:** bytes grew roughly linearly with account count across the 5 runs (~20
-bytes/account, from the 15-account/599-byte and 38-account/1059-byte data points). At that rate
-the largest observed case (1059 bytes, 38 accounts) has ~173 bytes / ~8–9 more accounts of
-headroom before hitting 1,232 — i.e. routes up to roughly **45–47 accounts** would likely still
-fit inline; multi-hop Jupiter routes with heavier LUT usage or non-Jupiter dApps that don't use
-LUTs at all are the more plausible source of staged/chunked cases in Phase 2, not typical 1–3-hop
-Jupiter swaps. **The `stagedChunks` fallback path (`Math.ceil(instructionBytes/900)`) itself was
-never exercised end-to-end by this spike** since no case measured needed it — Phase 2 should add a
-synthetic large-instruction-count test (e.g. a hand-built message with 60+ dummy accounts) to
-validate that arithmetic before relying on it in production, since real-world routes here never
-got close enough to test it honestly.
+**Do not treat "45–47 accounts" as a validated ceiling — it isn't, for two reasons:**
+1. It was extrapolated from *pre-fix* byte counts, which excluded the compute-budget instruction
+   this spike now knows the real wrapped tx must carry (~40 B). Post-fix, the 43-account run
+   already overflowed at 1235 B — 8–9 accounts *earlier* than the old extrapolation predicted.
+2. It was extrapolated from a straight-line fit through only 2 data points in a 5-point sample
+   that never actually observed an overflow. With an overflow now observed at 43 accounts and a
+   fit observed at 35 accounts (post-fix), the honest statement is: **the breakpoint for this
+   input/output pair, at this trade size, is somewhere in the 35–43 account band** — no tighter
+   than that without more samples, and not safe to extrapolate past 43 without new data.
+
+**What actually explains the byte cost** (mechanism, still valid post-fix): `wrapForExecute`'s
+outer `execute` instruction spends ~4 bytes of fixed overhead plus 2 bytes per referenced account
+(1-byte index into the *compiled* outer message's account-key list + 1-byte signer/writable
+flags) rather than re-embedding 32-byte pubkeys, and reuses whatever Address Lookup Tables the
+inner route already carries — both of these keep the marginal cost per account far below a naive
+32-byte-per-account scheme, which is why 15–38-account routes fit while a 43-account one just
+barely didn't.
+
+**`stagedChunks` is no longer unvalidated arithmetic.** Round 1 flagged that the `900`-byte
+staging-payload constant was unexplained and the chunking path was never exercised end-to-end.
+Both are fixed: `maxStageChunkPayloadBytes()` now measures the real cap (985 B on this run, from
+actually serializing a representative `stage_chunk` tx and binary-searching), and it's exercised
+both by a synthetic ~3,000-byte-payload unit test (`wrap.test.ts`) *and* by the real 43-account
+Jupiter overflow above (`stagedChunks: 1`), which is the first real-route confirmation that the
+inline/staged branch split behaves as designed.
+
+**What Phase 2 should actually do with this:** treat "does this route need staging" as a
+per-transaction runtime check (`wrapForExecute` already returns `inline: null` when it doesn't
+fit), not a static assumption from this spike's sample. The safe design conclusion is that
+staging support is **not optional/rare-edge-case** — this spike hit a real staging-required route
+on only its 6th Jupiter measurement — so Phase 1/2 must ship the `stage_chunk`/`execute_staged`
+path fully working, not as a defensively-added-but-untested fallback.
 
 ## USER_PUBKEY note
 
@@ -197,6 +263,86 @@ burning more of the request budget chasing an address that wouldn't change the r
   typically have 20–40 accounts, expect many to NOT fit inline"): the first half held for every
   real (non-toy) case measured (Jupiter, Marinade); the second half did **not** — every real route
   measured across 5 spaced runs fit inline. See Conclusion.
+
+### Round 1 fix (2026-08-18) — task review findings, addressed
+
+**1. Critical — wrong account indices in the packed `execute` payload (FIXED).** The original
+`idx()` looked up positions in a *locally built* `order` array (insertion order into a `Map` while
+walking the inner instructions), but the packed indices are read by the on-chain program against
+the *compiled outer message's* account-key list — and `TransactionMessage.compileToV0Message`
+dedups + re-sorts accounts into `[signer+writable, signer+readonly, non-signer+writable,
+non-signer+readonly]` before appending LUT-resolved keys, an ordering that has no fixed
+relationship to insertion order. The bug wouldn't fail a naive smoke test — every index still
+resolved to *some* valid account in range, just frequently the wrong one — which is exactly why
+the original unit test (checking only `bytesInline`/`bytesOriginal`, never decoding the payload)
+passed despite it.
+  - **Fix:** `wrapForExecute` now compiles the outer message in two passes. Pass 1 compiles with
+    the real account metas but placeholder (empty) instruction data, purely to learn the final
+    compiled ordering — `compileToV0Message`'s account ordering is a pure function of each
+    instruction's `keys` (pubkey + isSigner + isWritable) and the payer, **never** of instruction
+    data, so this ordering is provably identical to what the real (data-filled) compile produces.
+    Indices for the packed payload are computed from
+    `compiled.getAccountKeys({ addressLookupTableAccounts }).keySegments().flat()` — the exact
+    resolution order Solana uses on-chain — via a small `idx()` that also now **throws** if an
+    account is missing or its index exceeds `0xff` (u8), and instruction account/data counts are
+    asserted to fit `u8`/`u16` before packing, instead of silently truncating.
+  - **New round-trip test** (`wrap.test.ts`, "round-trips: decoding the packed execute payload
+    recovers the exact original inner-instruction keys, flags, and data"): builds a 2-instruction
+    message with overlapping *and* distinct accounts (so `compileToV0Message`'s signer/writable
+    re-sort actually has work to do — the exact scenario where the old bug pointed at the wrong
+    pubkey), wraps it, decodes the packed payload with a new exported `decodeExecuteData()`, and
+    asserts every decoded `{programIdx, accounts[], data}` resolves (via the new exported
+    `compiledAccountKeys()`) back to the *original* inner instruction's program id, account
+    pubkeys, writable flags, and data bytes. One deliberate subtlety verified explicitly: the
+    packed per-account `isSigner` flag intentionally mirrors the **original** inner instruction's
+    flag exactly, including for the smart account/PDA itself — that's what makes `invoke_signed`
+    work (the CPI'd instruction's account meta must say `is_signer:true` for the PDA if the
+    target program requires it; the runtime honors that because the calling program supplies
+    matching seeds). That's separate from `metas`' forcing of the account to `isSigner:false` at
+    the *outer transaction* level (no real ed25519 signature required from it) — the two flags
+    serve different layers and both are now tested.
+
+**2. Important — compute-budget instructions were being CPI-wrapped (FIXED).**
+`ComputeBudgetProgram` instructions (`SetComputeUnitLimit`/`SetComputeUnitPrice`/etc.) are only
+honored by the runtime at the transaction's top level, never inside a CPI — wrapping them into
+`execute`'s payload the way every other inner instruction was wrapped would make them silently
+inert. **Fix:** `wrapForExecute` now filters `allInner` by `programId.equals(ComputeBudgetProgram
+.programId)`, hoists any found straight into the outer message's top-level instruction list
+(alongside `execute`, not inside it), and — if the dApp tx carried none — adds a default
+`ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 })` so the measured shape matches what
+Phase 1 will actually need to build. Their bytes are counted in `bytesInline` (they're part of the
+same compiled message the returned `tx` comes from). Measured effect: Marinade's wrapped size grew
+662 B → 702 B (the dApp tx carries no compute-budget instruction of its own, so the default was
+added) — see "Post-fix re-measurement" above.
+
+**3. Important — unexplained `900`-byte staging constant (FIXED).** New exported
+`maxStageChunkPayloadBytes(wardenProgram)` builds a representative `stage_chunk` instruction (1
+signer/payer, 3 accounts: payer / stage PDA / System Program, data = 8-byte `[offset:u32,
+len:u32]` header + payload) and binary-searches the largest payload that keeps the whole
+transaction ≤ `MAX_TX_BYTES`, memoized per program id. Measured **985 B** (see "Post-fix
+re-measurement" above) — close to but not the same as the old guess, confirming it was worth
+deriving rather than assuming. `stagedChunks` now divides by this measured value instead of the
+literal `900`. One implementation wrinkle surfaced and handled: `@solana/web3.js`'s
+`MessageV0.serializeInstructions()` pre-allocates a fixed `PACKET_DATA_SIZE` (1232 B) scratch
+buffer and **throws** ("encoding overruns Uint8Array") rather than returning a large length once
+the instructions section alone would overrun it — both `maxStageChunkPayloadBytes`'s binary search
+and `wrapForExecute`'s own `bytesInline`/`bytesOriginal` computation now catch that and treat it
+as `+Infinity` (an unambiguous "does not fit"), since a throw there otherwise crashes the whole
+measurement instead of correctly reporting an oversized tx. **New unit test** ("a synthetic
+~3000-byte inner-instruction payload forces staging and yields the expected chunk count"): wraps a
+single instruction carrying a 3,000-byte data payload (guaranteed to overflow), computes the
+expected packed-payload length by hand from the wire format, and asserts `r.stagedChunks ===
+Math.ceil(expectedPartsLen / maxStageChunkPayloadBytes(prog))` — i.e. it checks the *formula*
+against the *measured* cap, not against a hardcoded chunk-count number that could silently drift.
+Plus a sanity-bounds test on `maxStageChunkPayloadBytes` itself (700–1200 B).
+
+**4. Minor — Conclusion overclaimed beyond its sample (FIXED).** See the rewritten "Conclusion"
+above: explicitly scoped to "8 Jupiter SOL→USDC builds + 4 Marinade-shape builds, nothing else,"
+the 45–47-account extrapolation is dropped (replaced with an honest "breakpoint is somewhere in
+the 35–43 account band, not safe to extrapolate past 43" given the post-fix 43-account overflow),
+and hop-count capture (`routePlan.length` from the Jupiter quote) was added to `measure.ts` for
+future runs (captured starting with post-fix run C: 1 hop for a 15-account/604 B route; runs A/B
+predate the capture).
 
 ## Part (b) — conservation snapshot CU
 

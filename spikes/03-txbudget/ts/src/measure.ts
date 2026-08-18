@@ -4,11 +4,13 @@ const RPC = process.env.RPC ?? "https://api.mainnet-beta.solana.com";
 const conn = new Connection(RPC);
 const user = new PublicKey("11111111111111111111111111111112"); // any funded pubkey works for quotes; swap tx build needs a real owner: use env USER_PUBKEY
 const owner = new PublicKey(process.env.USER_PUBKEY ?? user.toBase58());
+let lastJupiterHops: number | undefined;
 async function jupiter(): Promise<VersionedTransaction> {
   // NOTE: the brief's original URL included platformFeeBps=85, but Jupiter's /swap rejects that
   // without a feeAccount in the POST body ("feeAccount is required for swap with platformFee").
   // Dropped platformFeeBps since a spike doesn't need real fee revenue, just a realistic route.
   const q = await (await fetch(`https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=100000000&slippageBps=50`)).json();
+  lastJupiterHops = Array.isArray(q.routePlan) ? q.routePlan.length : undefined; // hop count for result.md
   const s = await (await fetch("https://lite-api.jup.ag/swap/v1/swap", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteResponse: q, userPublicKey: owner.toBase58(), wrapAndUnwrapSol: true }) })).json();
   if (!s.swapTransaction) throw new Error(`jupiter swap build failed: ${JSON.stringify(s)}`);
   return VersionedTransaction.deserialize(Buffer.from(s.swapTransaction, "base64"));
@@ -66,7 +68,8 @@ async function main() {
       const tx = await build();
       const luts = await Promise.all(tx.message.addressTableLookups.map(async l => (await conn.getAddressLookupTable(l.accountKey)).value!));
       const r = wrapForExecute(tx.message, wardenProgram, account, session, luts);
-      console.log(JSON.stringify({ name, bytesOriginal: r.bytesOriginal, bytesInline: r.bytesInline, fitsInline: !!r.inline, stagedChunks: r.stagedChunks, writableAccounts: tx.message.staticAccountKeys.length + tx.message.addressTableLookups.reduce((a, l) => a + l.writableIndexes.length + l.readonlyIndexes.length, 0) }));
+      const hops = name.startsWith("jupiter") ? lastJupiterHops : undefined;
+      console.log(JSON.stringify({ name, bytesOriginal: r.bytesOriginal, bytesInline: r.bytesInline, fitsInline: !!r.inline, stagedChunks: r.stagedChunks, writableAccounts: tx.message.staticAccountKeys.length + tx.message.addressTableLookups.reduce((a, l) => a + l.writableIndexes.length + l.readonlyIndexes.length, 0), ...(hops !== undefined ? { hops } : {}) }));
     } catch (e: any) {
       console.log(JSON.stringify({ name, error: String(e?.message ?? e) }));
     }
