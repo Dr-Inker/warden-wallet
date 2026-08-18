@@ -1,6 +1,6 @@
 # Phase 0 decision gate — spike roll-up
 
-**Date:** 2026-08-18 · **Spec:** `docs/superpowers/specs/2026-08-18-warden-wallet-design.md` (rev 5 in, **rev 6** out) · **Plan:** `.superpowers/sdd/2026-08-18-warden-phase0-scaffold-spikes/`
+**Date:** 2026-08-18 · **Spec:** `docs/superpowers/specs/2026-08-18-warden-wallet-design.md` (rev 5 in, **rev 6** out) · **Plan:** `docs/superpowers/plans/2026-08-18-warden-phase0-scaffold-spikes.md` (ledger: `docs/spikes/PHASE0-LEDGER.md`)
 
 Inputs, all read for this document (citations below are `path § heading (l.N)` — the nearest preceding markdown heading plus the current line number):
 
@@ -14,7 +14,7 @@ Inputs, all read for this document (citations below are `path § heading (l.N)` 
 | 4 — dApp compatibility inventory | `spikes/04-compat/inventory.md` | 7 |
 | — design foundation (not a spike) | `docs/design/figma.md` | 8 |
 
-Rulings recorded during the campaign live in `.superpowers/sdd/2026-08-18-warden-phase0-scaffold-spikes/progress.md`; the ones that bind the spec are carried into §"Consequences" below.
+Rulings recorded during the campaign live in `docs/spikes/PHASE0-LEDGER.md` (copied from the SDD scratch ledger); the ones that bind the spec are carried into §"Consequences" below.
 
 ---
 
