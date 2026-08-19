@@ -1,0 +1,107 @@
+# cargo-deny configuration — L9 dependency-provenance gate (spec §17, plan Task 11).
+#
+# Schema matches cargo-deny 0.20.2 (installed 2026-08-19 via
+# `cargo install cargo-deny --locked`; see docs/TOOLCHAIN.md for the rest of
+# the pinned toolchain). Checked against the root workspace only
+# (`members = ["programs/*"]`, i.e. `programs/warden` and
+# `programs/test-middleman`) — `spikes/*` carry their own `[workspace]`
+# tables and are excluded from the root `Cargo.toml`/`Cargo.lock`
+# (docs/TOOLCHAIN.md, "Workspace caveat"), so this config does not reach
+# them; re-run `cargo deny check --manifest-path spikes/.../Cargo.toml`
+# per-spike if that ever matters (spikes are throwaway evidence per
+# CLAUDE.md and are not shipped).
+#
+# `cargo deny check` (no build) was run once against this config on
+# 2026-08-19 at commit 26a8c1e; result recorded in
+# docs/program/PHASE1B-MEASUREMENTS.md and
+# .superpowers/sdd/2026-08-18-warden-phase1b-execute-swap/task-11-report.md.
+
+[graph]
+targets = []
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# advisories — RUSTSEC vulnerabilities, unmaintained/unsound/yanked crates.
+# In cargo-deny 0.20 these are always-deny by default (no separate
+# `vulnerability`/`unmaintained`/`yanked` lint-level keys exist any more);
+# `ignore` is the allow-list placeholder the plan asks for — every entry
+# needs a `reason` so an exception is never silent.
+# ---------------------------------------------------------------------------
+[advisories]
+ignore = [
+    # Placeholder — no advisories are ignored yet. Add entries only with a
+    # `reason` explaining why the advisory does not apply, e.g.:
+    # { id = "RUSTSEC-0000-0000", reason = "explain why this is not exploitable here" },
+]
+
+# ---------------------------------------------------------------------------
+# licenses — allow the permissive set the workspace's real dependency tree
+# uses (MIT/Apache-2.0/BSD-2/3-Clause/ISC/Unicode-DFS-2016/Zlib/MPL-2.0);
+# everything else denies by omission (cargo-deny 0.20 denies any license not
+# on `allow`). AGPL/GPL are never added here even though Squads v4 and Swig
+# are AGPL-3.0/GPL-3.0 reference-only prior art (spec §16, "Licensing
+# constraint") — this repo does not vendor their code, and no non-MIT prior
+# art may land without a counsel-approved reuse policy per spec §16.
+# ---------------------------------------------------------------------------
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "0BSD",
+    "CC0-1.0",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[licenses.private]
+ignore = false
+registries = []
+
+# ---------------------------------------------------------------------------
+# bans — duplicate-version detection is `warn`, not `deny`: a small Anchor/
+# Solana crate graph legitimately carries a few transitive-version splits
+# (see docs/TOOLCHAIN.md's spl-token v7-vs-v9 / solana-program 2.x-vs-3.x
+# notes for exactly this pattern in the spikes) and failing the gate on
+# every such split would make it noise, not signal. Promote a specific
+# duplicate to `deny` (via `[[bans.deny]]`) if a real problem is found.
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+allow-workspace = true
+deny = []
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# sources — crates.io only. This workspace's Cargo.lock (checked 2026-08-19,
+# `grep -c 'git+' Cargo.lock` = 0) has no git dependencies, so `allow-git` is
+# empty; add an entry here (with a reason) the day a real git dependency
+# lands, never widen `unknown-git`/`unknown-registry` to `allow` instead.
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[sources.allow-org]
+github = []
+gitlab = []
+bitbucket = []

@@ -1,0 +1,133 @@
+name: CI
+
+# L0/L1 gates off-host (spec §17; plan Task 11 item 3, controller ruling).
+# Mirrors .claude/test-gate.sh exactly, plus the clippy arithmetic gate and
+# the L9 supply-chain gate (scripts/supply-chain-gate.sh), and uploads the
+# built .so + its sha256 for docs/security/RELEASE-INTEGRITY.md bookkeeping.
+#
+# UNVERIFIED: this workflow has not been executed by GitHub Actions as of
+# authoring (Task 11 is tooling/docs only — no push has happened yet). It is
+# validated locally only via `python3 -c "import yaml,sys; yaml.safe_load(...)"`.
+# See docs program report for the exact validation command run.
+
+on:
+  push:
+    branches:
+      - main
+      - "phase*"
+  pull_request:
+    branches:
+      - main
+      - "phase*"
+
+# Cancel superseded runs on the same ref so pushes to a fast-moving phase
+# branch don't queue up redundant Rust builds.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned versions — must match docs/TOOLCHAIN.md exactly. Update both
+  # together; a drift between this file and TOOLCHAIN.md is itself an L9 gap.
+  RUST_TOOLCHAIN: "1.97.1"
+  SOLANA_CLI_VERSION: "3.1.10"
+  ANCHOR_CLI_VERSION: "1.1.2"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11"
+
+jobs:
+  build-test-gate:
+    name: build + test-gate (L0/L1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+
+      - name: Cache cargo registry + git + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ env.SOLANA_CLI_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ env.SOLANA_CLI_VERSION }}-
+
+      - name: Install Solana CLI (Agave) — pinned via the official installer
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_CLI_VERSION }}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install avm + Anchor CLI — pinned
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          avm install ${{ env.ANCHOR_CLI_VERSION }}
+          avm use ${{ env.ANCHOR_CLI_VERSION }}
+          echo "$HOME/.avm/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up pnpm ${{ env.PNPM_VERSION }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: pnpm install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify toolchain versions match docs/TOOLCHAIN.md
+        run: |
+          echo "solana: $(solana --version)"
+          echo "anchor: $(anchor --version)"
+          echo "rustc:  $(rustc --version)"
+          solana --version | grep -q "${{ env.SOLANA_CLI_VERSION }}"
+          anchor --version | grep -q "${{ env.ANCHOR_CLI_VERSION }}"
+
+      - name: Run .claude/test-gate.sh (builds warden.so, runs L0 sigverify + full suite)
+        run: ./.claude/test-gate.sh
+
+      - name: cargo clippy -p warden — deny arithmetic side effects
+        run: cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects
+
+      - name: L9 supply-chain gate (cargo-deny + pnpm audit)
+        run: ./scripts/supply-chain-gate.sh
+
+      - name: Compute warden.so sha256
+        if: always()
+        run: |
+          if [ -f target/deploy/warden.so ]; then
+            sha256sum target/deploy/warden.so | tee target/deploy/warden.so.sha256
+          else
+            echo "target/deploy/warden.so not built — nothing to hash" >&2
+          fi
+
+      - name: Upload warden.so + sha256 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warden-so-${{ github.sha }}
+          path: |
+            target/deploy/warden.so
+            target/deploy/warden.so.sha256
+          if-no-files-found: warn
+          retention-days: 90
