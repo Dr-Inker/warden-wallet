@@ -709,6 +709,66 @@
       "code": 6038,
       "name": "RootRequiresTopLevel",
       "msg": "a root-authorized instruction may only be invoked at transaction level, never via CPI"
+    },
+    {
+      "code": 6039,
+      "name": "ConservationViolated",
+      "msg": "a CPI changed a vault-owned account in a way conservation forbids"
+    },
+    {
+      "code": 6040,
+      "name": "UnsupportedAccountKind",
+      "msg": "a vault-owned account that is not an SPL/Token-2022 token account was passed writable"
+    },
+    {
+      "code": 6041,
+      "name": "MintMissing",
+      "msg": "the mint of a writable vault-owned token account is not present in the account list"
+    },
+    {
+      "code": 6042,
+      "name": "Token2022ExtensionRejected",
+      "msg": "the mint carries a Token-2022 extension that is never allow-listable (transfer hook, permanent delegate, confidential transfer)"
+    },
+    {
+      "code": 6043,
+      "name": "TransferFeeMintUnsupported",
+      "msg": "the mint carries the Token-2022 transfer-fee extension, which Phase 1B does not support"
+    },
+    {
+      "code": 6044,
+      "name": "SelfCpiRejected",
+      "msg": "an inner instruction targets the warden program itself"
+    },
+    {
+      "code": 6045,
+      "name": "PayloadInvalid",
+      "msg": "the execute payload is malformed"
+    },
+    {
+      "code": 6046,
+      "name": "RegistryDenied",
+      "msg": "the adapter registry does not allow this (program, instruction) pair"
+    },
+    {
+      "code": 6047,
+      "name": "StageInvalid",
+      "msg": "the staged content does not match this instruction"
+    },
+    {
+      "code": 6048,
+      "name": "StageExpired",
+      "msg": "the staged content has expired"
+    },
+    {
+      "code": 6049,
+      "name": "ComputeBudgetInExecute",
+      "msg": "compute-budget instructions are top-level only and may not appear in an execute payload"
+    },
+    {
+      "code": 6050,
+      "name": "DenyListed",
+      "msg": "this (program, instruction) pair is on the fixed deny-list and no registry entry can re-enable it"
     }
   ],
   "types": [

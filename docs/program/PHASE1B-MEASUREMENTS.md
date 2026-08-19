@@ -1,0 +1,72 @@
+# Phase 1B — measured costs and recorded design withdrawals
+
+Companion to `docs/program/PHASE1A-MEASUREMENTS.md`. Task 9 folds the Task 0
+re-measurements recorded there into this file; everything below is added by the
+task named in the heading.
+
+---
+
+## Task 1 — `conservation`
+
+### `Outflow` has no `gross_turnover` field, and must not grow one
+
+Recorded here so that a later reader who finds only the code does not "restore"
+a field that was deliberately withdrawn (research §3(a).6; spec §5.2 rule 4b and
+§5.3). Two independent, permanent reasons:
+
+1. **There is no prior art to copy.** LazorKit's "gross" accounting is *SOL
+   summed between outer CPIs*; its **token** per-transaction limit is an
+   ordinary before/after **net** diff. `SWIG-GROSS-OUTFLOW` in
+   `docs/security/PRIOR-ART-FINDINGS.md` says so explicitly. The first draft of
+   the rev-8 research proposed a persistent gross-turnover bucket on the false
+   premise that such a precedent existed, and withdrew it when the premise did
+   not survive checking.
+2. **No snapshot granularity can observe the quantity it would hold.** A single
+   CPI that moves 100 SOL of vault value out and returns 99.5 SOL *within its
+   own execution* presents a net delta of 0.5 SOL. Per-inner-instruction
+   snapshots do not help: the round trip completes below the boundary at which
+   the caller regains control. A `gross_turnover` field would therefore report a
+   number the program cannot measure — worse than an honest gap, because it
+   would read as a bound.
+
+What 1B enforces instead (spec §5.2 rule 4b): the **adapter-decoded `max_in`**,
+parsed out of the inner instruction's own data rather than inferred from
+balances, plus a **pinned source ATA**, both checked before the CPI runs
+(Task 6). That is a bound on the value the program can see being *authorised*.
+It is an explicit **design bet**, not a proof, and the product statement must not
+claim that a conservation check bounds intra-CPI turnover.
+
+`conservation::tests::outflow_has_no_gross_turnover_field` destructures
+`Outflow` exhaustively, so adding a field breaks that test.
+
+### Token / Token-2022 layout constants: provenance
+
+Every constant in `constants.rs`'s conservation block was re-derived from
+vendored crate source at the versions this repo resolves — not from memory:
+
+| Fact | Source |
+|---|---|
+| `Account::LEN == 165`, `Mint::LEN == 82`, `Multisig::LEN == 355` | `spl-token 9` (dev-dependency), asserted at runtime by `conservation::tests::spl_crate_layout_lengths_are_pinned` |
+| `BASE_ACCOUNT_LENGTH == 165`; `AccountType` byte at absolute offset 165; TLV tail from absolute offset 166, for **both** mints and token accounts; a mint's bytes 82..165 must be zero padding; a buffer of exactly `Multisig::LEN` is never extensible | `spl-token-2022 7.0.0`, `src/extension/mod.rs` — `type_and_tlv_indices`, `unpack_tlv_data`, `check_min_len_and_not_multisig` |
+| TLV entry = `type: u16 LE ‖ length: u16 LE ‖ value[length]`; a `type` of `Uninitialized (0)` terminates the walk | same file — `get_tlv_indices`, `get_extension_indices` |
+| `AccountType::{Uninitialized = 0, Mint = 1, Account = 2}` | same file |
+| `ExtensionType` discriminants: `TransferFeeConfig 1`, `ConfidentialTransferMint 4`, `ConfidentialTransferAccount 5`, `PermanentDelegate 12`, `TransferHook 14`, `ConfidentialTransferFeeConfig 16`, `ConfidentialTransferFeeAmount 17`, `ConfidentialMintBurn 24` | same file — `pub enum ExtensionType` |
+| `TransferFeeConfig` = `transfer_fee_config_authority[0..32] ‖ withdraw_withheld_authority[32..64] ‖ withheld_amount[64..72] ‖ older_transfer_fee[72..90] ‖ newer_transfer_fee[90..108]`, each `TransferFee` = `{epoch u64, maximum_fee u64, bps u16}`; the two authorities are `OptionalNonZeroPubkey` (a bare 32-byte key, all-zeros = `None`, **no tag**) | `src/extension/transfer_fee/mod.rs` |
+
+The deny-list instruction tags (§5.2 rule 1a) are **not** in this table — they
+are Task 5's to derive and pin, with its own unit test against the `spl-token`
+crate's `TokenInstruction` encoding.
+
+### Deliberate tightenings beyond the spec's letter (each can only reject more)
+
+- **`DANGER_CONFIDENTIAL` covers extensions 4, 5, 16, 17 and 24**, where spec
+  §5.2 rule 5 names 4/5. Every one of them hides an amount behind a ZK
+  ciphertext, which is the property that makes conservation *unverifiable*
+  rather than merely hard. Widening a permanent deny cannot open a hole.
+- **Mint authority fields are compared for every required mint**, where the
+  spec compares them only "if the vault holds any authority on M". The spec's
+  condition is a CU optimisation; comparing unconditionally is a superset and
+  no legitimate 1B flow changes a mint authority.
+- **A `CloseIntent` must agree with the snapshot** (`amount_before` equal to the
+  BEFORE balance, the account actually gone, every intent consumed exactly
+  once). A decoder/comparison desync fails loudly instead of silently passing.

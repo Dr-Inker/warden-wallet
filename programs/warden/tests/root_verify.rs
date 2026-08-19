@@ -104,6 +104,22 @@ mod err {
     pub const ROOT_SLOT_STALE: u32 = 6036;
     pub const ROOT_SLOT_IN_FUTURE: u32 = 6037;
     pub const ROOT_REQUIRES_TOP_LEVEL: u32 = 6038;
+    // Appended by Phase 1B Task 1 (`conservation`). These cover Task 1's own
+    // failures AND the codes Tasks 3/4/5 raise, declared in one block so the
+    // ABI is appended once and never renumbered mid-phase. Same append-only
+    // rule.
+    pub const CONSERVATION_VIOLATED: u32 = 6039;
+    pub const UNSUPPORTED_ACCOUNT_KIND: u32 = 6040;
+    pub const MINT_MISSING: u32 = 6041;
+    pub const TOKEN_2022_EXTENSION_REJECTED: u32 = 6042;
+    pub const TRANSFER_FEE_MINT_UNSUPPORTED: u32 = 6043;
+    pub const SELF_CPI_REJECTED: u32 = 6044;
+    pub const PAYLOAD_INVALID: u32 = 6045;
+    pub const REGISTRY_DENIED: u32 = 6046;
+    pub const STAGE_INVALID: u32 = 6047;
+    pub const STAGE_EXPIRED: u32 = 6048;
+    pub const COMPUTE_BUDGET_IN_EXECUTE: u32 = 6049;
+    pub const DENY_LISTED: u32 = 6050;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -112,7 +128,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 39] = [
+    let pairs: [(u32, WardenError, &str); 51] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -168,6 +184,34 @@ fn pinned_error_codes_match_the_enum_today() {
             WardenError::RootRequiresTopLevel,
             "RootRequiresTopLevel",
         ),
+        (err::CONSERVATION_VIOLATED, WardenError::ConservationViolated, "ConservationViolated"),
+        (
+            err::UNSUPPORTED_ACCOUNT_KIND,
+            WardenError::UnsupportedAccountKind,
+            "UnsupportedAccountKind",
+        ),
+        (err::MINT_MISSING, WardenError::MintMissing, "MintMissing"),
+        (
+            err::TOKEN_2022_EXTENSION_REJECTED,
+            WardenError::Token2022ExtensionRejected,
+            "Token2022ExtensionRejected",
+        ),
+        (
+            err::TRANSFER_FEE_MINT_UNSUPPORTED,
+            WardenError::TransferFeeMintUnsupported,
+            "TransferFeeMintUnsupported",
+        ),
+        (err::SELF_CPI_REJECTED, WardenError::SelfCpiRejected, "SelfCpiRejected"),
+        (err::PAYLOAD_INVALID, WardenError::PayloadInvalid, "PayloadInvalid"),
+        (err::REGISTRY_DENIED, WardenError::RegistryDenied, "RegistryDenied"),
+        (err::STAGE_INVALID, WardenError::StageInvalid, "StageInvalid"),
+        (err::STAGE_EXPIRED, WardenError::StageExpired, "StageExpired"),
+        (
+            err::COMPUTE_BUDGET_IN_EXECUTE,
+            WardenError::ComputeBudgetInExecute,
+            "ComputeBudgetInExecute",
+        ),
+        (err::DENY_LISTED, WardenError::DenyListed, "DenyListed"),
     ];
     for (pinned, variant, name) in pairs {
         assert_eq!(

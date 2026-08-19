@@ -104,4 +104,35 @@ pub enum WardenError {
     RootSlotInFuture,
     #[msg("a root-authorized instruction may only be invoked at transaction level, never via CPI")]
     RootRequiresTopLevel,
+    // ---------------------------------------------------------------------
+    // Phase 1B Task 1 — `conservation` (snapshot / compare / accounting), plus
+    // the codes Tasks 3/4/5 raise, defined here so the ABI block is appended
+    // ONCE and never renumbered mid-phase. APPEND ONLY — see the note above.
+    // Codes 6039..=6050; the pinned drift table in tests/root_verify.rs is the
+    // single place they are checked against this enum.
+    // ---------------------------------------------------------------------
+    #[msg("a CPI changed a vault-owned account in a way conservation forbids")]
+    ConservationViolated,
+    #[msg("a vault-owned account that is not an SPL/Token-2022 token account was passed writable")]
+    UnsupportedAccountKind,
+    #[msg("the mint of a writable vault-owned token account is not present in the account list")]
+    MintMissing,
+    #[msg("the mint carries a Token-2022 extension that is never allow-listable (transfer hook, permanent delegate, confidential transfer)")]
+    Token2022ExtensionRejected,
+    #[msg("the mint carries the Token-2022 transfer-fee extension, which Phase 1B does not support")]
+    TransferFeeMintUnsupported,
+    #[msg("an inner instruction targets the warden program itself")]
+    SelfCpiRejected,
+    #[msg("the execute payload is malformed")]
+    PayloadInvalid,
+    #[msg("the adapter registry does not allow this (program, instruction) pair")]
+    RegistryDenied,
+    #[msg("the staged content does not match this instruction")]
+    StageInvalid,
+    #[msg("the staged content has expired")]
+    StageExpired,
+    #[msg("compute-budget instructions are top-level only and may not appear in an execute payload")]
+    ComputeBudgetInExecute,
+    #[msg("this (program, instruction) pair is on the fixed deny-list and no registry entry can re-enable it")]
+    DenyListed,
 }

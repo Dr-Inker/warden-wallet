@@ -1,6 +1,7 @@
 #![deny(clippy::arithmetic_side_effects)]
 use anchor_lang::prelude::*;
 pub mod buckets;
+pub mod conservation;
 pub mod constants;
 pub mod errors;
 pub mod instructions;

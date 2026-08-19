@@ -112,3 +112,92 @@ pub const TOKEN_ACCOUNT_LEN: usize = 165;
 pub const TOKEN_STATE_INITIALIZED: u8 = 1;
 /// `spl_token::instruction::TokenInstruction::Transfer` tag.
 pub const TOKEN_IX_TRANSFER: u8 = 3;
+
+// ---------------------------------------------------------------------------
+// Conservation (Phase 1B Task 1) — SPL Token / Token-2022 layout constants.
+//
+// Every value below was re-derived from the vendored crate sources at the
+// versions this repo resolves, NOT from memory:
+//   - `spl-token 9` (dev-dependency, `state.rs`): `Account::LEN == 165`,
+//     `Mint::LEN == 82`, `Multisig::LEN == 355`.
+//   - `spl-token-2022 7.0.0` (`~/.cargo/registry/.../src/extension/mod.rs`):
+//     `BASE_ACCOUNT_LENGTH == Account::LEN == 165`; `type_and_tlv_indices`
+//     puts the `AccountType` byte at absolute offset 165 and starts the TLV
+//     tail at absolute offset 166 for BOTH mints and token accounts (for a
+//     mint, bytes 82..165 are zero padding that the crate checks); a TLV entry
+//     is `type: u16 LE ‖ length: u16 LE ‖ value[length]`; `AccountType` is
+//     `Uninitialized = 0, Mint = 1, Account = 2`.
+// `conservation::snapshot`'s unit tests pin the ones a fixture can express.
+// ---------------------------------------------------------------------------
+
+/// Fixed-layout length of an SPL Token `Mint` (`spl_token::state::Mint::LEN`).
+pub const MINT_ACCOUNT_LEN: usize = 82;
+/// `spl_token::state::Multisig::LEN`. A multisig is owned by the token program
+/// and is neither a mint nor a token account; Token-2022 refuses to treat an
+/// account of exactly this length as extensible, and so do we.
+pub const TOKEN_MULTISIG_LEN: usize = 355;
+/// Absolute offset of the Token-2022 `AccountType` discriminator byte, for
+/// both mints and token accounts (`BASE_ACCOUNT_LENGTH`).
+pub const T22_ACCOUNT_TYPE_OFFSET: usize = 165;
+/// Absolute offset at which the Token-2022 TLV tail begins.
+pub const T22_TLV_OFFSET: usize = 166;
+/// `spl_token_2022::extension::AccountType::Mint`.
+pub const T22_ACCOUNT_TYPE_MINT: u8 = 1;
+/// `spl_token_2022::extension::AccountType::Account`.
+pub const T22_ACCOUNT_TYPE_ACCOUNT: u8 = 2;
+/// `spl_token::state::AccountState::Frozen` discriminant.
+pub const TOKEN_STATE_FROZEN: u8 = 2;
+
+/// `TokenSnap::program` / `MintSnap::program` tag: classic SPL Token.
+pub const PROGRAM_SPL: u8 = 0;
+/// `TokenSnap::program` / `MintSnap::program` tag: SPL Token-2022.
+pub const PROGRAM_T22: u8 = 1;
+
+// `spl_token_2022::extension::ExtensionType` discriminants (u16 LE in the TLV
+// `type` field). Only the ones conservation rules on are named.
+/// `ExtensionType::Uninitialized` — a zero type terminates the TLV walk;
+/// the crate writes nothing after it.
+pub const EXT_UNINITIALIZED: u16 = 0;
+/// `ExtensionType::TransferFeeConfig` (mint).
+pub const EXT_TRANSFER_FEE_CONFIG: u16 = 1;
+/// `ExtensionType::ConfidentialTransferMint`.
+pub const EXT_CONFIDENTIAL_TRANSFER_MINT: u16 = 4;
+/// `ExtensionType::ConfidentialTransferAccount`.
+pub const EXT_CONFIDENTIAL_TRANSFER_ACCOUNT: u16 = 5;
+/// `ExtensionType::PermanentDelegate` (mint).
+pub const EXT_PERMANENT_DELEGATE: u16 = 12;
+/// `ExtensionType::TransferHook` (mint).
+pub const EXT_TRANSFER_HOOK: u16 = 14;
+/// `ExtensionType::ConfidentialTransferFeeConfig`.
+pub const EXT_CONFIDENTIAL_TRANSFER_FEE_CONFIG: u16 = 16;
+/// `ExtensionType::ConfidentialTransferFeeAmount`.
+pub const EXT_CONFIDENTIAL_TRANSFER_FEE_AMOUNT: u16 = 17;
+/// `ExtensionType::ConfidentialMintBurn`.
+pub const EXT_CONFIDENTIAL_MINT_BURN: u16 = 24;
+
+// `MintSnap::dangerous_ext` bit flags (spec §5.2 rule 5). All four reject in
+// 1B; the bits are separate so 1C can lift exactly one of them (transfer fee)
+// without touching the other three, which are never allow-listable.
+/// `TransferFeeConfig` (1). Class (ii): allowed in 1C with an inequality,
+/// rejected in 1B because the allow-list machinery is 1C.
+pub const DANGER_TRANSFER_FEE: u8 = 1 << 0;
+/// Confidential-transfer family. Class (iii): a permanent non-goal.
+///
+/// The spec names extensions **4/5**. This bit deliberately covers a **wider**
+/// set — 4, 5, 16 (`ConfidentialTransferFeeConfig`), 17
+/// (`ConfidentialTransferFeeAmount`) and 24 (`ConfidentialMintBurn`) — because
+/// every one of them hides an amount behind a ZK ciphertext, which is the
+/// exact property that makes conservation *unverifiable* rather than merely
+/// hard. Widening a permanent deny can only reject more, never allow more, so
+/// it cannot open a hole; it is recorded here (and in the Task 1 report) as a
+/// deliberate tightening beyond the spec's literal enumeration.
+pub const DANGER_CONFIDENTIAL: u8 = 1 << 1;
+/// `PermanentDelegate` (12). Class (i): never allow-listable.
+pub const DANGER_PERMANENT_DELEGATE: u8 = 1 << 2;
+/// `TransferHook` (14). Class (i): never allow-listable.
+pub const DANGER_TRANSFER_HOOK: u8 = 1 << 3;
+/// The class-(i)/(iii) bits: rejected with `Token2022ExtensionRejected`, and
+/// no policy path ever enables them. `DANGER_TRANSFER_FEE` is deliberately
+/// NOT in this mask — it gets its own error so 1C can lift it alone.
+pub const DANGER_NEVER_ALLOWLISTABLE: u8 =
+    DANGER_CONFIDENTIAL | DANGER_PERMANENT_DELEGATE | DANGER_TRANSFER_HOOK;
