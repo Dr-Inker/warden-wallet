@@ -8,6 +8,11 @@ import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
+import {
+  validateFindings,
+  loadKnownInvariantIds,
+  loadKnownPriorArtIds,
+} from "../../../scripts/validate-findings.mjs";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const LEDGER = join(REPO, "docs/security/invariants.jsonl");
@@ -119,6 +124,33 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
     }
   });
 
+  // A path that exists proves nothing: a renamed or deleted test leaves the file in place and the
+  // ledger still pointing at it. This is the check that actually keeps `test-covered` honest.
+  it("cites test names that still exist in the file they name, at HEAD", () => {
+    for (const r of rows) {
+      for (const e of r.evidence) {
+        if (!e.name) continue;
+        const src = readFileSync(join(REPO, e.path), "utf8");
+        if (e.path.endsWith(".rs")) {
+          // Rust: `tests::foo` (a #[cfg(test)] module fn) or a bare integration-test fn.
+          const leaf = e.name.split("::").pop()!;
+          expect(
+            new RegExp(`\\bfn\\s+${leaf}\\s*\\(`).test(src),
+            `${r.id}: ${e.path} has no \`fn ${leaf}(\` — the test was renamed or removed`,
+          ).toBe(true);
+          // and it must actually be a test, not a helper the ledger mistook for one
+          const at = src.indexOf(`fn ${leaf}(`);
+          expect(
+            src.slice(Math.max(0, at - 200), at).includes("#[test]"),
+            `${r.id}: ${e.path}::${leaf} is not annotated #[test] — it is a helper, not evidence`,
+          ).toBe(true);
+        } else if (e.path.endsWith(".ts")) {
+          expect(src.includes(e.name), `${r.id}: ${e.path} has no test named "${e.name}"`).toBe(true);
+        }
+      }
+    }
+  });
+
   it("leaves unimplemented rows honest: no evidence, no code_ref", () => {
     for (const r of rows.filter((x) => x.status === "unimplemented")) {
       expect(r.evidence.length, `${r.id} is unimplemented but cites evidence`).toBe(0);
@@ -138,7 +170,7 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
 
   it("covers the namespaces Phase 1A and 1B are required to seed", () => {
     const ns = new Set(rows.map((r) => r.id.split("-")[1]));
-    for (const n of ["NONCE", "CAP", "EXEC", "FRZ", "ROOT", "DENY", "BUF"]) {
+    for (const n of ["NONCE", "CAP", "SESS", "EXEC", "FRZ", "ROOT", "DENY", "BUF", "STAGE"]) {
       expect(ns.has(n), `namespace WRD-${n}-* is not seeded`).toBe(true);
     }
   });
@@ -277,5 +309,150 @@ describe("prior-art corpus (docs/security/PRIOR-ART-FINDINGS.md)", () => {
   it("records the licensing constraint on non-MIT prior art", () => {
     expect(md).toMatch(/AGPL/);
     expect(md).toMatch(/counsel/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The anti-silence guarantee, tested against the validator itself.
+//
+// The rule that matters — "silence on a seeded invariant is a FAIL, not a pass" — is only real if
+// the EXPECTED seed list comes from the wrapper (scripts/review.sh, from invariants.jsonl) rather
+// than from the model's own report of what it was asked. These cases pin that: every one of them
+// would PASS if the validator trusted `doc.seeded_invariants`.
+// ---------------------------------------------------------------------------
+describe("findings validator (scripts/validate-findings.mjs)", () => {
+  const schema = JSON.parse(readFileSync(SCHEMA, "utf8"));
+  const ajv = new Ajv2020({ allErrors: true, strict: false, validateFormats: false });
+  const validateSchema = ajv.compile(schema);
+  const EXPECT_FILE = join(REPO, ".codex/schemas/warden-findings.example.expect.json");
+  const knownInvariants = loadKnownInvariantIds(REPO);
+  const knownPriorArt = loadKnownPriorArtIds(REPO);
+
+  const fresh = () => JSON.parse(readFileSync(EXAMPLE, "utf8"));
+  const expectations = () => JSON.parse(readFileSync(EXPECT_FILE, "utf8"));
+  const run = (doc: unknown, expect_?: unknown) =>
+    validateFindings(doc, { validateSchema, expect: expect_, knownInvariants, knownPriorArt });
+
+  it("accepts the worked example against its expectations file", () => {
+    expect(run(fresh(), expectations())).toEqual([]);
+  });
+
+  it("the expectations file matches the example's own seed list", () => {
+    expect([...expectations().seeded_invariants].sort()).toEqual([...fresh().seeded_invariants].sort());
+  });
+
+  it("FAILS when the model drops a seeded invariant from both the seed list and the verdicts", () => {
+    const doc = fresh();
+    const dropped = doc.seeded_invariants.pop();
+    doc.invariant_verdicts = doc.invariant_verdicts.filter(
+      (v: { invariant_id: string }) => v.invariant_id !== dropped,
+    );
+    // Self-consistent — and exactly the shape a self-reported check would wave through.
+    expect(run(doc)).not.toEqual([]);
+    const errs = run(doc, expectations());
+    expect(errs.some((e) => e.includes(dropped) && e.includes("dropped"))).toBe(true);
+    expect(errs.some((e) => e.includes(dropped) && e.includes("silence is a FAIL"))).toBe(true);
+  });
+
+  it("FAILS when a seeded invariant has no verdict", () => {
+    const doc = fresh();
+    const missing = doc.seeded_invariants[0];
+    doc.invariant_verdicts = doc.invariant_verdicts.filter(
+      (v: { invariant_id: string }) => v.invariant_id !== missing,
+    );
+    expect(run(doc, expectations()).some((e) => e.includes(missing) && e.includes("silence is a FAIL"))).toBe(true);
+  });
+
+  it("FAILS on a duplicated verdict and on contradictory verdicts for one id", () => {
+    const dup = fresh();
+    dup.invariant_verdicts.push({ ...dup.invariant_verdicts[0] });
+    expect(run(dup, expectations()).some((e) => e.startsWith("duplicate verdict"))).toBe(true);
+
+    const contra = fresh();
+    contra.invariant_verdicts.push({ ...contra.invariant_verdicts[0], verdict: "violated" });
+    expect(run(contra, expectations()).some((e) => e.startsWith("contradictory verdicts"))).toBe(true);
+  });
+
+  it("FAILS on empty seeded_invariants, empty verdicts, and empty expectations", () => {
+    const empty = fresh();
+    empty.seeded_invariants = [];
+    empty.invariant_verdicts = [];
+    // Against the wrapper's expectations this is the worst case, not a clean round.
+    expect(run(empty, expectations()).length).toBeGreaterThanOrEqual(expectations().seeded_invariants.length);
+    // And an expectations file that itself seeds nothing is refused rather than trivially satisfied.
+    expect(run(empty, { ...expectations(), seeded_invariants: [] }).some((e) => e.includes("unseeded round"))).toBe(true);
+  });
+
+  it("FAILS when a verdict comes back not_reviewed", () => {
+    const doc = fresh();
+    doc.invariant_verdicts[0].verdict = "not_reviewed";
+    expect(run(doc, expectations()).some((e) => e.includes("not_reviewed"))).toBe(true);
+  });
+
+  it("FAILS when the model invents a seed or rules on an un-seeded invariant", () => {
+    const doc = fresh();
+    doc.seeded_invariants.push("WRD-CAP-01");
+    doc.invariant_verdicts.push({ invariant_id: "WRD-CAP-01", verdict: "upheld", rationale: "n/a" });
+    const errs = run(doc, expectations());
+    expect(errs.some((e) => e.includes("invented seeded invariant WRD-CAP-01"))).toBe(true);
+    expect(errs.some((e) => e.includes("verdict for un-seeded invariant WRD-CAP-01"))).toBe(true);
+  });
+
+  it("FAILS on base_sha / head_sha drift from the range the wrapper asked for", () => {
+    const doc = fresh();
+    doc.head_sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    expect(run(doc, expectations()).some((e) => e.includes("head_sha mismatch"))).toBe(true);
+    const doc2 = fresh();
+    doc2.base_sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    expect(run(doc2, expectations()).some((e) => e.includes("base_sha mismatch"))).toBe(true);
+  });
+
+  it("FAILS on missing provenance the schema alone would let through", () => {
+    // `reviewer_model` and `head_sha` are schema-optional on purpose (a hand-written finding may not
+    // have them). A round with no identity cannot be scored in the L3 scorecard, so the validator
+    // requires them anyway — this is the gap between "well-formed" and "usable".
+    for (const k of ["reviewer_model", "head_sha"]) {
+      const doc = fresh();
+      delete doc[k];
+      const errs = run(doc, expectations());
+      expect(errs.some((e) => e.startsWith("provenance:") && e.includes(k)), `${k} not caught`).toBe(true);
+    }
+    // An empty required string is caught one layer earlier, by the schema.
+    const blank = fresh();
+    blank.thread = "";
+    expect(run(blank, expectations()).some((e) => e.startsWith("schema:"))).toBe(true);
+  });
+
+  it("FAILS when a sibling file the wrapper required was not read", () => {
+    const doc = fresh();
+    doc.sibling_files_read = [];
+    const errs = run(doc, expectations());
+    expect(errs.filter((e) => e.startsWith("sibling file not reported as read")).length).toBe(
+      expectations().sibling_files.length,
+    );
+  });
+
+  it("FAILS on unknown invariant ids, unknown prior art, and a dangling finding reference", () => {
+    const doc = fresh();
+    doc.findings[0].invariant_ids = ["WRD-NOPE-99"];
+    expect(run(doc, expectations()).some((e) => e.includes("unknown invariant WRD-NOPE-99"))).toBe(true);
+
+    const doc2 = fresh();
+    doc2.findings[0].prior_art_cited = ["NOT-A-REAL-FINDING"];
+    expect(run(doc2, expectations()).some((e) => e.includes("unknown prior-art id"))).toBe(true);
+
+    const doc3 = fresh();
+    doc3.invariant_verdicts[0].finding_ids = ["WRDF-9999"];
+    expect(run(doc3, expectations()).some((e) => e.includes("unknown finding WRDF-9999"))).toBe(true);
+  });
+
+  it("FAILS a reproducer whose base_sha equals its fixed_sha", () => {
+    const doc = fresh();
+    doc.findings[0].reproducer.fixed_sha = doc.findings[0].reproducer.base_sha;
+    expect(run(doc, expectations()).some((e) => e.includes("base_sha == fixed_sha"))).toBe(true);
+  });
+
+  it("refuses to certify a round with no expectations file at all", () => {
+    expect(run(fresh()).some((e) => e.includes("no --expect file supplied"))).toBe(true);
   });
 });

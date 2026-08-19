@@ -1,0 +1,11 @@
+{
+  "base_sha": "208f7d55b6c01fd88e29d19ebddf42135b083b2d",
+  "head_sha": "3f9c1ad84e2b7660d5c0a1b93e77f4128ad6e05c",
+  "seeded_invariants": ["WRD-EXEC-01", "WRD-EXEC-06", "WRD-EXEC-08", "WRD-DENY-01", "WRD-ROOT-05"],
+  "sibling_files": [
+    "programs/warden/src/root_verify/transcript.rs",
+    "programs/warden/src/state/session.rs",
+    "programs/warden/src/errors.rs",
+    "programs/warden/src/buckets.rs"
+  ]
+}
