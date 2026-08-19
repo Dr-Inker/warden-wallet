@@ -306,3 +306,72 @@ strength of 1A's numbers.
 not implemented — 1A *rejects* them at grant rather than storing caps nothing
 enforces (spec §4: those windows are account-wide). Real per-session day
 buckets need a bucket PDA and are a 1B decision.
+
+---
+
+## Research 2026-08-18 → adopted / rejected
+
+**Source:** `docs/research/2026-08-18-security-assurance-and-wallet-landscape.md` (decision document over 20 raw reports `[R01]`–`[R20]` in `docs/research/raw-2026-08-18/` plus `critic.json`; Codex `gpt-5.6-sol` @ `max`, threads `01a016cf` REVISE → `01a016db` REVISE → `01a016e3` **SHIP-DOC**). **Applied to** spec **rev 8** (§3(a) deltas + new §17) and the Phase 1B plan **rev 3** (§3(b) deltas, new Tasks 10 and 11).
+
+**Read this before using any of it:** six of the twenty reports analysed `execute`, the adapter registry and the conservation checks **as if they were shipped code**. They are not — `programs/warden/src/instructions/` contains exactly `create_account`, `freeze`, `unfreeze`, `grant_session`, `revoke_session`, `rotate_nonce`, `transfer`. Everything those reports say about `execute` is **design input for Phase 1B, never an audit finding.**
+
+### Adopted (where it landed)
+
+| Delta | Landed |
+|---|---|
+| Root nonce is a **consumed scalar with strict `n+1` equality**, O(1) — not a "consumed-nonce set" | spec §4 |
+| **Slot-based root freshness**, `MAX_ROOT_SLOT_AGE = 150` slots, **future slots rejected**; `expiry_ts` demoted to secondary / 1C deferred flow | spec §4, §5.1; plan Task 0 (F) |
+| Transaction-level **`stack_height`** required on root paths (no CPI callers) | spec §5.1 cross-cutting |
+| **Fixed deny-list in the `execute` payload decoder, above and outside the registry, on BOTH paths** — `SetAuthority`/`Approve`/`ApproveChecked`/`Revoke` unconditional, `CloseAccount` unless the destination is the vault PDA | spec §5.2 rule 1a; plan Task 5 |
+| **Mint accounts in the snapshot set** — classic 82-byte / T22-TLV parsing, presence rule, authority change = **reject not accounting** | spec §5.2 rule 2a; plan Tasks 1 and 5 |
+| **`gross_turnover` withdrawn**; intra-CPI round trip stated as a **structural boundary**; 1B control = adapter-decoded `max_in` + pinned source ATA | spec §5.2 rule 4b, §5.3; plan Tasks 1, 2, 6 |
+| Non-WSOL `CloseAccount` **rent lamports** folded into the SOL outflow sum | spec §5.2 rule 4a; plan Task 2 |
+| The single **`DayBuckets` PDA** for 1C — seeds, `creator` rent payer (never the vault), close/reclaim rules, `init_day_buckets` ABI | spec §5.2 rule 4c |
+| **Token-2022 splits three ways**; **confidential mints are a PERMANENT non-goal**, not an allow-listable extension | spec §5.2 rule 5, §13 |
+| Expired session caps are **exhausted, not absent** | spec §4 |
+| **Synced-passkey extraction** threat row (T7) + the open owner decision on whether synced passkeys may be roots | spec §2 |
+| Third-party simulation and reputation feeds are **advisory only, never a signing gate** | spec §6, §13 |
+| **§17 — the L0–L9 assurance pipeline as binding process**: invariant ledger, typed findings with truth-status separate from evidence-type, human adjudication rules, gates | spec §17, §10 |
+| **L0 forged-signature gate + `litesvm = "=0.12.0"`**, before proof-of-possession | plan Task 0 |
+| **Invariant ledger + typed findings schema + prior-art corpus** seeding every review | plan Task 10 |
+| **L9 repo-side gates start now**: `cargo deny` / `pnpm audit`, per-release `.so` hash, `scripts/deploy-gate.sh` | plan Task 11 |
+| Per-adapter **selector-derivation rule** — Anchor sighash from IDL where one exists, per-program tag otherwise (extends C9) | spec §5.2 rule 1; plan Task 3 |
+| ND-SQD3-LO-01 / Certora H-01 **stage-squat** negatives | plan Task 4 |
+| `SWIG-ACC-C1` (close-and-reopen under a fake-layout program) and `LZR-ACC-C1` (account reorder) **named negatives** | plan Task 5 |
+
+### Rejected (research §3(e)) — and why, so none of these is re-proposed
+
+| Rejected | Reason |
+|---|---|
+| **Swig-style slot-epoch bucket floors** | Warden's buckets are already epoch-floored to UTC days with correct skipped-slot zeroing (`buckets.rs`, verified); the proposing report's rationale was **asserted, not argued**. No change |
+| **Restructuring the loop to Claude-reviews-Codex** on the +18.1/−8.6pp asymmetry | One narrow Python benchmark whose denominator could not be located; the executed pilot found real bugs **and** real false positives on both sides, and the single FP was caused by **reviewer scope, not model identity**. Decide via L8; until it returns the loop stays as it is |
+| **A third-party simulator as a signing gate** | Blowfish silently missed a `System::assign` while the wallet displayed "Receive 1 SOL"; simulation is bypassable by block-context-dependent contracts. Advisory only, permanently |
+| **An xNFT-style in-wallet app runtime** | Large new surface for phishing resistance the adapter registry already provides |
+| **The WebAuthn hardware sign counter for clone detection** | Synced passkeys return 0 or non-monotonic values; LazorKit and Swig both deliberately ignore it |
+| **Kani / SseRex as an adopt-now dependency** | Kani's `anchor-lang` work is a Jan-2023 prototype with path explosion and "CPI verification difficult if not impossible"; SseRex is a paper with no packaged CLI. **Ask the audit firm to bring Kani** — OtterSec used it productively on Squads in 2024 |
+| **`sol_big_mod_exp` on-curve checking at create** | Tried and reverted in 1A — the syscall is feature-gated and absent from litesvm's mainnet-active snapshot, so it would fail *every* `create_account`. **PoP supersedes it** (the precompile does the curve validation for free) |
+| **A bespoke SIWS bypass** | No Solana ERC-1271 and no SIMD filling the gap. Say SIWS is unsupported, loudly; be first to implement if Wallet Standard ships one |
+| **A Squads-style iframe connector** | Per-dApp onboarding; the Wallet-Standard wrapper reaches unmodified dApps |
+| **Vendoring Swig / Squads / Backpack code** | (A)GPL attaches to the combined work and extension distribution triggers GPL §5. Reference only |
+| **Planning against CPI depth 8 or a 4,096-byte transaction** | Neither feature is activated — SIMD-0268's feature account is `null`, not even queued. Design against depth 4 / 1,232 B |
+
+### Carried contradictions and unverified claims — open items with owners
+
+| # | Item | Status | Owner / gate |
+|---|---|---|---|
+| R1 | Six reports analysed **unbuilt** `execute`/registry/conservation as shipped | design input only, **never an audit finding** | **1B** — standing caveat on every citation from `[R01, R02, R04, R05, R09, R12]` |
+| R2 | Cross-model asymmetry **+18.1/−8.6pp** | **UNVERIFIED** — isolated Python tasks; the figure's own definition and denominator could not be located | **1B Task 9 (L8 A/B)** — do not restructure the loop before it returns |
+| R3 | **Certora OSS tier** ("public repo likely qualifies") | **UNVERIFIED** — sourced to a CVL rules doc, not a pricing page | **Owner** — get a written quote; budget ~5 weeks for L6 |
+| R4 | LazorKit audit status | **RESOLVED** — the Accretion A26SFR1 PDF exists at `audits/` with 14 findings; the report claiming "no named auditor" is wrong. Findings are usable | closed |
+| R5 | **Squads passkey support** — three reports disagree, nobody confirmed it | **UNVERIFIED** | **1C** — do **not** model guardians on assumed Squads maturity |
+| R6 | Anchor-version-dependent advice given without establishing the version | **RESOLVED** — it is `anchor-lang = "1.1.2"`, so the pre-0.30 close-account/discriminator advice is moot | closed |
+| R7 | **SIMD-0579 / keccak-p1600** — contested *inside* the round: one report said it does not exist; re-check found PR **#579 OPEN and unmerged** (#563 closed) | neither "live syscall" nor "fabricated" | **standing rule:** treat any protocol claim not backed by a **source-pinned fetch or an RPC call** as suspect |
+| R8 | Self-flagged uncited figures (Chainalysis $713M, "Chrome 147" PRF, the May-2025 Phantom incident, the Murphy v. Phantom memory-resident-key *allegation*, `haveibeendrained` dollar figures, Trident's current fuzzing backend) | **none load-bearing** | **owner** — do not quote any of them in product or marketing copy |
+| R9 | **AGPL §13 over on-chain program execution is legally untested** | open legal question | **Owner** — attorney opinion before any AGPL-derived code ships; §17 reuse-policy rule stands meanwhile |
+| R10 | A report compares Warden's guardian design to **shipped** systems, but 1C is not started | spec-to-shipped comparison | **1C** |
+| R11 | Still unmeasured: `is_native`, end-to-end `execute` CU, the reject-on-mutation branch through a real CPI, the `stage_chunk` cap (**O5, O11, O3**). The 40-account cap and 985-B stage cap stay **PROVISIONAL**. Real-device WebAuthn PRF still **UNVERIFIED** (**O1**) ⇒ Argon2id fallback stays mandatory | open | **1B** measured hard gate (O5/O11/O3); **owner** for O1 |
+| R12 | **SPL discriminator values** `SetAuthority(6)` / `Approve(4)` / `ApproveChecked(13)` / `CloseAccount(9)` are standard-layout but **UNVERIFIED against source** | must be verified before the deny-list ships | **1B Task 5** — re-derive from the pinned `spl-token` crate, record provenance, unit-test each constant |
+| R13 | **`--output-schema` silently ignored when MCP servers are active** | **UNVERIFIED** — unofficial-blog-sourced. *Verified:* `codex-cli 0.147.0`, and profiles resolving from `$CODEX_HOME/<name>.config.toml` | **1B Task 10** — run the pass tool-free anyway (costs nothing, removes the variable) and validate emitted JSON with an independent validator |
+| R14 | **`cargo-mutants` on an Anchor/SBF workspace is unpiloted** (not installed on this host); same for `proptest-state-machine` and Trident against `execute` | open | **1B Task 9** — pilot on `buckets.rs` first; **no tool confers a ledger proof status until piloted here** |
+| R15 | **The same-CPI round-trip blind spot is unclosable by snapshots** — now a stated spec boundary (§5.3), not a gap to fix. Whether the adapter-decoded `max_in` bound suffices in practice is a **design bet, not a proven property** | accepted risk, documented | **1B Task 6** to implement the bound; **owner** to accept the residual before mainnet |
+| R16 | **Whether a synced passkey may be a root at all** (spec §2 T7) — UV is mandatory but does not eliminate endpoint-side assertion forgery | open decision | **Owner**, gate: before public beta; **1C** if roots must become device-bound |
