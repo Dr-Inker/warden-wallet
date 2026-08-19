@@ -48,14 +48,21 @@ pub const MAX_MINTS_AT_CREATE: usize = 4;
 ///
 /// A root-authorized instruction shares its 1,232 B transaction with the
 /// secp256r1 precompile instruction (182 B of data, measured) and with
-/// `RootArgs` — 37 B `authenticatorData`, a canonical Chrome-shaped
-/// `clientDataJSON` of 164 B, and 9 B of scalars, so 218 B — which leaves
-/// only a few hundred bytes for the instruction's own arguments. Each
-/// `MintCap` is 56 B on the wire and each parallel lifetime cap another 8 B,
-/// so every extra cap costs 64 B. The plan (rev 2) estimated 4 caps would NOT
-/// fit and fixed the limit at 2; the measured 2-cap grant transaction is
-/// 944 B (see docs/program/PHASE1A-MEASUREMENTS.md), asserted by
+/// `RootArgs`, which is **226 B** on the wire for a canonical Chrome-shaped
+/// ceremony: 1 B `precompile_ix_index` + (4 B borsh length + 37 B)
+/// `authenticatorData` + (4 B borsh length + 164 B) `clientDataJSON` + 8 B
+/// `expiry_ts` + 8 B `signed_slot` = 226 B. That leaves only a few hundred
+/// bytes for the instruction's own arguments. Each `MintCap` is 56 B on the
+/// wire and each parallel lifetime cap another 8 B, so every extra cap costs
+/// 64 B. The plan (rev 2) estimated 4 caps would NOT fit and fixed the limit
+/// at 2; the measured 2-cap grant transaction is **984 B** (see
+/// docs/program/PHASE1A-MEASUREMENTS.md), asserted by
 /// `sessions::grant_tx_fits_1232_bytes_with_2_caps`.
+///
+/// Both figures are post-Phase-1B-Task-0: `RootArgs` was 218 B and the grant
+/// transaction 976 B before `signed_slot` added 8 B to every root path. (The
+/// 944 B this comment carried before that was older still — it predated the
+/// `prior_authority_hash` field added by the 1A milestone review.)
 ///
 /// Independent of `MAX_MINT_CAPS` (8), which is the `SessionKey`'s fixed slot
 /// count and stays 8: a session accumulates more than

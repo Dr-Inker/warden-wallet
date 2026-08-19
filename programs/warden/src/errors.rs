@@ -98,7 +98,7 @@ pub enum WardenError {
     // paths. APPEND ONLY — see the note above. These are the first three
     // codes of the Phase 1B ABI block (6036+).
     // ---------------------------------------------------------------------
-    #[msg("the root ceremony's signed_slot is more than MAX_ROOT_SLOT_AGE slots behind the current slot")]
+    #[msg("the root ceremony's signed_slot is at least MAX_ROOT_SLOT_AGE (150) slots behind the current slot")]
     RootSlotStale,
     #[msg("the root ceremony's signed_slot is in the future")]
     RootSlotInFuture,

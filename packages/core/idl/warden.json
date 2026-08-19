@@ -698,7 +698,7 @@
     {
       "code": 6036,
       "name": "RootSlotStale",
-      "msg": "the root ceremony's signed_slot is more than MAX_ROOT_SLOT_AGE slots behind the current slot"
+      "msg": "the root ceremony's signed_slot is at least MAX_ROOT_SLOT_AGE (150) slots behind the current slot"
     },
     {
       "code": 6037,

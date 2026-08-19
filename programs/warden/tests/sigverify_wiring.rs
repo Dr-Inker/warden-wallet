@@ -81,6 +81,9 @@ fn rotate_nonce_ix(smart_account: Pubkey, args: &RootArgs) -> Instruction {
 struct Built {
     svm: LiteSVM,
     tx: Transaction,
+    /// The same two instructions the transaction above carries, kept so a test
+    /// can re-sign the identical ceremony under a different fee payer.
+    ixs: Vec<Instruction>,
     account: Pubkey,
 }
 
@@ -147,15 +150,36 @@ fn build(bend: impl FnOnce(&mut [u8; 64])) -> Built {
         expiry_ts,
         signed_slot,
     };
+    let ixs = vec![precompile, rotate_nonce_ix(account, &args)];
     let tx = Transaction::new(
         &[&payer],
-        Message::new(
-            &[precompile, rotate_nonce_ix(account, &args)],
-            Some(&payer.pubkey()),
-        ),
+        Message::new(&ixs, Some(&payer.pubkey())),
         svm.latest_blockhash(),
     );
-    Built { svm, tx, account }
+    Built {
+        svm,
+        tx,
+        ixs,
+        account,
+    }
+}
+
+/// Re-sign `b`'s ceremony, byte-for-byte unchanged, under a brand-new
+/// well-funded fee payer.
+///
+/// `rotate_nonce` names only the `SmartAccount` and the Instructions sysvar —
+/// there is no payer account in its context and no signer among its accounts —
+/// so the fee payer is purely who pays, never who authorizes. Substituting it
+/// must therefore change nothing in either direction.
+fn repay_with_a_new_payer(b: &mut Built) {
+    let interloper = Keypair::new();
+    b.svm.airdrop(&interloper.pubkey(), 10_000_000_000).unwrap();
+    b.svm.expire_blockhash();
+    b.tx = Transaction::new(
+        &[&interloper],
+        Message::new(&b.ixs, Some(&interloper.pubkey())),
+        b.svm.latest_blockhash(),
+    );
 }
 
 fn expect_precompile_rejection(mut b: Built, what: &str) {
@@ -298,14 +322,37 @@ fn positive_and_negative_share_the_same_account_and_key() {
 }
 
 /// Keeps this file honest about which keypair the ceremony belongs to: the
-/// payer signs the transaction, but nothing about the payer authorizes the
-/// root action — only the precompile-verified P-256 assertion does.
+/// payer signs the *transaction*, but nothing about the payer authorizes the
+/// root *action* — only the precompile-verified P-256 assertion does.
+///
+/// Both directions, because either alone would be weak. If only the negative
+/// were checked, a substitution that broke the transaction for some unrelated
+/// reason would look like a pass; if only the positive were checked, nothing
+/// would show that lamports cannot buy a forged assertion its way through.
 #[test]
-fn payer_signature_alone_does_not_authorize_the_root_action() {
+fn fee_payer_identity_neither_authorizes_nor_blocks() {
+    // (a) forged assertion, re-signed and paid for by a brand-new, well-funded
+    //     account: still rejected at instruction 0, before warden runs.
     let mut b = build(|sig| sig[63] ^= 1);
-    // A brand-new payer with plenty of lamports changes nothing: the rejection
-    // is at instruction 0, before warden runs.
-    let interloper = Keypair::new();
-    b.svm.airdrop(&interloper.pubkey(), 10_000_000_000).unwrap();
-    expect_precompile_rejection(b, "a well-funded payer over a forged assertion");
+    let original_payer = b.tx.message.account_keys[0];
+    repay_with_a_new_payer(&mut b);
+    assert_ne!(
+        b.tx.message.account_keys[0], original_payer,
+        "the fee payer must actually have changed, or this test proves nothing"
+    );
+    expect_precompile_rejection(b, "a forged assertion paid for by a different, well-funded account");
+
+    // (b) the honest assertion, under the same substitution: succeeds, and the
+    //     ceremony is consumed exactly as when its own payer submitted it.
+    let mut b = build(|_sig| {});
+    let before = read_smart_account(&b.svm, &b.account).root_nonce;
+    repay_with_a_new_payer(&mut b);
+    b.svm
+        .send_transaction(b.tx)
+        .expect("a stranger may PAY for an honestly signed ceremony; only the passkey authorizes it");
+    assert_eq!(
+        read_smart_account(&b.svm, &b.account).root_nonce,
+        before + 1,
+        "the ceremony must be consumed regardless of who paid the fee"
+    );
 }
