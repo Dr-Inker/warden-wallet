@@ -1,5 +1,5 @@
 # Warden Wallet — repo directives
-- Spec: docs/superpowers/specs/2026-08-18-warden-wallet-design.md (rev 7). Plans: docs/superpowers/plans/. Phase 1A measured costs + milestone review: docs/program/PHASE1A-MEASUREMENTS.md.
+- Spec: docs/superpowers/specs/2026-08-18-warden-wallet-design.md (rev 8; §17 Assurance is binding process). Plans: docs/superpowers/plans/. Phase 1A measured costs + milestone review: docs/program/PHASE1A-MEASUREMENTS.md.
 - Published task/review ledgers: docs/spikes/PHASE0-LEDGER.md (Phase 0) and docs/spikes/PHASE1A-LEDGER.md (Phase 1A) — sanitized copies of the working SDD ledgers.
 - Never import from spikes/ into packages/ or apps/. Spikes are throwaway evidence.
 - Heavy Rust builds are serialized on this host; never run two cargo builds at once.
