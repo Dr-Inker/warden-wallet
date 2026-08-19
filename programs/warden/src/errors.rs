@@ -135,4 +135,9 @@ pub enum WardenError {
     ComputeBudgetInExecute,
     #[msg("this (program, instruction) pair is on the fixed deny-list and no registry entry can re-enable it")]
     DenyListed,
+    // ---------------------------------------------------------------------
+    // Task 1, round-1 review fix (Codex C2). APPEND ONLY — see above.
+    // ---------------------------------------------------------------------
+    #[msg("a CPI created, or converted an existing account into, an account the vault owns")]
+    NewVaultAccountRejected,
 }

@@ -571,7 +571,19 @@ fn token_owner_change_is_rejected() {
 
 #[test]
 fn mint_field_change_is_rejected() {
-    expect_violation(plain_token_bytes(pk(0x66), vault(), 100));
+    // Since round 1 (Codex C2) this reports `NewVaultAccountRejected` rather
+    // than `ConservationViolated`: an account whose `mint` differs is not the
+    // account we snapshotted, so the "did it BECOME the vault's?" check fires
+    // before the field-identity diff. Same verdict, more precise cause.
+    let before = vec![vault_ata(pk(3), pk(2), 100), plain_mint(pk(2))];
+    let after = vec![
+        snap_token(pk(3), &plain_token_bytes(pk(0x66), vault(), 100), true),
+        plain_mint(pk(2)),
+    ];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::NewVaultAccountRejected)
+    );
 }
 
 #[test]
@@ -815,13 +827,18 @@ fn an_account_at_the_mints_address_that_is_not_a_mint_counts_as_missing() {
 }
 
 #[test]
-fn the_mint_is_not_required_for_a_read_only_vault_token_account() {
-    // A read-only account cannot be written by any CPI, so demanding its mint
-    // would be pure liveness cost (spec 5.2 rule 2a gates on WRITABLE).
+fn the_mint_is_required_even_for_a_read_only_vault_token_account() {
+    // Round 1 (Codex C1): the presence rule is NOT gated on `is_writable`.
+    // "Read-only" is a property of THIS instruction's account list, and the
+    // mint is what the danger-extension and authority checks read; gating on
+    // writable let a caller opt out of both by passing the ATA read-only.
     let m = pk(2);
     let s = snap_token(pk(3), &plain_token_bytes(m, vault(), 100), false);
     let before = vec![s.clone()];
-    assert_eq!(cmp(&before, &before, &[]).expect("ok"), Outflow::default());
+    assert_eq!(
+        cmp(&before, &before, &[]).unwrap_err(),
+        err(WardenError::MintMissing)
+    );
 }
 
 #[test]
@@ -1135,4 +1152,319 @@ fn outflow_has_no_gross_turnover_field() {
                                         // field breaks this line.
     assert_eq!(sol, 0);
     assert!(by_mint.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Round 1 regressions — Codex review (sol@max, thread 01a018fa)
+// ---------------------------------------------------------------------------
+
+/// A mint the vault holds `mint_authority` on, as a writable snapshot.
+fn vault_controlled_mint(key: Pubkey, supply: u64, freeze: Option<Pubkey>) -> Snap {
+    snap_token(key, &mint_bytes(Some(vault()), supply, 6, freeze), true)
+}
+
+// --- C1: vault-controlled mints are validated independently of any token
+//         account, and required/dangerous mints are validated BEFORE the
+//         close branch.
+
+#[test]
+fn c1_a_standalone_vault_controlled_mint_authority_change_is_rejected() {
+    // No vault token account anywhere in the set: the ONLY thing that can
+    // catch this is the independent mint pre-scan.
+    let m = pk(2);
+    let before = vec![vault_controlled_mint(m, 1, None)];
+    let after = vec![snap_token(m, &mint_bytes(Some(pk(0x99)), 1, 6, None), true)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn c1_a_standalone_vault_controlled_mint_freeze_authority_change_is_rejected() {
+    let m = pk(2);
+    let before = vec![vault_controlled_mint(m, 1, None)];
+    let after = vec![vault_controlled_mint(m, 1, Some(pk(0x99)))];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn c1_a_standalone_vault_controlled_mint_supply_change_is_still_ok() {
+    // Adjudication (1), re-confirmed: `supply` is not an authority field.
+    let m = pk(2);
+    let before = vec![vault_controlled_mint(m, 1, None)];
+    let after = vec![vault_controlled_mint(m, 9_999, None)];
+    assert_eq!(cmp(&before, &after, &[]).expect("ok"), Outflow::default());
+}
+
+#[test]
+fn c1_a_vault_controlled_mint_tlv_tail_change_is_rejected() {
+    // For a mint the vault CONTROLS, the whole-tail hash IS compared — see the
+    // note in `compare::prescan_vault_mints` on why that is safe here and
+    // wrong for the token-account-backed path.
+    let m = pk(2);
+    let b = t22_mint_bytes(
+        mint_bytes(Some(vault()), 1, 6, None),
+        &tlv(&[(18, vec![0u8; 32])]),
+    );
+    let a = t22_mint_bytes(
+        mint_bytes(Some(vault()), 1, 6, None),
+        &tlv(&[(18, vec![7u8; 32])]),
+    );
+    let before = vec![snap_t22(m, &b, true)];
+    let after = vec![snap_t22(m, &a, true)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn c1_a_vault_controlled_mint_that_disappears_is_rejected() {
+    let m = pk(2);
+    let before = vec![vault_controlled_mint(m, 1, None)];
+    let after = vec![snap_closed(m)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn c1_a_mint_change_is_caught_even_when_its_token_account_is_closed() {
+    // The close branch used to `continue` before any mint validation ran, so a
+    // CPI could close the (zero-balance) vault ATA and rewrite the mint in the
+    // same instruction.
+    let m = pk(2);
+    let before = vec![vault_ata(pk(3), m, 0), vault_controlled_mint(m, 1, None)];
+    let after = vec![snap_closed(pk(3)), vault_controlled_mint(m, 1, Some(pk(0x99)))];
+    assert_eq!(
+        cmp(&before, &after, &[intent(pk(3), vault(), 0)]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn c1_a_dangerous_mint_is_rejected_even_when_its_token_account_is_closed() {
+    let m = pk(2);
+    let acct = t22_token_bytes(plain_token_bytes(m, vault(), 0), &tlv(&[(2, vec![0u8; 8])]));
+    let mb = t22_mint_bytes(mint_bytes(None, 1, 6, None), &tlv(&[(EXT_TRANSFER_HOOK, vec![0u8; 32])]));
+    let before = vec![snap_t22(pk(3), &acct, true), snap_t22(m, &mb, true)];
+    let after = vec![snap_closed(pk(3)), snap_t22(m, &mb, true)];
+    assert_eq!(
+        cmp(&before, &after, &[intent(pk(3), vault(), 0)]).unwrap_err(),
+        err(WardenError::Token2022ExtensionRejected)
+    );
+}
+
+#[test]
+fn c1_a_missing_mint_is_rejected_even_when_its_token_account_is_closed() {
+    let m = pk(2);
+    let before = vec![vault_ata(pk(3), m, 0)];
+    let after = vec![snap_closed(pk(3))];
+    assert_eq!(
+        cmp(&before, &after, &[intent(pk(3), vault(), 0)]).unwrap_err(),
+        err(WardenError::MintMissing)
+    );
+}
+
+// --- C2: an account that BECOMES the vault's is rejected.
+
+#[test]
+fn c2_a_vault_token_account_created_by_the_cpi_is_rejected() {
+    // BEFORE: nothing at this address. AFTER: a vault-owned ATA carrying an
+    // attacker delegate. A BEFORE-driven classification never looks at it.
+    let m = pk(2);
+    let created = token_bytes(
+        m,
+        vault(),
+        0,
+        Some(pk(0x99)),
+        u64::MAX,
+        None,
+        AccountState::Initialized,
+        None,
+    );
+    let before = vec![snap_closed(pk(3)), plain_mint(m)];
+    let after = vec![snap_token(pk(3), &created, true), plain_mint(m)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::NewVaultAccountRejected)
+    );
+}
+
+#[test]
+fn c2_an_account_converted_into_a_vault_token_account_is_rejected() {
+    let m = pk(2);
+    let before = vec![
+        snap_token(pk(3), &plain_token_bytes(m, pk(0x55), 100), true),
+        plain_mint(m),
+    ];
+    let after = vec![vault_ata(pk(3), m, 100), plain_mint(m)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::NewVaultAccountRejected)
+    );
+}
+
+#[test]
+fn c2_a_non_token_account_that_becomes_a_vault_ata_is_rejected() {
+    let m = pk(2);
+    let before = vec![snapshot_one(&pk(3), &pk(0x77), RENT, &[0u8; 40], true), plain_mint(m)];
+    let after = vec![vault_ata(pk(3), m, 1_000), plain_mint(m)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::NewVaultAccountRejected)
+    );
+}
+
+#[test]
+fn c2_a_vault_controlled_mint_appearing_only_in_after_is_rejected() {
+    let m = pk(2);
+    let before = vec![snapshot_one(&m, &pk(0x77), RENT, &[0u8; 40], true)];
+    let after = vec![vault_controlled_mint(m, 1, None)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+// --- C3: duplicate keys.
+
+#[test]
+fn c3_duplicate_account_keys_are_rejected() {
+    // The exact undercount: the same vault ATA listed twice. Slot 0 sees
+    // 100 -> 0 (-100) and slot 1 sees 100 -> 150 (+50), so the signed net
+    // reports 50 for a movement of 100.
+    let m = pk(2);
+    let ata = pk(3);
+    let before = vec![vault_ata(ata, m, 100), vault_ata(ata, m, 100), plain_mint(m)];
+    let after = vec![vault_ata(ata, m, 0), vault_ata(ata, m, 150), plain_mint(m)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::PayloadInvalid)
+    );
+}
+
+#[test]
+fn c3_a_duplicated_mint_key_is_rejected() {
+    let m = pk(2);
+    let before = vec![vault_ata(pk(3), m, 100), plain_mint(m), plain_mint(m)];
+    assert_eq!(
+        cmp(&before, &before, &[]).unwrap_err(),
+        err(WardenError::PayloadInvalid)
+    );
+}
+
+// --- C4: lamports on non-native vault token accounts.
+
+#[test]
+fn c4_excess_lamports_drained_from_a_non_native_vault_token_account_is_rejected() {
+    // Token-2022 `WithdrawExcessLamports` (tag 38): every compared field is
+    // byte-identical and only the account's lamport balance moves.
+    let m = pk(2);
+    let d = plain_token_bytes(m, vault(), 100);
+    let before = vec![snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT.saturating_add(9_000), &d, true), plain_mint(m)];
+    let after = vec![snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT, &d, true), plain_mint(m)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn c4_a_lamport_donation_to_a_non_native_vault_token_account_is_also_rejected() {
+    let m = pk(2);
+    let d = plain_token_bytes(m, vault(), 100);
+    let before = vec![snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT, &d, true), plain_mint(m)];
+    let after = vec![snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT.saturating_add(1), &d, true), plain_mint(m)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn c4_a_native_account_may_move_lamports_because_the_amount_covers_them() {
+    // `is_native: Some(..)` is what says "these lamports back the `amount`".
+    let d = token_bytes(
+        NATIVE_MINT,
+        vault(),
+        5_000,
+        None,
+        0,
+        None,
+        AccountState::Initialized,
+        Some(RENT),
+    );
+    let before = vec![
+        snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT.saturating_add(5_000), &d, true),
+        plain_mint(NATIVE_MINT),
+    ];
+    let after = vec![
+        snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT, &d, true),
+        plain_mint(NATIVE_MINT),
+    ];
+    assert_eq!(cmp(&before, &after, &[]).expect("ok"), Outflow::default());
+}
+
+// --- C5: strict, program-aware parsing.
+
+#[test]
+fn c5_classic_spl_token_accepts_only_exact_lengths() {
+    // A buffer that WOULD decode as a Token-2022 extended account, but owned
+    // by classic SPL Token, which has no extensions at all.
+    let d = t22_token_bytes(plain_token_bytes(pk(2), vault(), 1), &tlv(&[(2, vec![0u8; 8])]));
+    let s = snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT, &d, true);
+    assert!(s.token.is_none() && s.mint.is_none());
+    assert!(s.token_parse_failed);
+
+    let m = t22_mint_bytes(mint_bytes(None, 1, 0, None), &tlv(&[(18, vec![0u8; 8])]));
+    let s = snapshot_one(&pk(4), &SPL_TOKEN_ID, RENT, &m, false);
+    assert!(s.mint.is_none());
+    assert!(s.token_parse_failed);
+}
+
+#[test]
+fn c5_a_token_2022_account_tlv_tail_is_walked_not_just_hashed() {
+    // A length that runs past the end of the tail.
+    let mut tail = Vec::new();
+    tail.extend_from_slice(&2u16.to_le_bytes());
+    tail.extend_from_slice(&999u16.to_le_bytes());
+    tail.extend_from_slice(&[0u8; 4]);
+    let d = t22_token_bytes(plain_token_bytes(pk(2), vault(), 1), &tail);
+    let s = snap_t22(pk(3), &d, true);
+    assert!(s.token.is_none(), "an overlong TLV length must not parse");
+    assert!(s.token_parse_failed);
+
+    // A truncated header.
+    let d = t22_token_bytes(plain_token_bytes(pk(2), vault(), 1), &[2u8, 0]);
+    assert!(snap_t22(pk(3), &d, true).token.is_none());
+
+    // A well-formed unknown extension type is allowed, as long as it fits.
+    let d = t22_token_bytes(
+        plain_token_bytes(pk(2), vault(), 1),
+        &tlv(&[(9_999, vec![0u8; 16])]),
+    );
+    assert!(snap_t22(pk(3), &d, true).token.is_some());
+}
+
+#[test]
+fn c5_a_vault_owned_t22_account_whose_tail_becomes_truncated_is_rejected() {
+    let m = pk(2);
+    let good = t22_token_bytes(plain_token_bytes(m, vault(), 100), &tlv(&[(2, vec![0u8; 8])]));
+    let mut bad = good.clone();
+    let n = bad.len().saturating_sub(4);
+    bad.truncate(n); // the value no longer fits its declared length
+    let mb = snap_t22(m, &mint_bytes(None, 1, 0, None), false);
+    let before = vec![snap_t22(pk(3), &good, true), mb.clone()];
+    let after = vec![snap_t22(pk(3), &bad, true), mb];
+    assert!(after[0].token_parse_failed);
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
 }

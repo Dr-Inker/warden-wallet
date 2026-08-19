@@ -120,6 +120,8 @@ mod err {
     pub const STAGE_EXPIRED: u32 = 6048;
     pub const COMPUTE_BUDGET_IN_EXECUTE: u32 = 6049;
     pub const DENY_LISTED: u32 = 6050;
+    // Appended by Task 1's round-1 review fix (Codex C2).
+    pub const NEW_VAULT_ACCOUNT_REJECTED: u32 = 6051;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -128,7 +130,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 51] = [
+    let pairs: [(u32, WardenError, &str); 52] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -212,6 +214,11 @@ fn pinned_error_codes_match_the_enum_today() {
             "ComputeBudgetInExecute",
         ),
         (err::DENY_LISTED, WardenError::DenyListed, "DenyListed"),
+        (
+            err::NEW_VAULT_ACCOUNT_REJECTED,
+            WardenError::NewVaultAccountRejected,
+            "NewVaultAccountRejected",
+        ),
     ];
     for (pinned, variant, name) in pairs {
         assert_eq!(

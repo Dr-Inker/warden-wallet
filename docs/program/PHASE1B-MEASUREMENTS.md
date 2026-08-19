@@ -70,3 +70,33 @@ crate's `TokenInstruction` encoding.
 - **A `CloseIntent` must agree with the snapshot** (`amount_before` equal to the
   BEFORE balance, the account actually gone, every intent consumed exactly
   once). A decoder/comparison desync fails loudly instead of silently passing.
+
+### Round-1 review fixes (Codex sol@max, thread `01a018fa`) — recorded rulings
+
+Four fail-open paths and one parsing weakness, each now with a regression:
+
+| # | Hole | Fix |
+|---|---|---|
+| C1 | Vault-**controlled** mints were only checked when reached through a vault token account, and that check ran *after* the `CloseIntent` branch | `compare::prescan_vault_mints` validates every mint whose `mint_authority` / `freeze_authority` / T22 fee authority is the PDA, independently of any token account and before anything else; the token-account-driven mint checks moved ahead of the close branch |
+| C2 | Classification was BEFORE-driven, so an account that *became* the vault's mid-instruction was never examined | anything vault-owned in the AFTER snapshot must have been the same vault-owned token account of the same mint under the same program BEFORE — else `NewVaultAccountRejected` (6051) |
+| C3 | Positional comparison under-counts when one account is listed twice | duplicate pubkeys rejected up front (`PayloadInvalid`) |
+| C4 | Token-2022 `WithdrawExcessLamports` (tag 38) drains rent with every compared field unchanged | lamports must be unchanged on **non-native** vault token accounts; `is_native.is_some()` (not the mint key) is the exemption |
+| C5 | Token-**account** TLV tails were hashed but never walked; `classify` was program-agnostic | tails are walked with bounded, fail-closed parsing; classic SPL Token accepts **only** exactly 165 B (account) / 82 B (mint) — it has no extension mechanism |
+
+**The presence rule is no longer gated on `is_writable`** (round-1 adjudication).
+Gating on writable let a caller opt out of the danger-extension check and the
+mint-authority comparison by passing the vault ATA read-only. Spec §5.2 rule 2a
+was amended to match.
+
+**One deliberate false positive, scheduled for 1C.** `prescan_vault_mints`
+compares the TLV **tail hash** for a vault-controlled mint, where `check_mint`
+(mints reached through a vault token account) deliberately does not. The
+false positive §5.2 rule 2a warns about — a legitimate `transfer_fee` accrual
+mutating `withheld_amount` in the tail — can only occur on a fee mint, and a fee
+mint backing a vault token account already rejects outright in 1B
+(`TransferFeeMintUnsupported`). The residue is a **vault-controlled fee mint
+with no vault token account in the list**: its withheld-fee accrual rejects in
+1B and must become a field-wise comparison in 1C, when fee mints become legal.
+
+**`supply` stays uncompared** in both paths — re-confirmed in the round-1
+adjudication against spec §5.2 rule 2a.

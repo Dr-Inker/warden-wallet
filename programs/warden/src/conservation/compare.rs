@@ -11,14 +11,23 @@
 //!    (`SelfCpiRejected`), then vault-owned non-token writable
 //!    (`UnsupportedAccountKind`). Both are decided on `owner_program`, before
 //!    any layout-dependent decode (`SWIG-ACC-C1`);
-//! 3. is this a vault-owned token account BEFORE? If not, it is ignored
+//! 3. did the account BECOME the vault's? (round 1, Codex C2) —
+//!    `NewVaultAccountRejected`;
+//! 4. is this a vault-owned token account BEFORE? If not, it is ignored
 //!    entirely — a stranger's account changing is none of our business;
-//! 4. a decoded [`CloseIntent`] for this exact key, or the account must have
+//! 5. the mint rules (presence, danger extensions, authority identity), which
+//!    since round 1 run BEFORE the close branch and are NOT gated on
+//!    `is_writable`;
+//! 6. a decoded [`CloseIntent`] for this exact key, or the account must have
 //!    survived;
-//! 5. field identity, then the after-state policy, then the before-state
+//! 7. field identity, then the after-state policy, then the before-state
 //!    policy;
-//! 6. the mint rules (presence, danger extensions, authority identity);
-//! 7. the amount, into the netter.
+//! 8. lamports unchanged, for non-native accounts (round 1, Codex C4);
+//! 9. the amount, into the netter.
+//!
+//! Two whole-list checks run before any of that: duplicate pubkeys are
+//! rejected (round 1, Codex C3), and every mint the vault holds an authority
+//! on is compared independently of any token account (round 1, Codex C1).
 //!
 //! ## What "vault-owned" means here, and why it is decided in ONE place
 //!
@@ -73,6 +82,26 @@ pub fn compare_and_account(
 ) -> Result<Outflow> {
     require!(before.len() == after.len(), WardenError::ConservationViolated);
 
+    // Round 1 (Codex C3). The two arrays are compared POSITIONALLY, so the
+    // same account appearing at two indices is snapshotted twice and its
+    // balance change is counted twice — once as a decrease and once, from the
+    // same pair of reads, as whatever the second slot saw. A vault ATA listed
+    // twice while 100 tokens leave it nets to 50, not 100. Reject duplicates
+    // outright rather than try to reconcile them: the SDK already asserts the
+    // logical list is duplicate-free (spec 5.2, `accounts_hash`), so a
+    // duplicate reaching here is a malformed payload.
+    for (i, x) in before.iter().enumerate() {
+        for (j, y) in before.iter().enumerate() {
+            require!(i == j || x.key != y.key, WardenError::PayloadInvalid);
+        }
+    }
+
+    // Round 1 (Codex C1). Every mint the vault holds an authority on is
+    // validated INDEPENDENTLY of any token account, and before anything else
+    // runs — a standalone writable mint used to be invisible to this function,
+    // and the close branch used to `continue` past all mint validation.
+    prescan_vault_mints(before, after, vault)?;
+
     let mut net = Netter::default();
     let mut close_used = vec![false; closes.len()];
 
@@ -110,12 +139,43 @@ pub fn compare_and_account(
             WardenError::UnsupportedAccountKind
         );
 
-        // (3) Only vault-owned token accounts are this function's business.
+        // (3) Round 1 (Codex C2). Classification used to be BEFORE-driven, so
+        // an account that BECAME the vault's during the CPI was never examined
+        // at all — a freshly created vault ATA carrying an attacker delegate,
+        // or a stranger's account converted to vault ownership, both sailed
+        // through. Anything that is the vault's AFTER must have been the same
+        // vault-owned token account of the same mint under the same program
+        // BEFORE; otherwise the vault just acquired an account whose history
+        // this instruction cannot vouch for.
+        //
+        // (Account CREATION is always funded by the outer fee payer and
+        // performed at transaction level, never inside `execute` — spec 5.2
+        // rule 4 — so this rejects nothing a well-formed client does.)
+        if let Some(at) = a.token.as_ref().filter(|t| t.owner == *vault) {
+            let continuous = b
+                .token
+                .as_ref()
+                .is_some_and(|t| t.owner == *vault && t.mint == at.mint)
+                && b.owner_program == a.owner_program;
+            require!(continuous, WardenError::NewVaultAccountRejected);
+        }
+
+        // (4) Only vault-owned token accounts are this function's business.
         let Some(bt) = b.token.as_ref().filter(|t| t.owner == *vault) else {
             continue;
         };
 
-        // (4) A decoded close intent, or the account must have survived.
+        // (5) The mint rules, BEFORE the close branch (Codex C1) and NOT gated
+        // on `is_writable` (Codex C1 / adjudication 3). Gating on writable let
+        // a caller opt out of the danger-extension and authority checks simply
+        // by passing the vault ATA read-only, and running them after the close
+        // branch let a CPI close a zero-balance ATA and rewrite its mint in the
+        // same instruction.
+        let bm = find_mint(before, &bt.mint)?;
+        let am = find_mint(after, &bt.mint)?;
+        check_mint(bm, am)?;
+
+        // (6) A decoded close intent, or the account must have survived.
         if let Some(j) = first_unused_intent(closes, &close_used, &b.key) {
             let intent = closes.get(j).ok_or(WardenError::ConservationViolated)?;
             if let Some(used) = close_used.get_mut(j) {
@@ -127,7 +187,7 @@ pub fn compare_and_account(
 
         let at = a.token.as_ref().ok_or(WardenError::ConservationViolated)?;
 
-        // (5) Field identity: everything except `amount`.
+        // (7) Field identity: everything except `amount`.
         let identical = a.owner_program == b.owner_program
             && a.data_len == b.data_len
             && at.mint == bt.mint
@@ -154,17 +214,20 @@ pub fn compare_and_account(
             WardenError::ConservationViolated
         );
 
-        // (6) Mint rules — only for accounts a CPI could actually have
-        // written. A read-only account cannot be mutated by any CPI, so
-        // demanding its mint be present would be pure liveness cost (spec
-        // §5.2 rule 2a states the presence rule for *writable* accounts).
-        if writable {
-            let bm = find_mint(before, &bt.mint)?;
-            let am = find_mint(after, &bt.mint)?;
-            check_mint(bm, am)?;
+        // (8) Round 1 (Codex C4). Token-2022's `WithdrawExcessLamports`
+        // (tag 38) moves an account's lamports while leaving every field this
+        // function compares byte-identical, so a vault ATA over-funded with
+        // rent could be drained invisibly. For a NON-native account the
+        // lamports are not backed by anything the token layout records, so the
+        // only correct statement is that they must not move at all. For a
+        // native (wrapped-SOL) account they DO back `amount`, which the SOL
+        // equation already counts — `is_native`, not the mint key, is the
+        // field that says so.
+        if bt.is_native.is_none() {
+            require!(a.lamports == b.lamports, WardenError::ConservationViolated);
         }
 
-        // (7) The amount.
+        // (9) The amount.
         account_amount(&mut net, bt, at)?;
     }
 
@@ -177,6 +240,55 @@ pub fn compare_and_account(
     );
 
     Ok(net.finish())
+}
+
+/// Round 1 (Codex C1): validate every mint the vault holds an authority on,
+/// independently of whether any vault token account of it is in the list.
+///
+/// Two holes this closes. First, a **standalone writable mint**: the vault can
+/// be a mint's `mint_authority` without holding a single token of it, and
+/// handing that authority away is exactly the irreversible loss the deny-list's
+/// `SetAuthority` row exists to prevent — but no token account meant no check.
+/// Second, **ordering**: mint validation used to sit after the close branch,
+/// so closing the (zero-balance) vault ATA in the same instruction skipped it.
+///
+/// Unlike [`check_mint`] — which serves mints reached *through* a vault token
+/// account — this comparison **does** include the TLV tail hash. The tail-hash
+/// false positive spec §5.2 rule 2a warns about is a legitimate `transfer_fee`
+/// accrual, and that can only occur on a fee mint; a fee mint backing a vault
+/// token account is already rejected outright in 1B
+/// (`TransferFeeMintUnsupported`). The residue is a vault-controlled fee mint
+/// with **no** vault token account in the list, whose withheld-fee accrual will
+/// reject in 1B and must move to a field-wise comparison in 1C when fee mints
+/// become legal. Recorded in `docs/program/PHASE1B-MEASUREMENTS.md`.
+fn prescan_vault_mints(before: &[Snap], after: &[Snap], vault: &Pubkey) -> Result<()> {
+    for (i, b) in before.iter().enumerate() {
+        let a = after.get(i).ok_or(WardenError::ConservationViolated)?;
+        let controlled = b.mint.as_ref().is_some_and(|m| m.holds_authority(vault))
+            || a.mint.as_ref().is_some_and(|m| m.holds_authority(vault));
+        if !controlled {
+            continue;
+        }
+        // A vault-controlled mint that appears from nowhere, disappears, or
+        // stops parsing is a reject in either direction.
+        let bm = b.mint.as_ref().ok_or(WardenError::ConservationViolated)?;
+        let am = a.mint.as_ref().ok_or(WardenError::ConservationViolated)?;
+        let identical = am.mint_authority == bm.mint_authority
+            && am.freeze_authority == bm.freeze_authority
+            && am.transfer_fee_config_authority == bm.transfer_fee_config_authority
+            && am.withdraw_withheld_authority == bm.withdraw_withheld_authority
+            && am.decimals == bm.decimals
+            && am.is_initialized == bm.is_initialized
+            && am.dangerous_ext == bm.dangerous_ext
+            && am.program == bm.program
+            && am.tlv_hash == bm.tlv_hash
+            && a.owner_program == b.owner_program
+            && a.data_len == b.data_len;
+        require!(identical, WardenError::ConservationViolated);
+        // `supply` is still excluded: spec §5.2 rule 2a, re-confirmed in the
+        // round-1 adjudication. A legitimate mint/burn changes it.
+    }
+    Ok(())
 }
 
 /// First not-yet-consumed intent naming `key`.
@@ -231,8 +343,9 @@ fn handle_close(
     Ok(())
 }
 
-/// The mint of a writable vault-owned token account must be in the snapshot
-/// set and must decode as a mint (spec §5.2 rule 2a, presence rule).
+/// The mint of a vault-owned token account must be in the snapshot set and
+/// must decode as a mint (spec §5.2 rule 2a, presence rule — ungated on
+/// `is_writable` since round 1).
 fn find_mint<'a>(snaps: &'a [Snap], mint: &Pubkey) -> Result<&'a MintSnap> {
     snaps
         .iter()

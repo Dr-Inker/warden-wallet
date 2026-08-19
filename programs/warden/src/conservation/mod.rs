@@ -144,6 +144,23 @@ pub struct MintSnap {
     pub program: u8,
 }
 
+impl MintSnap {
+    /// Does `key` hold **any** authority on this mint?
+    ///
+    /// Round 1 (Codex C1): this is what makes a mint the vault's own concern
+    /// independently of whether the vault happens to hold a token account of
+    /// it. `mint_authority` and `freeze_authority` are the classic pair;
+    /// Token-2022 adds the two transfer-fee authorities, which live inside the
+    /// TLV tail and are extracted by type.
+    pub fn holds_authority(&self, key: &Pubkey) -> bool {
+        let k = Some(*key);
+        self.mint_authority == k
+            || self.freeze_authority == k
+            || self.transfer_fee_config_authority == k
+            || self.withdraw_withheld_authority == k
+    }
+}
+
 /// One account's before- (or after-) state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snap {

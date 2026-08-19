@@ -769,6 +769,11 @@
       "code": 6050,
       "name": "DenyListed",
       "msg": "this (program, instruction) pair is on the fixed deny-list and no registry entry can re-enable it"
+    },
+    {
+      "code": 6051,
+      "name": "NewVaultAccountRejected",
+      "msg": "a CPI created, or converted an existing account into, an account the vault owns"
     }
   ],
   "types": [

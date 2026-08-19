@@ -113,7 +113,7 @@ pub fn snapshot_one(
     let mut token_parse_failed = false;
 
     if is_token_program {
-        match classify(data) {
+        match classify(data, program) {
             Some(Kind::Token(tlv)) => {
                 token = parse_token_fields(data, tlv, program);
                 token_parse_failed = token.is_none();
@@ -147,13 +147,22 @@ enum Kind {
     Mint(core::ops::Range<usize>),
 }
 
-/// Decide mint vs token account vs neither, exactly as `spl-token-2022` does.
+/// Decide mint vs token account vs neither, exactly as `spl-token-2022` does —
+/// and, since round 1, **the owner program decides which layouts are even
+/// legal**.
+///
+/// Classic SPL Token has no extension mechanism at all, so an SPL-owned buffer
+/// is a token account at *exactly* 165 B and a mint at *exactly* 82 B, and
+/// nothing else. Before round 1 this function was program-agnostic, so an
+/// SPL-owned buffer carrying a Token-2022-shaped `AccountType` byte and tail
+/// decoded happily — an attacker-controlled shape the real token program would
+/// never produce, decoded by us as if it had.
 ///
 /// The length checks are **equalities**, never `>=` — a multisig (355 B) and a
 /// mint (82 B) are both owned by the token program, and a `>=` check would
 /// happily read a multisig's first 64 bytes as a mint/owner pair (the same
 /// argument `transfer::parse_token_account` records).
-fn classify(data: &[u8]) -> Option<Kind> {
+fn classify(data: &[u8], program: u8) -> Option<Kind> {
     let len = data.len();
     // `check_min_len_and_not_multisig`: an account of exactly `Multisig::LEN`
     // is never extensible and is never a mint or a token account.
@@ -165,6 +174,10 @@ fn classify(data: &[u8]) -> Option<Kind> {
     }
     if len == MINT_ACCOUNT_LEN {
         return Some(Kind::Mint(0..0));
+    }
+    if program == PROGRAM_SPL {
+        // Classic SPL Token: exact lengths only. No tail exists to decode.
+        return None;
     }
     // Anything with a Token-2022 tail: the `AccountType` byte sits at 165 and
     // the TLV starts at 166, so the buffer must be strictly longer than 166
@@ -194,6 +207,16 @@ fn parse_token_fields(
     program: u8,
 ) -> Option<TokenSnap> {
     let tail = data.get(tlv)?;
+    // Round 1 (Codex C5): the tail is WALKED, not merely hashed. A tail whose
+    // declared lengths do not fit is not a token account we will reason about,
+    // and `compare` turns that into a reject when the account was the vault's.
+    // Unknown extension types are allowed — the set grows over time — but every
+    // entry must be structurally sound. (Per-extension account-KIND validation
+    // is not attempted: it would need the full `ExtensionType -> AccountType`
+    // map. The `AccountType` byte `classify` already checks is the crate's own
+    // mint-vs-account separator, and the danger decision is made on the MINT's
+    // TLV per spec 5.2 rule 5.)
+    scan_extensions(tail)?;
     Some(TokenSnap {
         mint: read_pubkey(data, 0..32)?,
         owner: read_pubkey(data, 32..64)?,
