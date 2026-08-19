@@ -1,0 +1,1855 @@
+{
+  "MIT": [
+    {
+      "name": "@babel/runtime",
+      "versions": [
+        "7.29.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@babel+runtime@7.29.7/node_modules/@babel/runtime"
+      ],
+      "license": "MIT",
+      "author": "The Babel Team",
+      "homepage": "https://babel.dev/docs/en/next/babel-runtime",
+      "description": "babel's modular runtime helpers"
+    },
+    {
+      "name": "@esbuild/linux-x64",
+      "versions": [
+        "0.28.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@esbuild+linux-x64@0.28.2/node_modules/@esbuild/linux-x64"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/evanw/esbuild#readme",
+      "description": "The Linux 64-bit binary for esbuild, a JavaScript bundler."
+    },
+    {
+      "name": "@jridgewell/sourcemap-codec",
+      "versions": [
+        "1.5.5"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@jridgewell+sourcemap-codec@1.5.5/node_modules/@jridgewell/sourcemap-codec"
+      ],
+      "license": "MIT",
+      "author": "Justin Ridgewell",
+      "homepage": "https://github.com/jridgewell/sourcemaps/tree/main/packages/sourcemap-codec",
+      "description": "Encode/decode sourcemap mappings"
+    },
+    {
+      "name": "@napi-rs/lzma-linux-x64-gnu",
+      "versions": [
+        "1.5.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@napi-rs+lzma-linux-x64-gnu@1.5.1/node_modules/@napi-rs/lzma-linux-x64-gnu"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/Brooooooklyn/lzma#readme",
+      "description": "lzma / lzma2 / xz compression for Node.js and the browser, backed by pure-Rust lzma-rust2 via https://napi.rs"
+    },
+    {
+      "name": "@noble/curves",
+      "versions": [
+        "1.9.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@noble+curves@1.9.7/node_modules/@noble/curves"
+      ],
+      "license": "MIT",
+      "author": "Paul Miller",
+      "homepage": "https://paulmillr.com/noble/",
+      "description": "Audited & minimal JS implementation of elliptic curve cryptography"
+    },
+    {
+      "name": "@noble/hashes",
+      "versions": [
+        "1.8.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes"
+      ],
+      "license": "MIT",
+      "author": "Paul Miller",
+      "homepage": "https://paulmillr.com/noble/",
+      "description": "Audited & minimal 0-dependency JS implementation of SHA, RIPEMD, BLAKE, HMAC, HKDF, PBKDF & Scrypt"
+    },
+    {
+      "name": "@rollup/rollup-linux-x64-gnu",
+      "versions": [
+        "4.62.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@rollup+rollup-linux-x64-gnu@4.62.4/node_modules/@rollup/rollup-linux-x64-gnu"
+      ],
+      "license": "MIT",
+      "author": "Lukas Taegert-Atkinson",
+      "homepage": "https://rollupjs.org/",
+      "description": "Native bindings for Rollup"
+    },
+    {
+      "name": "@solana/buffer-layout",
+      "versions": [
+        "4.0.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+buffer-layout@4.0.1/node_modules/@solana/buffer-layout"
+      ],
+      "license": "MIT",
+      "author": "Peter A. Bigot",
+      "homepage": "https://github.com/solana-labs/buffer-layout",
+      "description": "Translation between JavaScript values and Buffers"
+    },
+    {
+      "name": "@solana/codecs",
+      "versions": [
+        "2.0.0-rc.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+codecs@2.0.0-rc.1_fastestsmallesttextencoderdecoder@1.0.22_typescript@5.9.3/node_modules/@solana/codecs"
+      ],
+      "license": "MIT",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/solana-labs/solana-web3.js#readme",
+      "description": "A library for encoding and decoding any data structure"
+    },
+    {
+      "name": "@solana/codecs-core",
+      "versions": [
+        "2.0.0-rc.1",
+        "2.3.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+codecs-core@2.0.0-rc.1_typescript@5.9.3/node_modules/@solana/codecs-core",
+        "/opt/warden/node_modules/.pnpm/@solana+codecs-core@2.3.0_typescript@5.9.3/node_modules/@solana/codecs-core"
+      ],
+      "license": "MIT",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/anza-xyz/kit#readme",
+      "description": "Core types and helpers for encoding and decoding byte arrays on Solana"
+    },
+    {
+      "name": "@solana/codecs-data-structures",
+      "versions": [
+        "2.0.0-rc.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+codecs-data-structures@2.0.0-rc.1_typescript@5.9.3/node_modules/@solana/codecs-data-structures"
+      ],
+      "license": "MIT",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/solana-labs/solana-web3.js#readme",
+      "description": "Codecs for various data structures"
+    },
+    {
+      "name": "@solana/codecs-numbers",
+      "versions": [
+        "2.0.0-rc.1",
+        "2.3.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+codecs-numbers@2.0.0-rc.1_typescript@5.9.3/node_modules/@solana/codecs-numbers",
+        "/opt/warden/node_modules/.pnpm/@solana+codecs-numbers@2.3.0_typescript@5.9.3/node_modules/@solana/codecs-numbers"
+      ],
+      "license": "MIT",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/anza-xyz/kit#readme",
+      "description": "Codecs for numbers of different sizes and endianness"
+    },
+    {
+      "name": "@solana/codecs-strings",
+      "versions": [
+        "2.0.0-rc.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+codecs-strings@2.0.0-rc.1_fastestsmallesttextencoderdecoder@1.0.22_typescript@5.9.3/node_modules/@solana/codecs-strings"
+      ],
+      "license": "MIT",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/solana-labs/solana-web3.js#readme",
+      "description": "Codecs for strings of different sizes and encodings"
+    },
+    {
+      "name": "@solana/errors",
+      "versions": [
+        "2.0.0-rc.1",
+        "2.3.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+errors@2.0.0-rc.1_typescript@5.9.3/node_modules/@solana/errors",
+        "/opt/warden/node_modules/.pnpm/@solana+errors@2.3.0_typescript@5.9.3/node_modules/@solana/errors"
+      ],
+      "license": "MIT",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/anza-xyz/kit#readme",
+      "description": "Throw, identify, and decode Solana JavaScript errors"
+    },
+    {
+      "name": "@solana/options",
+      "versions": [
+        "2.0.0-rc.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+options@2.0.0-rc.1_fastestsmallesttextencoderdecoder@1.0.22_typescript@5.9.3/node_modules/@solana/options"
+      ],
+      "license": "MIT",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/solana-labs/solana-web3.js#readme",
+      "description": "Managing and serializing Rust-like Option types in JavaScript"
+    },
+    {
+      "name": "@solana/web3.js",
+      "versions": [
+        "1.98.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6/node_modules/@solana/web3.js"
+      ],
+      "license": "MIT",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://solana.com/",
+      "description": "Solana Javascript API"
+    },
+    {
+      "name": "@types/bn.js",
+      "versions": [
+        "5.2.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@types+bn.js@5.2.0/node_modules/@types/bn.js"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/bn.js",
+      "description": "TypeScript definitions for bn.js"
+    },
+    {
+      "name": "@types/chai",
+      "versions": [
+        "5.2.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@types+chai@5.2.3/node_modules/@types/chai"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/chai",
+      "description": "TypeScript definitions for chai"
+    },
+    {
+      "name": "@types/connect",
+      "versions": [
+        "3.4.38"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@types+connect@3.4.38/node_modules/@types/connect"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/connect",
+      "description": "TypeScript definitions for connect"
+    },
+    {
+      "name": "@types/deep-eql",
+      "versions": [
+        "4.0.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@types+deep-eql@4.0.2/node_modules/@types/deep-eql"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/deep-eql",
+      "description": "TypeScript definitions for deep-eql"
+    },
+    {
+      "name": "@types/estree",
+      "versions": [
+        "1.0.9"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@types+estree@1.0.9/node_modules/@types/estree"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree",
+      "description": "TypeScript definitions for estree"
+    },
+    {
+      "name": "@types/node",
+      "versions": [
+        "12.20.55",
+        "22.20.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@types+node@12.20.55/node_modules/@types/node",
+        "/opt/warden/node_modules/.pnpm/@types+node@22.20.1/node_modules/@types/node"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node",
+      "description": "TypeScript definitions for node"
+    },
+    {
+      "name": "@types/uuid",
+      "versions": [
+        "10.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@types+uuid@10.0.0/node_modules/@types/uuid"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/uuid",
+      "description": "TypeScript definitions for uuid"
+    },
+    {
+      "name": "@types/ws",
+      "versions": [
+        "7.4.7",
+        "8.18.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@types+ws@7.4.7/node_modules/@types/ws",
+        "/opt/warden/node_modules/.pnpm/@types+ws@8.18.1/node_modules/@types/ws"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/ws",
+      "description": "TypeScript definitions for ws"
+    },
+    {
+      "name": "@vitest/expect",
+      "versions": [
+        "3.2.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@vitest+expect@3.2.7/node_modules/@vitest/expect"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/expect#readme",
+      "description": "Jest's expect matchers as a Chai plugin"
+    },
+    {
+      "name": "@vitest/mocker",
+      "versions": [
+        "3.2.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@vitest+mocker@3.2.7_vite@7.3.6_@types+node@22.20.1_tsx@4.23.12_/node_modules/@vitest/mocker"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/mocker#readme",
+      "description": "Vitest module mocker implementation"
+    },
+    {
+      "name": "@vitest/pretty-format",
+      "versions": [
+        "3.2.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@vitest+pretty-format@3.2.7/node_modules/@vitest/pretty-format"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/utils#readme",
+      "description": "Fork of pretty-format with support for ESM"
+    },
+    {
+      "name": "@vitest/runner",
+      "versions": [
+        "3.2.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/runner#readme",
+      "description": "Vitest test runner"
+    },
+    {
+      "name": "@vitest/snapshot",
+      "versions": [
+        "3.2.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@vitest+snapshot@3.2.7/node_modules/@vitest/snapshot"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/snapshot#readme",
+      "description": "Vitest snapshot manager"
+    },
+    {
+      "name": "@vitest/spy",
+      "versions": [
+        "3.2.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@vitest+spy@3.2.7/node_modules/@vitest/spy"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/spy#readme",
+      "description": "Lightweight Jest compatible spy implementation"
+    },
+    {
+      "name": "@vitest/utils",
+      "versions": [
+        "3.2.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@vitest+utils@3.2.7/node_modules/@vitest/utils"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/utils#readme",
+      "description": "Shared Vitest utility functions"
+    },
+    {
+      "name": "agentkeepalive",
+      "versions": [
+        "4.6.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/agentkeepalive@4.6.0/node_modules/agentkeepalive"
+      ],
+      "license": "MIT",
+      "author": "fengmk2",
+      "homepage": "https://github.com/node-modules/agentkeepalive#readme",
+      "description": "Missing keepalive http.Agent"
+    },
+    {
+      "name": "ajv",
+      "versions": [
+        "8.20.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/ajv@8.20.0/node_modules/ajv"
+      ],
+      "license": "MIT",
+      "author": "Evgeny Poberezkin",
+      "homepage": "https://ajv.js.org",
+      "description": "Another JSON Schema Validator"
+    },
+    {
+      "name": "assertion-error",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/assertion-error@2.0.1/node_modules/assertion-error"
+      ],
+      "license": "MIT",
+      "author": "Jake Luer",
+      "homepage": "https://github.com/chaijs/assertion-error#readme",
+      "description": "Error constructor for test and validation frameworks that implements standardized AssertionError specification."
+    },
+    {
+      "name": "base-x",
+      "versions": [
+        "3.0.11",
+        "4.0.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/base-x@3.0.11/node_modules/base-x",
+        "/opt/warden/node_modules/.pnpm/base-x@4.0.1/node_modules/base-x"
+      ],
+      "license": "MIT",
+      "author": "Daniel Cousens",
+      "homepage": "https://github.com/cryptocoinjs/base-x",
+      "description": "Fast base encoding / decoding of any given alphabet"
+    },
+    {
+      "name": "base64-js",
+      "versions": [
+        "1.5.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/base64-js@1.5.1/node_modules/base64-js"
+      ],
+      "license": "MIT",
+      "author": "T. Jameson Little",
+      "homepage": "https://github.com/beatgammit/base64-js",
+      "description": "Base64 encoding/decoding in pure JS"
+    },
+    {
+      "name": "bignumber.js",
+      "versions": [
+        "9.3.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/bignumber.js@9.3.1/node_modules/bignumber.js"
+      ],
+      "license": "MIT",
+      "author": "Michael Mclaughlin",
+      "homepage": "https://github.com/MikeMcl/bignumber.js#readme",
+      "description": "A library for arbitrary-precision decimal and non-decimal arithmetic"
+    },
+    {
+      "name": "bindings",
+      "versions": [
+        "1.5.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/bindings@1.5.0/node_modules/bindings"
+      ],
+      "license": "MIT",
+      "author": "Nathan Rajlich",
+      "homepage": "https://github.com/TooTallNate/node-bindings",
+      "description": "Helper module for loading your native module's .node file"
+    },
+    {
+      "name": "bn.js",
+      "versions": [
+        "5.2.5"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/bn.js@5.2.5/node_modules/bn.js"
+      ],
+      "license": "MIT",
+      "author": "Fedor Indutny",
+      "homepage": "https://github.com/indutny/bn.js",
+      "description": "Big number implementation in pure javascript"
+    },
+    {
+      "name": "bs58",
+      "versions": [
+        "4.0.1",
+        "5.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/bs58@4.0.1/node_modules/bs58",
+        "/opt/warden/node_modules/.pnpm/bs58@5.0.0/node_modules/bs58"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/cryptocoinjs/bs58#readme",
+      "description": "Base 58 encoding / decoding"
+    },
+    {
+      "name": "buffer",
+      "versions": [
+        "6.0.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/buffer@6.0.3/node_modules/buffer"
+      ],
+      "license": "MIT",
+      "author": "Feross Aboukhadijeh",
+      "homepage": "https://github.com/feross/buffer",
+      "description": "Node.js Buffer API, for the browser"
+    },
+    {
+      "name": "buffer-layout",
+      "versions": [
+        "1.2.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/buffer-layout@1.2.2/node_modules/buffer-layout"
+      ],
+      "license": "MIT",
+      "author": "Peter A. Bigot",
+      "homepage": "https://github.com/pabigot/buffer-layout",
+      "description": "Translation between JavaScript values and Buffers"
+    },
+    {
+      "name": "bufferutil",
+      "versions": [
+        "4.1.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/bufferutil@4.1.0/node_modules/bufferutil"
+      ],
+      "license": "MIT",
+      "author": "Einar Otto Stangvik",
+      "homepage": "https://github.com/websockets/bufferutil",
+      "description": "WebSocket buffer utils"
+    },
+    {
+      "name": "cac",
+      "versions": [
+        "6.7.14"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/cac@6.7.14/node_modules/cac"
+      ],
+      "license": "MIT",
+      "author": "egoist",
+      "homepage": "https://github.com/egoist/cac#readme",
+      "description": "Simple yet powerful framework for building command-line apps."
+    },
+    {
+      "name": "camelcase",
+      "versions": [
+        "6.3.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/camelcase@6.3.0/node_modules/camelcase"
+      ],
+      "license": "MIT",
+      "author": "Sindre Sorhus",
+      "homepage": "https://github.com/sindresorhus/camelcase#readme",
+      "description": "Convert a dash/dot/underscore/space separated string to camelCase or PascalCase: `foo-bar` → `fooBar`"
+    },
+    {
+      "name": "chai",
+      "versions": [
+        "5.3.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/chai@5.3.3/node_modules/chai"
+      ],
+      "license": "MIT",
+      "author": "Jake Luer",
+      "homepage": "http://chaijs.com",
+      "description": "BDD/TDD assertion library for node.js and the browser. Test framework agnostic."
+    },
+    {
+      "name": "chalk",
+      "versions": [
+        "5.6.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/chalk@5.6.2/node_modules/chalk"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/chalk/chalk#readme",
+      "description": "Terminal string styling done right"
+    },
+    {
+      "name": "check-error",
+      "versions": [
+        "2.1.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/check-error@2.1.3/node_modules/check-error"
+      ],
+      "license": "MIT",
+      "author": "Jake Luer",
+      "homepage": "https://github.com/chaijs/check-error#readme",
+      "description": "Error comparison and information related utility for node and the browser"
+    },
+    {
+      "name": "commander",
+      "versions": [
+        "2.20.3",
+        "12.1.0",
+        "14.0.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/commander@2.20.3/node_modules/commander",
+        "/opt/warden/node_modules/.pnpm/commander@12.1.0/node_modules/commander",
+        "/opt/warden/node_modules/.pnpm/commander@14.0.3/node_modules/commander"
+      ],
+      "license": "MIT",
+      "author": "TJ Holowaychuk",
+      "homepage": "https://github.com/tj/commander.js#readme",
+      "description": "the complete solution for node.js command-line programs"
+    },
+    {
+      "name": "cross-fetch",
+      "versions": [
+        "3.2.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/cross-fetch@3.2.0/node_modules/cross-fetch"
+      ],
+      "license": "MIT",
+      "author": "Leonardo Quixada",
+      "homepage": "https://github.com/lquixada/cross-fetch",
+      "description": "Universal WHATWG Fetch API for Node, Browsers and React Native"
+    },
+    {
+      "name": "crypto-hash",
+      "versions": [
+        "1.3.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/crypto-hash@1.3.0/node_modules/crypto-hash"
+      ],
+      "license": "MIT",
+      "author": "Sindre Sorhus",
+      "homepage": "https://github.com/sindresorhus/crypto-hash#readme",
+      "description": "Tiny hashing module that uses the native crypto API in Node.js and the browser"
+    },
+    {
+      "name": "debug",
+      "versions": [
+        "4.4.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/debug@4.4.3/node_modules/debug"
+      ],
+      "license": "MIT",
+      "author": "Josh Junon",
+      "homepage": "https://github.com/debug-js/debug#readme",
+      "description": "Lightweight debugging utility for Node.js and the browser"
+    },
+    {
+      "name": "deep-eql",
+      "versions": [
+        "5.0.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/deep-eql@5.0.2/node_modules/deep-eql"
+      ],
+      "license": "MIT",
+      "author": "Jake Luer",
+      "homepage": "https://github.com/chaijs/deep-eql#readme",
+      "description": "Improved deep equality testing for Node.js and the browser."
+    },
+    {
+      "name": "delay",
+      "versions": [
+        "5.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/delay@5.0.0/node_modules/delay"
+      ],
+      "license": "MIT",
+      "author": "Sindre Sorhus",
+      "homepage": "https://github.com/sindresorhus/delay#readme",
+      "description": "Delay a promise a specified amount of time"
+    },
+    {
+      "name": "dot-case",
+      "versions": [
+        "3.0.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/dot-case@3.0.4/node_modules/dot-case"
+      ],
+      "license": "MIT",
+      "author": "Blake Embrey",
+      "homepage": "https://github.com/blakeembrey/change-case/tree/master/packages/dot-case#readme",
+      "description": "Transform into a lower case string with a period between words"
+    },
+    {
+      "name": "es-module-lexer",
+      "versions": [
+        "1.7.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/es-module-lexer@1.7.0/node_modules/es-module-lexer"
+      ],
+      "license": "MIT",
+      "author": "Guy Bedford",
+      "homepage": "https://github.com/guybedford/es-module-lexer#readme",
+      "description": "Lexes ES modules returning their import/export metadata"
+    },
+    {
+      "name": "es6-promise",
+      "versions": [
+        "4.2.8"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/es6-promise@4.2.8/node_modules/es6-promise"
+      ],
+      "license": "MIT",
+      "author": "Yehuda Katz, Tom Dale, Stefan Penner and contributors",
+      "homepage": "https://github.com/stefanpenner/es6-promise",
+      "description": "A lightweight library that provides tools for organizing asynchronous code"
+    },
+    {
+      "name": "es6-promisify",
+      "versions": [
+        "5.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/es6-promisify@5.0.0/node_modules/es6-promisify"
+      ],
+      "license": "MIT",
+      "author": "Mike Hall",
+      "homepage": "https://github.com/digitaldesignlabs/es6-promisify#readme",
+      "description": "Converts callback-based functions to ES6 Promises"
+    },
+    {
+      "name": "esbuild",
+      "versions": [
+        "0.28.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/esbuild@0.28.2/node_modules/esbuild"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/evanw/esbuild#readme",
+      "description": "An extremely fast JavaScript and CSS bundler and minifier."
+    },
+    {
+      "name": "estree-walker",
+      "versions": [
+        "3.0.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/estree-walker@3.0.3/node_modules/estree-walker"
+      ],
+      "license": "MIT",
+      "author": "Rich Harris",
+      "homepage": "https://github.com/Rich-Harris/estree-walker#readme",
+      "description": "Traverse an ESTree-compliant AST"
+    },
+    {
+      "name": "eventemitter3",
+      "versions": [
+        "4.0.7",
+        "5.0.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/eventemitter3@4.0.7/node_modules/eventemitter3",
+        "/opt/warden/node_modules/.pnpm/eventemitter3@5.0.4/node_modules/eventemitter3"
+      ],
+      "license": "MIT",
+      "author": "Arnout Kazemier",
+      "homepage": "https://github.com/primus/eventemitter3#readme",
+      "description": "EventEmitter3 focuses on performance while maintaining a Node.js AND browser compatible interface."
+    },
+    {
+      "name": "eyes",
+      "versions": [
+        "0.1.8"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/eyes@0.1.8/node_modules/eyes"
+      ],
+      "license": "MIT",
+      "author": "Alexis Sellier",
+      "description": "a customizable value inspector"
+    },
+    {
+      "name": "fast-deep-equal",
+      "versions": [
+        "3.1.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/fast-deep-equal@3.1.3/node_modules/fast-deep-equal"
+      ],
+      "license": "MIT",
+      "author": "Evgeny Poberezkin",
+      "homepage": "https://github.com/epoberezkin/fast-deep-equal#readme",
+      "description": "Fast deep equal"
+    },
+    {
+      "name": "fast-stable-stringify",
+      "versions": [
+        "1.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/fast-stable-stringify@1.0.0/node_modules/fast-stable-stringify"
+      ],
+      "license": "MIT",
+      "author": "Nicky Out",
+      "homepage": "https://github.com/nickyout/fast-stable-stringify#readme",
+      "description": "Deterministic stringification for when performance matters"
+    },
+    {
+      "name": "fdir",
+      "versions": [
+        "6.5.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/fdir@6.5.0_picomatch@4.0.5/node_modules/fdir"
+      ],
+      "license": "MIT",
+      "author": "thecodrr",
+      "homepage": "https://github.com/thecodrr/fdir#readme",
+      "description": "The fastest directory crawler & globbing alternative to glob, fast-glob, & tiny-glob. Crawls 1m files in < 1s"
+    },
+    {
+      "name": "file-uri-to-path",
+      "versions": [
+        "1.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/file-uri-to-path@1.0.0/node_modules/file-uri-to-path"
+      ],
+      "license": "MIT",
+      "author": "Nathan Rajlich",
+      "homepage": "https://github.com/TooTallNate/file-uri-to-path",
+      "description": "Convert a file: URI to a file path"
+    },
+    {
+      "name": "humanize-ms",
+      "versions": [
+        "1.2.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/humanize-ms@1.2.1/node_modules/humanize-ms"
+      ],
+      "license": "MIT",
+      "author": "dead-horse",
+      "homepage": "https://github.com/node-modules/humanize-ms#readme",
+      "description": "transform humanize time to ms"
+    },
+    {
+      "name": "isomorphic-ws",
+      "versions": [
+        "4.0.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/isomorphic-ws@4.0.1_ws@7.5.13_bufferutil@4.1.0_utf-8-validate@6.0.6_/node_modules/isomorphic-ws"
+      ],
+      "license": "MIT",
+      "author": "@heineiuo",
+      "homepage": "https://github.com/heineiuo/isomorphic-ws#readme",
+      "description": "Isomorphic implementation of WebSocket"
+    },
+    {
+      "name": "jayson",
+      "versions": [
+        "4.3.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/jayson@4.3.0_bufferutil@4.1.0_utf-8-validate@6.0.6/node_modules/jayson"
+      ],
+      "license": "MIT",
+      "author": "Tedde Lundgren",
+      "homepage": "https://jayson.tedeh.net",
+      "description": "JSON-RPC 1.0/2.0 compliant server and client"
+    },
+    {
+      "name": "js-sha256",
+      "versions": [
+        "0.9.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/js-sha256@0.9.0/node_modules/js-sha256"
+      ],
+      "license": "MIT",
+      "author": "Chen, Yi-Cyuan",
+      "homepage": "https://github.com/emn178/js-sha256",
+      "description": "A simple SHA-256 / SHA-224 hash function for JavaScript supports UTF-8 encoding."
+    },
+    {
+      "name": "js-tokens",
+      "versions": [
+        "9.0.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/js-tokens@9.0.1/node_modules/js-tokens"
+      ],
+      "license": "MIT",
+      "author": "Simon Lydell",
+      "homepage": "https://github.com/lydell/js-tokens#readme",
+      "description": "Tiny JavaScript tokenizer."
+    },
+    {
+      "name": "json-schema-traverse",
+      "versions": [
+        "1.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/json-schema-traverse@1.0.0/node_modules/json-schema-traverse"
+      ],
+      "license": "MIT",
+      "author": "Evgeny Poberezkin",
+      "homepage": "https://github.com/epoberezkin/json-schema-traverse#readme",
+      "description": "Traverse JSON Schema passing each schema object to callback"
+    },
+    {
+      "name": "loupe",
+      "versions": [
+        "3.2.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/loupe@3.2.1/node_modules/loupe"
+      ],
+      "license": "MIT",
+      "author": "Veselin Todorov",
+      "homepage": "https://github.com/chaijs/loupe",
+      "description": "Inspect utility for Node.js and browsers"
+    },
+    {
+      "name": "lower-case",
+      "versions": [
+        "2.0.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/lower-case@2.0.2/node_modules/lower-case"
+      ],
+      "license": "MIT",
+      "author": "Blake Embrey",
+      "homepage": "https://github.com/blakeembrey/change-case/tree/master/packages/lower-case#readme",
+      "description": "Transforms the string to lower case"
+    },
+    {
+      "name": "magic-string",
+      "versions": [
+        "0.30.21"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/magic-string@0.30.21/node_modules/magic-string"
+      ],
+      "license": "MIT",
+      "author": "Rich Harris",
+      "homepage": "https://github.com/Rich-Harris/magic-string#readme",
+      "description": "Modify strings, generate sourcemaps"
+    },
+    {
+      "name": "ms",
+      "versions": [
+        "2.1.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/ms@2.1.3/node_modules/ms"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vercel/ms#readme",
+      "description": "Tiny millisecond conversion utility"
+    },
+    {
+      "name": "nanoid",
+      "versions": [
+        "3.3.18"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/nanoid@3.3.18/node_modules/nanoid"
+      ],
+      "license": "MIT",
+      "author": "Andrey Sitnik",
+      "homepage": "https://github.com/ai/nanoid#readme",
+      "description": "A tiny (116 bytes), secure URL-friendly unique string ID generator"
+    },
+    {
+      "name": "no-case",
+      "versions": [
+        "3.0.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/no-case@3.0.4/node_modules/no-case"
+      ],
+      "license": "MIT",
+      "author": "Blake Embrey",
+      "homepage": "https://github.com/blakeembrey/change-case/tree/master/packages/no-case#readme",
+      "description": "Transform into a lower cased string with spaces between words"
+    },
+    {
+      "name": "node-fetch",
+      "versions": [
+        "2.7.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/node-fetch@2.7.0/node_modules/node-fetch"
+      ],
+      "license": "MIT",
+      "author": "David Frank",
+      "homepage": "https://github.com/bitinn/node-fetch",
+      "description": "A light-weight module that brings window.fetch to node.js"
+    },
+    {
+      "name": "node-gyp-build",
+      "versions": [
+        "4.8.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/node-gyp-build@4.8.4/node_modules/node-gyp-build"
+      ],
+      "license": "MIT",
+      "author": "Mathias Buus",
+      "homepage": "https://github.com/prebuild/node-gyp-build",
+      "description": "Build tool and bindings loader for node-gyp that supports prebuilds"
+    },
+    {
+      "name": "pathe",
+      "versions": [
+        "2.0.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/pathe@2.0.3/node_modules/pathe"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/unjs/pathe#readme",
+      "description": "Universal filesystem path utils"
+    },
+    {
+      "name": "pathval",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/pathval@2.0.1/node_modules/pathval"
+      ],
+      "license": "MIT",
+      "author": "Veselin Todorov",
+      "homepage": "https://github.com/chaijs/pathval",
+      "description": "Object value retrieval given a string path"
+    },
+    {
+      "name": "picomatch",
+      "versions": [
+        "4.0.5"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/picomatch@4.0.5/node_modules/picomatch"
+      ],
+      "license": "MIT",
+      "author": "Jon Schlinkert",
+      "homepage": "https://github.com/micromatch/picomatch",
+      "description": "Blazing fast and accurate glob matcher written in JavaScript, with no dependencies and full support for standard and extended Bash glob features, including braces, extglobs, POSIX brackets, and regular expressions."
+    },
+    {
+      "name": "postcss",
+      "versions": [
+        "8.5.26"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/postcss@8.5.26/node_modules/postcss"
+      ],
+      "license": "MIT",
+      "author": "Andrey Sitnik",
+      "homepage": "https://postcss.org/",
+      "description": "Tool for transforming styles with JS plugins"
+    },
+    {
+      "name": "require-from-string",
+      "versions": [
+        "2.0.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/require-from-string@2.0.2/node_modules/require-from-string"
+      ],
+      "license": "MIT",
+      "author": "Vsevolod Strukchinsky",
+      "homepage": "https://github.com/floatdrop/require-from-string#readme",
+      "description": "Require module from string"
+    },
+    {
+      "name": "rollup",
+      "versions": [
+        "4.62.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/rollup@4.62.4/node_modules/rollup"
+      ],
+      "license": "MIT",
+      "author": "Rich Harris",
+      "homepage": "https://rollupjs.org/",
+      "description": "Next-generation ES module bundler"
+    },
+    {
+      "name": "safe-buffer",
+      "versions": [
+        "5.2.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/safe-buffer@5.2.1/node_modules/safe-buffer"
+      ],
+      "license": "MIT",
+      "author": "Feross Aboukhadijeh",
+      "homepage": "https://github.com/feross/safe-buffer",
+      "description": "Safer Node.js Buffer API"
+    },
+    {
+      "name": "snake-case",
+      "versions": [
+        "3.0.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/snake-case@3.0.4/node_modules/snake-case"
+      ],
+      "license": "MIT",
+      "author": "Blake Embrey",
+      "homepage": "https://github.com/blakeembrey/change-case/tree/master/packages/snake-case#readme",
+      "description": "Transform into a lower case string with underscores between words"
+    },
+    {
+      "name": "stackback",
+      "versions": [
+        "0.0.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/stackback@0.0.2/node_modules/stackback"
+      ],
+      "license": "MIT",
+      "author": "Roman Shtylman",
+      "homepage": "https://github.com/shtylman/node-stackback#readme",
+      "description": "return list of CallSite objects from a captured stacktrace"
+    },
+    {
+      "name": "std-env",
+      "versions": [
+        "3.10.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/std-env@3.10.0/node_modules/std-env"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/unjs/std-env#readme",
+      "description": "Runtime agnostic JS utils"
+    },
+    {
+      "name": "strip-literal",
+      "versions": [
+        "3.1.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/strip-literal@3.1.0/node_modules/strip-literal"
+      ],
+      "license": "MIT",
+      "author": "Anthony Fu",
+      "homepage": "https://github.com/antfu/strip-literal#readme",
+      "description": "Strip comments and string literals from JavaScript code"
+    },
+    {
+      "name": "superstruct",
+      "versions": [
+        "0.15.5",
+        "2.0.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/superstruct@0.15.5/node_modules/superstruct",
+        "/opt/warden/node_modules/.pnpm/superstruct@2.0.2/node_modules/superstruct"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/ianstormtaylor/superstruct#readme",
+      "description": "A simple and composable way to validate data in JavaScript (and TypeScript)."
+    },
+    {
+      "name": "tinybench",
+      "versions": [
+        "2.9.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/tinybench@2.9.0/node_modules/tinybench"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/tinylibs/tinybench#readme"
+    },
+    {
+      "name": "tinyexec",
+      "versions": [
+        "0.3.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/tinyexec@0.3.2/node_modules/tinyexec"
+      ],
+      "license": "MIT",
+      "author": "James Garbutt",
+      "homepage": "https://github.com/tinylibs/tinyexec#readme",
+      "description": "A minimal library for executing processes in Node"
+    },
+    {
+      "name": "tinyglobby",
+      "versions": [
+        "0.2.17"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/tinyglobby@0.2.17/node_modules/tinyglobby"
+      ],
+      "license": "MIT",
+      "author": "Superchupu",
+      "homepage": "https://superchupu.dev/tinyglobby",
+      "description": "A fast and minimal alternative to globby and fast-glob"
+    },
+    {
+      "name": "tinypool",
+      "versions": [
+        "1.1.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/tinypool@1.1.1/node_modules/tinypool"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/tinylibs/tinypool#readme",
+      "description": "A minimal and tiny Node.js Worker Thread Pool implementation, a fork of piscina, but with fewer features"
+    },
+    {
+      "name": "tinyrainbow",
+      "versions": [
+        "2.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/tinyrainbow@2.0.0/node_modules/tinyrainbow"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/tinylibs/tinyrainbow#readme",
+      "description": "A small library to print colourful messages."
+    },
+    {
+      "name": "tinyspy",
+      "versions": [
+        "4.0.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/tinyspy@4.0.4/node_modules/tinyspy"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/tinylibs/tinyspy#readme",
+      "description": "A minimal fork of nanospy, with more features"
+    },
+    {
+      "name": "toml",
+      "versions": [
+        "3.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/toml@3.0.0/node_modules/toml"
+      ],
+      "license": "MIT",
+      "author": "Michelle Tilley",
+      "homepage": "https://github.com/BinaryMuse/toml-node#readme",
+      "description": "TOML parser for Node.js (parses TOML spec v0.4.0)"
+    },
+    {
+      "name": "tr46",
+      "versions": [
+        "0.0.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/tr46@0.0.3/node_modules/tr46"
+      ],
+      "license": "MIT",
+      "author": "Sebastian Mayr",
+      "homepage": "https://github.com/Sebmaster/tr46.js#readme",
+      "description": "An implementation of the Unicode TR46 spec"
+    },
+    {
+      "name": "tsx",
+      "versions": [
+        "4.23.12"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/tsx@4.23.12/node_modules/tsx"
+      ],
+      "license": "MIT",
+      "author": "Hiroki Osame",
+      "homepage": "https://tsx.hirok.io",
+      "description": "TypeScript Execute (tsx): Node.js enhanced with esbuild to run TypeScript & ESM files"
+    },
+    {
+      "name": "undici-types",
+      "versions": [
+        "6.21.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/undici-types@6.21.0/node_modules/undici-types"
+      ],
+      "license": "MIT",
+      "homepage": "https://undici.nodejs.org",
+      "description": "A stand-alone types package for Undici"
+    },
+    {
+      "name": "utf-8-validate",
+      "versions": [
+        "6.0.6"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/utf-8-validate@6.0.6/node_modules/utf-8-validate"
+      ],
+      "license": "MIT",
+      "author": "Einar Otto Stangvik",
+      "homepage": "https://github.com/websockets/utf-8-validate",
+      "description": "Check if a buffer contains valid UTF-8"
+    },
+    {
+      "name": "uuid",
+      "versions": [
+        "8.3.2",
+        "14.0.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/uuid@8.3.2/node_modules/uuid",
+        "/opt/warden/node_modules/.pnpm/uuid@14.0.1/node_modules/uuid"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/uuidjs/uuid#readme",
+      "description": "RFC9562 UUIDs"
+    },
+    {
+      "name": "vite",
+      "versions": [
+        "7.3.6"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/vite@7.3.6_@types+node@22.20.1_tsx@4.23.12/node_modules/vite"
+      ],
+      "license": "MIT",
+      "author": "Evan You",
+      "homepage": "https://vite.dev",
+      "description": "Native-ESM powered web dev build tool"
+    },
+    {
+      "name": "vite-node",
+      "versions": [
+        "3.2.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/vite-node@3.2.4_@types+node@22.20.1_tsx@4.23.12/node_modules/vite-node"
+      ],
+      "license": "MIT",
+      "author": "Anthony Fu",
+      "homepage": "https://github.com/vitest-dev/vitest/blob/main/packages/vite-node#readme",
+      "description": "Vite as Node.js runtime"
+    },
+    {
+      "name": "vitest",
+      "versions": [
+        "3.2.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/vitest@3.2.7_@types+node@22.20.1_tsx@4.23.12/node_modules/vitest"
+      ],
+      "license": "MIT",
+      "author": "Anthony Fu",
+      "homepage": "https://github.com/vitest-dev/vitest#readme",
+      "description": "Next generation testing framework powered by Vite"
+    },
+    {
+      "name": "whatwg-url",
+      "versions": [
+        "5.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/whatwg-url@5.0.0/node_modules/whatwg-url"
+      ],
+      "license": "MIT",
+      "author": "Sebastian Mayr",
+      "homepage": "https://github.com/jsdom/whatwg-url#readme",
+      "description": "An implementation of the WHATWG URL Standard's URL API and parsing machinery"
+    },
+    {
+      "name": "why-is-node-running",
+      "versions": [
+        "2.3.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/why-is-node-running@2.3.0/node_modules/why-is-node-running"
+      ],
+      "license": "MIT",
+      "author": "Mathias Buus",
+      "homepage": "https://github.com/mafintosh/why-is-node-running",
+      "description": "Node is running but you don't know why? why-is-node-running is here to help you."
+    },
+    {
+      "name": "ws",
+      "versions": [
+        "7.5.13",
+        "8.21.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/ws@7.5.13_bufferutil@4.1.0_utf-8-validate@6.0.6/node_modules/ws",
+        "/opt/warden/node_modules/.pnpm/ws@8.21.3_bufferutil@4.1.0_utf-8-validate@6.0.6/node_modules/ws"
+      ],
+      "license": "MIT",
+      "author": "Einar Otto Stangvik",
+      "homepage": "https://github.com/websockets/ws",
+      "description": "Simple to use, blazing fast and thoroughly tested websocket client and server for Node.js"
+    }
+  ],
+  "(MIT OR Apache-2.0)": [
+    {
+      "name": "@coral-xyz/anchor",
+      "versions": [
+        "0.28.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@coral-xyz+anchor@0.28.0_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6/node_modules/@coral-xyz/anchor"
+      ],
+      "license": "(MIT OR Apache-2.0)",
+      "homepage": "https://github.com/coral-xyz/anchor#readme",
+      "description": "Anchor client"
+    }
+  ],
+  "Apache-2.0": [
+    {
+      "name": "@coral-xyz/borsh",
+      "versions": [
+        "0.28.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@coral-xyz+borsh@0.28.0_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6_/node_modules/@coral-xyz/borsh"
+      ],
+      "license": "Apache-2.0",
+      "description": "Anchor Borsh"
+    },
+    {
+      "name": "@playwright/test",
+      "versions": [
+        "1.62.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@playwright+test@1.62.1/node_modules/@playwright/test"
+      ],
+      "license": "Apache-2.0",
+      "author": "Microsoft Corporation",
+      "homepage": "https://playwright.dev",
+      "description": "A high-level API to automate web browsers"
+    },
+    {
+      "name": "@solana/buffer-layout-utils",
+      "versions": [
+        "0.2.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+buffer-layout-utils@0.2.0_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6/node_modules/@solana/buffer-layout-utils"
+      ],
+      "license": "Apache-2.0",
+      "author": "Solana Maintainers",
+      "homepage": "https://github.com/solana-labs/buffer-layout-utils#readme"
+    },
+    {
+      "name": "@solana/spl-memo",
+      "versions": [
+        "0.2.5"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+spl-memo@0.2.5_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6_/node_modules/@solana/spl-memo"
+      ],
+      "license": "Apache-2.0",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/solana-labs/solana-program-library#readme",
+      "description": "SPL Memo Program JS API"
+    },
+    {
+      "name": "@solana/spl-token",
+      "versions": [
+        "0.4.9",
+        "0.4.14"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+spl-token@0.4.9_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_utf-8-_6ae4a7f6074b28c0882b795db6cfa2a9/node_modules/@solana/spl-token",
+        "/opt/warden/node_modules/.pnpm/@solana+spl-token@0.4.14_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_utf-8_3ed350ec948d2f6646f78e07a6ecb7d2/node_modules/@solana/spl-token"
+      ],
+      "license": "Apache-2.0",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/solana-labs/solana-program-library#readme",
+      "description": "SPL Token Program JS API"
+    },
+    {
+      "name": "@solana/spl-token-group",
+      "versions": [
+        "0.0.7"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+spl-token-group@0.0.7_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3__d371257137ded6f26d0a33bd5ef15d81/node_modules/@solana/spl-token-group"
+      ],
+      "license": "Apache-2.0",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/solana-labs/solana-program-library#readme",
+      "description": "SPL Token Group Interface JS API"
+    },
+    {
+      "name": "@solana/spl-token-metadata",
+      "versions": [
+        "0.1.6"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+spl-token-metadata@0.1.6_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9_0009ac5a42a9adac12f3888b98daeec0/node_modules/@solana/spl-token-metadata"
+      ],
+      "license": "Apache-2.0",
+      "author": "Solana Labs Maintainers",
+      "homepage": "https://github.com/solana-labs/solana-program-library#readme",
+      "description": "SPL Token Metadata Interface JS API"
+    },
+    {
+      "name": "@swc/helpers",
+      "versions": [
+        "0.5.23"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@swc+helpers@0.5.23/node_modules/@swc/helpers"
+      ],
+      "license": "Apache-2.0",
+      "author": "강동윤",
+      "homepage": "https://swc.rs",
+      "description": "External helpers for the swc project."
+    },
+    {
+      "name": "bigint-buffer",
+      "versions": [
+        "1.1.5"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/bigint-buffer@1.1.5/node_modules/bigint-buffer"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/no2chem/bigint-buffer#readme",
+      "description": "bigint to buffer conversion with native support"
+    },
+    {
+      "name": "borsh",
+      "versions": [
+        "0.7.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/borsh@0.7.0/node_modules/borsh"
+      ],
+      "license": "Apache-2.0",
+      "author": "Near Inc",
+      "homepage": "https://github.com/near/borsh-js#readme",
+      "description": "Binary Object Representation Serializer for Hashing"
+    },
+    {
+      "name": "expect-type",
+      "versions": [
+        "1.4.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/expect-type@1.4.0/node_modules/expect-type"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/mmkal/expect-type#readme"
+    },
+    {
+      "name": "playwright",
+      "versions": [
+        "1.62.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/playwright@1.62.1/node_modules/playwright"
+      ],
+      "license": "Apache-2.0",
+      "author": "Microsoft Corporation",
+      "homepage": "https://playwright.dev",
+      "description": "A high-level API to automate web browsers"
+    },
+    {
+      "name": "playwright-core",
+      "versions": [
+        "1.62.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/playwright-core@1.62.1/node_modules/playwright-core"
+      ],
+      "license": "Apache-2.0",
+      "author": "Microsoft Corporation",
+      "homepage": "https://playwright.dev",
+      "description": "A high-level API to automate web browsers"
+    },
+    {
+      "name": "typescript",
+      "versions": [
+        "5.9.3"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript"
+      ],
+      "license": "Apache-2.0",
+      "author": "Microsoft Corp.",
+      "homepage": "https://www.typescriptlang.org/",
+      "description": "TypeScript is a language for application scale JavaScript development"
+    }
+  ],
+  "ISC": [
+    {
+      "name": "@marinade.finance/marinade-ts-sdk",
+      "versions": [
+        "6.0.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@marinade.finance+marinade-ts-sdk@6.0.1_bufferutil@4.1.0_fastestsmallesttextencoderdeco_fe33246bac5c71068d0c871818dadafc/node_modules/@marinade.finance/marinade-ts-sdk"
+      ],
+      "license": "ISC",
+      "homepage": "https://github.com/marinade-finance/marinade-ts-sdk#readme",
+      "description": "Marinade SDK for Typescript"
+    },
+    {
+      "name": "@marinade.finance/native-staking-sdk",
+      "versions": [
+        "1.3.4"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@marinade.finance+native-staking-sdk@1.3.4_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6/node_modules/@marinade.finance/native-staking-sdk"
+      ],
+      "license": "ISC",
+      "homepage": "https://github.com/marinade-finance/native-staking#readme",
+      "description": "Marinade SDK for the Native Staking"
+    },
+    {
+      "name": "@solana/spl-stake-pool",
+      "versions": [
+        "1.1.8"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/@solana+spl-stake-pool@1.1.8_bufferutil@4.1.0_fastestsmallesttextencoderdecoder@1.0.22__d5eef510e5579a9a1bc3720d42108a18/node_modules/@solana/spl-stake-pool"
+      ],
+      "license": "ISC",
+      "homepage": "https://solana.com",
+      "description": "SPL Stake Pool Program JS API"
+    },
+    {
+      "name": "json-stringify-safe",
+      "versions": [
+        "5.0.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/json-stringify-safe@5.0.1/node_modules/json-stringify-safe"
+      ],
+      "license": "ISC",
+      "author": "Isaac Z. Schlueter",
+      "homepage": "https://github.com/isaacs/json-stringify-safe",
+      "description": "Like JSON.stringify, but doesn't blow up on circular refs."
+    },
+    {
+      "name": "picocolors",
+      "versions": [
+        "1.1.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/picocolors@1.1.1/node_modules/picocolors"
+      ],
+      "license": "ISC",
+      "author": "Alexey Raspopov",
+      "homepage": "https://github.com/alexeyraspopov/picocolors#readme",
+      "description": "The tiniest and the fastest library for terminal output formatting with ANSI colors"
+    },
+    {
+      "name": "siginfo",
+      "versions": [
+        "2.0.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/siginfo@2.0.0/node_modules/siginfo"
+      ],
+      "license": "ISC",
+      "author": "Emil Bay",
+      "homepage": "https://github.com/emilbayes/siginfo#readme",
+      "description": "Utility module to print pretty messages on SIGINFO/SIGUSR1"
+    }
+  ],
+  "BSD-3-Clause": [
+    {
+      "name": "fast-uri",
+      "versions": [
+        "3.1.5"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/fast-uri@3.1.5/node_modules/fast-uri"
+      ],
+      "license": "BSD-3-Clause",
+      "author": "Vincent Le Goff",
+      "homepage": "https://github.com/fastify/fast-uri",
+      "description": "Dependency-free RFC 3986 URI toolbox"
+    },
+    {
+      "name": "ieee754",
+      "versions": [
+        "1.2.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/ieee754@1.2.1/node_modules/ieee754"
+      ],
+      "license": "BSD-3-Clause",
+      "author": "Feross Aboukhadijeh",
+      "homepage": "https://github.com/feross/ieee754#readme",
+      "description": "Read/write IEEE754 floating point numbers from/to a Buffer or array-like object"
+    },
+    {
+      "name": "source-map-js",
+      "versions": [
+        "1.2.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/source-map-js@1.2.1/node_modules/source-map-js"
+      ],
+      "license": "BSD-3-Clause",
+      "author": "Valentin 7rulnik Semirulnik",
+      "homepage": "https://github.com/7rulnik/source-map-js",
+      "description": "Generates and consumes source maps"
+    },
+    {
+      "name": "stream-chain",
+      "versions": [
+        "2.2.5"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/stream-chain@2.2.5/node_modules/stream-chain"
+      ],
+      "license": "BSD-3-Clause",
+      "author": "Eugene Lazutkin",
+      "homepage": "https://github.com/uhop/stream-chain#readme",
+      "description": "Chain functions as transform streams."
+    },
+    {
+      "name": "stream-json",
+      "versions": [
+        "1.9.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/stream-json@1.9.1/node_modules/stream-json"
+      ],
+      "license": "BSD-3-Clause",
+      "author": "Eugene Lazutkin",
+      "homepage": "http://github.com/uhop/stream-json",
+      "description": "stream-json is the micro-library of Node.js stream components for creating custom JSON processing pipelines with a minimal memory footprint. It can parse JSON files far exceeding available memory streaming individual primitives using a SAX-inspired API. Includes utilities to stream JSON database dumps."
+    }
+  ],
+  "CC0-1.0": [
+    {
+      "name": "fastestsmallesttextencoderdecoder",
+      "versions": [
+        "1.0.22"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/fastestsmallesttextencoderdecoder@1.0.22/node_modules/fastestsmallesttextencoderdecoder"
+      ],
+      "license": "CC0-1.0",
+      "author": "Jack Giffin",
+      "homepage": "https://github.com/anonyco/FastestSmallestTextEncoderDecoder#quick-start",
+      "description": "The fastest smallest Javascript polyfill for the encode of TextEncoder and decode of TextDecoder for UTF-8 only. Made by AnonyCo with ❤️ from 🐕s."
+    }
+  ],
+  "(MIT AND Zlib)": [
+    {
+      "name": "pako",
+      "versions": [
+        "2.2.0"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/pako@2.2.0/node_modules/pako"
+      ],
+      "license": "(MIT AND Zlib)",
+      "homepage": "https://github.com/nodeca/pako#readme",
+      "description": "zlib port to javascript - fast, modularized, with browser support"
+    }
+  ],
+  "LGPL-3.0-only": [
+    {
+      "name": "rpc-websockets",
+      "versions": [
+        "9.3.9"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/rpc-websockets@9.3.9/node_modules/rpc-websockets"
+      ],
+      "license": "LGPL-3.0-only",
+      "author": "Elpheria",
+      "homepage": "https://github.com/elpheria/rpc-websockets#readme",
+      "description": "JSON-RPC 2.0 implementation over WebSockets for Node.js"
+    }
+  ],
+  "Unknown": [
+    {
+      "name": "text-encoding-utf-8",
+      "versions": [
+        "1.0.2"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/text-encoding-utf-8@1.0.2/node_modules/text-encoding-utf-8"
+      ],
+      "license": "Unknown",
+      "author": "Erik Arvidsson",
+      "homepage": "https://github.com/arv/text-encoding-utf-8",
+      "description": "UTF-8 only polyfill for the Encoding Living Standard's API."
+    }
+  ],
+  "0BSD": [
+    {
+      "name": "tslib",
+      "versions": [
+        "2.8.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib"
+      ],
+      "license": "0BSD",
+      "author": "Microsoft Corp.",
+      "homepage": "https://www.typescriptlang.org/",
+      "description": "Runtime library for TypeScript helper functions"
+    }
+  ],
+  "BSD-2-Clause": [
+    {
+      "name": "webidl-conversions",
+      "versions": [
+        "3.0.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/webidl-conversions@3.0.1/node_modules/webidl-conversions"
+      ],
+      "license": "BSD-2-Clause",
+      "author": "Domenic Denicola",
+      "homepage": "https://github.com/jsdom/webidl-conversions#readme",
+      "description": "Implements the WebIDL algorithms for converting to and from JavaScript values"
+    }
+  ]
+}

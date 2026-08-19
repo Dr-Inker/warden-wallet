@@ -12,13 +12,18 @@
 # CLAUDE.md and are not shipped).
 #
 # `cargo deny check` (no build) was run against this config on 2026-08-19;
-# results (round 1 at commit b320ecd, round 2 fixes at the commit this file
-# is now part of) are recorded in
+# results (round 1 at commit b320ecd, round 2 at d8e3f54, round 3 at the
+# commit this file is now part of) are recorded in
 # .superpowers/sdd/2026-08-18-warden-phase1b-execute-swap/task-11-report.md
-# and in docs/security/THIRD_PARTY_NOTICES.md (license summary). Task 9 will
-# add a corresponding evidence-block entry to docs/program/PHASE1B-MEASUREMENTS.md
-# (that file does not exist yet as of this task — do not treat this comment
-# as a claim that it does).
+# and in docs/security/THIRD_PARTY_NOTICES.md (license summary).
+#
+# Corrected 2026-08-19 (Codex round-2 review caught this): the precedent for
+# this kind of evidence block is docs/program/PHASE1A-MEASUREMENTS.md, which
+# DOES exist (committed, Task 1). docs/program/PHASE1B-MEASUREMENTS.md ALSO
+# now exists (committed by a concurrent Task 9 agent partway through this
+# task) but, as of this comment, carries no Task 11/L9/cargo-deny entry yet
+# — Task 9 owns adding that evidence-block row, this file does not attempt
+# to add it on Task 9's behalf.
 
 [graph]
 targets = []

@@ -233,3 +233,12 @@ jobs:
 
       - name: Run spikes/*/ts tests
         run: pnpm --filter './spikes/**' --if-present test
+
+      # spikes/ advisories (e.g. bigint-buffer via spikes/03-txbudget/ts's
+      # Marinade SDK chain) are excluded from the main job's blocking
+      # `pnpm audit` (scripts/supply-chain-gate.sh) precisely so they land
+      # here instead — non-blocking (`continue-on-error: true` on the whole
+      # job), but still visible in CI's run log rather than never audited
+      # anywhere.
+      - name: Audit spikes/*/ts (non-blocking — informational only)
+        run: pnpm audit --audit-level=high || echo "spikes/ advisory(ies) present — non-blocking, see job log above"

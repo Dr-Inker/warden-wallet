@@ -29,44 +29,57 @@ Toolchain versions are pinned exactly as recorded in `docs/TOOLCHAIN.md`:
 | Solana CLI (Agave) / `cargo-build-sbf` | `3.1.10` (platform-tools v1.52) |
 | Anchor CLI (`avm`) | `1.1.2` |
 
-**The reproducible recipe for a real release is `anchor build --verifiable`
-(Docker-based), not plain `anchor build`.** Plain `anchor build` links
-against whatever the invoking host happens to have installed beyond the
-toolchain table above (system libc, linker, etc.) and is not guaranteed
-byte-identical across machines; `--verifiable` builds inside a pinned Docker
-image specifically so a second party can reproduce the exact bytes:
+**The reproducible recipe for a real release — the ONLY one release rows may
+use — is `anchor build --verifiable` (Docker-based), pinned by immutable
+digest, never plain `anchor build` and never a bare tag.** Plain `anchor
+build` links against whatever the invoking host happens to have installed
+beyond the toolchain table above (system libc, linker, etc.) and is not
+guaranteed byte-identical across machines. A tag like `:v1.1.2` can be
+repointed by whoever controls the `ottersec` quay.io namespace — it names
+"the image that was v1.1.2 last time anyone checked," not a fixed set of
+bytes — so a real release recipe pins the immutable content digest instead:
 
 ```sh
 git checkout <release-tag>
-anchor build --verifiable   --solana-version 3.1.10   --docker-image quay.io/ottersec/anchor:v1.1.2
+anchor build --verifiable   --solana-version 3.1.10   --docker-image quay.io/ottersec/anchor@sha256:4ef4cf067fb1332ddd2b997a48ed05257854f51067ade342d63ebdc1039fe72e
 sha256sum target/deploy/warden.so
 ```
 
-**Where the image tag comes from — confirmed from Anchor 1.1.2's own
-source, not guessed.** `anchor build --help` (checked 2026-08-19) confirms
+**Where the image reference comes from — resolved, not guessed, and not
+merely tag-pinned.** `anchor build --help` (checked 2026-08-19) confirms
 Anchor CLI `1.1.2` supports `-v/--verifiable` plus `--solana-version` and
 `--docker-image` (verifiable-only) and a `--bootstrap` flag. Reading the
 Anchor 1.1.2 source directly (`cli/src/config.rs`, `Config::docker()`, from
 the local `~/.cargo/git` checkout pinned by `avm`'s own `--tag v1.1.2`
 install — see `.github/workflows/ci.yml`) shows the **default** image when
-`--docker-image` is omitted is:
-
-```rust
-format!("quay.io/ottersec/anchor:v{version}")   // version = the Anchor CLI's own version, i.e. 1.1.2
-```
-
-i.e. `quay.io/ottersec/anchor:v1.1.2` — which is what the recipe above pins
-explicitly rather than relying on the default resolving the same way on
-every machine. **Still not executed in this task**: Task 11 is tooling/docs
-only, another agent owns the in-flight Rust build in this branch, and a
-Docker-based verifiable build is a second, heavier build of the program that
-would race it. The plain, **non-reproducible** `anchor build` recipe below
-is what this repo's seed row was actually produced by, and is labeled as
-such in the table.
+`--docker-image` is omitted is `format!("quay.io/ottersec/anchor:v{version}")`
+— i.e. the tag `quay.io/ottersec/anchor:v1.1.2`. That tag was then resolved
+to its immutable manifest-list digest via a direct registry API query (no
+image pull, no build — a single unauthenticated HEAD-equivalent request):
 
 ```sh
-# NON-REPRODUCIBLE — host-dependent, dev/local builds only. The seed row
-# below was built this way, not via --verifiable.
+$ curl -sI     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json"     https://quay.io/v2/ottersec/anchor/manifests/v1.1.2 | grep -i docker-content-digest
+docker-content-digest: sha256:4ef4cf067fb1332ddd2b997a48ed05257854f51067ade342d63ebdc1039fe72e
+```
+
+Resolved 2026-08-19; verbatim output kept in the Task 11 fix report ("Fix
+report — round 2"). **This digest may need re-resolving if `ottersec`
+publishes a new `v1.1.2` build** (digests are immutable per-push, but a tag
+can be force-repointed to a new digest — if that ever happens, the pin above
+goes stale and must be re-queried, not silently trusted). **Still not
+executed as a build in this task**: Task 11 is tooling/docs only, another
+agent owns the in-flight Rust build in this branch, and a Docker-based
+verifiable build is a second, heavier build of the program that would race
+it — the digest was resolved via a metadata-only registry query, not by
+running the build.
+
+The plain, **non-reproducible** `anchor build` command below is what this
+repo's seed row was actually produced by (it predates this fix — real
+release rows must not use it):
+
+```sh
+# NON-REPRODUCIBLE — host-dependent, dev/local builds only, NEVER for a real
+# release row. The seed row below was built this way, not via --verifiable.
 git checkout <release-tag>
 anchor build
 sha256sum target/deploy/warden.so
@@ -75,7 +88,7 @@ sha256sum target/deploy/warden.so
 **Fallback / cross-check tool: `solana-verify`.** Not installed on this host
 (`command -v solana-verify` → not found, checked 2026-08-19). When adopted,
 `solana-verify build` (mirrors `anchor build --verifiable` via the same
-pinned Docker image) and `solana-verify get-program-hash --url <rpc>
+digest-pinned Docker image) and `solana-verify get-program-hash --url <rpc>
 <program-id>` (reads the **on-chain** program's hash directly, independent
 of a local build — this is what `scripts/deploy-gate.sh` check 4a is
 specified to use) are the two commands this table's "solana-verify output"
@@ -102,7 +115,13 @@ other than exercising the tool.
 ## Adding a new row
 
 1. From a clean checkout at the release tag (`git status` clean, `git log -1`
-   matches the tag), run `anchor build`.
+   matches the tag), run `anchor build --verifiable` with the pinned,
+   digest-referenced Docker image from the recipe above — **never** plain
+   `anchor build` for a row that is a real release candidate (that recipe is
+   for dev/local builds only, see the NON-REPRODUCIBLE block above). If the
+   pinned digest is stale (`ottersec` republished `v1.1.2` under a new
+   digest), re-resolve it first with the `curl`/`docker-content-digest`
+   query above and update the recipe block before building.
 2. `sha256sum target/deploy/warden.so` — this is the hash.
 3. Once a devnet/mainnet deployment exists, run
    `solana-verify get-program-hash --url <rpc-url> <program-id>` and confirm

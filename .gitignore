@@ -8,6 +8,9 @@ test-ledger
 .env.*
 !.env.example
 .superpowers/
+# NOT excluded (contrast with the line above): docs/security/third-party/ —
+# small, committed raw cargo-deny/pnpm-licenses output. See
+# docs/security/THIRD_PARTY_NOTICES.md.
 # Review artefacts written by scripts/review.sh. Redundant with the line above —
 # stated explicitly because this is a public repo and a findings file quotes source.
 .superpowers/reviews/

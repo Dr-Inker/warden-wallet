@@ -7,13 +7,22 @@ the two commands below; this file is evidence, not a hand-maintained legal
 document.
 
 ```sh
-cargo deny list                 # Rust — license -> crate@version, from Cargo.lock
-pnpm licenses ls                # TypeScript — package -> license, from pnpm-lock.yaml
+cargo deny list                     # Rust — license -> crate@version, from Cargo.lock
+pnpm licenses list --json           # TypeScript — package -> license, from pnpm-lock.yaml
 ```
 
-Full raw output of both commands as run 2026-08-19 is kept alongside the
-Task 11 fix report (`.superpowers/sdd/2026-08-18-warden-phase1b-execute-swap/task-11-report.md`,
-"Fix report — round 1").
+**This file is a hand-written summary, not the raw output.** The full raw
+output of both commands as run 2026-08-19 is committed alongside it —
+`docs/security/third-party/cargo-deny-list.txt` (human-format `cargo deny
+list`) and `docs/security/third-party/pnpm-licenses.json` (`pnpm licenses
+list --json`) — small text files, not gitignored, so a clone of this repo
+carries the actual evidence, not just a pointer to a report that lives
+outside git (`.superpowers/` is gitignored per `CLAUDE.md`; the Task 11 fix
+report there has the same output too, but it is not the durable copy).
+Regenerate both files (the commands above, redirected to those two paths) on
+any dependency change; this summary table can go stale independently of
+them, so treat the two files under `docs/security/third-party/` as the
+source of truth and this table as a convenience index into them.
 
 ## Rust (`cargo deny list`, root workspace: `programs/warden`, `programs/test-middleman`)
 

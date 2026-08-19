@@ -65,13 +65,54 @@ else
 fi
 
 echo
-echo "-- 3/4: pnpm audit --audit-level=high --"
+echo "-- 3/4: pnpm audit --audit-level=high, SCOPED to shipped code (spikes/ excluded from the blocking gate) --"
+# `pnpm audit` does NOT support `--filter` (verified 2026-08-19: `pnpm
+# --filter '!./spikes/**' audit --audit-level=high` still reports the
+# spikes-only bigint-buffer/uuid advisories — pnpm audits the whole merged
+# lockfile regardless of any workspace filter passed before the `audit`
+# subcommand). So this gate audits the whole lockfile via `--json`, then
+# uses jq to drop any advisory whose EVERY finding path is entirely under a
+# `spikes__*` workspace project (pnpm's audit JSON prefixes each dependency
+# path with the mangled importer name, e.g. `spikes__03-txbudget__ts>...`;
+# "entirely under spikes" means every single path for that advisory —
+# across every finding — starts with `spikes__`, not just some of them, so
+# an advisory that also reaches shipped code through some other path still
+# blocks). This is the "run pnpm audit --json + jq to ignore advisories
+# whose paths are entirely under spikes/" option, chosen over a temp
+# workspace file because it needs no extra file and is easy to unit-verify
+# (see below). The non-blocking spikes-audit CI job (.github/workflows/ci.yml)
+# covers spikes/ advisories on its own, separately, non-blocking.
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "[dry-run] would run: pnpm audit --audit-level=high"
+  echo "[dry-run] would run: pnpm audit --audit-level=high (human-readable log)"
+  echo "[dry-run] would run: pnpm audit --json | jq -e '...spikes__-only filter...' (the actual gate decision)"
 else
-  if ! pnpm audit --audit-level=high; then
-    echo "FAIL: pnpm audit found high/critical advisories"
+  # Human-readable output for the log — informational, not what gates.
+  pnpm audit --audit-level=high || true
+  echo
+  echo "-- scoped gate decision (spikes__* advisories excluded) --"
+  audit_json="$(pnpm audit --json || true)"
+  if [ -z "$audit_json" ]; then
+    echo "FAIL: \`pnpm audit --json\` produced no output — cannot evaluate the scoped gate"
     status=1
+  else
+    scoped_hits="$(echo "$audit_json" | jq '
+      [.advisories // {} | to_entries[] | .value
+       | select(
+           ((.findings | map(.paths) | add // []) | all(startswith("spikes__")))
+           | not
+         )
+       | select(.severity == "high" or .severity == "critical")
+      ]
+    ')"
+    scoped_count="$(echo "$scoped_hits" | jq 'length')"
+    if [ "$scoped_count" -gt 0 ]; then
+      echo "FAIL: $scoped_count high/critical advisory(ies) reach shipped code (outside spikes/):"
+      echo "$scoped_hits" | jq -r '.[] | "  - \(.module_name) (\(.severity)): \(.url)"'
+      status=1
+    else
+      spikes_only_count="$(echo "$audit_json" | jq '[.advisories // {} | to_entries[] | select(.value.severity == "high" or .value.severity == "critical")] | length')"
+      echo "OK: 0 high/critical advisories reach shipped code; $spikes_only_count high/critical advisory(ies) exist but are entirely under spikes/ (non-blocking; see the spikes-audit CI job)"
+    fi
   fi
 fi
 
