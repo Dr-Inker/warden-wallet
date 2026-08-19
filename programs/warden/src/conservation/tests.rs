@@ -1468,3 +1468,138 @@ fn c5_a_vault_owned_t22_account_whose_tail_becomes_truncated_is_rejected() {
         err(WardenError::ConservationViolated)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Round 2 regressions — Codex re-review (thread 01a0190f)
+// ---------------------------------------------------------------------------
+
+/// A vault-owned token account of `mint` holding `amount`, with an explicit
+/// lamport balance (the round-1 `vault_ata` helper pins lamports to `RENT`).
+fn vault_ata_with_lamports(key: Pubkey, mint: Pubkey, amount: u64, lamports: u64) -> Snap {
+    snapshot_one(&key, &SPL_TOKEN_ID, lamports, &plain_token_bytes(mint, vault(), amount), true)
+}
+
+#[test]
+fn r2_drain_excess_lamports_then_close_is_rejected() {
+    // The C4 bypass: `WithdrawExcessLamports` (tag 38) sends the over-funded
+    // rent to an attacker, then the *permitted* zero-balance `CloseAccount` to
+    // the PDA returns only the true rent. Every field the close path compared
+    // was fine, and the close branch exited before the lamport check.
+    let m = pk(2);
+    let before = vec![
+        vault_ata_with_lamports(pk(3), m, 0, RENT.saturating_add(9_000)),
+        plain_mint(m),
+    ];
+    let after = vec![snap_closed(pk(3)), plain_mint(m)];
+    assert_eq!(
+        compare_and_account(
+            &before,
+            &after,
+            &vault(),
+            &[intent(pk(3), vault(), 0)],
+            1_000_000,
+            1_000_000u64.saturating_add(RENT), // only the true rent came home
+        )
+        .unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn r2_an_honest_close_credits_the_pda_by_lamports_before() {
+    // The same shape, honest: the PDA is credited the FULL `lamports_before`.
+    let m = pk(2);
+    let over = RENT.saturating_add(9_000);
+    let before = vec![vault_ata_with_lamports(pk(3), m, 0, over), plain_mint(m)];
+    let after = vec![snap_closed(pk(3)), plain_mint(m)];
+    let out = compare_and_account(
+        &before,
+        &after,
+        &vault(),
+        &[intent(pk(3), vault(), 0)],
+        1_000_000,
+        1_000_000u64.saturating_add(over),
+    )
+    .expect("ok");
+    assert_eq!(out.sol, 0, "debit lamports_before, credit the PDA delta, net zero");
+    assert!(out.by_mint.is_empty());
+}
+
+#[test]
+fn r2_a_close_to_a_stranger_charges_the_whole_lamports_before() {
+    // The rule-4a backstop now charges the FULL balance, over-funding included
+    // — not just whatever a rent-exempt minimum would have been.
+    let m = pk(2);
+    let over = RENT.saturating_add(9_000);
+    let before = vec![vault_ata_with_lamports(pk(3), m, 0, over), plain_mint(m)];
+    let after = vec![snap_closed(pk(3)), plain_mint(m)];
+    let out = cmp(&before, &after, &[intent(pk(3), pk(0x55), 0)]).expect("ok");
+    assert_eq!(out.sol, over);
+}
+
+#[test]
+fn r2_a_partially_credited_close_is_rejected_even_with_other_sol_movement() {
+    // The shortfall must not be laundered through an unrelated WSOL inflow.
+    let m = pk(2);
+    let before = vec![
+        vault_ata_with_lamports(pk(3), m, 0, RENT.saturating_add(9_000)),
+        plain_mint(m),
+        vault_ata(pk(4), NATIVE_MINT, 0),
+        plain_mint(NATIVE_MINT),
+    ];
+    let after = vec![
+        snap_closed(pk(3)),
+        plain_mint(m),
+        vault_ata(pk(4), NATIVE_MINT, 50_000),
+        plain_mint(NATIVE_MINT),
+    ];
+    assert_eq!(
+        compare_and_account(
+            &before,
+            &after,
+            &vault(),
+            &[intent(pk(3), vault(), 0)],
+            0,
+            RENT,
+        )
+        .unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn r2_vault_controlled_mint_lamports_must_not_move() {
+    // Tag 38 drains excess lamports from MINTS too, and the pre-scan compared
+    // every field except the one that moved.
+    let m = pk(2);
+    let bytes = mint_bytes(Some(vault()), 1, 6, None);
+    let before = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT.saturating_add(9_000), &bytes, true)];
+    let after = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT, &bytes, true)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn r2_a_lamport_donation_to_a_vault_controlled_mint_is_also_rejected() {
+    let m = pk(2);
+    let bytes = mint_bytes(None, 1, 6, Some(vault()));
+    let before = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT, &bytes, true)];
+    let after = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT.saturating_add(1), &bytes, true)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn r2_a_mint_the_vault_does_not_control_may_move_lamports() {
+    // The freeze is scoped to mints the PDA holds an authority on; a stranger's
+    // mint passed through the instruction is none of our business.
+    let m = pk(2);
+    let bytes = mint_bytes(Some(pk(0x99)), 1, 6, None);
+    let before = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT.saturating_add(9_000), &bytes, true)];
+    let after = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT, &bytes, true)];
+    assert_eq!(cmp(&before, &after, &[]).expect("ok"), Outflow::default());
+}

@@ -27,7 +27,12 @@
 //!
 //! Two whole-list checks run before any of that: duplicate pubkeys are
 //! rejected (round 1, Codex C3), and every mint the vault holds an authority
-//! on is compared independently of any token account (round 1, Codex C1).
+//! on is compared independently of any token account — including its lamports
+//! (round 1 Codex C1, round 2 for the lamports).
+//!
+//! Two more run after: every [`CloseIntent`] must have been consumed exactly
+//! once, and the PDA's lamport gain must cover every vault-destination close's
+//! `lamports_before` in full (round 2, Codex — see [`handle_close`]).
 //!
 //! ## What "vault-owned" means here, and why it is decided in ONE place
 //!
@@ -104,6 +109,9 @@ pub fn compare_and_account(
 
     let mut net = Netter::default();
     let mut close_used = vec![false; closes.len()];
+    // Round 2 (Codex): Σ `lamports_before` over closes whose destination is the
+    // PDA — the inflow the PDA MUST have received. See `handle_close`.
+    let mut expected_close_credit: u64 = 0;
 
     // The PDA's own lamports. Both directions are recorded; the floor is
     // applied once, to the merged SOL figure, in `Netter::finish` — so a
@@ -181,7 +189,9 @@ pub fn compare_and_account(
             if let Some(used) = close_used.get_mut(j) {
                 *used = true;
             }
-            handle_close(intent, b, a, bt, vault, &mut net)?;
+            expected_close_credit = expected_close_credit
+                .checked_add(handle_close(intent, b, a, bt, vault, &mut net)?)
+                .ok_or(WardenError::Overflow)?;
             continue;
         }
 
@@ -239,6 +249,24 @@ pub fn compare_and_account(
         WardenError::ConservationViolated
     );
 
+    // Round 2 (Codex): the PDA must actually have received every lamport a
+    // vault-destination close was supposed to return. The netting in
+    // `handle_close` alone would only turn a shortfall into a *capped* SOL
+    // outflow; this makes it a reject, which is the right verdict because a
+    // short close means value left by a path the equation cannot attribute.
+    //
+    // This is a sound bound rather than an approximation: the SmartAccount PDA
+    // may never be writable to a CPI target (spec §5.2 rule 3, enforced above
+    // as `SelfCpiRejected`) and is owned by this program, so **no inner CPI can
+    // debit it**. During the CPI window its lamports can only rise, and the
+    // rise is therefore entirely attributable to credits — of which the closes
+    // are the ones we can name.
+    let pda_gain = pda_lamports_after.saturating_sub(pda_lamports_before);
+    require!(
+        pda_gain >= expected_close_credit,
+        WardenError::ConservationViolated
+    );
+
     Ok(net.finish())
 }
 
@@ -283,7 +311,14 @@ fn prescan_vault_mints(before: &[Snap], after: &[Snap], vault: &Pubkey) -> Resul
             && am.program == bm.program
             && am.tlv_hash == bm.tlv_hash
             && a.owner_program == b.owner_program
-            && a.data_len == b.data_len;
+            && a.data_len == b.data_len
+            // Round 2 (Codex): `WithdrawExcessLamports` (tag 38) drains a
+            // MINT's over-funded rent just as happily as a token account's,
+            // and every field above survives it untouched. A mint has no
+            // `amount` to back its lamports, so the only correct statement is
+            // that they must not move. Scoped to mints the PDA holds an
+            // authority on — a stranger's mint passing through is not ours.
+            && a.lamports == b.lamports;
         require!(identical, WardenError::ConservationViolated);
         // `supply` is still excluded: spec §5.2 rule 2a, re-confirmed in the
         // round-1 adjudication. A legitimate mint/burn changes it.
@@ -302,6 +337,31 @@ fn first_unused_intent(closes: &[CloseIntent], used: &[bool], key: &Pubkey) -> O
 }
 
 /// The rule-1a vault-sweep exception, plus rule 4a's backstop.
+///
+/// Returns the lamport inflow the PDA is **required** to have received on
+/// account of this close (`lamports_before` for a vault-destination close, 0
+/// otherwise); the caller checks the total against the PDA's actual gain.
+///
+/// ## Round 2 (Codex): the close path is no longer exempt from the lamport rule
+///
+/// Step 8's "lamports must not move on a non-native vault token account" sat
+/// *after* this branch, and this branch `continue`d — so `WithdrawExcessLamports`
+/// (tag 38) could send an over-funded ATA's excess rent to an attacker and the
+/// permitted zero-balance `CloseAccount` to the PDA would then sail through,
+/// because the token `amount` really was 0 and the destination really was the
+/// PDA. The close path cannot reuse step 8's equality (the account is *gone*
+/// AFTER, so `a.lamports` is 0 by construction), so it uses the accounting
+/// identity instead: **debit `lamports_before` unconditionally and let the
+/// PDA's own credit pay it back**.
+///
+/// That single rule now covers both rule-4a cases without a special case:
+/// - **vault destination** — debit `lamports_before`, and the PDA's inflow
+///   (already counted by the SOL equation) cancels it exactly, netting zero on
+///   the honest path. This is rule 4a's "nothing extra is added" restated as a
+///   matched pair rather than as an omission — and unlike an omission, it
+///   *detects* the mismatch instead of assuming it away.
+/// - **non-vault destination** — the same debit, with nothing to cancel it, is
+///   exactly the rule-4a backstop that was already here.
 fn handle_close(
     intent: &CloseIntent,
     b: &Snap,
@@ -309,7 +369,7 @@ fn handle_close(
     bt: &TokenSnap,
     vault: &Pubkey,
     net: &mut Netter,
-) -> Result<()> {
+) -> Result<u64> {
     // The account must actually be gone. An intent for a surviving account is
     // a decoder/comparison desync, and letting it pass would skip every field
     // check for that account.
@@ -328,19 +388,14 @@ fn handle_close(
     // mint here — `bt` is a token account.)
     require!(b.key != *vault, WardenError::ConservationViolated);
 
-    if intent.destination == *vault {
-        // Rule 4a: the rent arrives as an increase in the PDA's own lamports,
-        // which the SOL equation already sees. Adding it here as well would
-        // double-count it.
-    } else {
-        // Rule 4a's **backstop**. The decoder rejects a non-vault destination
-        // before the CPI ever runs (`DenyListed`), so reaching this line means
-        // the floor did not fire — the two controls are deliberately redundant
-        // and neither may be the only one. Charge the whole rent as SOL
-        // outflow.
-        net.add_sol_out(b.lamports)?;
-    }
-    Ok(())
+    // Every closed account's lamports left the account: debit them, always.
+    // For a vault-destination close the PDA's matching credit cancels this
+    // exactly; for any other destination nothing cancels it, which is rule 4a's
+    // backstop. (The decoder rejects a non-vault destination before the CPI
+    // ever runs — `DenyListed` — so the two controls stay deliberately
+    // redundant and neither is ever the only one.)
+    net.add_sol_out(b.lamports)?;
+    Ok(if intent.destination == *vault { b.lamports } else { 0 })
 }
 
 /// The mint of a vault-owned token account must be in the snapshot set and
