@@ -1,5 +1,8 @@
 # Warden Wallet — repo directives
 - Spec: docs/superpowers/specs/2026-08-18-warden-wallet-design.md (rev 8; §17 Assurance is binding process). Plans: docs/superpowers/plans/. Phase 1A measured costs + milestone review: docs/program/PHASE1A-MEASUREMENTS.md.
+- Phase 1B plan: docs/superpowers/plans/2026-08-18-warden-phase1b-execute-swap.md (rev 3). Task run order 0 → 10 → 1 → 2b → 2 → 3 → 4 → 5 → 6 → 8 → 9, Task 11 in parallel; there is deliberately no Task 7 (renumbered to 2b).
+- Assurance (spec §17) is binding: every Codex review is seeded with docs/security/INVARIANTS.md + docs/security/PRIOR-ART-FINDINGS.md and the named sibling files (transcript.rs, state/session.rs, errors.rs, buckets.rs); output is JSON validated against .codex/schemas/warden-findings.json; truth_status and evidence_type are separate axes; silence on a seeded invariant is a FAIL. Review profile lives at $CODEX_HOME/warden-review.config.toml, not in-repo.
+- Payload account indices are LOGICAL, one canonical mapping: logical[0]=smart_account, logical[1]=signer, logical[2+k]=remaining_accounts[k]. Never index the raw physical account slice; accounts_hash is over the logical list.
 - Published task/review ledgers: docs/spikes/PHASE0-LEDGER.md (Phase 0) and docs/spikes/PHASE1A-LEDGER.md (Phase 1A) — sanitized copies of the working SDD ledgers.
 - Never import from spikes/ into packages/ or apps/. Spikes are throwaway evidence.
 - Heavy Rust builds are serialized on this host; never run two cargo builds at once.

@@ -305,7 +305,13 @@ strength of 1A's numbers.
 **Also true of 1A, and not a Phase-0 item:** per-session day/30-day caps are
 not implemented — 1A *rejects* them at grant rather than storing caps nothing
 enforces (spec §4: those windows are account-wide). Real per-session day
-buckets need a bucket PDA and are a 1B decision.
+buckets need a bucket PDA. **Superseded 2026-08-19 (spec rev 8 §5.2 rule 4c):
+this is a Phase 1C item, not "a 1B decision" — per-session day buckets and
+persistent gross-day accounting are two columns of the SAME `DayBuckets` PDA
+(seeds `["daybuckets", account]`, rent paid by the outer fee payer and recorded
+as `creator`, never the vault; closed by root or permissionlessly after a
+generation bump), which is exactly why they cannot be scheduled apart and why
+1B defers them together and keeps rejecting per-session day caps at grant.**
 
 ---
 
