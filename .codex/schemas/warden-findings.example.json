@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "thread": "phase1b/task-05/round-2",
+  "reviewer_model": "gpt-5.6-sol@max",
+  "base_sha": "208f7d55b6c01fd88e29d19ebddf42135b083b2d",
+  "head_sha": "3f9c1ad84e2b7660d5c0a1b93e77f4128ad6e05c",
+  "seeded_invariants": ["WRD-EXEC-01", "WRD-EXEC-06", "WRD-EXEC-08", "WRD-DENY-01", "WRD-ROOT-05"],
+  "sibling_files_read": [
+    "programs/warden/src/root_verify/transcript.rs",
+    "programs/warden/src/state/session.rs",
+    "programs/warden/src/errors.rs",
+    "programs/warden/src/buckets.rs"
+  ],
+  "invariant_verdicts": [
+    {
+      "invariant_id": "WRD-EXEC-01",
+      "verdict": "upheld",
+      "finding_ids": [],
+      "rationale": "Every non-amount field of the BEFORE token-account snapshot is compared byte-for-byte in compare.rs, and the COption decode rejects any tag other than 0 or 1. No path in this diff reaches the comparison with a partially-populated snapshot."
+    },
+    {
+      "invariant_id": "WRD-EXEC-06",
+      "verdict": "violated",
+      "finding_ids": ["WRDF-0001"],
+      "rationale": "The logical list is rebuilt from the Anchor context, but duplicate keys are not rejected, so a duplicated account shifts every later logical index while leaving accounts_hash satisfiable."
+    },
+    {
+      "invariant_id": "WRD-EXEC-08",
+      "verdict": "violated",
+      "finding_ids": ["WRDF-0002"],
+      "rationale": "owner_program is captured in the snapshot struct but never compared in the AFTER pass; this is the Swig ACC-C1 shape exactly."
+    },
+    {
+      "invariant_id": "WRD-DENY-01",
+      "verdict": "not_applicable",
+      "finding_ids": [],
+      "rationale": "The payload decoder is not touched by this diff; the deny-list lands in Task 6."
+    },
+    {
+      "invariant_id": "WRD-ROOT-05",
+      "verdict": "upheld",
+      "finding_ids": ["WRDF-0003"],
+      "rationale": "Precompile binding is unchanged by this diff. Raised WRDF-0003 separately as a harness-fidelity concern that is not a violation of this row."
+    }
+  ],
+  "findings": [
+    {
+      "id": "WRDF-0001",
+      "title": "Duplicate key in the logical account list shifts every later payload index",
+      "severity": "critical",
+      "truth_status": "CONFIRMED",
+      "evidence_type": "red_test",
+      "file": "programs/warden/src/instructions/execute.rs",
+      "line": 214,
+      "invariant_ids": ["WRD-EXEC-06"],
+      "prior_art_cited": ["LZR-ACC-C1", "LZR-ACC-H1"],
+      "reproducer": {
+        "base_sha": "208f7d55b6c01fd88e29d19ebddf42135b083b2d",
+        "fixed_sha": "3f9c1ad84e2b7660d5c0a1b93e77f4128ad6e05c",
+        "test_path": "programs/warden/tests/execute.rs",
+        "test_name": "duplicate_logical_account_rejected",
+        "verified": false
+      },
+      "confidence": 0.9,
+      "rationale": "The handler builds the logical list but does not assert key uniqueness. A caller that passes the same pubkey twice in remaining_accounts produces a list the SDK and the handler index differently, so a payload index that the root assertion bound to logical[7] resolves to a different account at execution. accounts_hash still matches because it is computed over the same duplicated list. This is LazorKit ACC-C1 reached by a different route: binding is by position after all.",
+      "suggested_fix": "Reject in build_logical_list when any pubkey appears twice, with a dedicated error code, and add the negative test above. The SDK-side assertion in spec 5.2 is not a substitute: it is off-chain.",
+      "reviewer_model": "gpt-5.6-sol@max",
+      "thread": "phase1b/task-05/round-2"
+    },
+    {
+      "id": "WRDF-0002",
+      "title": "AFTER snapshot never compares the account's runtime program owner",
+      "severity": "critical",
+      "truth_status": "POTENTIAL",
+      "evidence_type": "static_trace",
+      "file": "programs/warden/src/conservation/compare.rs",
+      "line": 88,
+      "invariant_ids": ["WRD-EXEC-01", "WRD-EXEC-08"],
+      "prior_art_cited": ["SWIG-ACC-C1"],
+      "reproducer": null,
+      "reproducer_infeasible_reason": "Reproducing the full attack needs a second on-chain program that fakes the SPL token byte layout; LiteSVM can host one but writing it is Task 6 work, so this round reports the trace and routes the claim to human security adjudication rather than auto-downgrading it.",
+      "confidence": 0.75,
+      "rationale": "Snap captures owner_program at line 41 but compare_token_account reads only (mint, owner, amount, delegate, delegated_amount, close_authority, state, is_native). Swig's sign_v1 had exactly this shape: end-state field values were checked, the program owner was not, and transfer-out then close then reopen under an attacker program with a matching layout passed every check and drained the vault from a 1-lamport-permission role.",
+      "suggested_fix": "Compare owner_program first, before any layout-dependent decode, so an account whose owner changed can never reach the field comparison at all.",
+      "reviewer_model": "gpt-5.6-sol@max",
+      "thread": "phase1b/task-05/round-2"
+    },
+    {
+      "id": "WRDF-0003",
+      "title": "litesvm precompiles feature is not asserted by any test",
+      "severity": "important",
+      "truth_status": "CONFIRMED",
+      "evidence_type": "config_attestation",
+      "file": "Cargo.toml",
+      "line": 40,
+      "invariant_ids": ["WRD-ROOT-05"],
+      "prior_art_cited": [],
+      "reproducer": null,
+      "reproducer_infeasible_reason": "A dependency-resolution regression is not expressible as an in-suite red test at the same SHA; the gate is the two-direction sigverify_wiring.rs test plus an exact version pin, which is a configuration control (L0), not a program-logic bug.",
+      "confidence": 0.95,
+      "rationale": "litesvm is declared as \"0.12\" with the precompiles feature, but LiteSVM::default() starts with every feature off and nothing in the suite would notice if the feature were dropped. Until L0 lands, bind_precompile is the only remaining gate on the root of trust and a dependency bump would remove it silently.",
+      "suggested_fix": "Pin litesvm = { version = \"=0.12.0\", features = [\"precompiles\"] }, keep Cargo.lock committed, and add tests/sigverify_wiring.rs asserting BOTH directions: valid signature => transaction succeeds, forged signature => exactly InstructionError(0, Custom(2)).",
+      "adjudication": {
+        "ruling": "adopted",
+        "by": "human:owner",
+        "date": "2026-08-19",
+        "rationale": "Accepted as L0 scope; this is the prerequisite for proof of possession (WRD-ROOT-01) and blocks it."
+      },
+      "reviewer_model": "gpt-5.6-sol@max",
+      "thread": "phase1b/task-05/round-2"
+    },
+    {
+      "id": "WRDF-0004",
+      "title": "cluster_tag is not bound in create_account",
+      "severity": "minor",
+      "truth_status": "REFUTED",
+      "evidence_type": "primary_source",
+      "file": "programs/warden/src/instructions/create_account.rs",
+      "line": 120,
+      "invariant_ids": ["WRD-ROOT-07"],
+      "prior_art_cited": [],
+      "reproducer": null,
+      "reproducer_infeasible_reason": "Refuted on documentation, not on execution: there is no bug to reproduce.",
+      "confidence": 0.2,
+      "rationale": "Refuted. root_verify/transcript.rs:69-76 documents this binding as knowingly deferred and spec section 4 states the limit explicitly: cluster_tag is a client-attested domain separator, NOT a verified genesis binding, because a Solana program cannot read the cluster's genesis hash. Recorded rather than dropped: this is the 1A pilot's one false positive and its cause was reviewer SCOPE (transcript.rs was not in the prompt), not model identity, which is why sibling files are now mandatory.",
+      "adjudication": {
+        "ruling": "disputed",
+        "by": "human:owner",
+        "date": "2026-08-19",
+        "rationale": "Kept in the corpus as a scorecard datapoint for L3. Not a defect."
+      },
+      "reviewer_model": "gpt-5.6-sol@max",
+      "thread": "phase1b/task-05/round-2"
+    }
+  ]
+}

@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/drinkerlabs/warden/.codex/schemas/warden-findings.json",
+  "title": "Warden adversarial review findings",
+  "description": "Typed output of a Codex (or Claude) adversarial review round against the Warden wallet program. Validated by an INDEPENDENT validator (packages/core/test/security-ledger.test.ts, scripts/review.sh) and never trusted merely because --output-schema was passed: that flag constrains the model's final response, not every JSONL event on the way there. truth_status and evidence_type are orthogonal axes and must never be collapsed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "thread", "base_sha", "seeded_invariants", "findings", "invariant_verdicts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "thread": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Review thread identifier, e.g. 'phase1b/task-5/round-2'."
+    },
+    "reviewer_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Model that produced this round, e.g. 'gpt-5.6-sol@max'. Recorded for the L8 A/B, never used to weight a finding."
+    },
+    "base_sha": {
+      "$ref": "#/$defs/sha",
+      "description": "The SHA the diff was taken against. Findings are scoped to base_sha..HEAD."
+    },
+    "head_sha": { "$ref": "#/$defs/sha" },
+    "seeded_invariants": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/invariant_id" },
+      "description": "Every invariant ID the prompt seeded. Silence on a seeded invariant is a FAIL, not a pass, which is why the list is echoed back and why invariant_verdicts must cover it."
+    },
+    "sibling_files_read": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The named cross-cutting files the round was required to read (transcript.rs, state/session.rs, errors.rs, buckets.rs). The 1A pilot's one false positive came from reviewer scope, not model identity."
+    },
+    "invariant_verdicts": {
+      "type": "array",
+      "description": "Exactly one verdict per seeded invariant. 'not_reviewed' is a FAIL condition for the round, not a neutral value.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["invariant_id", "verdict"],
+        "properties": {
+          "invariant_id": { "$ref": "#/$defs/invariant_id" },
+          "verdict": {
+            "enum": ["upheld", "violated", "not_applicable", "not_reviewed"],
+            "description": "upheld = the reviewer looked and found no violation in this diff. It does NOT promote the ledger row; only an evidence artefact or a human adjudication does."
+          },
+          "finding_ids": { "type": "array", "items": { "type": "string" } },
+          "rationale": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "Every finding, INCLUDING disputed and scoped-out ones. A round that reports only adopted findings produces a survivorship artifact, not a false-positive rate.",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "A git object SHA, short or full, lowercase hex."
+    },
+    "invariant_id": {
+      "type": "string",
+      "pattern": "^WRD-[A-Z]+-[0-9]{2}$",
+      "description": "An ID present in docs/security/invariants.jsonl."
+    },
+    "prior_art_id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9-]+$",
+      "description": "An ID present in docs/security/PRIOR-ART-FINDINGS.md."
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "severity",
+        "truth_status",
+        "evidence_type",
+        "file",
+        "line",
+        "invariant_ids",
+        "reproducer",
+        "rationale"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^WRDF-[0-9]{4}$",
+          "description": "Stable finding id, allocated per repo (not per round) so a finding can be re-raised, disputed and closed under one identity."
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "severity": {
+          "enum": ["critical", "important", "minor", "info"],
+          "description": "Impact if the claim is true. Independent of truth_status: a POTENTIAL finding can be critical."
+        },
+        "truth_status": {
+          "enum": ["POTENTIAL", "CONFIRMED", "REFUTED"],
+          "description": "The claim's standing. Everything a model raises enters as POTENTIAL. CONFIRMED requires an evidence artefact of an allowed type OR a recorded human security adjudication; model agreement is a confidence signal and never promotes on its own."
+        },
+        "evidence_type": {
+          "enum": [
+            "red_test",
+            "static_trace",
+            "formal_counterexample",
+            "config_attestation",
+            "primary_source",
+            "none"
+          ],
+          "description": "HOW it is known — orthogonal to truth_status. 'none' is only legal while truth_status is POTENTIAL: a CONFIRMED or REFUTED finding must name its evidence. Never collapse this with truth_status: 'no red test => inconclusive' would discard static traces, supply-chain and dependency-provenance findings, key-management and release-credential failures, upgrade-authority misconfiguration, economic/MEV and liveness attacks, and formal counterexamples."
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repo-relative path. Use the path the claim is ABOUT, not the path the diff touched, when they differ."
+        },
+        "line": { "type": "integer", "minimum": 0 },
+        "invariant_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/invariant_id" },
+          "description": "Ledger rows this finding contradicts or extends. May be empty for a finding that names a gap the ledger has no row for — that itself is an action item: add the row."
+        },
+        "prior_art_cited": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/prior_art_id" }
+        },
+        "reproducer": {
+          "description": "Required only where one is FEASIBLE. When present it must FAIL on base_sha and PASS on fixed_sha — 'fails on HEAD' is the wrong predicate once a fix has landed. Where infeasible, set null AND set reproducer_infeasible_reason; the finding then routes to human security adjudication and is NEVER auto-downgraded.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["base_sha", "fixed_sha", "test_path"],
+              "properties": {
+                "base_sha": { "$ref": "#/$defs/sha" },
+                "fixed_sha": { "$ref": "#/$defs/sha" },
+                "test_path": { "type": "string", "minLength": 1 },
+                "test_name": { "type": "string" },
+                "verified": {
+                  "type": "boolean",
+                  "description": "True only once both directions have been RUN and observed: red at base_sha, green at fixed_sha."
+                }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "reproducer_infeasible_reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why no reproducer exists — e.g. supply-chain provenance, release-credential handling, upgrade-authority configuration, economic/MEV, liveness. Required whenever reproducer is null."
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The argument, not a restatement of the title. For a REFUTED finding this is the adjudication rationale."
+        },
+        "suggested_fix": { "type": "string" },
+        "adjudication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ruling", "by", "date", "rationale"],
+          "properties": {
+            "ruling": { "enum": ["adopted", "disputed", "scoped_out", "deferred"] },
+            "by": { "type": "string", "minLength": 1 },
+            "date": { "type": "string", "format": "date" },
+            "rationale": { "type": "string", "minLength": 1 }
+          }
+        },
+        "reviewer_model": { "type": "string" },
+        "thread": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "reproducer": { "type": "null" } }, "required": ["reproducer"] },
+          "then": { "required": ["reproducer_infeasible_reason"] }
+        },
+        {
+          "if": {
+            "properties": { "truth_status": { "enum": ["CONFIRMED", "REFUTED"] } },
+            "required": ["truth_status"]
+          },
+          "then": { "properties": { "evidence_type": { "not": { "const": "none" } } } }
+        }
+      ]
+    }
+  }
+}

@@ -1,3 +1,18 @@
-{ "name": "@warden/core", "version": "0.0.1", "type": "module", "main": "dist/index.js", "types": "dist/index.d.ts",
-  "scripts": { "build": "tsc -p tsconfig.json", "test": "vitest run", "typecheck": "tsc -p tsconfig.json --noEmit" },
-  "dependencies": { "@noble/hashes": "^1.8.0" } }
+{
+  "name": "@warden/core",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.8.0"
+  },
+  "devDependencies": {
+    "ajv": "^8.20.0"
+  }
+}

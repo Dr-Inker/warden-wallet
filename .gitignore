@@ -8,6 +8,9 @@ test-ledger
 .env.*
 !.env.example
 .superpowers/
+# Review artefacts written by scripts/review.sh. Redundant with the line above —
+# stated explicitly because this is a public repo and a findings file quotes source.
+.superpowers/reviews/
 
 # Program keypairs (private keys) — never commit. See docs/PROGRAM-KEYS.md.
 **/keypair.json
