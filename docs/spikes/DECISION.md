@@ -285,20 +285,26 @@ strength of 1A's numbers.
   `sol_big_mod_exp` (Euler's criterion) was implemented and reverted — the
   syscall is feature-gated and absent from litesvm's mainnet-active snapshot,
   so calling it would fail *every* `create_account` — and hand-rolled 256-bit
-  field arithmetic was rejected on risk. **1B must add proof of possession at
-  creation** (a real root ceremony over `generation = 0`, `root_nonce = 0`,
-  which makes the precompile do the curve validation for free), re-derive
-  `MAX_MINTS_AT_CREATE` against the resulting byte budget, and flip
-  `create_account::tests::root_accepts_an_off_curve_x_phase_1a_gap` to assert
-  rejection. The real residual is broader than off-curve encoding: creation
-  is unauthenticated end to end — no root signature is required at all, and
-  `owner_seed` is visible in-flight — so a front-runner can install their own
-  root at the client-chosen PDA (squatting/DoS; theft if funds are sent
-  before a successful root round-trip). Mitigation until 1B proof-of-possession:
-  the extension MUST perform a `rotate_nonce` (root ceremony) and verify
-  on-chain root == its passkey BEFORE showing a receive address or funding
-  anything. Proof-of-possession at create is a HARD pre-deployment gate
-  (1B).
+  field arithmetic was rejected on risk.
+  **CLOSED by Phase 1B Task 2b.** `create_account` now (a) derives its PDA
+  seed on-chain as `Keccak256("WARDEN/seed/v1" ‖ root_pubkey33 ‖ salt32)`, so
+  a front-runner who copies the salt but substitutes their own root lands a
+  different address, and (b) requires a real root ceremony over
+  `action_hash(0x06, borsh(CreateBody))` at `generation = 0`,
+  `policy_version = 1`, `root_nonce = 0`, so the victim's address cannot be
+  reached without the victim's passkey; on success the account is written with
+  `root_nonce = 1`. The precompile does the curve validation for free, so the
+  off-curve residual is gone too: the unit test was renamed
+  `root_encoding_check_alone_still_admits_an_off_curve_x` (it now pins the
+  DIVISION OF LABOUR — `validate_root` is an encoding check by design) and
+  `create_pop::off_curve_root_cannot_be_created_because_no_assertion_verifies`
+  is the end-to-end proof. Evidence: `programs/warden/tests/create_pop.rs`
+  (14 tests, incl. `squat_race_attacker_cannot_reach_the_victims_address`),
+  ledger row `WRD-ROOT-01`. Measured cost: **`MAX_MINTS_AT_CREATE` fell 4 → 1**
+  (ceremony = +477 B; 2 mints = 1,285 B, 53 B over the packet), so mints 2–8
+  now arrive with Phase 1C `set_policy`. The client-side readback
+  (`root == its passkey` before showing a receive address) remains good
+  practice, but it is no longer mitigating a live attack.
 * **O3 (stage cap), O1 (real-device PRF), O2, O4, O7, O8, O9** are unchanged by
   1A.
 

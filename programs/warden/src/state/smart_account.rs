@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::{MAX_MINT_CAPS, MAX_MINTS_AT_CREATE, RING_DAYS};
+use crate::constants::{MAX_MINT_CAPS, RING_DAYS};
 use crate::errors::WardenError;
 
 /// The passkey-rooted smart account, laid out as a `bytemuck`-`Pod`
@@ -196,7 +196,9 @@ impl Policy {
 
 /// Instruction-argument mirror of `Policy` (`create_account`, Task 4) — plain
 /// Borsh, sparse on the wire: `caps`/`session_ceiling`/`large_threshold` are
-/// `Vec<MintCap>` (each at most `MAX_MINTS_AT_CREATE` entries) instead of
+/// `Vec<MintCap>` (each at most `MAX_MINT_CAPS` entries — and at most
+/// `MAX_MINTS_AT_CREATE` when carried by `create_account`, which additionally
+/// has to fit a packet) instead of
 /// `Policy`'s fixed 8-slot arrays, which is what let a single `create_account`
 /// carrying a handful of mints blow past Solana's 1,232 B transaction limit
 /// when this was a plain `[MintCap; 8]` mirror (round-1 review finding,
@@ -213,10 +215,11 @@ impl Policy {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
 pub struct PolicyArgs {
     pub version: u32,
-    /// ≤ `MAX_MINTS_AT_CREATE` entries; every `mint` non-default and
-    /// distinct within this vector.
+    /// ≤ `MAX_MINT_CAPS` entries (and ≤ `MAX_MINTS_AT_CREATE` when this
+    /// travels in a `create_account` transaction); every `mint` non-default
+    /// and distinct within this vector.
     pub caps: Vec<MintCap>,
-    /// ≤ `MAX_MINTS_AT_CREATE` entries; every `mint` must match exactly one
+    /// Same length bounds; every `mint` must match exactly one
     /// `caps` entry (else `expand` rejects the whole policy) and be distinct
     /// within this vector (two entries keying onto the same `caps` slot is
     /// also rejected).
@@ -243,8 +246,9 @@ impl PolicyArgs {
     /// of them is "the shape can't be resolved to a well-formed `Policy`",
     /// as distinct from "the shape resolved fine but a value is out of
     /// bounds" (`InvalidPolicy`, checked afterward):
-    /// - more than `MAX_MINTS_AT_CREATE` entries in `caps`, `session_ceiling`,
-    ///   or `large_threshold`;
+    /// - more than `MAX_MINT_CAPS` entries in `caps`, `session_ceiling`,
+    ///   or `large_threshold` (the packet-derived `MAX_MINTS_AT_CREATE` bound
+    ///   is `create_account`'s, not this transform's);
     /// - a `caps` entry with `mint == Pubkey::default()`;
     /// - two `caps` entries sharing a `mint` (duplicate cap mint);
     /// - a `session_ceiling`/`large_threshold` entry whose `mint` matches no
@@ -252,14 +256,45 @@ impl PolicyArgs {
     /// - two `session_ceiling` (or two `large_threshold`) entries sharing a
     ///   `mint` — they would collide on the same resolved `caps` index
     ///   (duplicate ceiling/threshold mint).
+    /// `#[inline(never)]` is REQUIRED. This function's own frame holds three
+    /// `[MintCap; MAX_MINT_CAPS]` arrays (448 B each) plus the 1,448 B `Policy`
+    /// it returns; inlined into `create_account`'s handler — which already
+    /// holds the returned `Policy` and the deserialized arguments — the total
+    /// blows past SBF's 4 KB stack frame, which `cargo-build-sbf` reports as
+    /// "Stack offset ... exceeded max offset of 4096" and the runtime reports
+    /// as an access violation. Phase 1B Task 2b's `RootArgs` is what pushed it
+    /// over; the attribute keeps the two frames separate for good.
+    #[inline(never)]
     pub fn expand(&self) -> Result<Policy> {
-        require!(self.caps.len() <= MAX_MINTS_AT_CREATE, WardenError::InvalidAccountData);
+        let mut out: Policy = bytemuck::Zeroable::zeroed();
+        self.expand_into(&mut out)?;
+        Ok(out)
+    }
+
+    /// `expand`, writing straight into a caller-owned `Policy` instead of
+    /// returning one.
+    ///
+    /// `create_account`'s handler uses THIS form and passes the zero-copy
+    /// account's own `policy` field, so no 1,448 B `Policy` ever lands on the
+    /// handler's SBF stack frame — see the note on `expand` above for what
+    /// happens when one does. (A validation failure afterwards is harmless:
+    /// the runtime discards every account write when the instruction returns
+    /// an error.)
+    #[inline(never)]
+    pub fn expand_into(&self, out: &mut Policy) -> Result<()> {
+        // Bounded by the DESTINATION ARRAY WIDTH, which is what makes the
+        // expansion below memory-safe. The tighter, packet-derived
+        // `MAX_MINTS_AT_CREATE` bound belongs to `create_account` — it is a
+        // property of the transaction that carries the policy, not of this
+        // transform — and is enforced there (Phase 1B Task 2b split the two;
+        // before proof of possession they happened to coincide).
+        require!(self.caps.len() <= MAX_MINT_CAPS, WardenError::InvalidAccountData);
         require!(
-            self.session_ceiling.len() <= MAX_MINTS_AT_CREATE,
+            self.session_ceiling.len() <= MAX_MINT_CAPS,
             WardenError::InvalidAccountData
         );
         require!(
-            self.large_threshold.len() <= MAX_MINTS_AT_CREATE,
+            self.large_threshold.len() <= MAX_MINT_CAPS,
             WardenError::InvalidAccountData
         );
 
@@ -274,19 +309,18 @@ impl PolicyArgs {
         let session_ceiling = key_by_mint(&self.session_ceiling, &caps, self.caps.len())?;
         let large_threshold = key_by_mint(&self.large_threshold, &caps, self.caps.len())?;
 
-        Ok(Policy {
-            version: self.version,
-            _pad_version: [0u8; 4],
-            caps,
-            session_ceiling,
-            large_threshold,
-            timelock_secs: self.timelock_secs,
-            recovery_delay_secs: self.recovery_delay_secs,
-            max_session_life_secs: self.max_session_life_secs,
-            session_ops_ceiling: self.session_ops_ceiling,
-            _pad_ceiling: [0u8; 6],
-            _reserved: [0u8; 64],
-        })
+        out.version = self.version;
+        out._pad_version = [0u8; 4];
+        out.caps = caps;
+        out.session_ceiling = session_ceiling;
+        out.large_threshold = large_threshold;
+        out.timelock_secs = self.timelock_secs;
+        out.recovery_delay_secs = self.recovery_delay_secs;
+        out.max_session_life_secs = self.max_session_life_secs;
+        out.session_ops_ceiling = self.session_ops_ceiling;
+        out._pad_ceiling = [0u8; 6];
+        out._reserved = [0u8; 64];
+        Ok(())
     }
 }
 
@@ -544,7 +578,7 @@ mod tests {
     #[test]
     fn expand_rejects_too_many_caps() {
         let mut a = base_policy_args();
-        a.caps = (0..(MAX_MINTS_AT_CREATE + 1))
+        a.caps = (0..(MAX_MINT_CAPS + 1))
             .map(|_| mint_cap(Pubkey::new_unique(), 1, 1, 1))
             .collect();
         expect_expand_err(&a, WardenError::InvalidAccountData);
@@ -555,7 +589,7 @@ mod tests {
         let mint = Pubkey::new_unique();
         let mut a = base_policy_args();
         a.caps = vec![mint_cap(mint, 10, 10, 10)];
-        a.session_ceiling = (0..(MAX_MINTS_AT_CREATE + 1))
+        a.session_ceiling = (0..(MAX_MINT_CAPS + 1))
             .map(|_| mint_cap(Pubkey::new_unique(), 1, 1, 1))
             .collect();
         expect_expand_err(&a, WardenError::InvalidAccountData);

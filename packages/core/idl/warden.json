@@ -9,8 +9,11 @@
     {
       "name": "create_account",
       "docs": [
-        "Create a passkey- (or Ed25519-) rooted `SmartAccount` PDA. No root",
-        "signature required — see `instructions::create_account` for why."
+        "Create a passkey-rooted `SmartAccount` PDA at an address DERIVED from",
+        "the root key (`[\"account\", Keccak256(\"WARDEN/seed/v1\" ‖ root_pubkey33",
+        "‖ salt)]`), under a mandatory root ceremony proving possession of that",
+        "passkey — so the address cannot be squatted by a front-runner. See",
+        "`instructions::create_account`."
       ],
       "discriminator": [
         99,
@@ -30,27 +33,15 @@
         },
         {
           "name": "smart_account",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  99,
-                  99,
-                  111,
-                  117,
-                  110,
-                  116
-                ]
-              },
-              {
-                "kind": "arg",
-                "path": "args.owner_seed"
-              }
-            ]
-          }
+          "writable": true
+        },
+        {
+          "name": "ix_sysvar",
+          "docs": [
+            "`load_instruction_at_checked` / `load_current_index_checked`, which",
+            "re-check the address themselves."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
         },
         {
           "name": "system_program",
@@ -783,20 +774,44 @@
         "kind": "struct",
         "fields": [
           {
-            "name": "owner_seed",
+            "name": "root_key",
+            "docs": [
+              "The passkey this account is rooted to. Renamed from 1A's `root`: it is",
+              "now an *input to the address*, not merely a stored field, and the name",
+              "says so."
+            ],
+            "type": {
+              "defined": {
+                "name": "RootKey"
+              }
+            }
+          },
+          {
+            "name": "root_assertion",
+            "docs": [
+              "The proof of possession — a real WebAuthn assertion by `root_key` over",
+              "`action_hash(OP_CREATE, borsh(CreateBody))`, verified against the",
+              "secp256r1 precompile instruction it names."
+            ],
+            "type": {
+              "defined": {
+                "name": "RootArgs"
+              }
+            }
+          },
+          {
+            "name": "salt",
+            "docs": [
+              "32 client-chosen random bytes. Together with `root_key` they derive",
+              "`owner_seed` (see `derive_owner_seed`) and therefore the address.",
+              "**`owner_seed` is no longer an argument**: an attacker who could name",
+              "the seed directly could name any address, which is exactly the 1A hole."
+            ],
             "type": {
               "array": [
                 "u8",
                 32
               ]
-            }
-          },
-          {
-            "name": "root",
-            "type": {
-              "defined": {
-                "name": "RootKey"
-              }
             }
           },
           {
@@ -1166,7 +1181,9 @@
       "docs": [
         "Instruction-argument mirror of `Policy` (`create_account`, Task 4) — plain",
         "Borsh, sparse on the wire: `caps`/`session_ceiling`/`large_threshold` are",
-        "`Vec<MintCap>` (each at most `MAX_MINTS_AT_CREATE` entries) instead of",
+        "`Vec<MintCap>` (each at most `MAX_MINT_CAPS` entries — and at most",
+        "`MAX_MINTS_AT_CREATE` when carried by `create_account`, which additionally",
+        "has to fit a packet) instead of",
         "`Policy`'s fixed 8-slot arrays, which is what let a single `create_account`",
         "carrying a handful of mints blow past Solana's 1,232 B transaction limit",
         "when this was a plain `[MintCap; 8]` mirror (round-1 review finding,",
@@ -1189,8 +1206,9 @@
           {
             "name": "caps",
             "docs": [
-              "≤ `MAX_MINTS_AT_CREATE` entries; every `mint` non-default and",
-              "distinct within this vector."
+              "≤ `MAX_MINT_CAPS` entries (and ≤ `MAX_MINTS_AT_CREATE` when this",
+              "travels in a `create_account` transaction); every `mint` non-default",
+              "and distinct within this vector."
             ],
             "type": {
               "vec": {
@@ -1203,7 +1221,7 @@
           {
             "name": "session_ceiling",
             "docs": [
-              "≤ `MAX_MINTS_AT_CREATE` entries; every `mint` must match exactly one",
+              "Same length bounds; every `mint` must match exactly one",
               "`caps` entry (else `expand` rejects the whole policy) and be distinct",
               "within this vector (two entries keying onto the same `caps` slot is",
               "also rejected)."

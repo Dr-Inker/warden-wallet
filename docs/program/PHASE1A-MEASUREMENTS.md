@@ -536,6 +536,88 @@ were taken — so they are not this implementation's own output played back.
 `action_hash` is unchanged: it does not include `signed_slot`, and its pinned
 vectors still hold.
 
+## Phase 1B Task 2b remeasure (2026-08-19) — proof of possession at `create_account`
+
+Same reason this section lives here as Task 0's: Task 2b changes the shape of a
+*Phase-1A* instruction. `create_account` gains a mandatory root ceremony and a
+root-bound address, so its byte and CU rows above are superseded. Same
+toolchain, same harness (`litesvm =0.12.0` + `precompiles`,
+`with_mainnet_features()`, Anchor 1.1.2, Agave `cargo-build-sbf` 3.1.10). CU
+figures exclude the runtime's own secp256r1 verification (**4,800 CU**, charged
+separately — budget it explicitly).
+
+### Transaction sizes — the ceremony costs **+477 B**, and `MAX_MINTS_AT_CREATE` drops 4 → 1
+
+The added bytes are a 182 B secp256r1 precompile instruction (plus its program
+id in the account list), a 226 B `RootArgs`, and the Instructions sysvar
+account. Each configured mint costs 168 B (cap + session ceiling + large
+threshold, 56 B each).
+
+| mints | 1A | Task 2b | fits 1,232 B | Test |
+| ---: | ---: | ---: | --- | --- |
+| 0 (all defaults) | 472 B | **949 B** | yes | `create_account::creates_with_defaults` |
+| 1 | 640 B | **1,117 B** | yes | `create_account::realistic_policy_transaction_fits_the_packet_limit` |
+| 2 | 808 B | **1,285 B** | **no** (53 B over) | `create_account::realistic_policy_plus_one_mint_does_not_fit` |
+| 4 (1A's `MAX_MINTS_AT_CREATE`) | 1,144 B | **1,621 B** | no | `create_pop::create_with_pop_transaction_sizes_are_measured_and_bounded` |
+| 8 (`MAX_MINT_CAPS`) | 1,816 B | **2,293 B** | no | `create_account::full_max_mint_caps_policy_does_not_fit_the_packet_limit` |
+
+**`MAX_MINTS_AT_CREATE` is therefore 1**, down from 4, and
+`create_pop::create_with_pop_transaction_sizes_are_measured_and_bounded`
+asserts the constant *equals* the largest count that actually fits, so it can
+never drift from the measurement again. Mints 2–8 are added after creation by
+Phase 1C's `set_policy`. The 2-mint shape misses by only 53 B, so a future wire
+trim (the `rp_id_hash` argument is 32 B of redundancy — it is recomputed
+on-chain and required equal) could restore it; raise the constant only against
+a fresh measurement.
+
+Note the packet bound moved: `PolicyArgs::expand` is now bounded by
+`MAX_MINT_CAPS` (the destination array width, which is what makes the expansion
+memory-safe) and `create_account`'s handler enforces `MAX_MINTS_AT_CREATE`
+separately, because that bound is a property of the transaction carrying the
+policy, not of the sparse→fixed transform.
+
+### Compute units
+
+| Path | 1A | Task 2b | Δ | Test |
+| --- | ---: | ---: | ---: | --- |
+| `create_account` (all defaults) | 8,866 | **26,462** | +17,596 | `create_account::creates_with_defaults` |
+| `create_account` (1 mint) | — | **26,396** | — | `create_pop::max_mints_at_create_with_pop_actually_lands` |
+
+Plus the runtime's **4,800 CU** secp256r1 verification ⇒ ≈**31,200 CU** all-in
+for a create, ~16% of a default 200k budget. The +17.6k is the root-verify path
+(`rotate_nonce` alone is 16,097 CU), which is now paid once at creation.
+
+### SBF stack — two `#[inline(never)]` attributes are load-bearing
+
+Adding `RootArgs` to `CreateAccountArgs` pushed `create_account`'s frame past
+SBF's 4 KB limit; `cargo-build-sbf` reports "Stack offset of 4776 exceeded max
+offset of 4096" and the runtime reports "Access violation in stack frame 5".
+Three changes fixed it and must not be reverted: `handler` and
+`PolicyArgs::expand`/`expand_into` are `#[inline(never)]`, the ceremony lives in
+its own `prove_possession` frame, and the policy is expanded **straight into the
+zero-copy account** (`expand_into`) rather than via a 1,448 B stack `Policy`.
+
+### Transcript ABI — `OP_CREATE` = 0x06
+
+`action_hash(0x06, borsh(CreateBody { salt[32], rp_id_hash[32], origin: Vec<u8>,
+cluster_tag[32], policy_hash[32] }))` — 183 B of body for the canonical 51-byte
+origin. Two new golden vectors, both computed with the same **INDEPENDENT**
+from-spec pure-Python Keccak-256 used for Task 0 (re-checked against this
+repo's existing `transcript_hash_matches_pinned_vector` digest before they were
+taken):
+
+| Vector | Rust test | TS test | Digest |
+| --- | --- | --- | --- |
+| `owner_seed` (`0x02‖Gx`, salt `0x44…`) | `create_account::tests::owner_seed_matches_pinned_vector` | "matches the Rust-pinned owner_seed vector" | `794e590e…e095b092` |
+| `CreateBody` action hash | `create_account::tests::create_body_action_hash_matches_pinned_vector` | "matches the Rust-pinned CreateBody action hash" | `d833a9c4…be4a4020` |
+
+**The IDL cannot express the PDA seed** (Anchor's IDL seed parser handles
+constants, plain arguments and account fields, not a Keccak of two arguments),
+so `create_account`'s `smart_account` carries no `pda` block and clients must
+use `packages/core`'s `deriveOwnerSeed`. That is a deliberate trade: carrying
+the seed as an argument so the IDL could name it is exactly the hole this task
+closes.
+
 ## Update policy
 
 Append a row per measured path; do not delete rows — a regression is only

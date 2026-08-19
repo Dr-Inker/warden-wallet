@@ -193,7 +193,7 @@ fn live() -> (LiteSVM, Keypair, TestPasskey, Pubkey) {
         policy: session_policy(),
         ..Default::default()
     };
-    let account = create_smart_account(&mut svm, &payer, &f);
+    let account = create_smart_account(&mut svm, &payer, &f, &pk);
     (svm, payer, pk, account)
 }
 
@@ -492,7 +492,11 @@ fn grant_ok_and_readback() {
     assert!(s.caps[2..].iter().all(|c| c.mint == Pubkey::default()), "unused slots stay empty");
     assert!(s._reserved.iter().all(|b| *b == 0));
 
-    assert_eq!(read_smart_account(&svm, &account).root_nonce, 1, "the ceremony is consumed");
+    assert_eq!(
+        read_smart_account(&svm, &account).root_nonce,
+        2,
+        "the ceremony is consumed (creation itself already consumed nonce 0)"
+    );
     assert!(res.compute_units_consumed < 100_000, "CU budget: {}", res.compute_units_consumed);
 }
 
@@ -583,7 +587,7 @@ fn grant_needs_fresh_nonce() {
     let session_key = Keypair::new();
     let ixs = grant_ixs(&svm, &payer, &account, &pk, two_cap_body(session_key.pubkey()));
     expect_ok(&mut svm, &[&payer], &ixs);
-    assert_eq!(read_smart_account(&svm, &account).root_nonce, 1);
+    assert_eq!(read_smart_account(&svm, &account).root_nonce, 2);
     expect_reject(&mut svm, &[&payer], &ixs, 1, err::NONCE_MISMATCH);
 }
 

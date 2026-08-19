@@ -73,6 +73,27 @@ pub const OP_UNFREEZE: u8 = 0x04;
 /// and the two are imported side by side in `instructions::transfer`.
 pub const OP_TRANSFER_ACTION: u8 = 0x05;
 
+/// `op_type` byte for `create_account`'s proof-of-possession ceremony (Phase
+/// 1B Task 2b); hashed over `borsh(CreateBody)` — see
+/// `instructions::create_account::CreateBody`, which the handler rebuilds
+/// from its own arguments.
+///
+/// **`CreateBody` carries `salt`, never `owner_seed`.** The seed is *derived*
+/// on-chain as `Keccak256("WARDEN/seed/v1" ‖ root_pubkey33 ‖ salt)`, so
+/// carrying it in the signed body would be redundant and would let the two
+/// drift. The root key itself is likewise absent from the body: it is bound
+/// far more strongly than a hash could bind it, because the assertion is
+/// verified *against* it (the precompile checks the signature under exactly
+/// that key, and the transcript's `account` field is the address that key and
+/// salt derive).
+///
+/// The transcript for this one op is built from the INSTRUCTION ARGUMENTS
+/// rather than from stored state — the account does not exist yet — at the
+/// fixed values a newborn account has: `generation = 0`, `policy_version = 1`,
+/// `root_nonce = 0`. On success the account is written with `root_nonce = 1`,
+/// so the creating ceremony is consumed exactly like every other one.
+pub const OP_CREATE: u8 = 0x06;
+
 /// Keccak256 over the canonical transcript encoding.
 ///
 /// `genesis` is `SmartAccount.cluster_tag`. **It is a client-attested domain

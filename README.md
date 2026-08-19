@@ -27,7 +27,7 @@ Facts worth knowing before you read the code (all measured, all in the docs):
 - Solana's secp256r1 precompile requires **low-S** signatures; Chrome emits high-S sometimes — the client normalizes.
 - LiteSVM does **not** enforce the 1,232-byte transaction limit; every instruction test here asserts serialized transaction size explicitly.
 - `execute` payload account indices are **instruction-local**; compute-budget instructions stay top-level.
-- Account creation is **unauthenticated in the current code** (a front-runner could squat a client-chosen address); Phase 1B binds the address to the root key and requires proof-of-possession — until then nothing should be funded before a successful root round-trip. Known limitations live in `docs/spikes/DECISION.md`.
+- Account creation is **root-bound and authenticated** (Phase 1B Task 2b): the address is `["account", Keccak256("WARDEN/seed/v1" ‖ root_pubkey33 ‖ salt)]` and the instruction requires a real passkey ceremony, so a front-runner can neither squat a chosen address nor reach someone else's. The measured cost is `MAX_MINTS_AT_CREATE` = 1 (a create carrying the ceremony fits 1,232 B at one mint, not two); further mints arrive with Phase 1C `set_policy`. Known limitations live in `docs/spikes/DECISION.md`.
 - Session caps in 1A are per-transaction + lifetime; **day/30-day limits are account-wide** across all sessions *and* root direct actions.
 
 ## Repository layout

@@ -105,7 +105,7 @@ fn build(bend: impl FnOnce(&mut [u8; 64])) -> Built {
     let pk = TestPasskey::new(3);
     let mut fixture = SmartAccountFixture::default();
     fixture.root_pubkey33 = pk.pubkey33();
-    let account = create_smart_account(&mut svm, &payer, &fixture);
+    let account = create_smart_account(&mut svm, &payer, &fixture, &pk);
 
     let expiry_ts = NOW + 60;
     let signed_slot = current_slot(&svm);

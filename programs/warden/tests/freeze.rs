@@ -66,7 +66,7 @@ fn live() -> (LiteSVM, Keypair, TestPasskey, Pubkey) {
     warp_clock(&mut svm, NOW);
     let pk = TestPasskey::new(3);
     let f = SmartAccountFixture { root_pubkey33: pk.pubkey33(), ..Default::default() };
-    let account = create_smart_account(&mut svm, &payer, &f);
+    let account = create_smart_account(&mut svm, &payer, &f, &pk);
     (svm, payer, pk, account)
 }
 

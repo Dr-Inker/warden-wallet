@@ -21,8 +21,11 @@ pub mod warden {
         Ok(())
     }
 
-    /// Create a passkey- (or Ed25519-) rooted `SmartAccount` PDA. No root
-    /// signature required — see `instructions::create_account` for why.
+    /// Create a passkey-rooted `SmartAccount` PDA at an address DERIVED from
+    /// the root key (`["account", Keccak256("WARDEN/seed/v1" ‖ root_pubkey33
+    /// ‖ salt)]`), under a mandatory root ceremony proving possession of that
+    /// passkey — so the address cannot be squatted by a front-runner. See
+    /// `instructions::create_account`.
     pub fn create_account(ctx: Context<CreateAccount>, args: CreateAccountArgs) -> Result<()> {
         instructions::create_account::handler(ctx, args)
     }

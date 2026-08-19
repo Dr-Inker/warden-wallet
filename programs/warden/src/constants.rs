@@ -34,15 +34,38 @@ pub const MAX_SESSIONS_LISTED: usize = 0; // sessions are separate PDAs; no list
 pub const DAY_SECS: i64 = 86_400;
 pub const RING_DAYS: usize = 30;
 /// Cap on how many distinct mints `create_account` may configure in a single
-/// instruction (Task 4 round-1 review finding: a `PolicyArgs` carrying all
-/// `MAX_MINT_CAPS` (8) mints across `caps`/`session_ceiling`/
-/// `large_threshold` does not fit Solana's 1,232 B transaction packet limit
-/// — see docs/program/PHASE1A-MEASUREMENTS.md for the measured sizes at 2
-/// and `MAX_MINTS_AT_CREATE` mints). Independent of `MAX_MINT_CAPS`, which is
-/// the on-chain `Policy`'s fixed array width and stays 8 either way: mints
-/// beyond this count are added after creation via a root-authorized
-/// `set_policy` instruction (Phase 1B), never by raising this constant.
-pub const MAX_MINTS_AT_CREATE: usize = 4;
+/// instruction — **a measured packet bound, not a design preference**.
+///
+/// A `create_account` transaction must fit Solana's 1,232 B packet. Since
+/// Phase 1B Task 2b it also carries a proof-of-possession ceremony: a 182 B
+/// secp256r1 precompile instruction, a 226 B `RootArgs`, and the Instructions
+/// sysvar account — **+477 B** over the Phase-1A shape. Measured on the real
+/// wire by `create_pop::create_with_pop_transaction_sizes_are_measured_and_bounded`
+/// (which asserts this constant equals the largest count that actually fits,
+/// so it can never drift from the measurement):
+///
+/// | mints | tx bytes | fits 1,232 B |
+/// | ----: | -------: | --- |
+/// |     0 |      949 | yes |
+/// |     1 |    1,117 | yes |
+/// |     2 |    1,285 | **no** (53 B over) |
+/// |     4 |    1,621 | no |
+///
+/// Each mint costs 168 B (cap + session ceiling + large threshold, 56 B each).
+/// **Phase 1A allowed 4; the ceremony costs three of them.** That is the price
+/// of an unsquattable address, and it is the right trade: an account whose
+/// caps are configured one mint at a time is a nuisance, an account someone
+/// else's passkey can own is a loss. Mints 2..8 are added after creation by a
+/// root-authorized `set_policy` (Phase 1C) — never by raising this constant.
+///
+/// The 2-mint shape misses by only 53 B, so a future wire trim (the redundant
+/// `rp_id_hash` argument is 32 B of it) could restore it. Raise this constant
+/// only against a fresh measurement; the test above will refuse a guess.
+///
+/// Independent of `MAX_MINT_CAPS`, which is the on-chain `Policy`'s fixed
+/// array width and stays 8. `PolicyArgs::expand` is bounded by *that* — this
+/// bound is enforced in `create_account`'s handler, where the packet is.
+pub const MAX_MINTS_AT_CREATE: usize = 1;
 
 /// Cap on how many `MintCap`s a single `grant_session` may carry (Task 5).
 ///

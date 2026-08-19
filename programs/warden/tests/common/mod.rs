@@ -16,8 +16,12 @@ use solana_sdk::{
     signer::Signer,
     transaction::Transaction,
 };
-use warden::constants::{ACCOUNT_SEED, SESSION_SEED};
-use warden::instructions::create_account::{CreateAccountArgs, MAX_SESSION_LIFE_SECS, MIN_TIMELOCK_SECS};
+use warden::constants::{ACCOUNT_SEED, MAX_MINTS_AT_CREATE, SESSION_SEED};
+use warden::instructions::create_account::{
+    derive_owner_seed, CreateAccountArgs, CreateBody, MAX_SESSION_LIFE_SECS, MIN_TIMELOCK_SECS,
+};
+use warden::root_verify::transcript::{action_hash, b64url_no_pad, transcript_hash, OP_CREATE};
+use warden::root_verify::RootArgs;
 use warden::state::{PolicyArgs, RootKey, SessionKey, SmartAccount};
 
 pub fn program_id() -> Pubkey {
@@ -51,6 +55,16 @@ pub fn setup() -> (LiteSVM, Keypair) {
 
 pub fn account_pda(owner_seed: &[u8; 32]) -> (Pubkey, u8) {
     Pubkey::find_program_address(&[ACCOUNT_SEED, owner_seed], &program_id())
+}
+
+/// The address `create_account` will derive for `(root_pubkey33, salt)` —
+/// `["account", Keccak256("WARDEN/seed/v1" ‖ root_pubkey33 ‖ salt)]`.
+///
+/// Tests derive it with the program's own `derive_owner_seed`; the pinned
+/// vector `create_account::tests::owner_seed_matches_pinned_vector` (computed
+/// with an INDEPENDENT Keccak) is what stops that from being circular.
+pub fn account_pda_for(root_pubkey33: &[u8; 33], salt: &[u8; 32]) -> (Pubkey, u8) {
+    account_pda(&derive_owner_seed(root_pubkey33, salt))
 }
 
 /// Set the SVM's `Clock` sysvar `unix_timestamp` — the only way `Clock::get()`
@@ -94,17 +108,20 @@ pub fn add_middleman(svm: &mut LiteSVM) -> Pubkey {
 
 /// Fields a test wants to vary when planting a `SmartAccount`.
 ///
-/// `generation`/`root_nonce` default to 0 because that is what the real
-/// `create_account` instruction actually produces (Task 4) — `0` is no
-/// longer an arbitrary test convenience, it's what `create_smart_account`
-/// below both asserts on input and gets back from LiteSVM. A test that needs
-/// a *different* generation/nonce (there is no instruction yet that advances
-/// `generation`, and reaching a given `root_nonce` other than 0 or 1 would
-/// mean replaying several real ceremonies first) still has `set_smart_account`
-/// for exactly that reason — see `root_verify.rs` for which tests do this and
-/// why.
+/// `generation` defaults to 0 and **`root_nonce` defaults to 1** because that
+/// is what the real `create_account` instruction produces since Phase 1B Task
+/// 2b: creation itself is a root ceremony, and it consumes its own nonce. The
+/// defaults are not test conveniences — `create_smart_account` asserts them on
+/// input and gets them back from LiteSVM. A test that needs a *different*
+/// generation/nonce (there is no instruction yet that advances `generation`,
+/// and reaching a given `root_nonce` other than 1 or 2 would mean replaying
+/// several real ceremonies first) still has `set_smart_account` for exactly
+/// that reason — see `root_verify.rs` for which tests do this and why.
 pub struct SmartAccountFixture {
-    pub owner_seed: [u8; 32],
+    /// The 32 client-chosen random bytes that, TOGETHER WITH the root key,
+    /// derive `owner_seed` and therefore the address (Phase 1B Task 2b).
+    /// Replaces 1A's `owner_seed` field: the seed is no longer a client input.
+    pub salt: [u8; 32],
     pub root_pubkey33: [u8; 33],
     /// `false` plants an Ed25519 root instead, to prove the passkey path
     /// refuses to run for it.
@@ -129,7 +146,7 @@ pub struct SmartAccountFixture {
 impl Default for SmartAccountFixture {
     fn default() -> Self {
         Self {
-            owner_seed: [7u8; 32],
+            salt: [7u8; 32],
             root_pubkey33: [0u8; 33],
             root_is_passkey: true,
             origin: passkey::TEST_ORIGIN.to_string(),
@@ -137,7 +154,7 @@ impl Default for SmartAccountFixture {
             cluster_tag: [0x5Au8; 32],
             generation: 0,
             policy_version: 1,
-            root_nonce: 0,
+            root_nonce: 1,
             policy: default_policy_args(),
         }
     }
@@ -159,6 +176,11 @@ pub fn default_policy_args() -> PolicyArgs {
     }
 }
 
+/// The `create_account` instruction itself. Since Phase 1B Task 2b it carries
+/// the Instructions sysvar (the root ceremony needs it) and `args` carries a
+/// `root_assertion` — see `sign_create`, which fills that in with a real
+/// assertion. Calling this with a placeholder assertion is what the
+/// "no ceremony" negative tests want.
 pub fn create_account_ix(payer: Pubkey, smart_account: Pubkey, args: &CreateAccountArgs) -> Instruction {
     let mut data = Sha256::digest(b"global:create_account")[..8].to_vec();
     args.serialize(&mut data).unwrap();
@@ -167,50 +189,229 @@ pub fn create_account_ix(payer: Pubkey, smart_account: Pubkey, args: &CreateAcco
         accounts: vec![
             AccountMeta::new(payer, true),
             AccountMeta::new(smart_account, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
             AccountMeta::new_readonly(anchor_lang::system_program::ID, false),
         ],
         data,
     }
 }
 
-/// Create a `SmartAccount` through the real `create_account` instruction
-/// (Task 4) rather than by hand-writing bytes. Panics with the program's own
-/// error on failure — every caller of this helper wants an honest account.
+/// A syntactically valid but *unsigned* `RootArgs`, for building a
+/// `create_account` that carries no real ceremony. `sign_create` overwrites it.
+pub fn placeholder_root_args() -> RootArgs {
+    RootArgs {
+        precompile_ix_index: 0,
+        authenticator_data: passkey::authenticator_data(passkey::rp_id_hash(passkey::TEST_ORIGIN), passkey::FLAGS_UP_UV),
+        client_data_json: passkey::client_data_json(&[b'A'; 43], passkey::TEST_ORIGIN),
+        expiry_ts: 0,
+        signed_slot: 0,
+    }
+}
+
+/// Assemble a `CreateAccountArgs` with a placeholder assertion — the shape
+/// every test starts from before `sign_create` signs it.
+pub fn create_args(
+    root: RootKey,
+    salt: [u8; 32],
+    origin: &str,
+    cluster_tag: [u8; 32],
+    policy: PolicyArgs,
+) -> CreateAccountArgs {
+    CreateAccountArgs {
+        root_key: root,
+        root_assertion: placeholder_root_args(),
+        salt,
+        rp_id_hash: passkey::rp_id_hash(origin),
+        origin: origin.as_bytes().to_vec(),
+        cluster_tag,
+        policy,
+    }
+}
+
+/// Produce a REAL root ceremony for `args`, write it into
+/// `args.root_assertion`, and return `(derived pda, [precompile_ix,
+/// create_account_ix])` — the two-instruction transaction the extension will
+/// build.
 ///
-/// Only `owner_seed`/`root_*`/`origin`/`cluster_tag` are honoured:
-/// `generation`/`root_nonce`/`policy_version` must be at the values
-/// `create_account` itself would produce (asserted below) — a fixture that
-/// needs anything else cannot be built through the instruction and must use
+/// The ceremony is honest **for whatever `args` says**, deliberately: a
+/// negative test that bends `origin`, `cluster_tag` or the policy still gets a
+/// correctly-signed assertion over the bent value, so the failure it observes
+/// is the program's own rule and not an incidental `ChallengeMismatch`. To
+/// test the binding itself, sign first and mutate `args` afterwards (see
+/// `create_pop.rs`).
+///
+/// `pk` is the key that SIGNS. It is not required to be `args.root_key` — the
+/// squat-race tests need exactly that mismatch, and the program must reject it
+/// at the precompile binding.
+pub fn sign_create(
+    svm: &LiteSVM,
+    payer: Pubkey,
+    pk: &passkey::TestPasskey,
+    args: &mut CreateAccountArgs,
+) -> (Pubkey, Vec<Instruction>) {
+    let clock: Clock = svm.get_sysvar();
+    let expiry_ts = clock.unix_timestamp + 60;
+    let signed_slot = clock.slot;
+
+    let root33 = match &args.root_key {
+        RootKey::P256Passkey { pubkey } => *pubkey,
+        RootKey::Ed25519 { pubkey } => {
+            let mut b = [0u8; 33];
+            b[1..33].copy_from_slice(pubkey.as_ref());
+            b
+        }
+    };
+    let (pda, _bump) = account_pda_for(&root33, &args.salt);
+
+    // The signed document, rebuilt exactly the way the handler rebuilds it.
+    let rp_id_hash: [u8; 32] = Sha256::digest(&args.origin).into();
+    let mut policy_bytes = Vec::new();
+    args.policy.serialize(&mut policy_bytes).unwrap();
+    let body = CreateBody {
+        salt: args.salt,
+        rp_id_hash,
+        origin: args.origin.clone(),
+        cluster_tag: args.cluster_tag,
+        policy_hash: solana_keccak_hasher::hashv(&[&policy_bytes]).to_bytes(),
+    };
+    let mut body_bytes = Vec::new();
+    body.serialize(&mut body_bytes).unwrap();
+
+    // A newborn account's transcript state: generation 0, policy_version 1,
+    // root_nonce 0 — the values the handler hardcodes.
+    let t = transcript_hash(
+        &args.cluster_tag,
+        &program_id(),
+        &pda,
+        0,
+        1,
+        0,
+        expiry_ts,
+        signed_slot,
+        &action_hash(OP_CREATE, &body_bytes),
+    );
+    let origin_str = String::from_utf8_lossy(&args.origin).into_owned();
+    let assertion = pk.assert_(&b64url_no_pad(&t), &origin_str, rp_id_hash, passkey::FLAGS_UP_UV);
+
+    args.root_assertion = RootArgs {
+        precompile_ix_index: 0,
+        authenticator_data: assertion.authenticator_data.clone(),
+        client_data_json: assertion.client_data_json.clone(),
+        expiry_ts,
+        signed_slot,
+    };
+    let ixs = vec![
+        passkey::precompile_ix(&assertion, &pk.pubkey33()),
+        create_account_ix(payer, pda, args),
+    ];
+    (pda, ixs)
+}
+
+/// Create a `SmartAccount` through the real `create_account` instruction —
+/// including the mandatory root ceremony (Phase 1B Task 2b).
+///
+/// `pk` must be the passkey the fixture's `root_pubkey33` names: it both roots
+/// the account and signs the creating assertion. Every suite in this repo
+/// builds its accounts through here, so the ceremony is exercised on every
+/// single test run rather than only in `create_pop.rs`.
+///
+/// **Policies with more than `MAX_MINTS_AT_CREATE` mints.** Since proof of
+/// possession landed, a `create_account` transaction only has room for
+/// `MAX_MINTS_AT_CREATE` mints (see `constants::MAX_MINTS_AT_CREATE` for the
+/// measured table). Suites that need a richer policy — `transfer.rs` needs SOL
+/// **and** a token, `sessions.rs` needs three mints — get it the way a real
+/// wallet will: the account is created for real, with a real ceremony, at its
+/// real derived address, carrying the scalar policy and as many mints as fit;
+/// the remaining caps are then written in directly, standing in for the Phase
+/// 1C `set_policy` instruction that does not exist yet. Only the extra caps
+/// are planted — never the account, the root, the seed or the nonce.
+///
+/// Only `salt`/`root_*`/`origin`/`cluster_tag`/`policy` are honoured:
+/// `generation`/`policy_version` must be at the values `create_account` itself
+/// produces, and `root_nonce` must be 1 — the creating ceremony is consumed,
+/// so a freshly created account starts at nonce 1, not 0. A fixture that needs
+/// anything else cannot be built through the instruction and must use
 /// `set_smart_account`.
-pub fn create_smart_account(svm: &mut LiteSVM, payer: &Keypair, f: &SmartAccountFixture) -> Pubkey {
+pub fn create_smart_account(
+    svm: &mut LiteSVM,
+    payer: &Keypair,
+    f: &SmartAccountFixture,
+    pk: &passkey::TestPasskey,
+) -> Pubkey {
     assert_eq!(f.generation, 0, "create_account always sets generation = 0");
-    assert_eq!(f.root_nonce, 0, "create_account always sets root_nonce = 0");
+    assert_eq!(
+        f.root_nonce, 1,
+        "create_account CONSUMES its own ceremony: a created account starts at root_nonce = 1"
+    );
     assert_eq!(f.policy_version, 1, "create_account always forces policy.version = 1");
     assert!(f.rp_id_hash.is_none(), "create_account recomputes rp_id_hash from origin itself");
+    assert!(f.root_is_passkey, "create_account refuses an Ed25519 root; plant it instead");
+    assert_eq!(
+        pk.pubkey33(),
+        f.root_pubkey33,
+        "the signing passkey must be the fixture's root key"
+    );
 
-    let (pda, _bump) = account_pda(&f.owner_seed);
-    let root = if f.root_is_passkey {
-        RootKey::P256Passkey { pubkey: f.root_pubkey33 }
+    let over_packet_budget = f.policy.caps.len() > MAX_MINTS_AT_CREATE
+        || f.policy.session_ceiling.len() > MAX_MINTS_AT_CREATE
+        || f.policy.large_threshold.len() > MAX_MINTS_AT_CREATE;
+    let creatable = if over_packet_budget {
+        // Same scalars, no mints — everything `create_account` can carry.
+        PolicyArgs {
+            caps: vec![],
+            session_ceiling: vec![],
+            large_threshold: vec![],
+            ..f.policy.clone()
+        }
     } else {
-        let mut pk = [0u8; 32];
-        pk.copy_from_slice(&f.root_pubkey33[..32]);
-        RootKey::Ed25519 { pubkey: Pubkey::from(pk) }
+        f.policy.clone()
     };
-    let origin = f.origin.as_bytes().to_vec();
-    let rp_id_hash = passkey::rp_id_hash(&f.origin);
-    let args = CreateAccountArgs {
-        owner_seed: f.owner_seed,
-        root,
-        rp_id_hash,
-        origin,
-        cluster_tag: f.cluster_tag,
-        policy: f.policy.clone(),
-    };
-    let ix = create_account_ix(payer.pubkey(), pda, &args);
-    let tx = Transaction::new(&[payer], Message::new(&[ix], Some(&payer.pubkey())), svm.latest_blockhash());
+
+    let mut args = create_args(
+        RootKey::P256Passkey { pubkey: f.root_pubkey33 },
+        f.salt,
+        &f.origin,
+        f.cluster_tag,
+        creatable,
+    );
+    let (pda, ixs) = sign_create(svm, payer.pubkey(), pk, &mut args);
+    let tx = Transaction::new(&[payer], Message::new(&ixs, Some(&payer.pubkey())), svm.latest_blockhash());
     svm.send_transaction(tx)
         .unwrap_or_else(|e| panic!("create_account must succeed: {:?} {:#?}", e.err, e.meta.logs));
+
+    if over_packet_budget {
+        write_policy(svm, &pda, &f.policy);
+    }
     pda
+}
+
+/// **TEST-ONLY back door**, and a narrow one: overwrite only the `policy`
+/// field of an account created by the real instruction, leaving every other
+/// byte — root, seed, bump, nonce, buckets, lamports — exactly as
+/// `create_account` wrote it.
+///
+/// Stands in for Phase 1C's `set_policy`. See `create_smart_account` for why
+/// it is needed at all (`MAX_MINTS_AT_CREATE` is a packet bound, and the
+/// transfer/sessions suites need more mints than one packet holds).
+pub fn write_policy(svm: &mut LiteSVM, pda: &Pubkey, policy: &PolicyArgs) {
+    let existing = svm.get_account(pda).expect("account exists");
+    let mut acc = read_smart_account(svm, pda);
+    acc.policy = policy.expand().expect("fixture policy must expand");
+    acc.policy.version = 1;
+    let mut data = SmartAccount::DISCRIMINATOR.to_vec();
+    data.extend_from_slice(bytemuck::bytes_of(&acc));
+    assert_eq!(data.len(), SmartAccount::LEN);
+    svm.set_account(
+        *pda,
+        Account {
+            lamports: existing.lamports,
+            data,
+            owner: existing.owner,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account");
 }
 
 /// Plant a fully-formed `SmartAccount` directly into the SVM, bypassing
@@ -239,11 +440,18 @@ pub fn create_smart_account(svm: &mut LiteSVM, payer: &Keypair, f: &SmartAccount
 /// format: the 8-byte Anchor discriminator followed by the `Pod` bytes
 /// (`anchor_discriminator_is_sha256_of_account_name` pins that claim).
 pub fn set_smart_account(svm: &mut LiteSVM, f: &SmartAccountFixture) -> Pubkey {
-    let (pda, bump) = account_pda(&f.owner_seed);
+    // The seed is derived exactly as `create_account` derives it, so a planted
+    // account is addressed the same way a real one is — `root_verify.rs`'s PDA
+    // re-derivation check must pass for it. (The Ed25519 fixture hashes the
+    // same 33 bytes it stores; it never goes through `create_account`, and the
+    // only property that matters is self-consistency between the address and
+    // the stored `owner_seed`.)
+    let owner_seed = derive_owner_seed(&f.root_pubkey33, &f.salt);
+    let (pda, bump) = account_pda(&owner_seed);
     let mut acc: SmartAccount = bytemuck::Zeroable::zeroed();
     acc.version = 1;
     acc.bump = bump;
-    acc.owner_seed = f.owner_seed;
+    acc.owner_seed = owner_seed;
     if f.root_is_passkey {
         acc.set_root(&RootKey::P256Passkey { pubkey: f.root_pubkey33 });
     } else {

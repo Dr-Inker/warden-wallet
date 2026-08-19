@@ -9,6 +9,9 @@ import {
   OP_FREEZE,
   OP_UNFREEZE,
   OP_TRANSFER,
+  OP_CREATE,
+  OWNER_SEED_DOMAIN,
+  deriveOwnerSeed,
 } from "../src/index.js";
 
 const hex = (b: Uint8Array): string =>
@@ -280,5 +283,89 @@ describe("integer range validation", () => {
   // nearest float would produce an unverifiable ceremony.
   it("transcriptHash throws RangeError for a number-typed signedSlot", () => {
     expect(() => transcriptHash({ ...base, signedSlot: 1 as unknown as bigint })).toThrow(RangeError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1B Task 2b — proof of possession at create_account
+// ---------------------------------------------------------------------------
+
+describe("create_account (OP_CREATE, 0x06)", () => {
+  // The P-256 generator's x-coordinate, big-endian, with the even-parity
+  // prefix — a point that indisputably exists, matching the Rust vector's
+  // input (`create_account::tests::generator_pubkey33`).
+  const GENERATOR_PUBKEY33 = fromHex(
+    "026b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+  );
+  const SALT = fill(32, 0x44);
+
+  it("pins the op byte (it is part of the signed transcript, so it is permanent)", () => {
+    expect(OP_CREATE).toBe(0x06);
+    // ...and it is distinct from every other op.
+    const ops = [OP_ROTATE_NONCE, OP_GRANT_SESSION, OP_REVOKE_SESSION, OP_FREEZE, OP_UNFREEZE, OP_TRANSFER, OP_CREATE];
+    expect(new Set(ops).size).toBe(ops.length);
+  });
+
+  it("mirrors the Rust seed domain separator byte-for-byte", () => {
+    expect(new TextDecoder().decode(OWNER_SEED_DOMAIN)).toBe("WARDEN/seed/v1");
+  });
+
+  // Pinned against the Rust `create_account::tests::owner_seed_matches_pinned_vector`,
+  // which was itself computed with an INDEPENDENT from-spec Keccak-256 (see
+  // task-2b-report.md). This is an ADDRESS vector: a mirror that disagreed
+  // would compute a different account address, sign for it, and be told
+  // `ChallengeMismatch` — or, if it disagreed only later, would orphan every
+  // account already created.
+  it("matches the Rust-pinned owner_seed vector (owner_seed_matches_pinned_vector)", () => {
+    expect(hex(deriveOwnerSeed(GENERATOR_PUBKEY33, SALT))).toBe(
+      "794e590e0ff775f60fe3a1ebd85d9c1be8e5653c417018a63063f461e095b092",
+    );
+  });
+
+  it("binds BOTH the root key and the salt", () => {
+    const otherParity = new Uint8Array(GENERATOR_PUBKEY33);
+    otherParity[0] = 0x03;
+    const otherSalt = new Uint8Array(SALT);
+    otherSalt[31] ^= 1;
+    const base = hex(deriveOwnerSeed(GENERATOR_PUBKEY33, SALT));
+    expect(hex(deriveOwnerSeed(otherParity, SALT))).not.toBe(base);
+    expect(hex(deriveOwnerSeed(GENERATOR_PUBKEY33, otherSalt))).not.toBe(base);
+  });
+
+  it("rejects a root key that is not a 33-byte compressed point", () => {
+    expect(() => deriveOwnerSeed(fill(32, 2), SALT)).toThrow();
+    expect(() => deriveOwnerSeed(fill(34, 2), SALT)).toThrow();
+  });
+
+  it("rejects a salt that is not 32 bytes", () => {
+    expect(() => deriveOwnerSeed(GENERATOR_PUBKEY33, fill(31, 0))).toThrow();
+  });
+
+  // Pinned against the Rust
+  // `create_account::tests::create_body_action_hash_matches_pinned_vector`.
+  // The borsh encoding is hand-built here on purpose: it is the encoding a
+  // client must produce, and hand-building it is what proves this package and
+  // the program agree on the field order and on `Vec<u8>`'s u32 LE length
+  // prefix.
+  it("matches the Rust-pinned CreateBody action hash (create_body_action_hash_matches_pinned_vector)", () => {
+    const origin = new TextEncoder().encode("chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi");
+    const body = new Uint8Array(32 + 32 + 4 + origin.length + 32 + 32);
+    let o = 0;
+    body.set(SALT, o);
+    o += 32;
+    body.set(fill(32, 0x55), o); // rp_id_hash
+    o += 32;
+    new DataView(body.buffer).setUint32(o, origin.length, true); // borsh Vec<u8> length
+    o += 4;
+    body.set(origin, o);
+    o += origin.length;
+    body.set(fill(32, 0x5a), o); // cluster_tag
+    o += 32;
+    body.set(fill(32, 0x66), o); // policy_hash
+    expect(body.length).toBe(183);
+
+    expect(hex(actionHash(OP_CREATE, body))).toBe(
+      "d833a9c4d6dae3169175caadc86f1d1308996eacc2918b4af5465dc6be4a4020",
+    );
   });
 });

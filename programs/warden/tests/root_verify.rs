@@ -400,7 +400,7 @@ fn build(case: Case) -> Built {
         // defense in depth for a 1B that implements the Ed25519 signature
         // path and reopens creation.
         set_smart_account(&mut svm, &fixture)
-    } else if fixture.generation != 0 || fixture.root_nonce != 0 {
+    } else if fixture.generation != 0 || fixture.root_nonce != 1 {
         // No instruction advances `generation` yet, and reaching a
         // `root_nonce` other than 0 by replaying real ceremonies would only
         // duplicate what `consecutive_ceremonies_each_consume_one_nonce` and
@@ -411,7 +411,7 @@ fn build(case: Case) -> Built {
         // deliberately "impossible via any implemented instruction" shapes.
         set_smart_account(&mut svm, &fixture)
     } else {
-        create_smart_account(&mut svm, &payer, &fixture)
+        create_smart_account(&mut svm, &payer, &fixture, &pk)
     };
 
     // The honest client signs the slot it observes; a case may pin a different
@@ -565,7 +565,7 @@ fn live_account() -> (LiteSVM, Keypair, TestPasskey, SmartAccountFixture, Pubkey
     let pk = TestPasskey::new(3);
     let mut f = SmartAccountFixture::default();
     f.root_pubkey33 = pk.pubkey33();
-    let account = create_smart_account(&mut svm, &payer, &f);
+    let account = create_smart_account(&mut svm, &payer, &f, &pk);
     (svm, payer, pk, f, account)
 }
 
@@ -680,12 +680,13 @@ fn rotate_nonce_ok_and_nonce_increments() {
 }
 
 /// Two full ceremonies against ONE account on ONE live SVM: the first signs
-/// over nonce 0, the second over the nonce the first left behind. This is the
+/// over the nonce creation left behind (1, since `create_account` consumes its
+/// own ceremony), the second over the nonce that one leaves. This is the
 /// property the extension depends on — a user can act twice in a row.
 #[test]
 fn consecutive_ceremonies_each_consume_one_nonce() {
     let (mut svm, payer, pk, f, account) = live_account();
-    for n in 0..2u64 {
+    for n in 1..3u64 {
         assert_eq!(read_smart_account(&svm, &account).root_nonce, n);
         let ixs = ceremony_ixs(account, &pk, &f, n, NOW + 60, NOW_SLOT);
         send_fresh(&mut svm, &payer, &ixs)
@@ -705,10 +706,11 @@ fn consecutive_ceremonies_each_consume_one_nonce() {
 #[test]
 fn replay_same_assertion_rejected() {
     let (mut svm, payer, pk, f, account) = live_account();
-    let ixs = ceremony_ixs(account, &pk, &f, 0, NOW + 60, NOW_SLOT);
+    // Nonce 1 — what `create_account`'s own consumed ceremony left behind.
+    let ixs = ceremony_ixs(account, &pk, &f, 1, NOW + 60, NOW_SLOT);
 
     send_fresh(&mut svm, &payer, &ixs).expect("first submission must succeed");
-    assert_eq!(read_smart_account(&svm, &account).root_nonce, 1);
+    assert_eq!(read_smart_account(&svm, &account).root_nonce, 2);
 
     let e = send_fresh(&mut svm, &payer, &ixs).expect_err("replay must be rejected");
     assert_eq!(
@@ -720,14 +722,14 @@ fn replay_same_assertion_rejected() {
     assert!(!e.meta.logs.iter().any(|l| l.contains("panicked")));
     assert_eq!(
         read_smart_account(&svm, &account).root_nonce,
-        1,
+        2,
         "a rejected replay must not consume a second nonce"
     );
 
-    // And the account is still usable: a fresh ceremony over nonce 1 works.
-    let next = ceremony_ixs(account, &pk, &f, 1, NOW + 60, NOW_SLOT);
+    // And the account is still usable: a fresh ceremony over nonce 2 works.
+    let next = ceremony_ixs(account, &pk, &f, 2, NOW + 60, NOW_SLOT);
     send_fresh(&mut svm, &payer, &next).expect("a fresh ceremony must still succeed after a replay");
-    assert_eq!(read_smart_account(&svm, &account).root_nonce, 2);
+    assert_eq!(read_smart_account(&svm, &account).root_nonce, 3);
 }
 
 /// A challenge over a nonce that is neither current nor the previous one is
@@ -970,11 +972,13 @@ fn wrong_pubkey_rejected() {
     let mut fixture = SmartAccountFixture::default();
     // `build` overwrites `root_pubkey33`, so plant the mismatch by making the
     // account's stored key belong to a different passkey afterwards.
-    fixture.owner_seed = [8u8; 32];
+    fixture.salt = [8u8; 32];
     let (mut svm, payer) = common::setup();
     set_clock(&mut svm, NOW);
     fixture.root_pubkey33 = other.pubkey33();
-    let account = create_smart_account(&mut svm, &payer, &fixture);
+    // Created (and therefore signed for) by `other`; the ceremony below is
+    // signed by a DIFFERENT key, which is the mismatch under test.
+    let account = create_smart_account(&mut svm, &payer, &fixture, &other);
 
     let signer = TestPasskey::new(3);
     let challenge = rotate_nonce_challenge(
@@ -1060,7 +1064,7 @@ fn message_mismatch_rejected() {
     let pk = TestPasskey::new(3);
     let mut fixture = SmartAccountFixture::default();
     fixture.root_pubkey33 = pk.pubkey33();
-    let account = create_smart_account(&mut svm, &payer, &fixture);
+    let account = create_smart_account(&mut svm, &payer, &fixture, &pk);
     let challenge = rotate_nonce_challenge(
         &fixture.cluster_tag,
         &account,
@@ -1102,7 +1106,7 @@ fn message_mismatch_rejected() {
         "logs={:#?}",
         err.meta.logs
     );
-    assert_eq!(read_smart_account(&svm, &account).root_nonce, 0);
+    assert_eq!(read_smart_account(&svm, &account).root_nonce, 1, "unchanged since creation");
 }
 
 /// Naming an instruction that is not a secp256r1 precompile.
@@ -1426,7 +1430,7 @@ fn root_instruction_via_cpi_rejected() {
     let pk = TestPasskey::new(3);
     let mut f = SmartAccountFixture::default();
     f.root_pubkey33 = pk.pubkey33();
-    let account = create_smart_account(&mut svm, &payer, &f);
+    let account = create_smart_account(&mut svm, &payer, &f, &pk);
 
     // One ceremony, built once, submitted two different ways.
     let ixs = ceremony_ixs(account, &pk, &f, f.root_nonce, NOW + 60, NOW_SLOT);

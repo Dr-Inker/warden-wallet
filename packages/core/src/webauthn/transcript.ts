@@ -119,6 +119,82 @@ export const OP_UNFREEZE = 0x04;
  */
 export const OP_TRANSFER = 0x05;
 
+/**
+ * `op_type` byte for `create_account`'s proof-of-possession ceremony (Phase 1B
+ * Task 2b); hashed over `borsh(CreateBody)`.
+ *
+ * `CreateBody` field order (borsh,
+ * `programs/warden/src/instructions/create_account.rs`):
+ * `salt: [u8; 32]`, `rp_id_hash: [u8; 32]`, `origin: Vec<u8>` (u32 LE length
+ * prefix, then the bytes), `cluster_tag: [u8; 32]`,
+ * `policy_hash: [u8; 32]` — 183 B for the canonical 51-byte
+ * `chrome-extension://…` origin. `policy_hash` is
+ * `Keccak256(borsh(PolicyArgs))`.
+ *
+ * Three things a client must get right, because each one is signed but not
+ * transmitted in the body:
+ * - **`salt`, never `owner_seed`.** The seed is DERIVED on-chain (see
+ *   {@link deriveOwnerSeed}); signing it too would be redundant and would let
+ *   the two drift.
+ * - **The transcript's `account` is the derived address**, not an address the
+ *   client picks: `["account", deriveOwnerSeed(rootPubkey33, salt)]` under the
+ *   Warden program id. Sign the wrong address and the program answers
+ *   `ChallengeMismatch` (6018).
+ * - **The transcript state is the newborn account's**: `generation = 0n`,
+ *   `policyVersion = 1`, `rootNonce = 0n`. The account is written with
+ *   `root_nonce = 1` — creation consumes its own ceremony — so the NEXT
+ *   ceremony for that account signs `rootNonce = 1n`, not `0n`.
+ *
+ * The root key is deliberately absent from the body: the assertion is verified
+ * *under* that key by the secp256r1 precompile, and the address is derived
+ * from it, so substituting it cannot produce a valid challenge.
+ */
+export const OP_CREATE = 0x06;
+
+/**
+ * Domain separator for the `create_account` PDA seed derivation. Mirrors
+ * `instructions::create_account::OWNER_SEED_DOMAIN`.
+ */
+export const OWNER_SEED_DOMAIN: Uint8Array = new TextEncoder().encode("WARDEN/seed/v1");
+
+/**
+ * `owner_seed = Keccak256("WARDEN/seed/v1" ‖ root_pubkey33 ‖ salt32)` — the
+ * seed of the `SmartAccount` PDA (`["account", owner_seed]`).
+ *
+ * Mirrors `instructions::create_account::derive_owner_seed` byte-for-byte and
+ * is pinned by a shared golden vector (Rust
+ * `create_account::tests::owner_seed_matches_pinned_vector`,
+ * TypeScript "matches the Rust-pinned owner_seed vector").
+ *
+ * **The IDL cannot express this seed** — Anchor's IDL seed parser handles
+ * constants, plain instruction arguments and account fields, not a Keccak of
+ * two arguments — so `create_account`'s `smart_account` account carries no
+ * `pda` block and a client CANNOT auto-derive the address from the IDL. This
+ * function is the supported derivation. Getting it wrong does not merely fail
+ * to find the account: it signs the wrong address, and the program answers
+ * `ChallengeMismatch`.
+ *
+ * The address is a hash of BOTH inputs, and both matter: the salt keeps one
+ * passkey able to hold several independent accounts (and keeps an observer who
+ * knows only the root key from computing the address); the root key is what
+ * makes the address unsquattable, because a front-runner who copies the salt
+ * and substitutes their own root lands somewhere else entirely.
+ *
+ * @param rootPubkey33 Compressed SEC1 P-256 point (33 bytes, prefix 0x02/0x03).
+ * @param salt 32 client-chosen random bytes.
+ */
+export function deriveOwnerSeed(rootPubkey33: Uint8Array, salt: Uint8Array): Uint8Array {
+  if (rootPubkey33.length !== 33) {
+    throw new Error(`rootPubkey33 must be exactly 33 bytes, got ${rootPubkey33.length}`);
+  }
+  require32(salt, "salt");
+  const preimage = new Uint8Array(OWNER_SEED_DOMAIN.length + 33 + 32);
+  preimage.set(OWNER_SEED_DOMAIN, 0);
+  preimage.set(rootPubkey33, OWNER_SEED_DOMAIN.length);
+  preimage.set(salt, OWNER_SEED_DOMAIN.length + 33);
+  return keccak_256(preimage);
+}
+
 const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /**

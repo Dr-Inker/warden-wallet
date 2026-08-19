@@ -155,7 +155,7 @@ fn live() -> (LiteSVM, Keypair, TestPasskey, Pubkey) {
         policy: transfer_policy(),
         ..Default::default()
     };
-    let account = create_smart_account(&mut svm, &payer, &f);
+    let account = create_smart_account(&mut svm, &payer, &f, &pk);
     svm.airdrop(&account, VAULT_FUNDING).expect("fund the vault");
     (svm, payer, pk, account)
 }
@@ -682,12 +682,12 @@ fn session_of_another_account_rejected() {
 
     // A second, independent account with the same policy and root key.
     let f = SmartAccountFixture {
-        owner_seed: [42u8; 32],
+        salt: [42u8; 32],
         root_pubkey33: pk.pubkey33(),
         policy: transfer_policy(),
         ..Default::default()
     };
-    let other = create_smart_account(&mut svm, &payer, &f);
+    let other = create_smart_account(&mut svm, &payer, &f, &pk);
     svm.airdrop(&other, VAULT_FUNDING).unwrap();
 
     let ix = session_sol_ix(&session_kp, other, session, Pubkey::new_unique(), 1);
