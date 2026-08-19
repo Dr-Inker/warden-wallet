@@ -1,8 +1,8 @@
 # Warden Wallet — design foundation (Figma)
 
 **File:** [Warden Wallet — design system](https://www.figma.com/design/GOBwNsRgT5I36H2oGjfSbi/Warden-Wallet-%E2%80%94-design-system)
-`fileKey = GOBwNsRgT5I36H2oGjfSbi` · owner `Dr. Inker` (`team::1660993652229402605`) · created 2026-08-18, revised
-2026-08-18 (review round 1).
+`fileKey = GOBwNsRgT5I36H2oGjfSbi` · owner `Dr. Inker` (`team::1660993652229402605`) · created 2026-08-18. Figma
+frames were last revised 2026-08-18 (review round 1); this ledger received a binding research audit on 2026-08-19.
 
 Doctrine followed: `/opt/drinkerlabs/DESIGN.md`. Product context: `docs/superpowers/specs/2026-08-18-warden-wallet-design.md`
 §6 (intent view) and §9 (UI/brand).
@@ -36,6 +36,31 @@ is clipped. Dark frames are clones carrying an explicit `color`-collection mode 
 
 Screenshots in this folder: `06-sign-request.png`, `02-home.png`, `06c-dust-only.png`, `00-components.png`.
 
+### Binding 2026-08-19 audit status
+
+The node ids and screenshots above are historical evidence of the current file,
+not approved implementation references. Research in
+`docs/research/2026-08-19-wallet-ui-extension-mobile.md` found:
+
+- `ConfirmField/Matched` and frame `10:54` incorrectly make a partial-address
+  match look like recipient verification. They are **legacy / do not ship**
+  until replaced with neutral attention-friction copy and exact-address
+  provenance.
+- Frame `10:145` and its dark clone incorrectly allow a dust/lookalike block
+  to be released by typing characters from the suspicious address. They are
+  **legacy / do not ship** until the override starts a fresh trusted-source
+  entry, shows a full-address diff, and requires fresh authentication.
+- Light-mode `warn` is 2.33:1 on `bg` and 2.19:1 on `surface`. Because its
+  rails/dots carry meaningful status, a replacement light warning-indicator
+  token must reach at least 3:1 on every permitted background.
+- The existing `NavBar` treats Send and Swap as destinations. Replace it with
+  Home / Activity / Protect / Settings plus a separate Send / Receive / Swap
+  action dock.
+
+No Figma node or exported token was changed by this documentation audit. Use an
+explicit Figma edit lease and record replacement node ids, native-size captures,
+and contrast measurements here.
+
 ## Components (page `9:86`)
 
 | Component | node id | variants / notes |
@@ -45,11 +70,11 @@ Screenshots in this folder: `06-sign-request.png`, `02-home.png`, `06c-dust-only
 | AddressChip | `9:211` | mono `first4…last4` + copy affordance |
 | TrustMark | `9:228` | `Known` · `FirstTime` · `DustOnly`. Semantic dot + **sentence-case Inter 12** label in `ink`. Not a filled badge |
 | PolicyVerdict | `9:244` | `Within` · `NeedsPasskey` · `Blocked`. 2 px semantic rail + `ink` title + `muted` detail |
-| ConfirmField | `9:260` | `State=Incomplete` (accent focus ring, caret, "2 characters left") · `State=Matched` (ok dot, "matches"). The typed first-4/last-4 gate required by spec §6 |
+| ConfirmField | `9:260` | **Legacy / redesign required.** `State=Incomplete` and `State=Matched` currently imply a first-4/last-4 identity gate. A replacement may provide neutral attention friction only; matching cannot use an ok dot, establish trust, lower risk, or release a poisoning block |
 | Meter | `9:261` | label left / value right, then a 4 px hairline-outlined track with an `accent` fill |
 | BalanceRow | `9:267` | symbol / name / amount / fiat |
 | Divider | `9:274` | 1 px hairline |
-| NavBar | `9:275` | Home / Send / Swap / Activity, sentence case, active = accent underline |
+| NavBar | `9:275` | **Legacy / redesign required.** Current Home / Send / Swap / Activity conflates destinations and actions. Target: Home / Activity / Protect / Settings; separate ActionDock: Send / Receive / Swap |
 | Sheet | `9:288` | bottom sheet, modal shadow tier |
 
 ## The colour rule (added in review round 1)
@@ -59,7 +84,8 @@ Two reasons, in order of weight:
 
 1. **Contrast.** Measured against `--w-surface` in light mode: `warn` = **2.19:1**, `ok` = **3.23:1**,
    `critical` = 4.55:1. Against dark `surface`, `critical` = 3.58:1. Coloured status *text* therefore fails WCAG AA
-   (4.5:1) in the majority of the places it would appear. The rail carries the same information at full legibility.
+   (4.5:1) in the majority of the places it would appear. Rails/dots may carry status only when they independently
+   reach WCAG's 3:1 non-text contrast threshold; current light `warn` does not and must be replaced before export.
 2. **Restraint.** Doctrine §2 uses a semantic hue "as dot, not wash". A wallet that paints every outgoing amount red
    is a casino; a wallet that paints only *authority changes, blocked verdicts and poisoning* red is an instrument.
 
@@ -68,8 +94,12 @@ Consequences:
 - Ordinary outgoing amounts (`−0.2500`) are **`ink`**; the sign is carried by the U+2212 glyph, not by hue.
 - `critical` appears in exactly three places: the authority-change rail (06b), the blocked-verdict rail (06b), and the
   poison rail + dust dot + "Block and report" stroke (06c).
-- `warn` appears on the pending-timelock rail (02), the first-time-recipient dot (06) and the needs-passkey rail.
-- `ok` appears on the session-unlocked dot (02) and the confirmation-matched dot (06a).
+- A revised light warning-indicator token will appear on the pending-timelock
+  rail, first-time-recipient dot, and needs-passkey rail only after measuring at
+  least 3:1 on each allowed background.
+- `ok` appears on independently evidenced positive state such as
+  session-unlocked. It must not appear merely because displayed recipient
+  characters matched.
 
 ## Variable collections
 
@@ -100,10 +130,16 @@ below `ink`.
 Only `accent` is a brand chroma above 0.10; `ok`/`warn`/`critical` are semantic status hues the spec (§9) separates
 from the accent, and per the rule above they never appear as chrome or as text.
 
-Figma variables are sRGB, so the OKLCH values were converted once and the sRGB result is what Figma stores:
+**Pending Figma-first correction:** do not export the current light `warn` for
+meaningful rails/dots. Add a semantic indicator role with Light/Dark/High
+Contrast modes, measure it against every allowed background, and export the
+Figma variables plus generated token files together.
+
+Figma variables are sRGB, so the documented OKLCH intent was converted and the sRGB result is what Figma stores:
 bg `#F8F5EF` / `#050911`, surface `#F1EEE9` / `#0C121A`, ink `#181B1E` / `#E6E4E0`, accent `#495DA7` / `#6A81CE`,
-ok `#439458`, warn `#D79628`, critical `#BD413F`. **OKLCH in `tokens.css` is the source of truth**; the hex is a lossy
-render for tooling that cannot do OKLCH.
+ok `#439458`, warn `#D79628`, critical `#BD413F`. **Figma variables are the design source of truth**; generated
+`tokens.css` must be exported from them, never hand-authored in the reverse direction. The hex values are the actual
+Figma storage values and the OKLCH notation documents authoring intent.
 
 ### `type` (`VariableCollectionId:1:12`)
 
@@ -142,17 +178,24 @@ elevation itself is part of the enabled/disabled signal.
 
 ### 06 — sign request / intent
 
-Reading order is origin → what changes → who receives it → what the policy will do → the gate → the button.
+Target reading order is origin → decoded intent → what changes now → continuing
+authority → independent origin/decode/simulation/policy evidence → cost/timing
+and stop path → an effect-specific decision.
 
 - **Origin header** — mark, host, connection age, and the key that will sign, so the user knows *which* key is acting.
 - **What changes** — per-token diff from simulation in `ink` mono, with fiat, network fee and resulting balance under a
   hairline. One number is the hero; everything else is 12 px.
-- **Recipient** — full base58 address in mono, plus a `TrustMark`.
-- **Policy verdict** — the on-chain answer, not a dismissible warning: within limits / needs passkey + delay / blocked.
-- **Typed confirmation (spec §6)** — a `ConfirmField` sits directly above the primary action. Until the typed value
-  matches the recipient's first four and last four characters, the primary is `PrimaryDisabled`: a flat `surface`
-  rectangle with a hairline and a `muted` label and no elevation — visibly not a button yet. `06a` (`10:54`) is the same
-  frame with `State=Matched` and `Variant=Primary`, showing the gate released.
+- **Recipient** — full Base58 address in mono plus exact-address provenance,
+  source, first/last genuine use, and a full character-level diff when a
+  lookalike exists.
+- **Evidence** — origin, decode, simulation, and on-chain policy remain four
+  independent axes; no axis turns another green.
+- **Partial-address typing (legacy correction)** — current `ConfirmField` and
+  `06a` (`10:54`) are not approved references. Matching first/last characters
+  does not verify a recipient. If the replacement retains typing as attention
+  friction, its matched copy is “Displayed characters matched. Recipient
+  identity is still unverified.” It remains neutral and cannot establish
+  provenance or lower risk.
 - **Actions** — primary reads "Send 0.25 SOL to 7f3k…q9Lm"; secondary is "Reject".
 
 ### 06b — blocked (authority change)
@@ -169,9 +212,13 @@ The poison case gets its own blocking treatment rather than a trust label alone:
   looks like the address the user actually uses.
 - The recipient card shows the poisoned address, the `DustOnly` `TrustMark`, and the **address the user actually sends
   to** for comparison — the single most useful thing the wallet can show here.
-- The primary action is inverted: destructive **"Block and report this address"**. The escape hatch,
-  "I understand the risk, continue", is a `SecondaryDisabled` and stays disabled until the same `ConfirmField` matches.
-  You cannot proceed through a poisoning warning by muscle memory.
+- The primary action is inverted: destructive **"Block and report this
+  address"**.
+- The current escape hatch that unlocks when `ConfirmField` matches is
+  superseded. A replacement expert path begins a fresh recipient entry from a
+  trusted source, shows the full-address comparison, requires fresh
+  authentication, and remains subject to policy/timelock. Copying characters
+  from the suspicious address never releases the block.
 
 ### 02 — home
 
@@ -187,12 +234,34 @@ Shows the account's safety state before it shows its money.
 
 ---
 
-## Not yet designed
+## Target file structure and remaining design scope
 
-Screens **01** onboarding (incl. the one Tiempos-italic hero phrase §9), **03** receive, **04** send, **05** swap,
-**07** connect, **08** policy, **09** sessions & devices, **10** guardians & recovery, **11** settings/trust.
-Also missing: full-page (expanded tab) variants, hover/focus states, loading states beyond the `—` case, the top-20
-dApp-compat surface (§12.4), and a `Sheet` used in situ.
+The expansion plan is
+`docs/superpowers/plans/2026-08-19-warden-s-tier-ui-mobile.md`; research and
+the complete state matrix are in
+`docs/research/2026-08-19-wallet-ui-extension-mobile.md`.
+
+Target pages:
+
+1. `00 Foundations`
+2. `01 Components`
+3. `02 Extension`
+4. `03 Mobile iOS`
+5. `04 Mobile Android`
+6. `05 Prototypes`
+7. `06 Adversarial states`
+8. `07 Research evidence`
+9. `99 Archive`
+
+Still undesigned: **01** onboarding, **02A** Activity, **03** Receive,
+**04** Send, **05** Swap, **07** Connect, **08** Protect/Policy,
+**09** Sessions & Devices, **10** Guardians & Recovery, and
+**11** Settings/Trust. Also missing are popup/side-panel/dedicated-approval/
+full-tab responsive variants; iOS and Android; complete security-evidence,
+financial, navigation, ceremony, and feedback components; keyboard/focus;
+loading/offline/stale/partial/error/interruption; top-20 dApp compatibility;
+large text/zoom; RTL/pseudolocale; reduced motion; high contrast; and a `Sheet`
+used in situ.
 
 ## Process note
 

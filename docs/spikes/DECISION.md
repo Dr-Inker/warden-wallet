@@ -92,7 +92,16 @@ Read the **post-fix** numbers; round 1's "100% inline, 45–47-account ceiling" 
 
 Three contract facts fall out of the fixes and bind the spec:
 
-1. **`execute` payload account indices are INSTRUCTION-LOCAL** — index *i* = position *i* in the execute instruction's own key list `[account, sessionKey, ...order]`, because on-chain the handler only ever sees its own instruction's account slice, never the message's global key list. `wrap.ts` now indexes `outerKeys` directly and asserts, after compiling and decompiling, that the resolved key order equals `outerKeys` exactly — a permanent regression guard (`spikes/03-txbudget/result.md § "Round 2 fix (2026-08-18) — read this too" (l.39-57)`).
+1. **Final contract correction: `execute` payload account indices are
+   LOGICAL** — `[0]=smart_account`, `[1]=signer`,
+   `[2+k]=remaining_accounts[k]`, constructed by the handler and never
+   indexing the raw physical slice. The spike's fixed shape called this
+   “instruction-local” and asserted `outerKeys`; that measurement remains
+   evidence about key order/size, but the label is superseded because
+   production handlers have named optional accounts. Phase 1's regression
+   guard must assert the logical mapping from spec rev 8 §5.2/§12.3
+   (`spikes/03-txbudget/result.md § "Round 2 fix (2026-08-18) — read this too"
+   (l.39-57)` records the historical spike shape).
 2. **Compute-budget instructions must be top-level.** `ComputeBudgetProgram` ixs are honored only at the transaction's top level, never inside a CPI, so wrapping them into the payload would silently make them inert. `wrapForExecute` hoists any it finds and adds a default `setComputeUnitLimit(600_000)` when the dApp tx carries none — this is the +40 B that took Marinade from 662 to 702 B (`spikes/03-txbudget/result.md § "Round 1 fix (2026-08-18) — task review findings, addressed" (l.453-464)`).
 3. **The 985-B `stage_chunk` payload cap is PROVISIONAL and stays PROVISIONAL.** It was *measured*, not guessed — `maxStageChunkPayloadBytes()` binary-searches the largest payload keeping a representative `stage_chunk` tx ≤ 1,232 B (`spikes/03-txbudget/result.md § "Round 1 fix (2026-08-18) — task review findings, addressed" (l.466-470)`) — but the account shape (payer / Stage PDA / System Program) and the 8-byte `[offset:u32, len:u32]` header are an **assumed** layout: spec rev 5 §5.1 fixed only the signer ("any payer") (`spikes/03-txbudget/result.md § "Round 2 fix (2026-08-18) — read this too" (l.58-65)`, `spikes/03-txbudget/result.md § "Post-fix re-measurement (authoritative)" (l.235-241)`). Spec rev 6 §5.1 now fixes the layout, which makes the number deterministically re-measurable — it does **not** retroactively make 985 B correct for that encoding: the measured instruction carried no program discriminator, so the cap under §5.1 is at most ≈977 B. Phase 1 measures it against the built program and records the exact value.
 
@@ -144,7 +153,23 @@ The four provisional rows are not fixable by more inspection in this environment
 
 ## Design foundation (Task 8, not a spike)
 
-`docs/design/figma.md` — tokens (colour/type/space/radius collections with Light/Dark modes), components, and screens **06 / 06a / 06b / 06c / 02** exist as real frames. Load-bearing for the spec: the typed first/last-4 confirmation gate is designed and wired (`ConfirmField` above the primary action, primary is `PrimaryDisabled` until matched — `docs/design/figma.md § "06 — sign request / intent" (l.152-156)`), the dust-only/poisoning case gets a **blocking** treatment with an inverted destructive primary (`docs/design/figma.md § "06c — dust-only recipient (address poisoning)" (l.164-174)`), semantic colours are never used as text and `critical` appears in exactly three places (`docs/design/figma.md § "The colour rule (added in review round 1)" (l.55-72)`), and `--w-muted` is ink @ 68 % (``docs/design/figma.md § "`color` — modes `Light` / `Dark` (`VariableCollectionId:1:2`)" (l.83)``) after the light-mode contrast fix. 9 of 11 screens remain undesigned (`docs/design/figma.md § "Not yet designed" (l.190-195)`) — a Phase-3 input, not a Phase-1 blocker.
+`docs/design/figma.md` — tokens (colour/type/space/radius collections with
+Light/Dark modes), components, and screens **06 / 06a / 06b / 06c / 02** exist
+as real frames. At Task 8's 2026-08-18 review base, the then-current spec's
+typed first/last-4 gate was designed and wired, the dust-only case had a
+blocking treatment with an inverted destructive primary, semantic colours were
+not used as text, and `--w-muted` had been raised to ink @ 68 %. Nine of eleven
+screen families remained undesigned—a later-phase input, not a Phase-1 blocker.
+
+**2026-08-19 supersession:** preserve the paragraph above as historical review
+evidence, but do not implement its partial-address gate. The binding rev-8
+UI/security erratum and
+`docs/research/2026-08-19-wallet-ui-extension-mobile.md` establish that
+matching visible address ends is not recipient verification. Existing matched
+and dust-override frames are legacy/do-not-ship until replaced with exact-
+address provenance, full-address comparison, and fresh-auth/policy controls.
+The same audit found current light `warn` rails/dots below 3:1. Current node
+status and replacement acceptance live in `docs/design/figma.md`.
 
 ---
 
@@ -157,7 +182,7 @@ Each is a concrete edit; all are applied in `docs/superpowers/specs/2026-08-18-w
 | C1 | §4 | Define `rpIdHash` as **SHA-256(full extension origin string `chrome-extension://<id>`)**, with the matching/non-matching hash pair inline as evidence, and require it to be per-build configuration held in account state — never a literal, never SHA-256(id) | 2b ``spikes/02-webauthn/result.md § "⚠ Correction to the spec: what `rpIdHash` actually hashes" (l.221-242)`` |
 | C2 | §4 | **Low-S normalization is mandatory client-side** before every submission (not a later edge case) | 2b `spikes/02-webauthn/result.md § "Headline numbers" (l.268)` |
 | C3 | §4, §5.2 | `clientDataJSON` verification = **strict top-level scanner**, defined exactly: depth-0 keys only; **exactly one** top-level `type`, `challenge` and `origin`; any duplicate top-level key ⇒ reject; `crossOrigin` **absent or `false`** (present-and-true ⇒ reject — the spike requires the field be examined, not that it be present); JSON escapes decoded before comparison, else reject; hard length cap. Substring matching is explicitly forbidden, and the spike's six hole tests must flip | 2b ``spikes/02-webauthn/result.md § "Honest caveat — the substring-match approach to `clientDataJSON`" (l.348-394)`` |
-| C4 | §5.2 | `execute` payload account indices are **instruction-local**; compute-budget ixs are **top-level only** with a default `setComputeUnitLimit(600_000)`; **cap accounts in a session `execute` at 40, PROVISIONAL** — a byte-limit-driven conservative choice, not a CU-driven one, evidenced by the 35–43 `totalKeys` band (i.e. total original-message keys — static + LUT — NOT a writable-only count; spike 3a's `writableAccounts` field was mislabeled and is renamed `totalKeys` in a round-5 docs fix), to be re-derived in Phase 1 once `writableKeys`/`executeAccountCount` are actually measured (see the justification note below) | 3a `spikes/03-txbudget/result.md § "Round 2 fix (2026-08-18) — read this too" (l.39-57), § "Post-fix re-measurement (authoritative)" (l.209-211), § "Round 1 fix (2026-08-18) — task review findings, addressed" (l.453-464)`; 3b `spikes/03-txbudget/result.md § "Results — CU sweep, N ∈ {10, 20, 30} vault-owned SPL Token accounts (happy path)" (l.747-749)` |
+| C4 | §5.2 | `execute` payload account indices use the final **logical** mapping `[0]=smart_account`, `[1]=signer`, `[2+k]=remaining_accounts[k]`, built by the handler and never indexing the raw physical slice. The spike's fixed account shape called this “instruction-local”; that wording is superseded by the named-optional-account contract. Compute-budget ixs are **top-level only** with a default `setComputeUnitLimit(600_000)`; **cap accounts in a session `execute` at 40, PROVISIONAL** — a byte-limit-driven conservative choice, not a CU-driven one, evidenced by the 35–43 `totalKeys` band (i.e. total original-message keys — static + LUT — NOT a writable-only count; spike 3a's `writableAccounts` field was mislabeled and is renamed `totalKeys` in a round-5 docs fix), to be re-derived in Phase 1 once `writableKeys`/`executeAccountCount` are actually measured (see the justification note below) | Final contract: spec rev 8 §5.2 and §12.3; measurement provenance: 3a `spikes/03-txbudget/result.md § "Round 2 fix (2026-08-18) — read this too" (l.39-57), § "Post-fix re-measurement (authoritative)" (l.209-211), § "Round 1 fix (2026-08-18) — task review findings, addressed" (l.453-464)`; 3b `spikes/03-txbudget/result.md § "Results — CU sweep, N ∈ {10, 20, 30} vault-owned SPL Token accounts (happy path)" (l.747-749)` |
 | C5 | §5.1 | Define the `stage_chunk` account layout explicitly (payer signer, Stage PDA writable, System program; data = discriminator ‖ `offset:u32 LE` ‖ `len:u32 LE` ‖ payload) so the cap becomes **deterministically re-measurable** instead of resting on an assumed shape. **The 985-B figure stays PROVISIONAL** and is not a spec-derived cap: it was measured against a representative tx whose data was header+payload with **no program discriminator**, so the cap for §5.1's encoding is ≈8 B lower (≤ 977 B). Phase 1 measures the real number against the built program | 3a `spikes/03-txbudget/result.md § "Round 2 fix (2026-08-18) — read this too" (l.58-65), § "Round 1 fix (2026-08-18) — task review findings, addressed" (l.466-470)` |
 | C6 | §5.2.2 | Conservation = **before/after field-by-field** compare over the named field list **including `is_native`**, with strict COption decoding; the §5.2.2 "UNVERIFIED" tag is replaced by the measured numbers | 3b `spikes/03-txbudget/result.md § "Part (b) — conservation snapshot CU" (l.695-698)`, progress `:49` |
 | C7 | §6 | Root-verify tx budget note: 788 B baseline with **no payload** ⇒ root instructions carry ≤ ~400 B of payload or use the staged path | 2b `spikes/02-webauthn/result.md § "Transaction size (input for spike 03 — tx budget)" (l.281-291)` |

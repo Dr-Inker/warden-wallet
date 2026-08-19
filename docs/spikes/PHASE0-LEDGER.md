@@ -44,6 +44,15 @@ Task 5: review (Codex thread 01a014d2): Needs fixes — Critical: account indice
 Task 6: commit 7850423; review (Codex thread 01a014d8): Needs fixes — Critical: invariant compares only after-state (delegate cleared / account shrunk passes) — plan-mandated code defect → Ruling: fix (before/after field-by-field compare, require valid token after-snapshot when before was vault-owned) — cost if wrong: CU numbers shift slightly; Important: COption tag decoded as !=0 not strict; Important: negative path is synthetic, invariant fn needs unit tests; Minor: error assert by string. CU: 10→8,688 / 20→16,134 / 30→23,254 (~750/acct).
 Task 8: fix round 1/5 (5 addressed, 0 open; commit e58a053)
 Task 8: complete (commits c345090..01414f0 + e58a053, review clean after round 1). Figma file GOBwNsRgT5I36H2oGjfSbi; ui-tokens 11 tests. Deferred: 9/11 screens undesigned; dark mode is a mode flip; disabled-primary vs secondary distinction weakest.
+Task 8: superseded requirement note (2026-08-19; documentation only) — the
+review above accurately records the then-current spec, but the binding rev-8
+UI/security erratum withdraws partial first/last-4 matching as recipient
+verification because lookalike
+addresses can deliberately match visible ends. The existing matched and
+dust-override Figma frames are legacy/do-not-ship. See
+docs/research/2026-08-19-wallet-ui-extension-mobile.md and
+docs/design/figma.md. This note does not rewrite Task 8's historical completion
+or claim a replacement design exists.
 Task 5: fix round 1/5 (2 addressed, 2 open — payload indices are message-global not instruction-local; stage_chunk cap realism; commit db8f85a). Ruling: `execute` payload indices are INSTRUCTION-LOCAL (index into execute's own account metas / remaining_accounts) — cost if wrong: Phase-1 SDK re-encoding. Ruling: stage_chunk account contract = spec §5.1 (payer, Stage PDA, system program, 8-B header) — cap 985 B is provisional until Phase 1 program exists; record in DECISION.md — cost if wrong: chunk count off by one.
 Task 6: fix round 1 commit e0990ea (16 tests; CU 10→10,011 / 20→18,785 / 30→27,225 ≈ 900/acct) — awaiting re-review.
 Task 6: fix round 1/5 (4 addressed, 0 open; commit e0990ea). Minor (deferred, Phase 1): parse+compare is_native COption (WSOL detection currently mint-only) — Ruling: not a bypass in the spike (is_native cannot change without close/recreate, which is blocked) but Phase 1 compares it too — cost if wrong: none for measurements.
@@ -52,6 +61,12 @@ Task 5: fix round 2/5 (1 addressed, small open — §5.1 citation overclaims (sa
 Task 5: fix round 3/5 (2 addressed, 1 open — result.md:60 still attributes header shape to §5.1; commit 787ab42). Ruling: round 4 resumes the same implementer (skill says fresh+stronger model) because the residual is a one-line doc wording — cost if wrong: none.
 Task 5: fix round 4/5 (1 addressed, 0 open; commit d004ba5)
 Task 5: complete (commits 01414f0..9912129 + db8f85a, 3b1951a, 787ab42, d004ba5; review clean after round 4). Headline: post-fix Jupiter SOL→USDC 2/3 fresh routes inline, 43-account route 1,235 B → 1 stage chunk; Marinade 702 B; execute payload indices INSTRUCTION-LOCAL; stage cap 985 B PROVISIONAL.
+Task 5: superseded index-contract note (2026-08-19; documentation only) —
+the review lines above record the spike's fixed account shape. The final spec
+rev 8 handler contract is LOGICAL: `[0]=smart_account`, `[1]=signer`,
+`[2+k]=remaining_accounts[k]`; it never indexes the raw physical account
+slice. See spec §5.2 and §12.3. This note preserves rather than rewrites the
+historical review.
 Task 5: minor (deferred): result.md has grown into a 600-line changelog — trim into DECISION.md summary; Tensor unmeasured (API key).
 Task 9: complete (commit e342c0e). Codex round 1 NO-GO (thread 01a014fc: 40-acct cap CU overclaim, 985 B "spec-derived", crossOrigin overstated) → fixed → round 2 GO (thread 01a014ff). Ruling: the two Codex GO/NO-GO rounds on DECISION.md + spec rev 6 serve as Task 9's task review (same diff, same reviewer) — cost if wrong: an unreviewed Cargo.toml/test-gate tweak (final review covers it).
 Open items carried to Phase 1: O1 real-device PRF (owner) — Argon2id primary until then; O11 full execute CU unmeasured (early Phase-1 LiteSVM); conservation reject branch never driven by a real CPI; Jupiter v6 route discriminator UNVERIFIED; root Cargo members=[] until programs/warden exists.

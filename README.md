@@ -13,20 +13,27 @@ The property we build toward, stated exactly (spec §1): *if an attacker obtains
 
 | Area | State |
 |---|---|
-| **Design spec** (rev 7) | `docs/superpowers/specs/2026-08-18-warden-wallet-design.md` — threat model, key model, on-chain instruction set, conservation rules, recovery, rollout |
+| **Design spec** (rev 8 + binding 2026-08-19 UI/security erratum) | `docs/superpowers/specs/2026-08-18-warden-wallet-design.md` — threat model, key model, on-chain instruction set, conservation rules, recovery, rollout |
 | **Phase 0 — spikes** | Done, merged. Evidence-backed answers to the four questions that could have killed the design: passkey root verified on-chain (secp256r1 precompile + Instructions-sysvar binding), transaction byte budget on real Jupiter routes, conservation-snapshot CU cost, dApp compatibility inventory. Roll-up + decision: `docs/spikes/DECISION.md` |
-| **Phase 1A — program foundation** | Done, merged to `main` (Codex `sol@max` final review MERGE-READY).  `programs/warden` (Anchor): zero-copy `SmartAccount`, `SessionKey`, bucket accounting, `root_verify` (strict WebAuthn `clientDataJSON` scanner, consumed nonce), `create_account`, `grant_session`/`revoke_session`, root `freeze`/`unfreeze`, `transfer` (session within caps / root bounded, both debiting shared account-wide buckets). 292 Rust + 50 TS tests at merge (`c583dfe`); the `phase1b` branch is at 431 Rust / 101 TS with the gate green in CI. Measured costs + error ABI (6000–6035): `docs/program/PHASE1A-MEASUREMENTS.md` |
+| **Phase 1A — program foundation** | Done, merged to `main` (Codex `sol@max` final review MERGE-READY).  `programs/warden` (Anchor): zero-copy `SmartAccount`, `SessionKey`, bucket accounting, `root_verify` (strict WebAuthn `clientDataJSON` scanner, consumed nonce), `create_account`, `grant_session`/`revoke_session`, root `freeze`/`unfreeze`, `transfer` (session within caps / root bounded, both debiting shared account-wide buckets). 292 Rust + 50 TS tests at merge (`c583dfe`). Measured costs, executable commands, evidence SHAs, and error ABI (6000–6035): `docs/program/PHASE1A-MEASUREMENTS.md` |
 | **Phase 1B — execute / registry / staging / swap** (in progress, branch `phase1b`) | Landed so far (each Codex-reviewed at `sol@max`): L0 harness-fidelity gate (forged-signature tests prove the secp256r1 precompile is live), slot-based root freshness + top-level-only root paths, the `conservation` module (before/after field-by-field compare incl. Mint pre-scan, new-vault-account rejection, duplicate-key rejection, lamport freeze, close-intent identity), root-bound account address + proof-of-possession at create (squatting impossible), the invariant ledger + typed Codex findings schema + prior-art corpus (`docs/security/`), CI workflow + cargo-deny + fail-closed supply-chain gate. Remaining: test programs, adapter registry, staging, `execute`, `swap`, TS payload builder, close-out. Plan: `docs/superpowers/plans/2026-08-18-warden-phase1b-execute-swap.md` (rev 3); ledger published at close-out. |
 | **Phase 1C** (after 1B) | `queue`/pending timelock + `set_policy` policy lattice, guardians / recovery / guardian-freeze |
-| **Design system** | Figma tokens + first screens (sign-request/intent, home, dust-only poison screen); CSS tokens in `packages/ui-tokens` — `docs/design/figma.md` |
+| **Design system** | Figma tokens + first Home/sign-request studies; current partial-match and dust-override frames are legacy/do-not-ship pending the binding audit in `docs/design/figma.md`. Extension/mobile research: `docs/research/2026-08-19-wallet-ui-extension-mobile.md`; plan: `docs/superpowers/plans/2026-08-19-warden-s-tier-ui-mobile.md` |
 | **Extension / services** | Not started (Phases 2–4) |
+
+Claude/session pickup for the complete 2026-08-19 security, vanity, and UI
+research campaign:
+`docs/OVERNIGHT-HANDOFF-2026-08-19.md`.
 
 Facts worth knowing before you read the code (all measured, all in the docs):
 
 - The passkey's `rpIdHash` is **SHA-256 of the full `chrome-extension://<id>` origin**, not of the extension id (spike 2b).
 - Solana's secp256r1 precompile requires **low-S** signatures; Chrome emits high-S sometimes — the client normalizes.
 - LiteSVM does **not** enforce the 1,232-byte transaction limit; every instruction test here asserts serialized transaction size explicitly.
-- `execute` payload account indices are **instruction-local**; compute-budget instructions stay top-level.
+- `execute` payload account indices use one **logical** mapping:
+  `logical[0]=smart_account`, `logical[1]=signer`,
+  `logical[2+k]=remaining_accounts[k]`. They never index the raw physical
+  account slice; compute-budget instructions stay top-level.
 - Account creation is **root-bound and authenticated** (Phase 1B Task 2b): the address is `["account", Keccak256("WARDEN/seed/v1" ‖ root_pubkey33 ‖ salt)]` and the instruction requires a real passkey ceremony, so a front-runner can neither squat a chosen address nor reach someone else's. The measured cost is `MAX_MINTS_AT_CREATE` = 1 (a create carrying the ceremony fits 1,232 B at one mint, not two); further mints arrive with Phase 1C `set_policy`. Known limitations live in `docs/spikes/DECISION.md`.
 - Session caps in 1A are per-transaction + lifetime; **day/30-day limits are account-wide** across all sessions *and* root direct actions.
 
@@ -37,11 +44,11 @@ programs/warden/          Anchor program (Rust) + LiteSVM tests
 packages/core/            TypeScript SDK (transcript/challenge mirror, constants, IDL)
 packages/ui-tokens/       Design tokens exported from Figma (CSS + JSON, constraint tests)
 spikes/                   THROWAWAY Phase-0 evidence (never imported by product code)
-docs/superpowers/specs/   Design spec (rev 7)
-docs/superpowers/plans/   Phase plans (0, 1A, 1B)
+docs/superpowers/specs/   Design spec (rev 8 + current binding errata)
+docs/superpowers/plans/   Phase and cross-cutting security/vanity/UI plans
 docs/security/            Invariant ledger, findings schema, prior-art corpus, release integrity, deploy gate
 .github/workflows/ci.yml  Off-host gate: toolchain pins, build, tests, clippy, supply-chain gate
-docs/research/            Security-assurance pipeline + Solana wallet landscape research (2026-08-18) + raw reports
+docs/research/            Security/wallet landscape and extension/mobile UI research + raw reports
 docs/spikes/              DECISION.md (Phase-0 gate), Phase-0 + Phase-1A ledgers
 docs/program/             Measured CU / byte costs, design notes, error ABI
 docs/design/              Figma file map, screenshots
@@ -70,7 +77,11 @@ Contributions: see `CONTRIBUTING.md`. Security reports: see `SECURITY.md`.
 
 ## Non-goals for v1
 
-Mobile, agent-key UI, quantum-resistant root signer (kept as a typed slot — see the companion study in the drinkerlabs docs), multi-chain, hardware wallets, fiat on-ramp, plain-keypair accounts inside Warden.
+Native mobile implementation, agent-key UI, quantum-resistant root signer
+(kept as a typed slot — see the companion study in the drinkerlabs docs),
+multi-chain, hardware wallets, fiat on-ramp, and plain-keypair accounts inside
+Warden. Mobile research/prototyping may proceed under its dated plan, but it is
+not a v1 implementation commitment.
 
 ## License
 
