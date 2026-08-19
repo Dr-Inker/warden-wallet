@@ -1,2 +1,8 @@
 [toolchain]
-channel = "stable"
+# Pinned exactly to docs/TOOLCHAIN.md's recorded `rustc --version` output
+# (1.97.1, rustup `stable` channel as resolved 2026-08-18). Was `channel =
+# "stable"`, which silently drifts to whatever rustup's stable channel
+# currently resolves to — pin the version string so `rustup` (both locally
+# and in CI via `dtolnay/rust-toolchain`) always installs the exact
+# toolchain this repo was built and reviewed against.
+channel = "1.97.1"

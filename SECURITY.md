@@ -15,11 +15,27 @@ Every tagged release records a reproducible-build recipe and a per-release
 with the stated limit next to it: a matching hash proves the deployed
 artifact is the one that was reviewed, not that the artifact is safe. The
 pre-deploy check that enforces this — upgrade authority, Squads multisig
-threshold/time-lock, and the artifact hash — is specified in
+governance (3-of-5 exact, 7-day time-lock floor, spec §5.5), and the
+artifact hash — is specified in
 [`docs/security/DEPLOY-GATE.md`](docs/security/DEPLOY-GATE.md) and
 implemented (spec + dry-run) in `scripts/deploy-gate.sh`. Dependency
-provenance (`cargo deny check`, `pnpm audit`) runs in CI as a failing gate,
-config in `deny.toml` and `scripts/supply-chain-gate.sh`.
+provenance (`cargo deny --locked check`, `pnpm audit`) runs in CI as a
+failing gate, config in `deny.toml` and `scripts/supply-chain-gate.sh`;
+license summary in `docs/security/THIRD_PARTY_NOTICES.md`.
+
+**Version → release tag → recorded SHA, the mapping that makes "which
+build is live" answerable in one lookup.** A **version** (e.g. `v1.2.0`,
+semver) names a release in changelogs, the CWS listing, and user-facing
+copy. It maps 1:1 to a **git tag** of the same name (`v1.2.0`) on the
+release commit — the tag is what `git checkout <release-tag>` in
+`docs/security/RELEASE-INTEGRITY.md`'s build recipe resolves. That tag
+maps 1:1 to a **git SHA** (`git rev-parse v1.2.0`), which is the exact key
+`docs/security/RELEASE-INTEGRITY.md`'s per-release table and
+`scripts/deploy-gate.sh <release-sha>` both index by. No stage of this
+chain is allowed to fork: one version has exactly one tag has exactly one
+SHA has exactly one recorded `.so` hash. The CWS-listing-vs-tag-SHA alert
+below is what catches the chain being violated in the one place this repo
+cannot directly observe (what Google's servers are actually serving).
 
 ## Dependency compromise
 

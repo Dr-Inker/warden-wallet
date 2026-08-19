@@ -74,12 +74,18 @@ else
 fi
 
 echo
-echo "-- check 2/5: Squads multisig threshold >= 3-of->=5, time_lock >= 7d (spec §5.5) --"
+echo "-- check 2/5: Squads multisig governance == spec §5.5 exactly (3-of-5, time_lock >= 7d) --"
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "[dry-run] would fetch: Squads multisig config account at $SQUADS_MULTISIG"
-  echo "[dry-run] would assert: threshold >= 3 AND member_count >= 5 AND time_lock_secs >= $((7*24*3600))"
+  # Spec §5.5 pins an EXACT governance shape, not a floor: "the BPF-loader
+  # upgrade authority IS a Squads multisig (3-of-5)". threshold and member
+  # count are asserted == (not >=) — a 4-of-7 multisig is not what spec §5.5
+  # authorized, even though it is nominally "stronger"; time_lock is the one
+  # field with an explicit floor (>= 7 days) since a longer lock is strictly
+  # safer, unlike a different threshold/membership shape.
+  echo "[dry-run] would assert: threshold == 3 AND member_count == 5 AND time_lock_secs >= $((7*24*3600))"
 else
-  fail "check 2 (multisig threshold/time-lock) NOT IMPLEMENTED — needs the Squads SDK to decode the account; see docs/security/DEPLOY-GATE.md 'What's stubbed'"
+  fail "check 2 (multisig governance) NOT IMPLEMENTED — needs the Squads SDK to decode the account; see docs/security/DEPLOY-GATE.md 'What's stubbed'"
 fi
 
 echo
@@ -92,7 +98,7 @@ else
 fi
 
 echo
-echo "-- check 4/5: release .so hash matches docs/security/RELEASE-INTEGRITY.md row --"
+echo "-- check 4/5: deployed .so hash matches docs/security/RELEASE-INTEGRITY.md row --"
 RELEASE_INTEGRITY_DOC="docs/security/RELEASE-INTEGRITY.md"
 if [ ! -f "$RELEASE_INTEGRITY_DOC" ]; then
   fail "$RELEASE_INTEGRITY_DOC is missing"
@@ -111,16 +117,35 @@ else
     recorded_hash="$(echo "$row" | grep -oE '[0-9a-f]{64}' | head -1 || true)"
     if [ -z "$recorded_hash" ]; then
       fail "could not extract a sha256 hash from the matched row in $RELEASE_INTEGRITY_DOC"
-    elif [ -f target/deploy/warden.so ]; then
-      local_hash="$(sha256sum target/deploy/warden.so | awk '{print $1}')"
-      if [ "$local_hash" != "$recorded_hash" ]; then
-        fail "target/deploy/warden.so sha256 ($local_hash) != RELEASE-INTEGRITY.md row ($recorded_hash)"
-      else
-        echo "OK: local target/deploy/warden.so matches recorded hash $recorded_hash"
-      fi
     else
-      echo "NOTE: target/deploy/warden.so not present locally to compare against recorded hash $recorded_hash"
-      echo "      (a real run against a deployed program would compare via solana-verify get-program-hash instead — check 1's follow-up)"
+      echo
+      echo "   4a. on-chain hash (the authoritative comparison — what is actually"
+      echo "       deployed, not what happens to be sitting in a local build dir):"
+      if [ "$DRY_RUN" -eq 1 ]; then
+        echo "   [dry-run] would dump the ON-CHAIN program (e.g. \`solana-verify"
+        echo "   get-program-hash --url <rpc> $PROGRAM_ID\`, or a raw getAccountInfo"
+        echo "   of the ProgramData account's code buffer, hashed the same way"
+        echo "   target/deploy/warden.so is) and assert it equals $recorded_hash"
+      else
+        fail "4a. on-chain hash dump NOT IMPLEMENTED — no RPC client wired into this script yet; see docs/security/DEPLOY-GATE.md 'What's stubbed'"
+      fi
+      echo
+      echo "   4b. local .so sanity check (best-effort, NOT a substitute for 4a —"
+      echo "       a local build dir can be stale or tampered independently of"
+      echo "       what is actually on-chain):"
+      if [ -f target/deploy/warden.so ]; then
+        local_hash="$(sha256sum target/deploy/warden.so | awk '{print $1}')"
+        if [ "$local_hash" != "$recorded_hash" ]; then
+          fail "4b. target/deploy/warden.so sha256 ($local_hash) != RELEASE-INTEGRITY.md row ($recorded_hash)"
+        else
+          echo "   OK: local target/deploy/warden.so matches recorded hash $recorded_hash"
+        fi
+      else
+        # A missing local artifact is a FAILURE, not a note: a deploy gate
+        # that shrugs at "nothing to check" and lets the overall check pass
+        # is exactly the silent-pass failure mode this gate exists to close.
+        fail "4b. target/deploy/warden.so not found locally — cannot verify; refusing rather than passing with nothing checked"
+      fi
     fi
   fi
 fi
@@ -136,7 +161,15 @@ else
 fi
 
 echo
-if [ "$status" -ne 0 ]; then
+if [ "$DRY_RUN" -eq 1 ]; then
+  # Never claim success for a dry run: checks 1-3 are only ever printed as a
+  # plan in this mode (real mode is the only mode that can fail them), so a
+  # clean dry-run exit means "the plan looks sane and the two local-only
+  # checks passed" — it is explicitly NOT a verified deploy decision.
+  echo "== L7 deploy gate: DRY RUN — NOT VERIFIED =="
+  echo "   (checks 1-3 were only printed as a plan; run without --dry-run"
+  echo "   against a real RPC endpoint, once wired, for an actual verdict)"
+elif [ "$status" -ne 0 ]; then
   echo "== L7 deploy gate: REFUSE TO DEPLOY =="
 else
   echo "== L7 deploy gate: ALL CHECKS PASSED =="

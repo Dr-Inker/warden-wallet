@@ -35,15 +35,20 @@ status=0
 echo "== L9 supply-chain gate =="
 
 echo
-echo "-- 1/4: cargo deny check (advisories, bans, sources, licenses) --"
+echo "-- 1/4: cargo deny --locked check (advisories, bans, sources, licenses) --"
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "[dry-run] would run: cargo deny check"
+  echo "[dry-run] would run: cargo deny --locked check"
 elif ! command -v cargo-deny >/dev/null 2>&1; then
-  echo "SKIP: cargo-deny not installed (install with: cargo install cargo-deny --locked)"
-  echo "      This is not fatal to the dry-run report, but CI must have cargo-deny on PATH."
+  # A missing cargo-deny is a FAILURE, not a skip: this gate exists precisely
+  # so a dependency-provenance regression can't slip through because the
+  # checker wasn't there. CI installs a pinned cargo-deny explicitly (see
+  # .github/workflows/ci.yml) — a local run without it installed is expected
+  # to fail loudly with this message, not pass silently.
+  echo "FAIL: cargo-deny is not installed (install with: cargo install cargo-deny --locked --version 0.20.2)"
+  status=1
 else
-  if ! cargo deny check; then
-    echo "FAIL: cargo deny check"
+  if ! cargo deny --locked check; then
+    echo "FAIL: cargo deny --locked check"
     status=1
   fi
 fi

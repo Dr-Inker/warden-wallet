@@ -1,14 +1,17 @@
 name: CI
 
 # L0/L1 gates off-host (spec §17; plan Task 11 item 3, controller ruling).
-# Mirrors .claude/test-gate.sh exactly, plus the clippy arithmetic gate and
-# the L9 supply-chain gate (scripts/supply-chain-gate.sh), and uploads the
-# built .so + its sha256 for docs/security/RELEASE-INTEGRITY.md bookkeeping.
+# Mirrors .claude/test-gate.sh exactly (with WARDEN_SKIP_SPIKES=1 — see the
+# "versions" and "gate" steps below and spikes-audit job), plus the clippy
+# arithmetic gate and the L9 supply-chain gate (scripts/supply-chain-gate.sh),
+# and uploads the built .so + its sha256 for docs/security/RELEASE-INTEGRITY.md
+# bookkeeping — only after every gate has passed, never from a possibly-stale
+# cache restore.
 #
 # UNVERIFIED: this workflow has not been executed by GitHub Actions as of
 # authoring (Task 11 is tooling/docs only — no push has happened yet). It is
 # validated locally only via `python3 -c "import yaml,sys; yaml.safe_load(...)"`.
-# See docs program report for the exact validation command run.
+# See the Task 11 fix report for the exact validation command run.
 
 on:
   push:
@@ -29,15 +32,26 @@ concurrency:
 env:
   # Pinned versions — must match docs/TOOLCHAIN.md exactly. Update both
   # together; a drift between this file and TOOLCHAIN.md is itself an L9 gap.
+  # The "versions" step below FAILS the build if any installed tool's
+  # reported version string doesn't contain its pin, rather than trusting
+  # the install steps silently did the right thing.
   RUST_TOOLCHAIN: "1.97.1"
   SOLANA_CLI_VERSION: "3.1.10"
   ANCHOR_CLI_VERSION: "1.1.2"
+  # avm itself is installed from a pinned git tag, not HEAD — resolved
+  # 2026-08-19 via `git ls-remote --tags https://github.com/coral-xyz/anchor`
+  # to `refs/tags/v1.1.2` -> commit 24035e2b0035c87e321acc1c05f97793829a87f1
+  # (peeled). Pinning the tag (not just the version avm installs) closes the
+  # gap where `avm` itself — the tool that fetches Anchor — was previously
+  # built from whatever HEAD happened to be on push day.
+  AVM_GIT_TAG: "v1.1.2"
+  CARGO_DENY_VERSION: "0.20.2"
   NODE_VERSION: "22"
   PNPM_VERSION: "11"
 
 jobs:
   build-test-gate:
-    name: build + test-gate (L0/L1)
+    name: build + test-gate (L0/L1) + supply-chain gate
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -50,29 +64,56 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy
 
-      - name: Cache cargo registry + git + target
+      # target/deploy (the SBF .so + IDL) is deliberately NOT cached: it must
+      # be produced fresh by this run's build step so the artifact uploaded
+      # below is provably what this run built, never a stale carry-over from
+      # a previous cache. target/debug (the host-side test build, which is
+      # the expensive part — full Agave runtime + openssl-sys from source)
+      # IS cached, since caching it cannot cause a stale-artifact problem.
+      - name: Cache cargo registry + git + host build
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            target/debug
           key: ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ env.SOLANA_CLI_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ env.SOLANA_CLI_VERSION }}-
+
+      - name: Cache ~/.cargo/bin tools (cargo-deny, avm, anchor-cli)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.avm
+          key: ${{ runner.os }}-cargo-bin-deny${{ env.CARGO_DENY_VERSION }}-avm${{ env.AVM_GIT_TAG }}-anchor${{ env.ANCHOR_CLI_VERSION }}
 
       - name: Install Solana CLI (Agave) — pinned via the official installer
         run: |
           sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_CLI_VERSION }}/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
-      - name: Install avm + Anchor CLI — pinned
+      - name: Install cargo-deny — pinned exact version
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
-          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
-          avm install ${{ env.ANCHOR_CLI_VERSION }}
+          if command -v cargo-deny >/dev/null 2>&1 && cargo-deny --version | grep -q "${{ env.CARGO_DENY_VERSION }}"; then
+            echo "cargo-deny ${{ env.CARGO_DENY_VERSION }} already present (cache hit)"
+          else
+            cargo install cargo-deny --version ${{ env.CARGO_DENY_VERSION }} --locked
+          fi
+
+      - name: Install avm (pinned git tag) + Anchor CLI — pinned
+        run: |
+          export PATH="$HOME/.cargo/bin:$HOME/.avm/bin:$PATH"
+          if ! command -v avm >/dev/null 2>&1; then
+            cargo install --git https://github.com/coral-xyz/anchor avm --tag ${{ env.AVM_GIT_TAG }} --locked --force
+          fi
+          if ! (command -v anchor >/dev/null 2>&1 && anchor --version | grep -q "${{ env.ANCHOR_CLI_VERSION }}"); then
+            avm install ${{ env.ANCHOR_CLI_VERSION }}
+          fi
           avm use ${{ env.ANCHOR_CLI_VERSION }}
           echo "$HOME/.avm/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Set up Node ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
@@ -95,39 +136,100 @@ jobs:
       - name: pnpm install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Verify toolchain versions match docs/TOOLCHAIN.md
+      # Fails the build (not just warns) on ANY pinned-version mismatch —
+      # every tool that install steps above claim to have set up is
+      # verified here by parsing its own --version output, not trusted
+      # because the install step exited 0.
+      - name: Assert pinned versions (rustc / solana / anchor / node / pnpm)
         run: |
-          echo "solana: $(solana --version)"
-          echo "anchor: $(anchor --version)"
-          echo "rustc:  $(rustc --version)"
-          solana --version | grep -q "${{ env.SOLANA_CLI_VERSION }}"
-          anchor --version | grep -q "${{ env.ANCHOR_CLI_VERSION }}"
+          set -euo pipefail
+          fail=0
+          check() {
+            local name="$1" expected="$2" actual="$3"
+            if ! echo "$actual" | grep -qF "$expected"; then
+              echo "VERSION MISMATCH: $name — expected to contain '$expected', got: $actual" >&2
+              fail=1
+            else
+              echo "OK: $name -> $actual"
+            fi
+          }
+          check "rustc"  "${{ env.RUST_TOOLCHAIN }}"    "$(rustc --version)"
+          check "solana" "${{ env.SOLANA_CLI_VERSION }}" "$(solana --version)"
+          check "anchor" "${{ env.ANCHOR_CLI_VERSION }}" "$(anchor --version)"
+          check "node"   "v${{ env.NODE_VERSION }}."     "$(node --version)"
+          check "pnpm"   "${{ env.PNPM_VERSION }}."      "$(pnpm --version)"
+          if [ "$fail" -ne 0 ]; then
+            echo "One or more toolchain versions do not match docs/TOOLCHAIN.md's pins — refusing to continue." >&2
+            exit 1
+          fi
 
-      - name: Run .claude/test-gate.sh (builds warden.so, runs L0 sigverify + full suite)
+      # WARDEN_SKIP_SPIKES=1: spikes/*/ts include a Playwright suite this
+      # job does not provision Chromium for (spikes are throwaway evidence
+      # per CLAUDE.md, not shipped — see .claude/test-gate.sh's own comment
+      # on this var). The spikes-audit job below covers them separately,
+      # non-blocking. Builds warden.so fresh every run (target/deploy is
+      # never cached — see the cache step above), then runs the L0
+      # sigverify suite + full cargo test --workspace.
+      - name: Run .claude/test-gate.sh (builds warden.so, runs L0 sigverify + full suite; spikes skipped here)
+        env:
+          WARDEN_SKIP_SPIKES: "1"
         run: ./.claude/test-gate.sh
 
       - name: cargo clippy -p warden — deny arithmetic side effects
         run: cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects
 
-      - name: L9 supply-chain gate (cargo-deny + pnpm audit)
+      - name: L9 supply-chain gate (cargo-deny --locked check + pnpm audit)
         run: ./scripts/supply-chain-gate.sh
 
+      # No `if: always()` — an artifact must only ever come from a run where
+      # every gate above actually passed. Uploading on failure (or from a
+      # cache-restored target/ that skipped a fresh build) is exactly the
+      # stale/misleading-artifact failure mode this step used to have.
       - name: Compute warden.so sha256
-        if: always()
         run: |
-          if [ -f target/deploy/warden.so ]; then
-            sha256sum target/deploy/warden.so | tee target/deploy/warden.so.sha256
-          else
-            echo "target/deploy/warden.so not built — nothing to hash" >&2
-          fi
+          test -f target/deploy/warden.so || { echo "target/deploy/warden.so missing after a passing test-gate.sh run — this should be impossible" >&2; exit 1; }
+          sha256sum target/deploy/warden.so | tee target/deploy/warden.so.sha256
 
       - name: Upload warden.so + sha256 artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: warden-so-${{ github.sha }}
           path: |
             target/deploy/warden.so
             target/deploy/warden.so.sha256
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 90
+
+  spikes-audit:
+    name: spikes audit (non-blocking, Playwright/Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Non-blocking by controller ruling: spikes are throwaway evidence
+    # (CLAUDE.md) and are excluded from both the Rust workspace
+    # (Cargo.toml `exclude = ["spikes"]`) and, in the main gate job above,
+    # from the pnpm test run (WARDEN_SKIP_SPIKES=1). This job exists purely
+    # to keep spikes/*/ts from silently bit-rotting — a red run here is a
+    # signal to look, never a blocker for main/phase-branch CI.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up pnpm ${{ env.PNPM_VERSION }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: pnpm install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for the Playwright spike (spikes/02-webauthn/ts)
+        run: pnpm --filter ./spikes/02-webauthn/ts exec playwright install --with-deps chromium
+
+      - name: Run spikes/*/ts tests
+        run: pnpm --filter './spikes/**' --if-present test

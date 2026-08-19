@@ -1,7 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-pnpm test
+# WARDEN_SKIP_SPIKES=1 (spec §17 L9, plan Task 11 fix round 1): CI's main
+# gate job sets this to skip `spikes/*/ts` — those packages include a
+# Playwright suite (spikes/02-webauthn or similar) that needs a Chromium
+# install CI's main job does not provision; spikes are throwaway evidence
+# (CLAUDE.md), not shipped, so skipping them here is not a coverage loss for
+# anything that ships. A separate, non-blocking CI job installs Chromium and
+# audits spikes on their own schedule — see .github/workflows/ci.yml. Local
+# runs (this var unset) still exercise everything, unchanged.
+#
+# Cargo already excludes spikes from the root workspace (see Cargo.toml) —
+# this only needs to filter the pnpm side.
+if [ "${WARDEN_SKIP_SPIKES:-0}" = "1" ]; then
+  echo "WARDEN_SKIP_SPIKES=1: running pnpm test with spikes/*/ts excluded"
+  pnpm -r --if-present --filter '!./spikes/**' test
+else
+  pnpm test
+fi
 # Spikes are excluded from the root workspace (see Cargo.toml), so --workspace
 # covers only programs/* once Phase 1 lands the first program crate.
 if ls programs/*/Cargo.toml >/dev/null 2>&1; then

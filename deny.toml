@@ -11,10 +11,14 @@
 # per-spike if that ever matters (spikes are throwaway evidence per
 # CLAUDE.md and are not shipped).
 #
-# `cargo deny check` (no build) was run once against this config on
-# 2026-08-19 at commit 26a8c1e; result recorded in
-# docs/program/PHASE1B-MEASUREMENTS.md and
-# .superpowers/sdd/2026-08-18-warden-phase1b-execute-swap/task-11-report.md.
+# `cargo deny check` (no build) was run against this config on 2026-08-19;
+# results (round 1 at commit b320ecd, round 2 fixes at the commit this file
+# is now part of) are recorded in
+# .superpowers/sdd/2026-08-18-warden-phase1b-execute-swap/task-11-report.md
+# and in docs/security/THIRD_PARTY_NOTICES.md (license summary). Task 9 will
+# add a corresponding evidence-block entry to docs/program/PHASE1B-MEASUREMENTS.md
+# (that file does not exist yet as of this task — do not treat this comment
+# as a claim that it does).
 
 [graph]
 targets = []
@@ -32,10 +36,48 @@ feature-depth = 1
 # needs a `reason` so an exception is never silent.
 # ---------------------------------------------------------------------------
 [advisories]
+# Every entry below was verified, not assumed: `cargo tree -p warden -e no-dev`
+# (dependency graph with [dev-dependencies] removed — the closest equivalent
+# available on this host to `--target sbf-solana-solana`, which is not a
+# registered rustc target outside cargo-build-sbf's bundled platform-tools
+# compiler and so `cargo tree --target sbf-solana-solana` errors here; the
+# *dependency graph* is not target-conditional for any of the crates below,
+# so `-e no-dev` on the host target is an equivalent check for "does this
+# reach the SBF-linked binary") was run for each crate name below on
+# 2026-08-19 at the commit this file is part of; full command + per-crate
+# result recorded in task-11-report.md "Fix report — round 1".
+#
+# ALL SIX below are unmaintained/vulnerable crates pulled in ONLY through
+# [dev-dependencies] (litesvm 0.12.0's own transitive Agave-runtime pull-in
+# — agave-precompiles / agave-syscalls / solana-bpf-loader-program etc. —
+# spec §17 L0's pinned litesvm), confirmed ABSENT from `cargo tree -p warden
+# -e no-dev` — they do not link into target/deploy/warden.so.
+#
+#   owner: task-11 (L9 gates) · accepted: 2026-08-19 · expiry: 2026-11-30
+#   (re-review required by expiry: either litesvm/Agave have moved off the
+#   flagged transitive dep by then, or the ignore is renewed with a fresh
+#   verification run — an ignore entry must never silently outlive its
+#   expiry unreviewed)
 ignore = [
-    # Placeholder — no advisories are ignored yet. Add entries only with a
-    # `reason` explaining why the advisory does not apply, e.g.:
-    # { id = "RUSTSEC-0000-0000", reason = "explain why this is not exploitable here" },
+    { id = "RUSTSEC-2021-0139", reason = "unmaintained ansi_term 0.12.1, dev-only via litesvm->agave-syscalls (absent from `cargo tree -p warden -e no-dev`, verified 2026-08-19); no runtime path into warden.so. upstream: https://rustsec.org/advisories/RUSTSEC-2021-0139 · owner: task-11 · expiry: 2026-11-30" },
+    { id = "RUSTSEC-2024-0344", reason = "curve25519-dalek 3.2.0 timing side-channel, dev-only via ed25519-dalek(1.0.1)->agave-precompiles->litesvm; the non-dev graph pulls curve25519-dalek 4.1.3 instead (patched line), confirmed by `cargo tree -p warden -e no-dev` showing only v4.1.3, verified 2026-08-19. upstream: https://rustsec.org/advisories/RUSTSEC-2024-0344 · owner: task-11 · expiry: 2026-11-30" },
+    { id = "RUSTSEC-2024-0388", reason = "unmaintained derivative 2.2.0, dev-only via ark-ff/ark-ec (light-poseidon->solana-poseidon->agave-syscalls->litesvm), absent from `cargo tree -p warden -e no-dev`, verified 2026-08-19. upstream: https://rustsec.org/advisories/RUSTSEC-2024-0388 · owner: task-11 · expiry: 2026-11-30" },
+    { id = "RUSTSEC-2022-0093", reason = "ed25519-dalek 1.0.1 double-pubkey signing oracle, dev-only via agave-precompiles->litesvm, absent from `cargo tree -p warden -e no-dev`, verified 2026-08-19; warden's own root/session verification never uses this crate (secp256r1 precompile + on-chain Ed25519 checks use the Solana syscalls, not ed25519-dalek). upstream: https://rustsec.org/advisories/RUSTSEC-2022-0093 · owner: task-11 · expiry: 2026-11-30" },
+    { id = "RUSTSEC-2025-0161", reason = "unmaintained libsecp256k1 0.6.0, dev-only via agave-precompiles/agave-syscalls->litesvm, absent from `cargo tree -p warden -e no-dev`, verified 2026-08-19. upstream: https://rustsec.org/advisories/RUSTSEC-2025-0161 · owner: task-11 · expiry: 2026-11-30" },
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained paste 1.0.15, dev-only via ark-ff->...->litesvm, absent from `cargo tree -p warden -e no-dev`, verified 2026-08-19. upstream: https://rustsec.org/advisories/RUSTSEC-2024-0436 · owner: task-11 · expiry: 2026-11-30" },
+    # NOT dev-only — flagged here for transparency, not to hide it. Verified
+    # 2026-08-19: bincode 1.3.3 IS present in `cargo tree -p warden -e
+    # no-dev`, pulled directly by anchor-lang 1.1.2 itself (both `warden`
+    # and `test-middleman` depend on anchor-lang non-dev), so it DOES link
+    # into target/deploy/warden.so. Accepted anyway because RUSTSEC-2025-0141
+    # is an "unmaintained" notice, not a vulnerability: upstream's own text
+    # says "the team considers version 1.3.3 a complete version of bincode
+    # that is not in need of any updates" (maintainers stopped due to a
+    # harassment incident, not a defect in 1.3.3). No safe upgrade exists
+    # while pinned to anchor-lang 1.1.2 (anchor-lang chooses its own bincode
+    # version; this repo does not control it). Revisit on any anchor-lang
+    # version bump, not just at the expiry date.
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.3.3 unmaintained (not a vulnerability); ships in warden.so via anchor-lang 1.1.2's own direct dependency (NOT dev-only, confirmed present in `cargo tree -p warden -e no-dev`, verified 2026-08-19); no safe upgrade while pinned to anchor-lang 1.1.2; upstream states 1.3.3 is feature-complete/stable. upstream: https://rustsec.org/advisories/RUSTSEC-2025-0141 · owner: task-11 · expiry: 2026-11-30 (or any anchor-lang bump, whichever first)" },
 ]
 
 # ---------------------------------------------------------------------------
