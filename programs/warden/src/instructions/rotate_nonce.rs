@@ -16,7 +16,7 @@ use anchor_lang::prelude::*;
 use crate::constants::ACCOUNT_SEED;
 use crate::errors::WardenError;
 use crate::root_verify::transcript::{action_hash, OP_ROTATE_NONCE};
-use crate::root_verify::{verify_root_assertion, RootArgs};
+use crate::root_verify::{verify_and_consume, RootArgs};
 use crate::state::SmartAccount;
 
 #[derive(Accounts)]
@@ -34,7 +34,9 @@ pub struct RotateNonce<'info> {
 // see the matching note on `create_account::handler` for why a bare `pub`
 // here would collide across the glob re-export in `instructions::mod.rs`.
 pub(crate) fn handler(ctx: Context<RotateNonce>, args: RootArgs) -> Result<()> {
-    let now = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
+    let slot = clock.slot;
     let account_key = ctx.accounts.smart_account.key();
     let ix_sysvar = ctx.accounts.ix_sysvar.to_account_info();
     let mut account = ctx.accounts.smart_account.load_mut()?;
@@ -53,7 +55,7 @@ pub(crate) fn handler(ctx: Context<RotateNonce>, args: RootArgs) -> Result<()> {
 
     // `rotate_nonce` has no arguments of its own beyond `RootArgs`, so the
     // action encoding is the op byte with an empty borsh payload.
-    verify_root_assertion(
+    verify_and_consume(
         &mut account,
         &ix_sysvar,
         &args,
@@ -61,5 +63,6 @@ pub(crate) fn handler(ctx: Context<RotateNonce>, args: RootArgs) -> Result<()> {
         &account_key,
         action_hash(OP_ROTATE_NONCE, &[]),
         now,
+        slot,
     )
 }

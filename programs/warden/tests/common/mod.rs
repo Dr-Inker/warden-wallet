@@ -24,6 +24,13 @@ pub fn program_id() -> Pubkey {
     warden::ID
 }
 
+/// Program id of the test-only middleman that CPIs into warden — see
+/// `programs/test-middleman`. Pinned as a literal here so the test suite does
+/// not need the crate as a dependency.
+pub fn middleman_program_id() -> Pubkey {
+    Pubkey::from_str_const("FHWwDX1az7eAtFsogaRrFcoZkZhBEzSS3QMXPwovSiMN")
+}
+
 pub fn setup() -> (LiteSVM, Keypair) {
     // `LiteSVM::new()` runs with EVERY runtime feature DISABLED
     // (`FeatureSet::default()`), which is not the chain this program deploys
@@ -57,6 +64,32 @@ pub fn warp_clock(svm: &mut LiteSVM, unix_timestamp: i64) {
     let mut c: Clock = svm.get_sysvar();
     c.unix_timestamp = unix_timestamp;
     svm.set_sysvar(&c);
+}
+
+/// The `Clock` sysvar's current `slot` — what a root ceremony must sign as its
+/// `signed_slot` (spec §4, rev 8: `signed_slot <= Clock::slot < signed_slot +
+/// MAX_ROOT_SLOT_AGE`).
+///
+/// Every ceremony helper in the suite reads this rather than hardcoding a
+/// value, so a test that never mentions slots gets a fresh, valid one by
+/// default and only the freshness tests bend it.
+pub fn current_slot(svm: &LiteSVM) -> u64 {
+    let c: Clock = svm.get_sysvar();
+    c.slot
+}
+
+/// Load the test-only middleman program (`programs/test-middleman`) into an
+/// existing SVM. Only the `stack_height` tests need it, so it is not part of
+/// `setup`.
+pub fn add_middleman(svm: &mut LiteSVM) -> Pubkey {
+    let so = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../target/deploy/test_middleman.so"
+    ))
+    .expect("run `anchor build` first — see docs/TOOLCHAIN.md");
+    let id = middleman_program_id();
+    svm.add_program(id, &so).expect("add_program(test_middleman)");
+    id
 }
 
 /// Fields a test wants to vary when planting a `SmartAccount`.

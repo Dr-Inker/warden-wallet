@@ -20,17 +20,33 @@
  *   ‖ policy_version       u32 LE
  *   ‖ root_nonce           u64 LE
  *   ‖ expiry_ts            i64 LE
+ *   ‖ signed_slot          u64 LE   <- Phase 1B: freshness is slot-based
  *   ‖ action_hash          (32 B)
  * )
  * action_hash = Keccak256(op_type:u8 ‖ borsh(op_args))
  * challenge   = base64url_nopad(transcript)
  * ```
  *
+ * **`signed_slot` sits between `expiry_ts` and `action_hash`, and the position
+ * is part of the ABI** (spec §4, rev 8) — not an implementation detail. A
+ * disagreement between this file and `transcript.rs` on that position forges
+ * or bricks every ceremony (prior-art finding `LZR-ACC-H2`: write/read layout
+ * drift). Three golden vectors pin it: the positive one, an
+ * `expiryTs = -1n` companion that proves two's-complement i64 LE, and a
+ * `signedSlot = 2^64 - 1` companion that proves the slot really is a full
+ * `u64` LE and not a truncated `u32`.
+ *
+ * The caller must fetch the current slot (`connection.getSlot()`) before the
+ * ceremony and sign it: the program requires
+ * `signedSlot <= Clock.slot < signedSlot + 150`, so a ceremony built against a
+ * slot more than ~60 s old, or against a future slot, is rejected
+ * (`RootSlotStale` 6036 / `RootSlotInFuture` 6037).
+ *
  * No `blockhash` is included, deliberately: a program cannot authenticate
  * the outer message's blockhash, so binding one would be security theatre.
  * Replay is prevented by `root_nonce` (consumed on every successful root
- * instruction) plus the `expiry_ts` window. See `transcript.rs` for the full
- * rationale, including the caveat that `cluster_tag` is a client-attested
+ * instruction) plus the two freshness windows. See `transcript.rs` for the
+ * full rationale, including the caveat that `cluster_tag` is a client-attested
  * domain separator, not a verified genesis binding.
  */
 
@@ -221,6 +237,12 @@ export interface TranscriptInput {
   policyVersion: number;
   rootNonce: bigint;
   expiryTs: bigint;
+  /**
+   * The slot the client observed when building the ceremony. PRIMARY freshness
+   * bound: the program requires
+   * `signedSlot <= Clock.slot < signedSlot + MAX_ROOT_SLOT_AGE (150)`.
+   */
+  signedSlot: bigint;
   /** Output of {@link actionHash} (32 bytes). */
   actionHash: Uint8Array;
 }
@@ -238,9 +260,10 @@ export function transcriptHash(input: TranscriptInput): Uint8Array {
   assertU32(input.policyVersion, "policyVersion");
   assertU64(input.rootNonce, "rootNonce");
   assertI64(input.expiryTs, "expiryTs");
+  assertU64(input.signedSlot, "signedSlot");
 
   const preimage = new Uint8Array(
-    TRANSCRIPT_DOMAIN.length + 32 + 32 + 32 + 8 + 4 + 8 + 8 + 32,
+    TRANSCRIPT_DOMAIN.length + 32 + 32 + 32 + 8 + 4 + 8 + 8 + 8 + 32,
   );
   let o = 0;
   preimage.set(TRANSCRIPT_DOMAIN, o);
@@ -258,6 +281,8 @@ export function transcriptHash(input: TranscriptInput): Uint8Array {
   preimage.set(u64le(input.rootNonce), o);
   o += 8;
   preimage.set(i64le(input.expiryTs), o);
+  o += 8;
+  preimage.set(u64le(input.signedSlot), o);
   o += 8;
   preimage.set(input.actionHash, o);
 

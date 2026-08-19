@@ -5,20 +5,52 @@ pnpm test
 # Spikes are excluded from the root workspace (see Cargo.toml), so --workspace
 # covers only programs/* once Phase 1 lands the first program crate.
 if ls programs/*/Cargo.toml >/dev/null 2>&1; then
-  # LiteSVM harnesses read target/deploy/warden.so at test runtime (gitignored,
-  # not committed) — build it first if missing or stale so a clean clone /
+  # L0 (spec §17): FEATURE-RESOLUTION evidence for the secp256r1 precompile.
+  #
+  # `precompiles` is not a default litesvm feature, and `LiteSVM::default()`
+  # starts with every runtime feature off. If a dependency bump or a careless
+  # edit dropped the feature, `bind_precompile` would become the ONLY gate on
+  # the root of trust — the program would still bind key+message, but nothing
+  # would verify the ECDSA signature.
+  #
+  # This check proves the feature RESOLVES. It does NOT prove the runtime
+  # verifies signatures — `programs/warden/tests/sigverify_wiring.rs` is the
+  # two-direction runtime gate that does, and this check never substitutes for
+  # it. Both are required; they fail for different reasons.
+  if ! cargo tree -e features -p warden 2>/dev/null | grep -q 'litesvm feature "precompiles"'; then
+    echo "L0 FAIL: litesvm's \"precompiles\" feature does not resolve for -p warden."
+    echo "         Without it the secp256r1 precompile is never loaded and no test"
+    echo "         in this repo verifies a real signature. See programs/warden/Cargo.toml"
+    echo "         and programs/warden/tests/sigverify_wiring.rs."
+    exit 1
+  fi
+  # LiteSVM harnesses read target/deploy/*.so at test runtime (gitignored,
+  # not committed) — build them first if missing or stale so a clean clone /
   # fresh checkout reproduces green without a manual `anchor build` step.
   # Stale = any source, manifest, lockfile, or Anchor config is newer than the .so.
-  if [ ! -f target/deploy/warden.so ] \
-    || [ -n "$(find programs/warden/src -newer target/deploy/warden.so -name '*.rs' | head -1)" ] \
-    || [ programs/warden/Cargo.toml -nt target/deploy/warden.so ] \
-    || [ Cargo.toml -nt target/deploy/warden.so ] \
-    || [ Cargo.lock -nt target/deploy/warden.so ] \
-    || [ Anchor.toml -nt target/deploy/warden.so ]; then
+  # `test-middleman` is the test-only CPI caller the root `stack_height` gate
+  # needs (programs/test-middleman); it is built here, never deployed.
+  needs_build=0
+  for so in target/deploy/warden.so target/deploy/test_middleman.so; do
+    [ -f "$so" ] || needs_build=1
+  done
+  if [ "$needs_build" -eq 0 ]; then
+    for so in target/deploy/warden.so target/deploy/test_middleman.so; do
+      if [ -n "$(find programs -name '*.rs' -newer "$so" | head -1)" ] \
+        || [ -n "$(find programs -name 'Cargo.toml' -newer "$so" | head -1)" ] \
+        || [ Cargo.toml -nt "$so" ] \
+        || [ Cargo.lock -nt "$so" ] \
+        || [ Anchor.toml -nt "$so" ]; then
+        needs_build=1
+      fi
+    done
+  fi
+  if [ "$needs_build" -eq 1 ]; then
     if command -v anchor >/dev/null 2>&1; then
       nice -n 10 anchor build
     else
       nice -n 10 cargo-build-sbf --manifest-path programs/warden/Cargo.toml
+      nice -n 10 cargo-build-sbf --manifest-path programs/test-middleman/Cargo.toml
     fi
   fi
   # anchor build regenerates target/idl/warden.json from the program source;

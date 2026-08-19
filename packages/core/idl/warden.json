@@ -694,6 +694,21 @@
       "code": 6035,
       "name": "SessionPriorStateMismatch",
       "msg": "prior_authority_hash does not match the session's current retained authority"
+    },
+    {
+      "code": 6036,
+      "name": "RootSlotStale",
+      "msg": "the root ceremony's signed_slot is more than MAX_ROOT_SLOT_AGE slots behind the current slot"
+    },
+    {
+      "code": 6037,
+      "name": "RootSlotInFuture",
+      "msg": "the root ceremony's signed_slot is in the future"
+    },
+    {
+      "code": 6038,
+      "name": "RootRequiresTopLevel",
+      "msg": "a root-authorized instruction may only be invoked at transaction level, never via CPI"
     }
   ],
   "types": [
@@ -1258,9 +1273,23 @@
             "name": "expiry_ts",
             "docs": [
               "Absolute unix seconds; the ceremony is valid for at most",
-              "`MAX_ROOT_EXPIRY_SECS` into the future."
+              "`MAX_ROOT_EXPIRY_SECS` into the future. Secondary bound — see",
+              "`signed_slot`."
             ],
             "type": "i64"
+          },
+          {
+            "name": "signed_slot",
+            "docs": [
+              "The slot the client observed when it built the ceremony (spec §4,",
+              "rev 8). PRIMARY freshness bound: the ceremony is valid only while",
+              "`signed_slot <= Clock::slot < signed_slot + MAX_ROOT_SLOT_AGE`.",
+              "",
+              "It is part of the signed transcript, so it cannot be edited after the",
+              "fact to stretch or move the window — bending it here only produces a",
+              "`ChallengeMismatch`."
+            ],
+            "type": "u64"
           }
         ]
       }

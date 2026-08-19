@@ -101,6 +101,80 @@ impl TestPasskey {
     }
 }
 
+/// The P-256 group order `n` (SEC 2 §2.4.2), big-endian.
+const P256_ORDER: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
+];
+
+/// `floor(n / 2)`, big-endian — the secp256r1 precompile's accept/reject
+/// boundary: a signature is "low-S" iff `s <= n/2`.
+const P256_HALF_ORDER: [u8; 32] = [
+    0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31, 0x92, 0xa8,
+];
+
+/// Whether `sig64`'s `s` component is in the high half (`s > n/2`), i.e. the
+/// form the precompile rejects. Exact big-endian comparison against
+/// `floor(n/2)` rather than a "top bit set" shortcut, so the boundary case is
+/// classified correctly.
+pub fn is_high_s(sig64: &[u8; 64]) -> bool {
+    for i in 0..32 {
+        let (a, b) = (sig64[32 + i], P256_HALF_ORDER[i]);
+        if a != b {
+            return a > b;
+        }
+    }
+    false // s == n/2 exactly is still low-S
+}
+
+/// `(r, s)` → `(r, n - s)`: the **high-S** (malleated) form of the same
+/// signature.
+///
+/// It is still a mathematically valid ECDSA signature over the same message
+/// and key — that is exactly the point. The secp256r1 precompile rejects it
+/// anyway (`PrecompileError::InvalidSignature`), which is why low-S
+/// normalization is the extension's job in production (spec §4) and why
+/// `sigverify_wiring::high_s_signature_rejected_by_precompile` is part of the
+/// L0 gate: a substrate that accepted this one would not be doing the
+/// precompile's checks.
+///
+/// The subtraction is done by hand on big-endian bytes rather than through the
+/// `p256` crate's scalar arithmetic, so this helper depends on no API beyond
+/// the byte encoding the precompile itself consumes.
+pub fn to_high_s(sig64: &[u8; 64]) -> [u8; 64] {
+    let mut s_be = [0u8; 32];
+    s_be.copy_from_slice(&sig64[32..]);
+    // n - s, 256-bit borrow subtraction. `0 < s < n`, so the result never
+    // borrows out of the top byte.
+    let mut neg = [0u8; 32];
+    let mut borrow: i16 = 0;
+    for i in (0..32).rev() {
+        let d = i16::from(P256_ORDER[i]) - i16::from(s_be[i]) - borrow;
+        if d < 0 {
+            neg[i] = (d + 256) as u8;
+            borrow = 1;
+        } else {
+            neg[i] = d as u8;
+            borrow = 0;
+        }
+    }
+    assert_eq!(borrow, 0, "s must be < n");
+    let mut out = *sig64;
+    out[32..].copy_from_slice(&neg);
+    assert_ne!(out, *sig64, "nothing was malleated");
+    // Negation must flip which half of the scalar range `s` lives in —
+    // otherwise this helper did not produce the malleated form at all. Stated
+    // as a flip rather than "the output is high-S" because the function is its
+    // own inverse and the tests apply it twice.
+    assert_ne!(
+        is_high_s(&out),
+        is_high_s(sig64),
+        "n - s must land in the opposite half of the scalar range"
+    );
+    out
+}
+
 /// `rpIdHash(32) ‖ flags(1) ‖ signCount(4 BE)`.
 pub fn authenticator_data(rp_id_hash: [u8; 32], flags: u8) -> Vec<u8> {
     let mut v = rp_id_hash.to_vec();

@@ -4,6 +4,31 @@ pub const ACCOUNT_SEED: &[u8] = b"account";
 pub const SESSION_SEED: &[u8] = b"session";
 pub const MAX_CLIENT_DATA_LEN: usize = 512;
 pub const MAX_ROOT_EXPIRY_SECS: i64 = 600;
+/// Maximum age, **in slots**, of a root passkey ceremony (spec §4, rev 8).
+///
+/// `Clock::unix_timestamp` is a stake-weighted *estimate* that can drift from
+/// wall clock by minutes, so `expiry_ts` alone is not the freshness control.
+/// `slot` is the consensus-native clock every peer anchors to, and the
+/// transcript therefore carries a client-signed `signed_slot`. The rule is one
+/// chained inequality, and both halves are load-bearing:
+///
+/// ```text
+/// signed_slot <= Clock::slot < signed_slot + MAX_ROOT_SLOT_AGE
+/// ```
+///
+/// - the left half rejects a **future** `signed_slot` outright
+///   (`RootSlotInFuture`) — without it a client buys itself an arbitrarily
+///   long window simply by signing ahead;
+/// - the right half is **strict** (`RootSlotStale`): an age of exactly
+///   `MAX_ROOT_SLOT_AGE` is rejected, `MAX_ROOT_SLOT_AGE - 1` is accepted.
+///
+/// 150 slots is ≈60 s at 400 ms/slot — the same order as LazorKit (150) and
+/// Swig (60), and 10–25× tighter than the 600 s `MAX_ROOT_EXPIRY_SECS`
+/// window Phase 1A relied on alone. `expiry_ts` stays as the **secondary**
+/// bound (spec §5.1's two-clock rule): its long tail exists only for Phase
+/// 1C's deferred/timelocked flow, and on the default path both checks must
+/// pass.
+pub const MAX_ROOT_SLOT_AGE: u64 = 150;
 pub const MAX_MINT_CAPS: usize = 8;
 pub const MAX_SESSIONS_LISTED: usize = 0; // sessions are separate PDAs; no list on the account
 pub const DAY_SECS: i64 = 86_400;

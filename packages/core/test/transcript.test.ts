@@ -25,7 +25,9 @@ const fromHex = (s: string): Uint8Array => {
 const fill = (n: number, byte: number): Uint8Array => new Uint8Array(n).fill(byte);
 
 // Pinned against programs/warden/src/root_verify/transcript.rs
-// `transcript_hash_matches_pinned_vector` (Task 3 vector; see task-3-report.md).
+// `transcript_hash_matches_pinned_vector` (Phase 1B Task 0 vector — it REPLACES
+// the Phase-1A one, because inserting `signed_slot` changes the preimage and
+// the old digest is wrong rather than merely stale; see task-0-report.md).
 // The program id is `crate::ID` = 017b5f72e2c074fa8555206db7ccf465c1db513c725913ca7ce685f135f8bd51
 // (pinned separately in Rust's `program_id_bytes_are_pinned`).
 const PROGRAM_ID = fromHex("017b5f72e2c074fa8555206db7ccf465c1db513c725913ca7ce685f135f8bd51");
@@ -36,8 +38,12 @@ const GENERATION = 7n;
 const POLICY_VERSION = 3;
 const ROOT_NONCE = 42n;
 const EXPIRY_TS = 1_760_000_000n;
+// A realistic mainnet-scale slot whose LE encoding has several distinct
+// non-zero bytes; the u64::MAX companion vector below covers the rest of the
+// range. Mirrors Rust's `VECTOR_SIGNED_SLOT`.
+const SIGNED_SLOT = 314_159_265n;
 
-const EXPECTED_CHALLENGE = "LEt28FWyglI8y61Sh__dFRbKn6uk8PYmo8p7JDpSds4";
+const EXPECTED_CHALLENGE = "0iukGHw3iP1zKFk8_xdrFguCkQpq88yeG6MsESK55Zs";
 
 describe("transcriptHash", () => {
   // Pinned against the Rust
@@ -55,11 +61,12 @@ describe("transcriptHash", () => {
       generation: GENERATION,
       policyVersion: POLICY_VERSION,
       rootNonce: ROOT_NONCE,
+      signedSlot: SIGNED_SLOT,
       expiryTs: -1n,
       actionHash: ACTION_HASH,
     });
-    expect(hex(t)).toBe("5469ceaeb4e6b2292539b3862bdf259712d5377174b00a43ea065f3de90127c0");
-    expect(challengeB64Url(t)).toBe("VGnOrrTmsiklObOGK98llxLVN3F0sApD6gZfPekBJ8A");
+    expect(hex(t)).toBe("ce70570590fa61713d351480103bd85de57db23843dae12a3328a39060d56a6f");
+    expect(challengeB64Url(t)).toBe("znBXBZD6YXE9NRSAEDvYXeV9sjhD2uEqMyijkGDVam8");
   });
 
   it("matches the Rust-pinned vector (transcript_hash_matches_pinned_vector)", () => {
@@ -70,11 +77,47 @@ describe("transcriptHash", () => {
       generation: GENERATION,
       policyVersion: POLICY_VERSION,
       rootNonce: ROOT_NONCE,
+      signedSlot: SIGNED_SLOT,
       expiryTs: EXPIRY_TS,
       actionHash: ACTION_HASH,
     });
-    expect(hex(t)).toBe("2c4b76f055b282523ccbad5287ffdd1516ca9faba4f0f626a3ca7b243a5276ce");
+    expect(hex(t)).toBe("d22ba4187c3788fd7328593cff176b160b82910a6af3cc9e1ba32c1122b9e59b");
     expect(challengeB64Url(t)).toBe(EXPECTED_CHALLENGE);
+  });
+
+  // Pinned against the Rust
+  // `transcript_hash_matches_pinned_max_slot_vector`. Same inputs as the
+  // positive vector with `signedSlot = 2^64 - 1` (all-0xff u64) and nothing
+  // else changed, so it proves this mirror encodes `signed_slot` as a full
+  // 8-byte little-endian u64 — a divergence the realistic-slot vector cannot
+  // catch, since 314_159_265 fits in four bytes and a truncated u32 encoding
+  // would reproduce it.
+  it("matches the Rust-pinned MAX-SLOT vector (transcript_hash_matches_pinned_max_slot_vector)", () => {
+    const t = transcriptHash({
+      clusterTag: CLUSTER_TAG,
+      programId: PROGRAM_ID,
+      account: ACCOUNT,
+      generation: GENERATION,
+      policyVersion: POLICY_VERSION,
+      rootNonce: ROOT_NONCE,
+      signedSlot: 2n ** 64n - 1n,
+      expiryTs: EXPIRY_TS,
+      actionHash: ACTION_HASH,
+    });
+    expect(hex(t)).toBe("87822c4c2c26c21ec09a7f4d3cd8b992e897b0899fea27a2ffd1c3234eebdf5c");
+    expect(challengeB64Url(t)).toBe("h4IsTCwmwh7Amn9NPNi5kuiXsImf6iei_9HDI07r31w");
+  });
+
+  // Mirrors Rust's `signed_slot_and_expiry_ts_are_not_interchangeable`.
+  // `expiryTs` and `signedSlot` are adjacent fixed-width integers, so a mirror
+  // that emitted them in the wrong ORDER would still build a preimage of the
+  // right length. Both values below are representable as i64 and u64, so the
+  // swap is a pure ordering change.
+  it("does not treat expiryTs and signedSlot as interchangeable", () => {
+    const base = { clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, actionHash: ACTION_HASH };
+    const a = transcriptHash({ ...base, expiryTs: 1000n, signedSlot: 2000n });
+    const b = transcriptHash({ ...base, expiryTs: 2000n, signedSlot: 1000n });
+    expect(hex(a)).not.toBe(hex(b));
   });
 
   it("changes when every field changes (mirrors every_transcript_field_changes_the_hash)", () => {
@@ -85,6 +128,7 @@ describe("transcriptHash", () => {
       generation: GENERATION,
       policyVersion: POLICY_VERSION,
       rootNonce: ROOT_NONCE,
+      signedSlot: SIGNED_SLOT,
       expiryTs: EXPIRY_TS,
       actionHash: ACTION_HASH,
     });
@@ -96,14 +140,15 @@ describe("transcriptHash", () => {
     const otherPubkey = fill(32, 0x99);
 
     const variants = [
-      transcriptHash({ clusterTag: clusterTag2, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
-      transcriptHash({ clusterTag: CLUSTER_TAG, programId: otherPubkey, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
-      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: otherPubkey, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
-      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION + 1n, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
-      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION + 1, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
-      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE + 1n, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
-      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS + 1n, actionHash: ACTION_HASH }),
-      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, expiryTs: EXPIRY_TS, actionHash: actionHash2 }),
+      transcriptHash({ clusterTag: clusterTag2, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, signedSlot: SIGNED_SLOT, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: otherPubkey, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, signedSlot: SIGNED_SLOT, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: otherPubkey, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, signedSlot: SIGNED_SLOT, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION + 1n, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, signedSlot: SIGNED_SLOT, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION + 1, rootNonce: ROOT_NONCE, signedSlot: SIGNED_SLOT, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE + 1n, signedSlot: SIGNED_SLOT, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, signedSlot: SIGNED_SLOT, expiryTs: EXPIRY_TS + 1n, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, signedSlot: SIGNED_SLOT + 1n, expiryTs: EXPIRY_TS, actionHash: ACTION_HASH }),
+      transcriptHash({ clusterTag: CLUSTER_TAG, programId: PROGRAM_ID, account: ACCOUNT, generation: GENERATION, policyVersion: POLICY_VERSION, rootNonce: ROOT_NONCE, signedSlot: SIGNED_SLOT, expiryTs: EXPIRY_TS, actionHash: actionHash2 }),
     ];
 
     for (const v of variants) {
@@ -178,6 +223,7 @@ describe("integer range validation", () => {
     policyVersion: POLICY_VERSION,
     rootNonce: ROOT_NONCE,
     expiryTs: EXPIRY_TS,
+    signedSlot: SIGNED_SLOT,
     actionHash: ACTION_HASH,
   };
 
@@ -219,5 +265,20 @@ describe("integer range validation", () => {
 
   it("transcriptHash throws RangeError for rootNonce >= 2^64", () => {
     expect(() => transcriptHash({ ...base, rootNonce: 2n ** 64n })).toThrow(RangeError);
+  });
+
+  it("transcriptHash throws RangeError for signedSlot >= 2^64", () => {
+    expect(() => transcriptHash({ ...base, signedSlot: 2n ** 64n })).toThrow(RangeError);
+  });
+
+  it("transcriptHash throws RangeError for a negative signedSlot", () => {
+    expect(() => transcriptHash({ ...base, signedSlot: -1n })).toThrow(RangeError);
+  });
+
+  // `signedSlot` is a bigint, not a number: a `number` cannot represent the
+  // full u64 range without precision loss, and a slot silently rounded to the
+  // nearest float would produce an unverifiable ceremony.
+  it("transcriptHash throws RangeError for a number-typed signedSlot", () => {
+    expect(() => transcriptHash({ ...base, signedSlot: 1 as unknown as bigint })).toThrow(RangeError);
   });
 });

@@ -427,6 +427,115 @@ the recovery-open interplay and queued guardian unfreeze are **not implemented
 in 1A** — `FrozenState::Guardian` is reserved state only — and the rest of §5
 (`execute`, `swap`, `queue`, recovery) is 1B.
 
+## Phase 1B Task 0 remeasure (2026-08-19)
+
+**Why this section lives in the Phase 1A document.** Phase 1B Task 0 changes
+the shape of *Phase 1A's* six root instructions — it adds `signed_slot: u64` to
+`RootArgs`, a slot-freshness check and a `stack_height` check — so every number
+in the tables above moved. Superseding rows are recorded here rather than
+edited in place, per the update policy below: a regression is only visible
+against the previous number. `docs/program/PHASE1B-MEASUREMENTS.md` (created by
+a later 1B task) owns the *new* 1B instructions.
+
+Measured at the Task 0 commit on branch `phase1b`, same toolchain and same
+harness as the tables above (`litesvm =0.12.0` + `precompiles`,
+`with_mainnet_features()`, Anchor 1.1.2, Agave `cargo-build-sbf` 3.1.10). CU
+figures again exclude the runtime's own secp256r1 verification (**4,800 CU**,
+charged separately on every root path — budget it explicitly).
+
+### Transaction sizes — `signed_slot` costs exactly +8 B on every root path
+
+| Path | 1A | Task 0 | Δ | Test (asserts ≤ 1,232 B) |
+| --- | ---: | ---: | ---: | --- |
+| `rotate_nonce` (root ceremony) | 680 B | **688 B** | +8 | `root_verify::rotate_nonce_ok_and_nonce_increments` (the assertion is new — 1A only printed the number) |
+| `freeze` | 680 B | **688 B** | +8 | `freeze::freeze_tx_fits_1232_bytes` |
+| `unfreeze` | 680 B | **688 B** | +8 | `freeze::unfreeze_tx_fits_1232_bytes` |
+| `grant_session` (2 caps) — **largest root tx** | 976 B | **984 B** | +8 | `sessions::grant_tx_fits_1232_bytes_with_2_caps` (248 B of margin) |
+| `revoke_session_root` | 778 B | **786 B** | +8 | `sessions::revoke_by_root_ok` |
+| `transfer` (root, SPL) — **largest transfer** | 823 B | **831 B** | +8 | `transfer::root_spl_transfer_tx_fits_1232_bytes` (401 B of margin) |
+| `transfer` (root, SOL) | 727 B | **735 B** | +8 | `transfer::root_transfer_tx_fits_1232_bytes` |
+| `transfer` (session, SOL) | 386 B | 386 B | 0 | `transfer::session_sol_transfer_tx_fits_1232_bytes` — session paths carry no `RootArgs` |
+| `transfer` (session, SPL) | 482 B | 482 B | 0 | `transfer::session_spl_transfer_tx_fits_1232_bytes` |
+| `revoke_session_self` | 341 B | 341 B | 0 | no root ceremony |
+| `create_account` (all-defaults) | 472 B | 472 B | 0 | no root ceremony **yet** — proof-of-possession (Task 2b) adds one |
+
+`RootArgs` on the wire is now **226 B** for a 37 B `authenticatorData` + 164 B
+`clientDataJSON` ceremony (was 218 B).
+
+**Owed to Task 2b (proof-of-possession at create).** `create_account` with 2
+mints is 808 B today and carries no ceremony. Adding one costs the same
+envelope `rotate_nonce` pays — a 182 B precompile instruction plus 226 B of
+`RootArgs` plus the extra account/instruction headers — which is ~450 B of
+*additional* payload on top of 808 B. That lands close enough to the 1,232 B
+packet limit that **Task 2b must measure it before assuming 2 mints still fit**,
+and `MAX_MINTS_AT_CREATE` (currently 4) may have to drop. This is not a
+prediction, it is the reason the plan made it a gate.
+
+### Compute units
+
+| Path | 1A | Task 0 | Δ | Test |
+| --- | ---: | ---: | ---: | --- |
+| `rotate_nonce` | 15,858 | **16,097** | +239 | `root_verify::rotate_nonce_ok_and_nonce_increments` |
+| `freeze` | 15,891 | **16,128** | +237 | `freeze::freeze_sets_state` |
+| `unfreeze` | 15,914 | **16,147** | +233 | `freeze::unfreeze_after_timelock_ok` |
+| `grant_session` (2 caps) | 30,696 | **30,976** | +280 | `sessions::grant_ok_and_readback` |
+| `revoke_session_root` | 20,968 | **21,236** | +268 | `sessions::revoke_by_root_ok` |
+| `transfer` (root, SOL) | 25,749 | **26,017** | +268 | `transfer::root_transfer_within_threshold_debits_buckets` |
+| `transfer` (root, SPL) — heaviest 1A shape | 27,886 | **28,154** | +268 | `transfer::root_spl_transfer_ok` |
+| `transfer` (session, SOL) | 18,533 | 18,539 | +6 | measurement noise — no root path |
+| `transfer` (session, SPL) | 20,665 | 20,671 | +6 | measurement noise — no root path |
+| `revoke_session_self` | 7,324 | 7,324 | 0 | no root ceremony |
+| `create_account` | 8,866 | 8,866 | 0 | no root ceremony |
+
+**≈ +240–280 CU on every root path**, which is the honest price of the change:
+8 more bytes through the Keccak transcript, two comparisons and one checked
+add for the slot window, and one `sol_get_stack_height` syscall. Against a
+200,000 CU default budget that is 0.14%.
+
+### `.so` size
+
+| Artifact | 1A (`4b409f7`) | Task 0 | Δ |
+| --- | ---: | ---: | ---: |
+| `target/deploy/warden.so` | 382,832 B | **388,208 B** | +5,376 B |
+| `target/deploy/test_middleman.so` | — | 82,152 B | new, test-only, never deployed |
+
+### Error ABI — the Phase 1B block opens at 6036
+
+Append-only, as always. Task 0 takes the first three codes because it lands
+first in the 1B run order; later 1B tasks append from 6039.
+
+| Code | Variant | Raised when |
+| ---: | --- | --- |
+| 6036 | `RootSlotStale` | `Clock::slot >= signed_slot + MAX_ROOT_SLOT_AGE` (150). The bound is **strict**: an age of exactly 150 is rejected, 149 is accepted. |
+| 6037 | `RootSlotInFuture` | `signed_slot > Clock::slot`. Rejects a client that signs ahead to buy itself a longer window. Checked **before** the stale bound, so `signed_slot = u64::MAX` is a future-slot rejection and never an overflow. |
+| 6038 | `RootRequiresTopLevel` | `get_stack_height() != TRANSACTION_LEVEL_STACK_HEIGHT` — a root path reached through a CPI. Distinct from the self-CPI rule, which only blocks warden → warden. |
+
+Pinned in `programs/warden/tests/root_verify.rs`'s `mod err` and checked
+against the enum by `pinned_error_codes_match_the_enum_today` (39 variants).
+Mirrored in the IDL and asserted by `packages/core/test/idl.test.ts`.
+
+### Transcript ABI — the golden vectors were REGENERATED, not extended
+
+`signed_slot: u64 LE` sits **between `expiry_ts` and `action_hash`**. Inserting
+it changes the preimage, so the Phase-1A digests are *wrong*, not merely stale,
+and they were replaced rather than kept alongside. Inputs are unchanged from 1A
+except for the new field (`signed_slot = 314_159_265`):
+
+| Vector | Rust test | TS test | Digest |
+| --- | --- | --- | --- |
+| positive | `transcript_hash_matches_pinned_vector` | "matches the Rust-pinned vector" | `d22ba418…22b9e59b` (`0iukGHw3iP1zKFk8_xdrFguCkQpq88yeG6MsESK55Zs`) |
+| `expiry_ts = -1` | `transcript_hash_matches_pinned_negative_expiry_vector` | "…NEGATIVE-expiry vector" | `ce705705…60d56a6f` |
+| `signed_slot = u64::MAX` | `transcript_hash_matches_pinned_max_slot_vector` | "…MAX-SLOT vector" | `87822c4c…4eebdf5c` |
+
+All three were computed with an **independent** from-spec pure-Python
+Keccak-f[1600] (self-tested against the published `keccak256("")`,
+`keccak256("abc")` and `keccak256("testing")` digests), which was first
+re-checked to reproduce the Phase-1A vectors byte-for-byte before the new ones
+were taken — so they are not this implementation's own output played back.
+
+`action_hash` is unchanged: it does not include `signed_slot`, and its pinned
+vectors still hold.
+
 ## Update policy
 
 Append a row per measured path; do not delete rows — a regression is only

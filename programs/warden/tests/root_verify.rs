@@ -33,6 +33,14 @@ use warden::root_verify::RootArgs;
 use warden::state::SmartAccount;
 
 const NOW: i64 = 1_760_000_000;
+/// Solana's transaction packet limit (`PACKET_DATA_SIZE`).
+const PACKET_DATA_SIZE: usize = 1232;
+/// The slot every ceremony in this suite is built against — a realistic
+/// mainnet-scale value rather than LiteSVM's default 0, so a `signed_slot`
+/// bent *backwards* by up to `MAX_ROOT_SLOT_AGE` cannot underflow into
+/// `u64::MAX` and accidentally test the future-slot branch instead of the
+/// stale one.
+const NOW_SLOT: u64 = 350_000_000;
 
 /// Anchor error codes as **literals**, independent of the program's enum.
 ///
@@ -90,6 +98,12 @@ mod err {
     // Appended by the Task 9 milestone security review. Same append-only rule.
     pub const INVALID_ROOT_KEY: u32 = 6034;
     pub const SESSION_PRIOR_STATE_MISMATCH: u32 = 6035;
+    // Appended by Phase 1B Task 0 (slot-based root freshness + top-level-only
+    // root paths). The Phase 1B ABI block starts at 6036; same append-only
+    // rule.
+    pub const ROOT_SLOT_STALE: u32 = 6036;
+    pub const ROOT_SLOT_IN_FUTURE: u32 = 6037;
+    pub const ROOT_REQUIRES_TOP_LEVEL: u32 = 6038;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -98,7 +112,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 36] = [
+    let pairs: [(u32, WardenError, &str); 39] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -147,6 +161,13 @@ fn pinned_error_codes_match_the_enum_today() {
             WardenError::SessionPriorStateMismatch,
             "SessionPriorStateMismatch",
         ),
+        (err::ROOT_SLOT_STALE, WardenError::RootSlotStale, "RootSlotStale"),
+        (err::ROOT_SLOT_IN_FUTURE, WardenError::RootSlotInFuture, "RootSlotInFuture"),
+        (
+            err::ROOT_REQUIRES_TOP_LEVEL,
+            WardenError::RootRequiresTopLevel,
+            "RootRequiresTopLevel",
+        ),
     ];
     for (pinned, variant, name) in pairs {
         assert_eq!(
@@ -171,9 +192,14 @@ fn rotate_nonce_ix(smart_account: Pubkey, args: &RootArgs) -> Instruction {
     }
 }
 
+/// Pin BOTH clocks the program reads (spec §5.1's two-clock rule: bucket/day
+/// arithmetic uses `unix_timestamp`, root-ceremony freshness uses `slot`).
+/// Every case in this suite starts from the same `(NOW, NOW_SLOT)` origin so a
+/// test that says nothing about slots gets a valid one by construction.
 fn set_clock(svm: &mut LiteSVM, unix_timestamp: i64) {
     let mut c: Clock = svm.get_sysvar();
     c.unix_timestamp = unix_timestamp;
+    c.slot = NOW_SLOT;
     svm.set_sysvar(&c);
 }
 
@@ -189,6 +215,7 @@ fn rotate_nonce_challenge(
     policy_version: u32,
     root_nonce: u64,
     expiry_ts: i64,
+    signed_slot: u64,
 ) -> Vec<u8> {
     let t = transcript_hash(
         cluster_tag,
@@ -198,6 +225,7 @@ fn rotate_nonce_challenge(
         policy_version,
         root_nonce,
         expiry_ts,
+        signed_slot,
         &action_hash(OP_ROTATE_NONCE, &[]),
     );
     b64url_no_pad(&t)
@@ -218,10 +246,20 @@ struct Case {
     /// rpIdHash actually signed (defaults to SHA-256 of `signed_origin`).
     signed_rp_id_hash: Option<[u8; 32]>,
     expiry_ts: i64,
+    /// `signed_slot` — signed into the transcript AND submitted, so bending it
+    /// moves the freshness window rather than breaking the binding. `None`
+    /// means "the SVM's current slot", the honest client behaviour.
+    signed_slot: Option<u64>,
+    /// The slot the SVM is warped to *after* the ceremony is built — how a
+    /// test ages a ceremony without changing what was signed.
+    svm_slot_at_submit: Option<u64>,
     /// Transcript inputs the signer *believes*; bending one breaks the binding.
     challenge_nonce: Option<u64>,
     challenge_generation: Option<u64>,
     challenge_cluster_tag: Option<[u8; 32]>,
+    /// `signed_slot` the signer *believes*, when it must differ from the one
+    /// submitted — the binding counterpart of `signed_slot` above.
+    challenge_signed_slot: Option<u64>,
     precompile_ix_index: Option<u8>,
     num_signatures: u8,
     entry_instruction_index: u16,
@@ -248,9 +286,12 @@ impl Default for Case {
             our_client_data: None,
             signed_rp_id_hash: None,
             expiry_ts: NOW + 60,
+            signed_slot: None,
+            svm_slot_at_submit: None,
             challenge_nonce: None,
             challenge_generation: None,
             challenge_cluster_tag: None,
+            challenge_signed_slot: None,
             precompile_ix_index: None,
             num_signatures: 1,
             entry_instruction_index: u16::MAX,
@@ -322,6 +363,10 @@ fn build(case: Case) -> Built {
         create_smart_account(&mut svm, &payer, &fixture)
     };
 
+    // The honest client signs the slot it observes; a case may pin a different
+    // one to move the freshness window, and a different one AGAIN inside the
+    // transcript to break the binding.
+    let submitted_slot = case.signed_slot.unwrap_or_else(|| common::current_slot(&svm));
     let challenge = rotate_nonce_challenge(
         &case.challenge_cluster_tag.unwrap_or(fixture.cluster_tag),
         &account,
@@ -329,6 +374,7 @@ fn build(case: Case) -> Built {
         fixture.policy_version,
         case.challenge_nonce.unwrap_or(fixture.root_nonce),
         case.expiry_ts,
+        case.challenge_signed_slot.unwrap_or(submitted_slot),
     );
 
     let cdj = match &case.client_data_template {
@@ -362,6 +408,7 @@ fn build(case: Case) -> Built {
             .clone()
             .unwrap_or_else(|| assertion.client_data_json.clone()),
         expiry_ts: case.expiry_ts,
+        signed_slot: submitted_slot,
     };
 
     let (ixs, our_ix_index, default_precompile_index) = if case.precompile_after_ours {
@@ -402,6 +449,13 @@ fn build(case: Case) -> Built {
     let mut ixs = ixs;
     ixs[our_ix_index as usize] = rotate_nonce_ix(account, &final_args);
 
+    // Ageing happens AFTER the ceremony is built, exactly as it would in
+    // reality: the client signed at one slot and the transaction lands at a
+    // later one.
+    if let Some(slot) = case.svm_slot_at_submit {
+        svm.warp_to_slot(slot);
+    }
+
     let tx = Transaction::new(
         &[&payer],
         Message::new(&ixs, Some(&payer.pubkey())),
@@ -424,6 +478,7 @@ fn ceremony_ixs(
     f: &SmartAccountFixture,
     root_nonce: u64,
     expiry_ts: i64,
+    signed_slot: u64,
 ) -> Vec<Instruction> {
     let challenge = rotate_nonce_challenge(
         &f.cluster_tag,
@@ -432,6 +487,7 @@ fn ceremony_ixs(
         f.policy_version,
         root_nonce,
         expiry_ts,
+        signed_slot,
     );
     let a = pk.assert_with_client_data(
         passkey::client_data_json(&challenge, &f.origin),
@@ -443,6 +499,7 @@ fn ceremony_ixs(
         authenticator_data: a.authenticator_data.clone(),
         client_data_json: a.client_data_json.clone(),
         expiry_ts,
+        signed_slot,
     };
     vec![
         passkey::precompile_ix(&a, &pk.pubkey33()),
@@ -553,6 +610,14 @@ fn rotate_nonce_ok_and_nonce_increments() {
     let res = b.svm.send_transaction(b.tx).expect("honest assertion must succeed");
     println!("root_verify CU: {}", res.compute_units_consumed);
     println!("serialized tx: {tx_bytes} B");
+    // LiteSVM has no wire layer and will happily execute a transaction a real
+    // validator drops before execution, so the packet limit is asserted, not
+    // merely printed (the same rule every other size test in this repo
+    // follows). Phase 1B Task 0's `signed_slot` costs 8 B here: 680 → 688.
+    assert!(
+        tx_bytes <= PACKET_DATA_SIZE,
+        "root ceremony must fit Solana's packet limit: {tx_bytes} B"
+    );
     let after = read_smart_account(&b.svm, &b.account);
     assert_eq!(after.root_nonce, before.root_nonce + 1, "nonce must be consumed");
     assert_eq!(after.generation, before.generation, "nothing else may change");
@@ -571,7 +636,7 @@ fn consecutive_ceremonies_each_consume_one_nonce() {
     let (mut svm, payer, pk, f, account) = live_account();
     for n in 0..2u64 {
         assert_eq!(read_smart_account(&svm, &account).root_nonce, n);
-        let ixs = ceremony_ixs(account, &pk, &f, n, NOW + 60);
+        let ixs = ceremony_ixs(account, &pk, &f, n, NOW + 60, NOW_SLOT);
         send_fresh(&mut svm, &payer, &ixs)
             .unwrap_or_else(|e| panic!("ceremony {n} must succeed: {:?} {:#?}", e.err, e.meta.logs));
         assert_eq!(read_smart_account(&svm, &account).root_nonce, n + 1);
@@ -589,7 +654,7 @@ fn consecutive_ceremonies_each_consume_one_nonce() {
 #[test]
 fn replay_same_assertion_rejected() {
     let (mut svm, payer, pk, f, account) = live_account();
-    let ixs = ceremony_ixs(account, &pk, &f, 0, NOW + 60);
+    let ixs = ceremony_ixs(account, &pk, &f, 0, NOW + 60, NOW_SLOT);
 
     send_fresh(&mut svm, &payer, &ixs).expect("first submission must succeed");
     assert_eq!(read_smart_account(&svm, &account).root_nonce, 1);
@@ -609,7 +674,7 @@ fn replay_same_assertion_rejected() {
     );
 
     // And the account is still usable: a fresh ceremony over nonce 1 works.
-    let next = ceremony_ixs(account, &pk, &f, 1, NOW + 60);
+    let next = ceremony_ixs(account, &pk, &f, 1, NOW + 60, NOW_SLOT);
     send_fresh(&mut svm, &payer, &next).expect("a fresh ceremony must still succeed after a replay");
     assert_eq!(read_smart_account(&svm, &account).root_nonce, 2);
 }
@@ -868,6 +933,7 @@ fn wrong_pubkey_rejected() {
         fixture.policy_version,
         fixture.root_nonce,
         NOW + 60,
+        NOW_SLOT,
     );
     let a = signer.assert_(
         &challenge,
@@ -880,6 +946,7 @@ fn wrong_pubkey_rejected() {
         authenticator_data: a.authenticator_data.clone(),
         client_data_json: a.client_data_json.clone(),
         expiry_ts: NOW + 60,
+        signed_slot: NOW_SLOT,
     };
     let tx = Transaction::new(
         &[&payer],
@@ -950,6 +1017,7 @@ fn message_mismatch_rejected() {
         fixture.policy_version,
         fixture.root_nonce,
         NOW + 60,
+        NOW_SLOT,
     );
     let signed = passkey::client_data_json(&challenge, TEST_ORIGIN);
     let a = pk.assert_with_client_data(signed, passkey::rp_id_hash(TEST_ORIGIN), FLAGS_UP_UV);
@@ -960,6 +1028,7 @@ fn message_mismatch_rejected() {
         authenticator_data: a.authenticator_data.clone(),
         client_data_json: swapped.into_bytes(),
         expiry_ts: NOW + 60,
+        signed_slot: NOW_SLOT,
     };
     let tx = Transaction::new(
         &[&payer],
@@ -1077,5 +1146,292 @@ fn ed25519_root_rejected_on_passkey_path() {
             ..Default::default()
         },
         err::ROOT_KIND_UNSUPPORTED,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Slot freshness (spec §4, rev 8 — Phase 1B Task 0)
+//
+// The rule is ONE chained inequality:
+//     signed_slot <= Clock::slot < signed_slot + MAX_ROOT_SLOT_AGE
+// Both halves are load-bearing and the upper boundary is EXCLUSIVE, so the
+// three cases that matter are age 149 (accept), age 150 (reject) and any
+// future slot (reject). `expiry_ts` is left honest in every one of them, so a
+// rejection can only have come from the slot clock — that is the whole point
+// of the two-clock rule.
+// ---------------------------------------------------------------------------
+
+/// Age 0: signed and submitted in the same slot.
+#[test]
+fn slot_age_zero_accepted() {
+    let mut b = build(Case::default());
+    b.svm
+        .send_transaction(b.tx)
+        .expect("a ceremony submitted in the slot it was signed in must be accepted");
+}
+
+/// Age exactly `MAX_ROOT_SLOT_AGE - 1` = 149 — the last accepted slot.
+#[test]
+fn slot_age_149_accepted() {
+    let mut b = build(Case {
+        svm_slot_at_submit: Some(NOW_SLOT + 149),
+        ..Default::default()
+    });
+    b.svm
+        .send_transaction(b.tx)
+        .expect("an age of 149 slots is inside the window (the bound is exclusive at 150)");
+}
+
+/// Age exactly `MAX_ROOT_SLOT_AGE` = 150 — the first rejected slot. This is the
+/// boundary the spec calls strict; an off-by-one here silently doubles nothing
+/// but silently *widens* the window, so it gets its own test rather than
+/// riding on the far-past case below.
+#[test]
+fn slot_age_150_rejected_as_stale() {
+    expect_reject(
+        Case {
+            svm_slot_at_submit: Some(NOW_SLOT + 150),
+            ..Default::default()
+        },
+        err::ROOT_SLOT_STALE,
+    );
+}
+
+/// Far past — a ceremony captured and replayed hours later.
+#[test]
+fn slot_age_far_in_the_past_rejected_as_stale() {
+    expect_reject(
+        Case {
+            svm_slot_at_submit: Some(NOW_SLOT + 1_000_000),
+            ..Default::default()
+        },
+        err::ROOT_SLOT_STALE,
+    );
+}
+
+/// `signed_slot = Clock::slot + 1`. Without the left half of the inequality a
+/// client would simply sign ahead and buy itself a window of any length it
+/// liked, so one slot into the future must already be refused.
+#[test]
+fn future_slot_by_one_rejected() {
+    expect_reject(
+        Case {
+            signed_slot: Some(NOW_SLOT + 1),
+            ..Default::default()
+        },
+        err::ROOT_SLOT_IN_FUTURE,
+    );
+}
+
+/// The same attack at scale: a `signed_slot` far enough ahead that the
+/// ceremony would stay "fresh" for days.
+#[test]
+fn future_slot_far_ahead_rejected() {
+    expect_reject(
+        Case {
+            signed_slot: Some(NOW_SLOT + 1_000_000),
+            ..Default::default()
+        },
+        err::ROOT_SLOT_IN_FUTURE,
+    );
+}
+
+/// `signed_slot = u64::MAX` must be refused as a future slot, and — the reason
+/// this case exists separately — the `signed_slot + MAX_ROOT_SLOT_AGE` the
+/// stale check computes must not be reachable with an overflow. The future
+/// check runs first, so the addition is never attempted; if the two were ever
+/// reordered this test would surface it as an `Overflow` instead.
+#[test]
+fn signed_slot_u64_max_rejected_as_future_not_overflow() {
+    expect_reject(
+        Case {
+            signed_slot: Some(u64::MAX),
+            ..Default::default()
+        },
+        err::ROOT_SLOT_IN_FUTURE,
+    );
+}
+
+/// `signed_slot` is part of the SIGNED transcript, so editing it in the
+/// instruction data to move the window does not work: the challenge no longer
+/// matches. Without this, the two tests above would only prove the window
+/// exists, not that it cannot be slid.
+#[test]
+fn signed_slot_edited_after_signing_rejected() {
+    expect_reject(
+        Case {
+            // The signer believed NOW_SLOT; the submitted args claim an older
+            // slot, which — if it were not bound — would still be inside the
+            // window and would therefore be accepted.
+            signed_slot: Some(NOW_SLOT - 10),
+            challenge_signed_slot: Some(NOW_SLOT),
+            ..Default::default()
+        },
+        err::CHALLENGE_MISMATCH,
+    );
+}
+
+/// The wall clock is the SECONDARY bound and does not rescue a stale slot:
+/// with a generous, perfectly valid `expiry_ts`, an over-age ceremony is still
+/// refused. This is what makes the change worth its bytes — `Clock::unix_timestamp`
+/// is a stake-weighted estimate that can drift by minutes, `slot` cannot.
+#[test]
+fn valid_expiry_does_not_rescue_a_stale_slot() {
+    expect_reject(
+        Case {
+            expiry_ts: NOW + 600,
+            svm_slot_at_submit: Some(NOW_SLOT + 150),
+            ..Default::default()
+        },
+        err::ROOT_SLOT_STALE,
+    );
+}
+
+/// …and symmetrically, a fresh slot does not rescue an expired wall clock.
+/// Both bounds must pass on the default path.
+#[test]
+fn fresh_slot_does_not_rescue_an_expired_ceremony() {
+    expect_reject(
+        Case {
+            expiry_ts: NOW - 1,
+            ..Default::default()
+        },
+        err::EXPIRED,
+    );
+}
+
+/// A Phase-1A-shaped `RootArgs` — one that stops after `expiry_ts` and carries
+/// no `signed_slot` — must fail to DECODE rather than be interpreted with a
+/// defaulted or garbage slot.
+///
+/// Anchor surfaces a borsh failure as its built-in
+/// `ErrorCode::InstructionDidNotDeserialize` = 102 (Anchor's own codes live
+/// below the 6000 user-error offset), pinned as a literal here for the same
+/// reason the `err` table is.
+#[test]
+fn phase_1a_root_args_without_signed_slot_fails_to_decode() {
+    const ANCHOR_INSTRUCTION_DID_NOT_DESERIALIZE: u32 = 102;
+
+    let b = build(Case::default());
+    // Rebuild instruction 1's data with the trailing 8 bytes (`signed_slot`)
+    // removed — exactly the wire format a Phase-1A client would produce.
+    let ours = b.tx.message.instructions[b.our_ix_index as usize].clone();
+    let mut truncated = ours.data.clone();
+    truncated.truncate(truncated.len() - 8);
+    assert_eq!(
+        ours.data.len() - truncated.len(),
+        8,
+        "signed_slot is the trailing u64 of RootArgs"
+    );
+
+    let mut svm = b.svm;
+    let payer = Keypair::new();
+    svm.airdrop(&payer.pubkey(), 10_000_000_000).unwrap();
+    let ix = Instruction {
+        program_id: common::program_id(),
+        accounts: vec![
+            AccountMeta::new(b.account, false),
+            AccountMeta::new_readonly(sysvar::instructions::ID, false),
+        ],
+        data: truncated,
+    };
+    let tx = Transaction::new(
+        &[&payer],
+        Message::new(&[ix], Some(&payer.pubkey())),
+        svm.latest_blockhash(),
+    );
+    let err = svm.send_transaction(tx).expect_err("must not decode");
+    assert_eq!(
+        err.err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(ANCHOR_INSTRUCTION_DID_NOT_DESERIALIZE)
+        ),
+        "logs={:#?}",
+        err.meta.logs
+    );
+}
+
+// ---------------------------------------------------------------------------
+// stack_height — root paths are transaction-level only (spec §5.1)
+// ---------------------------------------------------------------------------
+
+/// A middleman program CPIs a COMPLETE, VALID root ceremony into
+/// `rotate_nonce`, and warden refuses it purely because it is not running at
+/// transaction level.
+///
+/// The control is the second half of the same test: the byte-identical
+/// ceremony, submitted top-level, succeeds. Without that half a bug anywhere
+/// else in the ceremony would make the first half pass for the wrong reason.
+///
+/// This is distinct from the existing "self-CPI into warden is rejected" rule,
+/// which only blocks warden → warden; here the caller is an unrelated program.
+#[test]
+fn root_instruction_via_cpi_rejected() {
+    let (mut svm, payer) = common::setup();
+    set_clock(&mut svm, NOW);
+    let middleman = common::add_middleman(&mut svm);
+
+    let pk = TestPasskey::new(3);
+    let mut f = SmartAccountFixture::default();
+    f.root_pubkey33 = pk.pubkey33();
+    let account = create_smart_account(&mut svm, &payer, &f);
+
+    // One ceremony, built once, submitted two different ways.
+    let ixs = ceremony_ixs(account, &pk, &f, f.root_nonce, NOW + 60, NOW_SLOT);
+    let (precompile_ix, warden_ix) = (ixs[0].clone(), ixs[1].clone());
+
+    // ---- (a) through the middleman: rejected -----------------------------
+    let mut forward_data = Sha256::digest(b"global:forward")[..8].to_vec();
+    // borsh `Vec<u8>`: u32 LE length prefix then the bytes.
+    (warden_ix.data.len() as u32)
+        .to_le_bytes()
+        .iter()
+        .for_each(|b| forward_data.push(*b));
+    forward_data.extend_from_slice(&warden_ix.data);
+    let forward_ix = Instruction {
+        program_id: middleman,
+        // `Forward`'s one named account is the CPI target; everything after it
+        // is `remaining_accounts` and is forwarded with its flags intact.
+        accounts: vec![
+            AccountMeta::new_readonly(common::program_id(), false),
+            AccountMeta::new(account, false),
+            AccountMeta::new_readonly(sysvar::instructions::ID, false),
+        ],
+        data: forward_data,
+    };
+    let tx = Transaction::new(
+        &[&payer],
+        Message::new(&[precompile_ix.clone(), forward_ix], Some(&payer.pubkey())),
+        svm.latest_blockhash(),
+    );
+    let before = read_smart_account(&svm, &account).root_nonce;
+    let err = svm
+        .send_transaction(tx)
+        .expect_err("a root instruction reached through a CPI must be refused");
+    assert_eq!(
+        err.err,
+        TransactionError::InstructionError(1, InstructionError::Custom(err::ROOT_REQUIRES_TOP_LEVEL)),
+        "logs={:#?}",
+        err.meta.logs
+    );
+    assert_eq!(
+        read_smart_account(&svm, &account).root_nonce,
+        before,
+        "a refused ceremony must not be consumed"
+    );
+
+    // ---- (b) the SAME ceremony, top-level: accepted ----------------------
+    let res = send_fresh(&mut svm, &payer, &[precompile_ix, warden_ix])
+        .expect("the identical ceremony must succeed when it is not wrapped in a CPI");
+    assert!(
+        !res.logs.iter().any(|l| l.contains("panicked")),
+        "logs={:#?}",
+        res.logs
+    );
+    assert_eq!(
+        read_smart_account(&svm, &account).root_nonce,
+        before + 1,
+        "the top-level ceremony must be consumed"
     );
 }

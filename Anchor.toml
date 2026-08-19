@@ -7,6 +7,10 @@ skip-lint = false
 
 [programs.localnet]
 warden = "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2"
+# Test-only: a middleman that CPIs into warden, used by
+# `root_verify::root_instruction_via_cpi_rejected` to prove root paths refuse
+# to run below transaction level. Never deployed — see programs/test-middleman.
+test_middleman = "FHWwDX1az7eAtFsogaRrFcoZkZhBEzSS3QMXPwovSiMN"
 
 [registry]
 url = "https://api.apr.dev"

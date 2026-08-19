@@ -221,3 +221,52 @@ two struct definitions. The dev-dependency is what *pins* those choices:
 `tests/common/token.rs` is packed by the real crate's `Account::pack` /
 `Mint::pack`, so an SPL layout change breaks the tests loudly instead of
 silently drifting from what the program parses.
+
+## Phase 1B Task 0 — the L0 litesvm pin and the `test-middleman` crate (2026-08-19)
+
+**`litesvm` is now an EXACT pin, not a range.**
+
+| Crate | Requirement in `programs/warden/Cargo.toml` | Resolved version | Notes |
+| --- | --- | --- | --- |
+| `litesvm` | `{ version = "=0.12.0", features = ["precompiles"] }` (dev-dep) | `0.12.0` | Was `"0.12"`. Note that `"0.12"` **already** means `>=0.12, <0.13`, so the change is not about widening or narrowing the major/minor range — it is about pinning the patch. `"=0.12.x"` would be a *wildcard*, not a pin; `Cargo.lock` resolves `0.12.0`, so `=0.12.0` is the correct string. `Cargo.lock` is committed. |
+
+Why the pin and the feature both matter (spec §17, layer L0):
+
+- `precompiles` is **not** a default litesvm feature and `LiteSVM::default()` starts
+  with every runtime feature off. Without the feature the secp256r1 precompile
+  program account is never loaded, and every root ceremony fails with
+  `InvalidProgramForExecution` rather than being verified.
+- With the feature, litesvm 0.12's `process_precompile` calls
+  `agave-precompiles::…verify(...)`, i.e. the runtime performs the real ECDSA
+  check. That is the property the root of trust rests on, and it is now asserted
+  in **two independent places**:
+  - `programs/warden/tests/sigverify_wiring.rs` — the runtime gate. Both
+    directions against one transaction shape: a valid signature succeeds, and a
+    forged / bit-flipped / high-S one fails with **exactly**
+    `InstructionError(0, Custom(2))` (`PrecompileError::InvalidSignature`), i.e.
+    at the precompile instruction, before warden's own instruction runs.
+  - `.claude/test-gate.sh` — the feature-resolution gate. Fails the gate if
+    `cargo tree -e features -p warden` no longer resolves
+    `litesvm feature "precompiles"`. This is **evidence about resolution, not
+    about runtime behaviour**, and it never substitutes for the test above.
+- 0.13+ moves to Agave 4.x, which would diverge from the installed Agave 3.1.10
+  CLI — the same reason spike 2b stayed on the 0.12 line.
+
+**New crate: `programs/test-middleman`** (test-only, never deployed).
+
+| Fact | Value |
+| --- | --- |
+| Program id | `FHWwDX1az7eAtFsogaRrFcoZkZhBEzSS3QMXPwovSiMN` |
+| Derivation | **Nothing-up-my-sleeve**: `sha256("WARDEN/test-middleman/v1")` = `d43ec1db23c08041980a95fb03ef9fdc5b7463e4ac09d9ed74a8b202dced1ed9`, base58-encoded. No keypair for it exists or is committed (docs/PROGRAM-KEYS.md). |
+| Dependencies | `anchor-lang = "1.1.2"` only |
+| Built by | `anchor build` (workspace member via `members = ["programs/*"]`), and by `.claude/test-gate.sh`'s staleness check |
+| Artifact | `target/deploy/test_middleman.so`, 82,152 B at the Task 0 commit |
+| Used by | `root_verify::root_instruction_via_cpi_rejected` — it CPIs a complete, valid root ceremony into `rotate_nonce` and warden must refuse it with `RootRequiresTopLevel` (6038) |
+
+`anchor build` emits a keypair-mismatch warning for it, exactly as it does for
+`warden`, and for the same reason: LiteSVM loads programs by id + bytes, never
+by keypair. Nothing deploys this program.
+
+**`anchor build` cost after Task 0**: `target/deploy/warden.so` grew 382,832 B →
+388,208 B (+5,376 B) for the slot checks, the `stack_height` check, the
+`RootContext` refactor and three new error variants.

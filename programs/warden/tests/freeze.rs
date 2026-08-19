@@ -121,6 +121,11 @@ fn ceremony(svm: &LiteSVM, account: &Pubkey, pk: &TestPasskey, ah: [u8; 32]) -> 
     let st = read_smart_account(svm, account);
     let now: solana_sdk::clock::Clock = svm.get_sysvar();
     let expiry_ts = now.unix_timestamp + ROOT_EXPIRY_OFFSET;
+    // The honest client signs the slot it observes (spec §4: `signed_slot <=
+    // Clock::slot < signed_slot + MAX_ROOT_SLOT_AGE`). Read from the SVM, not
+    // hardcoded, so a test that warps time still produces a fresh ceremony —
+    // the slot-window boundaries themselves are owned by `root_verify.rs`.
+    let signed_slot = now.slot;
     let t = transcript_hash(
         &st.cluster_tag,
         &common::program_id(),
@@ -129,6 +134,7 @@ fn ceremony(svm: &LiteSVM, account: &Pubkey, pk: &TestPasskey, ah: [u8; 32]) -> 
         st.policy.version,
         st.root_nonce,
         expiry_ts,
+        signed_slot,
         &ah,
     );
     let a = pk.assert_with_client_data(
@@ -141,6 +147,7 @@ fn ceremony(svm: &LiteSVM, account: &Pubkey, pk: &TestPasskey, ah: [u8; 32]) -> 
         authenticator_data: a.authenticator_data.clone(),
         client_data_json: a.client_data_json.clone(),
         expiry_ts,
+        signed_slot,
     };
     (passkey::precompile_ix(&a, &pk.pubkey33()), args)
 }
@@ -381,12 +388,12 @@ fn rotate_nonce_still_allowed_when_frozen() {
 fn discriminators_are_sha256_of_the_global_names() {
     let ix = freeze_ix(
         Pubkey::new_unique(),
-        &RootArgs { precompile_ix_index: 0, authenticator_data: vec![], client_data_json: vec![], expiry_ts: 0 },
+        &RootArgs { precompile_ix_index: 0, authenticator_data: vec![], client_data_json: vec![], expiry_ts: 0, signed_slot: 0 },
     );
     assert_eq!(&ix.data[..8], &Sha256::digest(b"global:freeze")[..8]);
     let ix = unfreeze_ix(
         Pubkey::new_unique(),
-        &RootArgs { precompile_ix_index: 0, authenticator_data: vec![], client_data_json: vec![], expiry_ts: 0 },
+        &RootArgs { precompile_ix_index: 0, authenticator_data: vec![], client_data_json: vec![], expiry_ts: 0, signed_slot: 0 },
     );
     assert_eq!(&ix.data[..8], &Sha256::digest(b"global:unfreeze")[..8]);
 }

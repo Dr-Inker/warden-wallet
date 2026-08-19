@@ -252,6 +252,10 @@ fn ceremony(svm: &LiteSVM, account: &Pubkey, pk: &TestPasskey, ah: [u8; 32]) -> 
     let st = read_smart_account(svm, account);
     let clock: Clock = svm.get_sysvar();
     let expiry_ts = clock.unix_timestamp + ROOT_EXPIRY_OFFSET;
+    // Signed slot = the slot the client observes (spec §4); read from the SVM
+    // so a warped clock still yields a fresh ceremony. The slot-window
+    // boundaries are owned by `root_verify.rs`.
+    let signed_slot = clock.slot;
     let t = transcript_hash(
         &st.cluster_tag,
         &common::program_id(),
@@ -260,6 +264,7 @@ fn ceremony(svm: &LiteSVM, account: &Pubkey, pk: &TestPasskey, ah: [u8; 32]) -> 
         st.policy.version,
         st.root_nonce,
         expiry_ts,
+        signed_slot,
         &ah,
     );
     let a = pk.assert_with_client_data(
@@ -272,6 +277,7 @@ fn ceremony(svm: &LiteSVM, account: &Pubkey, pk: &TestPasskey, ah: [u8; 32]) -> 
         authenticator_data: a.authenticator_data.clone(),
         client_data_json: a.client_data_json.clone(),
         expiry_ts,
+        signed_slot,
     };
     (passkey::precompile_ix(&a, &pk.pubkey33()), args)
 }

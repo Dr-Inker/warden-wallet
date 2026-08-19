@@ -83,7 +83,7 @@ use crate::constants::{
 };
 use crate::errors::WardenError;
 use crate::root_verify::transcript::{action_hash, OP_GRANT_SESSION};
-use crate::root_verify::{verify_root_assertion, RootArgs};
+use crate::root_verify::{verify_and_consume, RootArgs};
 use crate::state::session::OPS_MASK_KNOWN;
 use crate::state::{FrozenState, MintCap, SessionKey, SmartAccount};
 
@@ -161,7 +161,9 @@ pub struct GrantSession<'info> {
 // Not `pub`: only `lib.rs`'s `#[program]` module calls this, by full path —
 // see the matching note on `create_account::handler`.
 pub(crate) fn handler(ctx: Context<GrantSession>, args: GrantSessionArgs) -> Result<()> {
-    let now = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
+    let slot = clock.slot;
     let account_key = ctx.accounts.smart_account.key();
     let ix_sysvar = ctx.accounts.ix_sysvar.to_account_info();
     let session_bump = ctx.bumps.session;
@@ -195,7 +197,7 @@ pub(crate) fn handler(ctx: Context<GrantSession>, args: GrantSessionArgs) -> Res
     // from the deserialized struct, never taken from raw instruction data.
     let mut body_bytes = Vec::new();
     args.body.serialize(&mut body_bytes)?;
-    verify_root_assertion(
+    verify_and_consume(
         &mut account,
         &ix_sysvar,
         &args.root,
@@ -203,6 +205,7 @@ pub(crate) fn handler(ctx: Context<GrantSession>, args: GrantSessionArgs) -> Res
         &account_key,
         action_hash(OP_GRANT_SESSION, &body_bytes),
         now,
+        slot,
     )?;
 
     validate_shape(&args.body)?;

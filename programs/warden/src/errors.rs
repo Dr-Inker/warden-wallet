@@ -93,4 +93,15 @@ pub enum WardenError {
     InvalidRootKey,
     #[msg("prior_authority_hash does not match the session's current retained authority")]
     SessionPriorStateMismatch,
+    // ---------------------------------------------------------------------
+    // Phase 1B Task 0 — slot-based root freshness + top-level-only root
+    // paths. APPEND ONLY — see the note above. These are the first three
+    // codes of the Phase 1B ABI block (6036+).
+    // ---------------------------------------------------------------------
+    #[msg("the root ceremony's signed_slot is more than MAX_ROOT_SLOT_AGE slots behind the current slot")]
+    RootSlotStale,
+    #[msg("the root ceremony's signed_slot is in the future")]
+    RootSlotInFuture,
+    #[msg("a root-authorized instruction may only be invoked at transaction level, never via CPI")]
+    RootRequiresTopLevel,
 }

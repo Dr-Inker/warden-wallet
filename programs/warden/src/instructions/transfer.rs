@@ -77,7 +77,7 @@ use crate::constants::{
 use crate::errors::WardenError;
 use crate::instructions::revoke_session::check_session_pda;
 use crate::root_verify::transcript::{action_hash, OP_TRANSFER_ACTION};
-use crate::root_verify::{verify_root_assertion, RootArgs};
+use crate::root_verify::{verify_and_consume, RootArgs};
 use crate::state::{FrozenState, MintCap, SessionKey, SmartAccount, OP_TRANSFER};
 
 /// `mint == None` means native SOL. There is deliberately **no destination
@@ -152,7 +152,9 @@ pub struct Transfer<'info> {
 // Not `pub`: only `lib.rs`'s `#[program]` module calls this, by full path —
 // see the matching note on `create_account::handler`.
 pub(crate) fn handler(ctx: Context<Transfer>, args: TransferArgs) -> Result<()> {
-    let now = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
+    let slot = clock.slot;
     let program_id = ctx.program_id;
     let account_key = ctx.accounts.smart_account.key();
     let destination_key = ctx.accounts.destination.key();
@@ -211,7 +213,7 @@ pub(crate) fn handler(ctx: Context<Transfer>, args: TransferArgs) -> Result<()> 
         };
         let mut body_bytes = Vec::new();
         body.serialize(&mut body_bytes)?;
-        verify_root_assertion(
+        verify_and_consume(
             &mut account,
             &ix_sysvar,
             root,
@@ -219,6 +221,7 @@ pub(crate) fn handler(ctx: Context<Transfer>, args: TransferArgs) -> Result<()> 
             &account_key,
             action_hash(OP_TRANSFER_ACTION, &body_bytes),
             now,
+            slot,
         )?;
 
         // AUTHORIZE FIRST, then validate (same ordering as `grant_session`).

@@ -12,6 +12,7 @@
 //!   ‖ policy_version      u32 LE
 //!   ‖ root_nonce          u64 LE
 //!   ‖ expiry_ts           i64 LE
+//!   ‖ signed_slot         u64 LE   <- Phase 1B: freshness is slot-based
 //!   ‖ action_hash         (32 B)
 //! )
 //! action_hash = Keccak256(op_type:u8 ‖ borsh(op_args))
@@ -21,6 +22,14 @@
 //! Every field is fixed-width, so the concatenation is unambiguous without
 //! length prefixes; `action_hash` is itself a hash of a borsh encoding, which
 //! is canonical for a fixed argument type.
+//!
+//! **`signed_slot` sits between `expiry_ts` and `action_hash`, and the
+//! position is part of the ABI** (spec §4, rev 8), not an implementation
+//! detail: Rust, the `packages/core` TypeScript mirror and the IDL must agree
+//! on it byte-for-byte or every ceremony either forges or bricks — prior-art
+//! finding `LZR-ACC-H2` (write/read layout drift). The golden vectors at the
+//! bottom of this file, mirrored verbatim in
+//! `packages/core/test/transcript.test.ts`, are what pin it.
 //!
 //! No `blockhash` is included, deliberately: a program cannot authenticate the
 //! outer message's blockhash, so binding one would be security theatre. Replay
@@ -75,7 +84,7 @@ pub const OP_TRANSFER_ACTION: u8 = 0x05;
 /// guarantee is that the tag names the cluster the transaction lands on. Spec
 /// §4 wording is corrected in Task 9.
 // The argument list is the spec's transcript field list, one parameter per
-// signed field; bundling them into a struct would only move the same eight
+// signed field; bundling them into a struct would only move the same nine
 // values behind a name and make the call sites less obviously exhaustive.
 #[allow(clippy::too_many_arguments)]
 pub fn transcript_hash(
@@ -86,6 +95,7 @@ pub fn transcript_hash(
     policy_version: u32,
     root_nonce: u64,
     expiry_ts: i64,
+    signed_slot: u64,
     action_hash: &[u8; 32],
 ) -> [u8; 32] {
     solana_keccak_hasher::hashv(&[
@@ -97,6 +107,7 @@ pub fn transcript_hash(
         &policy_version.to_le_bytes(),
         &root_nonce.to_le_bytes(),
         &expiry_ts.to_le_bytes(),
+        &signed_slot.to_le_bytes(),
         action_hash,
     ])
     .to_bytes()
@@ -146,10 +157,20 @@ pub fn b64url_no_pad(bytes: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    /// Byte-for-byte inputs of the pinned vector below. Task 7 mirrors this
-    /// exact vector in TypeScript; if the two ever disagree, one of them has
-    /// drifted and every root ceremony breaks.
-    fn vector_inputs() -> ([u8; 32], Pubkey, Pubkey, u64, u32, u64, i64, [u8; 32]) {
+    /// Byte-for-byte inputs of the pinned vectors below. The TypeScript mirror
+    /// (`packages/core/test/transcript.test.ts`) uses these exact values; if
+    /// the two ever disagree, one of them has drifted and every root ceremony
+    /// breaks.
+    ///
+    /// `signed_slot` (Phase 1B Task 0) is `314_159_265` — a realistic
+    /// mainnet-scale slot number chosen so its little-endian encoding has
+    /// several distinct non-zero bytes; `transcript_hash_matches_pinned_max_slot_vector`
+    /// pins the all-`0xff` end of the `u64` range as well, so a mirror that
+    /// encoded the field big-endian, as a `u32`, or in the wrong position
+    /// cannot reproduce all three digests.
+    const VECTOR_SIGNED_SLOT: u64 = 314_159_265;
+
+    fn vector_inputs() -> ([u8; 32], Pubkey, Pubkey, u64, u32, u64, i64, u64, [u8; 32]) {
         (
             [0x11u8; 32],
             crate::ID,
@@ -158,6 +179,7 @@ mod tests {
             3,
             42,
             1_760_000_000,
+            VECTOR_SIGNED_SLOT,
             [0x33u8; 32],
         )
     }
@@ -175,19 +197,26 @@ mod tests {
 
     /// Pinned against an INDEPENDENT Keccak-256 implementation (a from-spec
     /// pure-Python Keccak-f[1600], self-tested against the published
-    /// `keccak256("")` and `keccak256("abc")` vectors), not against this
-    /// function's own output. See task-3-report.md.
+    /// `keccak256("")`, `keccak256("abc")` and `keccak256("testing")` vectors
+    /// AND re-checked to reproduce the Phase-1A digests before `signed_slot`
+    /// was inserted), not against this function's own output. See
+    /// task-0-report.md (Phase 1B).
+    ///
+    /// **This vector REPLACES the Phase-1A one** (`2c4b76f0…`): inserting
+    /// `signed_slot` changes the preimage, so the old digest is not merely
+    /// stale, it is wrong, and keeping it would pin a preimage no code
+    /// produces.
     #[test]
     fn transcript_hash_matches_pinned_vector() {
-        let (g, pid, acct, gen, pv, nonce, exp, ah) = vector_inputs();
-        let t = transcript_hash(&g, &pid, &acct, gen, pv, nonce, exp, &ah);
+        let (g, pid, acct, gen, pv, nonce, exp, slot, ah) = vector_inputs();
+        let t = transcript_hash(&g, &pid, &acct, gen, pv, nonce, exp, slot, &ah);
         assert_eq!(
             hex::encode(t),
-            "2c4b76f055b282523ccbad5287ffdd1516ca9faba4f0f626a3ca7b243a5276ce"
+            "d22ba4187c3788fd7328593cff176b160b82910a6af3cc9e1ba32c1122b9e59b"
         );
         assert_eq!(
             String::from_utf8(b64url_no_pad(&t)).unwrap(),
-            "LEt28FWyglI8y61Sh__dFRbKn6uk8PYmo8p7JDpSds4"
+            "0iukGHw3iP1zKFk8_xdrFguCkQpq88yeG6MsESK55Zs"
         );
     }
 
@@ -199,22 +228,40 @@ mod tests {
     /// clock-skewed or pre-epoch timestamp. Inputs are `vector_inputs()`
     /// with `expiry_ts = -1` (all bytes 0xff) and nothing else changed.
     ///
-    /// Pinned against the same INDEPENDENT from-spec Keccak-256
-    /// implementation used for the positive vector (self-tested against the
-    /// published `keccak256("")` / `keccak256("abc")` digests, and re-checked
-    /// to reproduce the positive vector above before this one was taken), not
-    /// against this function's own output.
+    /// Same INDEPENDENT from-spec Keccak-256 provenance as the positive
+    /// vector above.
     #[test]
     fn transcript_hash_matches_pinned_negative_expiry_vector() {
-        let (g, pid, acct, gen, pv, nonce, _exp, ah) = vector_inputs();
-        let t = transcript_hash(&g, &pid, &acct, gen, pv, nonce, -1i64, &ah);
+        let (g, pid, acct, gen, pv, nonce, _exp, slot, ah) = vector_inputs();
+        let t = transcript_hash(&g, &pid, &acct, gen, pv, nonce, -1i64, slot, &ah);
         assert_eq!(
             hex::encode(t),
-            "5469ceaeb4e6b2292539b3862bdf259712d5377174b00a43ea065f3de90127c0"
+            "ce70570590fa61713d351480103bd85de57db23843dae12a3328a39060d56a6f"
         );
         assert_eq!(
             String::from_utf8(b64url_no_pad(&t)).unwrap(),
-            "VGnOrrTmsiklObOGK98llxLVN3F0sApD6gZfPekBJ8A"
+            "znBXBZD6YXE9NRSAEDvYXeV9sjhD2uEqMyijkGDVam8"
+        );
+    }
+
+    /// Companion vector with `signed_slot = u64::MAX` (all bytes 0xff),
+    /// pinned for the same reason the negative-`expiry_ts` vector exists: the
+    /// realistic slot number in the positive vector only exercises four
+    /// non-zero bytes, so on its own it cannot distinguish a `u64` LE
+    /// encoding from a `u32` one that silently truncates the high half.
+    ///
+    /// Same INDEPENDENT from-spec Keccak-256 provenance.
+    #[test]
+    fn transcript_hash_matches_pinned_max_slot_vector() {
+        let (g, pid, acct, gen, pv, nonce, exp, _slot, ah) = vector_inputs();
+        let t = transcript_hash(&g, &pid, &acct, gen, pv, nonce, exp, u64::MAX, &ah);
+        assert_eq!(
+            hex::encode(t),
+            "87822c4c2c26c21ec09a7f4d3cd8b992e897b0899fea27a2ffd1c3234eebdf5c"
+        );
+        assert_eq!(
+            String::from_utf8(b64url_no_pad(&t)).unwrap(),
+            "h4IsTCwmwh7Amn9NPNi5kuiXsImf6iei_9HDI07r31w"
         );
     }
 
@@ -222,25 +269,41 @@ mod tests {
     /// is silently dropped from the preimage would be undetectable otherwise.
     #[test]
     fn every_transcript_field_changes_the_hash() {
-        let (g, pid, acct, gen, pv, nonce, exp, ah) = vector_inputs();
-        let base = transcript_hash(&g, &pid, &acct, gen, pv, nonce, exp, &ah);
+        let (g, pid, acct, gen, pv, nonce, exp, slot, ah) = vector_inputs();
+        let base = transcript_hash(&g, &pid, &acct, gen, pv, nonce, exp, slot, &ah);
         let mut g2 = g;
         g2[0] ^= 1;
         let mut ah2 = ah;
         ah2[31] ^= 1;
         let variants = [
-            transcript_hash(&g2, &pid, &acct, gen, pv, nonce, exp, &ah),
-            transcript_hash(&g, &Pubkey::new_from_array([0x99u8; 32]), &acct, gen, pv, nonce, exp, &ah),
-            transcript_hash(&g, &pid, &Pubkey::new_from_array([0x99u8; 32]), gen, pv, nonce, exp, &ah),
-            transcript_hash(&g, &pid, &acct, gen.wrapping_add(1), pv, nonce, exp, &ah),
-            transcript_hash(&g, &pid, &acct, gen, pv.wrapping_add(1), nonce, exp, &ah),
-            transcript_hash(&g, &pid, &acct, gen, pv, nonce.wrapping_add(1), exp, &ah),
-            transcript_hash(&g, &pid, &acct, gen, pv, nonce, exp.wrapping_add(1), &ah),
-            transcript_hash(&g, &pid, &acct, gen, pv, nonce, exp, &ah2),
+            transcript_hash(&g2, &pid, &acct, gen, pv, nonce, exp, slot, &ah),
+            transcript_hash(&g, &Pubkey::new_from_array([0x99u8; 32]), &acct, gen, pv, nonce, exp, slot, &ah),
+            transcript_hash(&g, &pid, &Pubkey::new_from_array([0x99u8; 32]), gen, pv, nonce, exp, slot, &ah),
+            transcript_hash(&g, &pid, &acct, gen.wrapping_add(1), pv, nonce, exp, slot, &ah),
+            transcript_hash(&g, &pid, &acct, gen, pv.wrapping_add(1), nonce, exp, slot, &ah),
+            transcript_hash(&g, &pid, &acct, gen, pv, nonce.wrapping_add(1), exp, slot, &ah),
+            transcript_hash(&g, &pid, &acct, gen, pv, nonce, exp.wrapping_add(1), slot, &ah),
+            transcript_hash(&g, &pid, &acct, gen, pv, nonce, exp, slot.wrapping_add(1), &ah),
+            transcript_hash(&g, &pid, &acct, gen, pv, nonce, exp, slot, &ah2),
         ];
         for (i, v) in variants.iter().enumerate() {
             assert_ne!(base, *v, "transcript field {i} does not affect the digest");
         }
+    }
+
+    /// `signed_slot` and `expiry_ts` are adjacent fixed-width integers, so a
+    /// mirror that emitted them in the WRONG ORDER would still produce a
+    /// preimage of the right length. This pins the ordering directly: swapping
+    /// the two values must change the digest.
+    ///
+    /// The two chosen values are both representable in `i64` and `u64`, so the
+    /// swap is a pure ordering change, not a range artefact.
+    #[test]
+    fn signed_slot_and_expiry_ts_are_not_interchangeable() {
+        let (g, pid, acct, gen, pv, nonce, _exp, _slot, ah) = vector_inputs();
+        let a = transcript_hash(&g, &pid, &acct, gen, pv, nonce, 1_000, 2_000, &ah);
+        let b = transcript_hash(&g, &pid, &acct, gen, pv, nonce, 2_000, 1_000, &ah);
+        assert_ne!(a, b, "expiry_ts and signed_slot must not be order-interchangeable");
     }
 
     #[test]

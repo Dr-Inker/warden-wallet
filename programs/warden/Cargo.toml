@@ -37,7 +37,19 @@ solana-keccak-hasher = { version = "3", features = ["sha3"] }
 solana-sha256-hasher = { version = "3", features = ["sha2"] }
 
 [dev-dependencies]
-litesvm = { version = "0.12", features = ["precompiles"] }
+# EXACT pin, not a range (spec §17 L0). `"0.12"` already means `>=0.12, <0.13`
+# and `"=0.12.x"` would be a wildcard rather than a pin; `Cargo.lock` resolves
+# 0.12.0, so `=0.12.0` is the correct string. The `precompiles` feature is NOT
+# a default: without it LiteSVM never loads the secp256r1 precompile program
+# account and every root ceremony fails with `InvalidProgramForExecution` —
+# and with it, LiteSVM 0.12's `process_precompile` calls
+# `agave-precompiles::…verify(...)`, i.e. the runtime really does the ECDSA.
+# `tests/sigverify_wiring.rs` is the two-direction gate that proves the latter
+# at runtime; `.claude/test-gate.sh`'s `cargo tree -e features` assertion is
+# the cheap feature-RESOLUTION evidence that complements it and never
+# substitutes for it. 0.13+ moves to Agave 4.x, which would diverge from the
+# installed Agave 3.1.10 CLI — see docs/TOOLCHAIN.md.
+litesvm = { version = "=0.12.0", features = ["precompiles"] }
 solana-sdk = "3"
 solana-secp256r1-program = "3"
 p256 = { version = "0.13", features = ["ecdsa"] }

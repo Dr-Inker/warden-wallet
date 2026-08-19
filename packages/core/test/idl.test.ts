@@ -30,11 +30,37 @@ describe("warden.json IDL", () => {
     });
   }
 
-  it("error codes cover at least 6000..6035", () => {
+  it("error codes cover at least 6000..6038", () => {
     const codes = (idl.errors as Array<{ code: number }>).map((e) => e.code);
     const max = Math.max(...codes);
     expect(codes).toContain(6000);
-    expect(max).toBeGreaterThanOrEqual(6035);
+    expect(max).toBeGreaterThanOrEqual(6038);
+  });
+
+  // Phase 1B Task 0: the slot-freshness + top-level-only ABI block. Named, not
+  // just counted, because a client that maps 6036 to the wrong message is
+  // exactly the drift this file exists to catch.
+  it("names the Phase 1B Task 0 errors at their pinned codes", () => {
+    const byCode = new Map(
+      (idl.errors as Array<{ code: number; name: string }>).map((e) => [e.code, e.name]),
+    );
+    expect(byCode.get(6036)).toBe("RootSlotStale");
+    expect(byCode.get(6037)).toBe("RootSlotInFuture");
+    expect(byCode.get(6038)).toBe("RootRequiresTopLevel");
+  });
+
+  // The transcript ABI: `signed_slot` must be in the IDL's `RootArgs`, and it
+  // must be the LAST field — the wire order the TS client borsh-encodes and
+  // the position `packages/core/src/webauthn/transcript.ts` mirrors.
+  it("RootArgs carries signed_slot as its trailing u64", () => {
+    const rootArgs = (idl.types as Array<{ name: string; type: { fields?: Array<{ name: string; type: string }> } }>).find(
+      (t) => t.name === "RootArgs",
+    );
+    expect(rootArgs).toBeDefined();
+    const fields = rootArgs?.type.fields ?? [];
+    expect(fields.map((f) => f.name)).toContain("signed_slot");
+    expect(fields[fields.length - 1]?.name).toBe("signed_slot");
+    expect(fields[fields.length - 1]?.type).toBe("u64");
   });
 
   it("GrantBody type has prior_authority_hash", () => {

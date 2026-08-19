@@ -257,6 +257,11 @@ fn revoke_self_ix(
 /// SVM, exactly as the extension would).
 fn ceremony(svm: &LiteSVM, account: &Pubkey, pk: &TestPasskey, ah: [u8; 32]) -> (Instruction, RootArgs) {
     let st = read_smart_account(svm, account);
+    // Signed slot = the slot the client observes (spec §4). This suite pins
+    // `expiry_ts` to a constant and never warps the clock, so reading the
+    // SVM's live slot is both the honest client behaviour and always fresh.
+    let clock: solana_sdk::clock::Clock = svm.get_sysvar();
+    let signed_slot = clock.slot;
     let t = transcript_hash(
         &st.cluster_tag,
         &common::program_id(),
@@ -265,6 +270,7 @@ fn ceremony(svm: &LiteSVM, account: &Pubkey, pk: &TestPasskey, ah: [u8; 32]) -> 
         st.policy.version,
         st.root_nonce,
         ROOT_EXPIRY,
+        signed_slot,
         &ah,
     );
     let a = pk.assert_with_client_data(
@@ -277,6 +283,7 @@ fn ceremony(svm: &LiteSVM, account: &Pubkey, pk: &TestPasskey, ah: [u8; 32]) -> 
         authenticator_data: a.authenticator_data.clone(),
         client_data_json: a.client_data_json.clone(),
         expiry_ts: ROOT_EXPIRY,
+        signed_slot,
     };
     (passkey::precompile_ix(&a, &pk.pubkey33()), args)
 }
@@ -422,6 +429,7 @@ fn discriminators_are_sha256_of_the_global_names() {
                 authenticator_data: vec![],
                 client_data_json: vec![],
                 expiry_ts: 0,
+                signed_slot: 0,
             },
             body: two_cap_body(Pubkey::new_unique()),
         },
@@ -441,6 +449,7 @@ fn discriminators_are_sha256_of_the_global_names() {
                 authenticator_data: vec![],
                 client_data_json: vec![],
                 expiry_ts: 0,
+                signed_slot: 0,
             },
             body: RevokeBody { session_pubkey: Pubkey::new_unique(), refund_to: Pubkey::new_unique() },
         },
