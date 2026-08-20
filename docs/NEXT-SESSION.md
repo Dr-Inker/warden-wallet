@@ -49,18 +49,19 @@ Remaining, in campaign-plan order:
    findings): `test-mutator` + `test-jup-mock` + 18 harness smoke tests;
    `.claude/test-gate.sh` builds/checks both new `.so`. Close-out in
    `docs/program/PHASE1B-MEASUREMENTS.md`.
-2. **Task 3 IN PROGRESS** (core landed `a7b7824`+`dd78316`): Registry zero-copy
-   state, the selector-derivation rule (match on the `(program_id, selector)`
-   pair; disc_len 8/1/4/0), `registry_allows` + role validators, default adapters
-   (production + test lists), and `init_registry` (upgrade-authority-gated).
-   277 lib tests, clippy clean; **not yet whole-task-reviewed**. Remaining:
-   `grant_session` allowlist-id validation against the account's registry;
-   `create_account` optional-registry storage; `packages/core/registry-default.json`
-   parity; the `init_registry`/`grant_session` integration suite (needs a
-   synthesized ProgramData account in LiteSVM); then the whole-task Codex review.
-   NB: the System program id IS `Pubkey::default()`, so used slots are bounded by
-   `n_entries`, never by `program_id == default`.
-   Then **4 → 5 → 6 → 8 → 9**. Task 5 must wire the
+2. **Task 3 DONE** (`a7b7824`…`727d34c`, 3 review rounds → WRDF-0034..0043
+   adopted; final gate at `2b8ac40`, 281 lib + 104 TS tests): Registry zero-copy
+   state, selector-derivation rule (match on the `(program_id, selector)` pair;
+   disc_len 8/1/4/0), `registry_allows` with `(program,selector)` authority-
+   position role validators (fail-closed), default adapters, `init_registry`
+   (upgrade-authority-gated), `grant_session` allowlist validation, `create_account`
+   optional registry (**bound into the root ceremony**, CreateBody 183→215 B),
+   TS/Rust parity, integration suite. NB: the System program id IS
+   `Pubkey::default()`, so used slots are bounded by `n_entries`. Documented
+   follow-up: a positive on-chain grant-with-registry test (needs the grant
+   ceremony currently private to `tests/sessions.rs`).
+   **NEXT: Task 4** (`stage_open`/`stage_chunk`/`stage_finalize`/`stage_close`),
+   then **5 → 6 → 8 → 9**. Task 5 must wire the
    native-lamport SOL equation (not the `amount` cache — WRDF-0011) with a
    real-CPI `SyncNative`+`Transfer` regression, and cover the standalone-mint
    case through a real CPI. **C1a needs a program change** (`create_account` must
