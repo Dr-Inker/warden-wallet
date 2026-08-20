@@ -230,13 +230,16 @@ describe("append-review-run.mjs CLI", () => {
   it("REFUSES a replay of an already-recorded artefact — mutated self-report fields and reordered keys included (WRDF-0003)", () => {
     const doc = zeroFinding();
     doc.thread = "totally-different-self-report";
-    // Key order must not matter either: rebuild the object with reversed key insertion order.
+    // Order must not matter either: reverse both object-key insertion order and the
+    // set-semantics seeded_invariants array; a mutated (boundary-ignored) adjudication on a
+    // verdict must not matter both ways.
+    doc.seeded_invariants = [...doc.seeded_invariants].reverse();
     const reordered = Object.fromEntries(Object.entries(doc).reverse());
     const artefact = join(tmp, "zero-replay.json");
     writeFileSync(artefact, JSON.stringify(reordered));
     const before = readFileSync(runsFile, "utf8");
     // The zero-finding artefact's SUBSTANCE was already recorded by the first CLI test above;
-    // neither the self-reported thread nor property order buys it a fresh digest.
+    // neither the self-reported thread, nor property order, nor seed order buys a fresh digest.
     expect(() => cli(artefact)).toThrow();
     expect(readFileSync(runsFile, "utf8")).toBe(before);
   });
@@ -266,8 +269,10 @@ describe("append-review-run.mjs CLI", () => {
       orphanRuns,
       JSON.stringify({ date: "2026-08-20", kind: "task-diff", base_sha: "a".repeat(40), head_sha: "b".repeat(40), thread: "orphan-round", reviewer_model: "x", effort: null, seeded_count: 1, findings_count: 3, artefact: "gone.json", artefact_sha256: "c".repeat(64), recorded_by: "test" }) + "\n",
     );
+    // A PARTIAL scorecard (1 of the 3 claimed findings survived a torn write) must also refuse —
+    // the contract is one row per finding, not merely non-emptiness.
     const emptyCard = join(tmp, "card-orphan.jsonl");
-    writeFileSync(emptyCard, "");
+    writeFileSync(emptyCard, JSON.stringify({ finding_id: "WRDF-9001", thread: "orphan-round" }) + "\n");
     const doc = zeroFinding();
     doc.invariant_verdicts[0].rationale += " (orphan variant)"; // fresh digest
     const artefact = join(tmp, "orphan-next.json");

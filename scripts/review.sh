@@ -167,8 +167,13 @@ const fs = require("fs");
 const changed = (process.env.CHANGED || "").split("\n").filter(Boolean);
 const rows = fs.readFileSync("docs/security/invariants.jsonl", "utf8")
   .split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
-const touches = (p) => { if (!p) return false; const f = p.split(":")[0].split(" ")[0];
-  return changed.some((c) => c === f || f.startsWith(c + "/") || c.startsWith(f)); };
+// code_ref may name SEVERAL files, ";"-separated, each optionally annotated "path (fn)" or
+// "path:line" (WRDF-0010: an invariant enforced across two modules must seed on a change to either).
+const touches = (p) => { if (!p) return false;
+  return p.split(";").some((part) => {
+    const f = part.trim().split(":")[0].split(" ")[0];
+    return f && changed.some((c) => c === f || f.startsWith(c + "/") || c.startsWith(f));
+  }); };
 const changedRowIds = new Set((process.env.LEDGER_DIFF || "").split("\n").filter(Boolean)
   .map((l) => { try { return JSON.parse(l.slice(1)).id; } catch { return null; } }).filter(Boolean));
 const ids = new Set();

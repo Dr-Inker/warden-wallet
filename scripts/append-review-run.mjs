@@ -77,14 +77,22 @@ export async function buildRunRecord(doc, expect, opts = {}) {
   };
 }
 
-/** Deterministic serialization for hashing: sorted keys, self-report provenance stripped. */
-export function canonicalJson(node) {
-  if (Array.isArray(node)) return `[${node.map(canonicalJson).join(",")}]`;
+/**
+ * Deterministic serialization for hashing: sorted keys; every field the record boundary IGNORES is
+ * stripped (self-reported thread / reviewer_model, and model-supplied adjudication — WRDF-0009
+ * discards it, so mutating it must not buy a fresh digest); `seeded_invariants` is order-insensitive
+ * to the validator (set semantics) and is sorted, while every other array keeps its order.
+ */
+export function canonicalJson(node, key = null) {
+  if (Array.isArray(node)) {
+    const items = key === "seeded_invariants" ? [...node].sort() : node;
+    return `[${items.map((x) => canonicalJson(x, null)).join(",")}]`;
+  }
   if (node && typeof node === "object") {
     const keys = Object.keys(node)
-      .filter((k) => k !== "thread" && k !== "reviewer_model")
+      .filter((k) => k !== "thread" && k !== "reviewer_model" && k !== "adjudication")
       .sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(node[k])}`).join(",")}}`;
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(node[k], k)}`).join(",")}}`;
   }
   return JSON.stringify(node);
 }
@@ -174,9 +182,9 @@ async function main(argv) {
   if (lastRun && lastRun.artefact !== "not-recorded" && lastRun.findings_count > 0) {
     const carried = prevCard.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
       .filter((r) => r.thread === lastRun.thread).length;
-    if (carried === 0)
+    if (carried !== lastRun.findings_count)
       throw new Error(
-        `inconsistent ledgers: last run (thread ${lastRun.thread}) claims ${lastRun.findings_count} finding(s) but the scorecard carries none — a previous round was interrupted mid-write; repair the committed files before recording new rounds`,
+        `inconsistent ledgers: last run (thread ${lastRun.thread}) claims ${lastRun.findings_count} finding(s) but the scorecard carries ${carried} — a previous round was interrupted or truncated mid-write; repair the committed files before recording new rounds`,
       );
   }
   // BOTH ledgers are written by this one process, run record first, and rolled back together on a
