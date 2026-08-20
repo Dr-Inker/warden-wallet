@@ -163,6 +163,18 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
       gitOk = false;
     }
     if (!gitOk) return; // not a git checkout — nothing to verify
+    // WRDF-0013 round 9: in a FULL clone a fabricated/mistyped SHA is indistinguishable from
+    // shallow-missing history unless we know the repo is shallow. If it is not shallow, a missing
+    // commit is a mis-pin (FAIL), never a skip.
+    let shallow = true;
+    try {
+      shallow =
+        execFileSync("git", ["-C", REPO, "rev-parse", "--is-shallow-repository"], { stdio: "pipe" })
+          .toString()
+          .trim() === "true";
+    } catch {
+      shallow = false; // older git without the flag: treat as full, fail closed on missing objects
+    }
     const commitPresent = (sha: string) => {
       try {
         execFileSync("git", ["-C", REPO, "cat-file", "-e", `${sha}^{commit}`], { stdio: "pipe" });
@@ -174,10 +186,12 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
     for (const r of rows) {
       for (const e of r.evidence) {
         if (!e.name || !/^[0-9a-f]{7,40}$/.test(e.sha)) continue;
-        // Only skip when the commit is genuinely not in this clone (shallow CI). If the commit IS
-        // present, every subsequent step must succeed — a `git show` failure is now a FAIL, not a
-        // pass (WRDF-0013 round 8: the old catch-and-continue accepted missing objects/paths).
-        if (!commitPresent(e.sha)) continue;
+        // Skip a missing commit ONLY in a genuinely shallow clone. In a full clone a missing
+        // commit is a fabricated or mistyped SHA and must FAIL (WRDF-0013 round 9).
+        if (!commitPresent(e.sha)) {
+          expect(shallow, `${r.id}: cited evidence sha ${e.sha} is not a commit in this full clone (fabricated or mistyped)`).toBe(true);
+          continue;
+        }
         let blob: string;
         try {
           blob = execFileSync("git", ["-C", REPO, "show", `${e.sha}:${e.path}`], {

@@ -205,6 +205,29 @@ fn spl_crate_layout_lengths_are_pinned() {
 }
 
 #[test]
+fn t22_identifier_constants_match_independent_literals() {
+    // WRDF-0014: the native-SOL and danger-extension tests build their inputs
+    // from the same `NATIVE_MINT_2022` / `EXT_*` constants they exercise, so a
+    // typo in a constant would move implementation and test together and pass.
+    // Pin each against a literal transcribed independently from the pinned
+    // `spl-token-2022 7.0.0` source, so drift is caught here regardless.
+    use crate::constants::NATIVE_MINT_2022;
+    assert_eq!(
+        NATIVE_MINT_2022,
+        Pubkey::from_str_const("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP"),
+        "native_mint.rs declare_id!"
+    );
+    // ExtensionType discriminants (spl-token-2022 7.0.0 `extension/mod.rs`).
+    assert_eq!(EXT_TRANSFER_FEE_CONFIG, 1);
+    assert_eq!(EXT_CONFIDENTIAL_TRANSFER_MINT, 4);
+    assert_eq!(EXT_PERMANENT_DELEGATE, 12);
+    assert_eq!(EXT_TRANSFER_HOOK, 14);
+    // AccountType bytes.
+    assert_eq!(T22_ACCOUNT_TYPE_MINT, 1);
+    assert_eq!(T22_ACCOUNT_TYPE_ACCOUNT, 2);
+}
+
+#[test]
 fn classic_82_byte_mint_parses() {
     let auth = pk(9);
     let s = snap_token(pk(1), &mint_bytes(Some(auth), 42, 6, Some(pk(8))), false);
