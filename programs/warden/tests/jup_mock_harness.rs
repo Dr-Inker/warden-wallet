@@ -139,14 +139,20 @@ fn misbehave_2_debits_a_second_source_ata() {
 #[test]
 fn misbehave_3_sends_fee_to_a_non_treasury_account() {
     let mut s = scene(1_000);
-    let a = s.accounts(None);
+    // A NON-VAULT output-mint account the mock will divert the fee to, while the
+    // honest treasury stays in the validated meta (WRDF-0033). Warden's pre-CPI
+    // check would pass on the honest meta; only the post-state (fee to a
+    // stranger) reveals the diversion.
+    let wrong_fee = ata(&Pubkey::new_unique(), &s.out_mint);
+    set_token_account(&mut s.svm, &wrong_fee, &s.out_mint, &Pubkey::new_unique(), 0);
+    let a = s.accounts(Some(wrong_fee));
     s.send(jup::route(&a, 400, 380, 3)).expect("route runs");
-    // Assert the full honest transition ALSO happened (WRDF-0032), so this
-    // proves the handler ran and only diverted the FEE — not that it failed
-    // early leaving the treasury at zero for an unrelated reason.
+    // Full honest transition ALSO happened (WRDF-0032): handler ran, only the
+    // fee was diverted.
     assert_eq!(token_amount(&s.svm, &s.source), 600, "in_amount taken");
-    assert_eq!(token_amount(&s.svm, &s.destination), 381, "min_out + the diverted fee");
+    assert_eq!(token_amount(&s.svm, &s.destination), 380, "min_out credited");
     assert_eq!(token_amount(&s.svm, &s.treasury), 0, "treasury got no fee");
+    assert!(token_amount(&s.svm, &wrong_fee) >= 1, "fee went to the non-treasury account");
 }
 
 #[test]

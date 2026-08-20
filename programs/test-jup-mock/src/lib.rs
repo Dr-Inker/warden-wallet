@@ -11,8 +11,9 @@
 //!   `platform_fee_account`.
 //! - `1` credits **less** than `min_out`.
 //! - `2` also debits a **second** source ATA (passed as a remaining account).
-//! - `3` sends the fee to a **non-treasury** account (`pool_in_sink`) instead of
-//!   `platform_fee_account`.
+//! - `3` sends the fee to a **non-treasury** account (a caller-supplied
+//!   non-vault output-mint ATA passed as the extra remaining account) while
+//!   still presenting the honest treasury in the validated meta.
 //! - `4` sets a **delegate** (SPL `Approve`) on the source ATA.
 //!
 //! The pool ATAs are owned by a program PDA (`["pool"]`); the mock signs their
@@ -56,6 +57,15 @@ const FEE: u64 = 1;
 // where the real Jupiter program and warden both ignore it. The IDL provenance
 // (repo commit + SHA-256) is pinned in PHASE1B-MEASUREMENTS.md by Task 6, which
 // owns the byte/account fixtures generated from it.
+//
+// SCOPE (WRDF-0031, Task-2 terminus): this mock is faithful to Jupiter v6 in
+// FIELD ORDER for the empty-`route_plan` case only. Full fidelity — modelling
+// `Vec<RoutePlanStep>` (a variable-size `Swap` enum + percent/input/output),
+// non-empty-plan fixtures, and the exact optional account positions
+// (`destinationTokenAccount` on `route`; the program source/destination token
+// accounts on `sharedAccountsRoute`) — is **Task 6's** deliverable, assembled
+// independently from the pinned IDL, not this test program's. Task 2 needs a
+// working, honestly-shaped CPI target; Task 6 needs the byte-exact one.
 #[program]
 pub mod test_jup_mock {
     use super::*;
@@ -184,11 +194,18 @@ fn do_route<'info>(
         Some(pool_seeds),
     )?;
 
-    // (3) Platform fee (output mint). Honest: to platform_fee_account.
-    // Misbehave 3: to a non-treasury account — the user's own destination ATA,
-    // which is the same (output) mint but is not the treasury — so the fee
-    // never reaches the treasury the adapter requires.
-    let fee_dest = if misbehave == 3 { c.user_destination_ata } else { c.platform_fee_account };
+    // (3) Platform fee (output mint). Honest: to the passed `platform_fee_account`
+    // (which warden validates == Registry.treasury). Misbehave 3: divert the fee
+    // to a caller-supplied NON-VAULT account (the `extra` remaining account) while
+    // presenting the honest treasury in the validated meta — so warden's pre-CPI
+    // account check passes but the post-state shows the fee leaving to a stranger,
+    // which only conservation can catch (WRDF-0033). The divert target is an
+    // output-mint account, so the transfer is mint-valid.
+    let fee_dest = if misbehave == 3 {
+        remaining.first().expect("misbehave 3 needs a non-treasury fee account")
+    } else {
+        c.platform_fee_account
+    };
     spl_transfer(c.token_program, c.pool_out_ata, fee_dest, c.pool_authority, FEE, Some(pool_seeds))?;
 
     Ok(())
