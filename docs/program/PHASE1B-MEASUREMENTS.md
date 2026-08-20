@@ -378,9 +378,8 @@ version of this block mislabeled them:
 green (all workspace suites + all `.so`); `cargo test -p warden --lib` → 282
 passed; 42 integration (sessions/transfer/freeze/registry); `cargo clippy -p
 warden --all-targets` clean of `arithmetic_side_effects`; `pnpm --filter
-@warden/core test` → 104 passed. **Round-6 confirmation review pending** — Task 3
-is not DONE until it returns 0 findings (round-4's premature DONE is what
-WRDF-0043 flagged).
+@warden/core test` → 104 passed. **Round 7 confirmation = 0 findings at `300face`** — Task 3 DONE (round 6's lone
+info finding WRDF-0043 fixed; round 7 over the corrected docs returned nothing).
 
 ## Task 4 (staging) — measured payload cap + gate evidence
 

@@ -49,7 +49,7 @@ Remaining, in campaign-plan order:
    findings): `test-mutator` + `test-jup-mock` + 18 harness smoke tests;
    `.claude/test-gate.sh` builds/checks both new `.so`. Close-out in
    `docs/program/PHASE1B-MEASUREMENTS.md`.
-2. **Task 3 — round-6 confirmation pending** (`a7b7824`…`3361d2c`, 5 review
+2. **Task 3 DONE** (`a7b7824`…`300face`, 7 review
    rounds → WRDF-0034..0044 all adopted+fixed; full gate re-run at the fix SHA,
    282 lib + 42 integration + 104 TS tests, clippy clean): Registry zero-copy
    state, selector-derivation rule (match on the `(program_id, selector)` pair;
@@ -74,9 +74,12 @@ Remaining, in campaign-plan order:
      the trailing registry `Pubkey`); doc corrected from 183 B; the pinned
      action-hash vector now validates the exported API, not a hand-roll.
    - **WRDF-0043** — full `./.claude/test-gate.sh` re-run on the fix SHA.
-   Round-6 confirmation review must return 0 findings before this flips to DONE
-   (round-4's premature DONE is exactly what round 5 disputed).
-   **NEXT: close Task 3 (round 6), then Task 4** (`stage_open`/`stage_chunk`/`stage_finalize`/`stage_close`),
+   Round 7 confirmation returned **0 findings at `300face`** — Task 3 is DONE.
+   **Task 4 CODE COMPLETE, review pending** (`d47d8ce`…`b2aa52b`): stage_open/chunk/
+   finalize/close, content-addressed Stage PDA, 21 integration tests incl. the
+   ND-SQD3-LO-01 squat class, MEASURED stage_chunk cap **979 B**; whole-task
+   sol@max review in flight.
+   **NEXT: close Task 4 review, then Task 5** (`execute`),
    then **5 → 6 → 8 → 9**. Task 5 must wire the
    native-lamport SOL equation (not the `amount` cache — WRDF-0011) with a
    real-CPI `SyncNative`+`Transfer` regression, and cover the standalone-mint
