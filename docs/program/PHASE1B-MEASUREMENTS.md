@@ -100,3 +100,38 @@ with no vault token account in the list**: its withheld-fee accrual rejects in
 
 **`supply` stays uncompared** in both paths — re-confirmed in the round-1
 adjudication against spec §5.2 rule 2a.
+
+---
+
+## A0 — assurance-record repair (campaign plan 2026-08-20)
+
+Not a program task: A0 repaired the assurance records so Task 9's close-out is
+auditable (campaign plan gaps G1/G2/G7/G10/G11). No program code changed.
+
+**What changed:**
+
+- `docs/security/REVIEW-RUNS.jsonl` (new) — one line per completed review
+  round, **including zero-finding rounds**; `scripts/review.sh` now appends a
+  run record via `scripts/append-review-run.mjs` (step 8), which re-validates
+  the artefact independently and appends nothing for a failed round. 15
+  `baseline-not-recorded` entries record the pre-A0 rounds honestly: fix-commit
+  or citing-doc evidence only, no invented finding counts, thread ids only
+  where a committed doc retained them.
+- `docs/security/THREATMODEL.md` — retrospective milestone deltas appended for
+  Tasks 0, 1, 2b, 11 (append-only; the stale unauthenticated-create baseline
+  paragraph is superseded by the Task 2b delta, not rewritten).
+- `docs/security/invariants.jsonl` — `WRD-CONS-01`..`-06` unit-layer rows added
+  at `test-covered` with named tests at `d394b74` (campaign plan G7); the
+  end-to-end `WRD-EXEC-*` rows stay `unimplemented` until Task 5.
+- `docs/superpowers/plans/2026-08-18-warden-phase1b-execute-swap.md` — per-task
+  status/SHA/review table added; Task 11 marked **PARTIAL** pending Task 11R.
+- `packages/core/test/review-runs.test.ts` (new) — pins the run-record contract:
+  a validated zero-finding round appends exactly one run; a failed/invalid
+  round appends none; live runs carry full provenance; baseline entries must
+  say `retrospective`/`UNVERIFIED` and source any finding count they claim.
+
+**Task 11 gate evidence, rerun at the A0 SHA (campaign plan: record only what
+actually passes; the deployment gate stays partial until Task 11R):**
+
+<!-- A0-GATE-EVIDENCE: pinned by the evidence commit that follows the A0 commit,
+     because the evidence must name the committed SHA it ran at. -->

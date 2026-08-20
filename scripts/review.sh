@@ -8,7 +8,7 @@
 #   scripts/review.sh --selftest                   assert every codex flag this script uses exists
 #   scripts/review.sh --validate <f.json> [--expect <f>]   validate an existing findings file
 #
-#   Options: --dry-run · --with-tools · --out <path> · --model <m> · --effort <e>
+#   Options: --dry-run · --with-tools · --out <path> · --model <m> · --effort <e> · --kind <k>
 #
 # WHAT IT DOES
 #   1. Refuses to run on a dirty tree, and refuses unless the checked-out HEAD IS <head>. A review
@@ -25,6 +25,10 @@
 #   4. Runs `codex exec` (see below) with --output-schema, tool-free, blind, anti-rewrite.
 #   5. Validates the artefact with an INDEPENDENT validator against the expectations file.
 #   6. Appends every finding — disputed and scoped-out included — to REVIEW-SCORECARD.jsonl.
+#   7. Appends exactly ONE run record to REVIEW-RUNS.jsonl — including for a ZERO-finding round.
+#      The scorecard records findings; the run record records that the round happened at all,
+#      which is what makes review coverage demonstrable (L3). A round that fails validation
+#      appends nothing anywhere.
 #
 # WHY `codex exec` AND NOT `codex exec review` (codex-cli 0.147.0, checked on this host)
 #   `codex exec review` looks like the right subcommand and is not usable here:
@@ -92,7 +96,7 @@ if [[ "${1:-}" == "--validate" ]]; then
   exec node scripts/validate-findings.mjs "$@" --schema "$SCHEMA"
 fi
 
-DRY_RUN=0; WITH_TOOLS=0; OUT=""; BASE=""; HEAD_REF="HEAD"
+DRY_RUN=0; WITH_TOOLS=0; OUT=""; BASE=""; HEAD_REF="HEAD"; KIND="task-diff"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift;;
@@ -100,6 +104,7 @@ while [[ $# -gt 0 ]]; do
     --out) OUT="${2:?}"; shift 2;;
     --model) MODEL="${2:?}"; shift 2;;
     --effort) EFFORT="${2:?}"; shift 2;;
+    --kind) KIND="${2:?}"; shift 2;;
     -h|--help) sed -n '2,40p' "$0"; exit 0;;
     -*) die "unknown option $1";;
     *) if [[ -z "$BASE" ]]; then BASE="$1"; else HEAD_REF="$1"; fi; shift;;
@@ -287,6 +292,10 @@ const lines = doc.findings.map((f) => JSON.stringify({
 if (lines.length) fs.appendFileSync("docs/security/REVIEW-SCORECARD.jsonl", lines.join("\n") + "\n");
 console.error(`appended ${lines.length} finding(s) to docs/security/REVIEW-SCORECARD.jsonl`);
 '
+
+# ---- 8. record the RUN itself — zero-finding rounds included -----------------
+# Re-validates independently before appending; a failed round records nothing.
+node scripts/append-review-run.mjs "$OUT" --expect "$EXPECT" --kind "$KIND" --effort "$EFFORT"
 
 echo
 echo "Next: adjudicate every finding (disputed and scoped-out included), record the ruling in"

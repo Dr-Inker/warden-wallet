@@ -5,6 +5,23 @@
 **Revision:** **rev 3 (research deltas applied 2026-08-19)** — every §3(b) delta of `docs/research/2026-08-18-security-assurance-and-wallet-landscape.md` is applied: the L0 forged-signature gate and the exact litesvm pin move into Task 0 alongside the slot-freshness transcript change; Task 1 gains a `Mint` snap variant and **loses** the `gross_turnover` field (withdrawn); Task 2's mutator gains `close_zero_balance_ata_to_stranger` and **drops** `wash_round_trip`; Task 3 states the selector-derivation rule; Task 4 gains the ND-SQD3-LO-01 stage-squat negative; Task 5 gains the fixed deny-list on **both** paths plus Mint snapshot rules and the Swig/LazorKit named negatives; Task 6 gains the adapter-decoded `max_in` + pinned source ATA; **new Task 10** creates the invariant ledger, the typed-findings schema and the prior-art corpus; **new Task 11** lands the L9 gates that touch the repo *now*. Rev 2 = Codex plan review `01a0167a` applied (Task 0 rulings, root-bound PDA + PoP, `accounts_hash` binding, registry via ProgramData, one account ABI). Rev 1 = authored.
 **Task run order:** 0 → 10 → 1 → **2b** → 2 → 3 → 4 → 5 → 6 → 8 → 9, with **Task 11 running in parallel throughout**. **Task 2b runs immediately after Task 1** (it rewrites every existing account-creation test helper, so every later task should be written against the post-PoP helpers, never retro-fitted). Task 0's L0 gate must be green before 2b lands. **There is deliberately no Task 7:** it was the original proof-of-possession task and was renumbered to **2b** when Codex plan review `01a0167a` moved PoP earlier. The number is retired rather than reused so that references in DECISION.md, commit messages and review threads keep resolving; do not fill the gap. (it is L9; it does not block and is not blocked).
 
+**Task status (maintained by A0, campaign plan 2026-08-20 — the checkboxes below track steps; this table is the per-task verdict):**
+
+| Task | Status | Landed SHA(s) | Review round(s) |
+|---|---|---|---|
+| 0 | DONE | 26a8c1e + fix 050809e | 1 round (REVIEW-RUNS.jsonl, thread not retained) |
+| 10 | DONE | 8250e1b + fix 9f95b15 | 1 round (thread not retained) |
+| 1 | DONE | f0f38ca + fixes 2023902, d394b74 | 2 rounds (r1 = `01a018fa`, r2 thread not retained) |
+| 2b | DONE | 50dc590, evidence pinned b6ec220 | 1 round (thread not retained) |
+| 11 | **PARTIAL** | b320ecd + fixes d8e3f54, 56c543b, d0072fd | 3 rounds (threads not retained). Deploy gate = spec + partial dry-run (`DEPLOY-GATE.md:12`); **Task 11R** (campaign plan G11) owns the RPC checks before Task 9 |
+| 2 | not started | — | — |
+| 3 | not started | — | — |
+| 4 | not started | — | — |
+| 5 | not started | — | — |
+| 6 | not started | — | — |
+| 8 | not started | — | — |
+| 9 | not started (gates on 11R + ledger close-out + REVIEW-RUNS baseline exception, owner-adjudicated) | — | — |
+
 **Goal:** Let a bounded session key drive real dApp transactions and Jupiter swaps through `programs/warden` with on-chain conservation checks (before/after, field-by-field, incl. `is_native`), a registry of allowed `(program, discriminator)` adapters, staged multi-transaction payloads, and close the three Phase-1A pre-ship gate items: proof-of-possession at creation, `is_native` (O5), end-to-end `execute` CU + CPI mutation rejection + measured stage cap (O11).
 
 **Architecture:** New modules on top of the 1A foundation (branch `main` @080f07b): `conservation` (snapshot/compare/value-accounting over the instruction's writable accounts), `registry` (a `Registry` PDA holding curated `(program_id, discriminator, role_rules)` entries; `SessionKey.program_allowlist_id` references a list id inside it), `stage` (chunk-uploaded, content-addressed, consume-once payloads bound to `generation` + `policy_version`), instructions `execute`, `swap`, `stage_open/chunk/finalize/close`, `create_account` gains a mandatory root proof-of-possession, and `grant_session` accepts registry ids. Tests are LiteSVM with **real inner CPIs** (SPL Token transfers, a purpose-built `mutator` test program that tries to set delegate/close-authority/owner/realloc/close, and a Jupiter-shaped mock program) — the spike's "no CPI" gap must not recur. Phase 1C adds queue/pending/timelock, `set_policy` + policy lattice, guardians/recovery/guardian-freeze.

@@ -66,3 +66,88 @@ vectors are hand-synced with no mechanical cross-language gate). **Nothing seede
 does not verify that the tests are adequate — that is L4 (mutation testing, unpiloted on this
 workspace) — and it does not verify that the harness runs real cryptography — that is L0
 (`tests/sigverify_wiring.rs`, not yet landed). Every `test-covered` row inherits both caveats.
+
+---
+
+_The four deltas below are **retrospective**: their milestones landed 2026-08-19 but their entries
+were only appended 2026-08-20 by the A0 assurance-repair task (campaign plan 2026-08-20, gap G1).
+The dates and SHAs are the milestones' real ones; the recording lag is the dishonesty being
+corrected, not repeated. — recorded by A0, pending owner sign-off._
+
+## Phase 1B / Task 0 (L0 gate + slot freshness) — 26a8c1e, fix 050809e — 2026-08-19 — retrospective (A0), pending sign-off
+
+**New trust surface:** none. `RootArgs` gains `signed_slot` (a breaking ABI change, 1A args no longer
+decode) and root instructions are rejected when invoked via CPI (top-level only).
+
+**Removed / narrowed:** the root replay window shrank from a 600 s wall-clock `expiry_ts` alone to
+`signed_slot ≤ current_slot < signed_slot + 150` **and** the wall-clock deadline — both clocks are
+independent bounds. `tests/sigverify_wiring.rs` now proves the harness runs real secp256r1 in both
+directions (valid ⇒ accept, forged ⇒ `PrecompileError::InvalidSignature`), closing the silent-feature-
+regression hole; `litesvm` is pinned `=0.12.0`.
+
+**New invariants:** `WRD-NONCE-03` (test-covered), sigverify wiring rows per the ledger.
+
+**Residual, stated honestly:** slot freshness trusts `Clock::slot`; a colluding leader can still land
+a captured assertion within 150 slots. The window bounds exposure; it does not eliminate replay-by-
+the-leader inside the window. The review round for this task is in REVIEW-RUNS.jsonl as
+`baseline-not-recorded` — its thread id was not retained.
+
+## Phase 1B / Task 1 (conservation module) — f0f38ca, fixes 2023902 + d394b74 — 2026-08-19 — retrospective (A0), pending sign-off
+
+**New trust surface:** none yet. The `conservation` module (snapshot / compare / accounting, ~97 unit
+tests) compiles into the program but no shipped instruction calls it — `execute` lands in Task 5.
+Nothing an attacker can reach changed.
+
+**Removed / narrowed:** nothing at runtime. What the round-1/round-2 fixes narrowed is the module's
+own future fail-open surface before it ever went live: vault-controlled mint pre-scan, AFTER-driven
+classification (`NewVaultAccountRejected`), duplicate-pubkey rejection, non-native lamport freeze,
+fail-closed token-account TLV walks, close-path lamport checks.
+
+**New invariants:** `WRD-CONS-01`..`WRD-CONS-06` (unit layer, test-covered — added to the ledger by
+A0, 2026-08-20; the end-to-end `WRD-EXEC-*` rows correctly stay `unimplemented` until Task 5).
+
+**Residual, stated honestly:** unit tests exercise the comparison functions on synthetic snapshots;
+no CPI has ever run against this module. The intra-CPI round-trip blind spot is a permanent spec
+boundary (§5.3), not a residual to fix.
+
+## Phase 1B / Task 2b (root-bound address + proof-of-possession) — 50dc590 — 2026-08-19 — retrospective (A0), pending sign-off
+
+**CORRECTION — supersedes the "Standing 1A exposure until `WRD-ROOT-01` lands" paragraph in the
+baseline above.** That exposure is closed: `create_account` now derives the PDA seed on-chain as
+`Keccak256("WARDEN/seed/v1" ‖ root_pubkey33 ‖ salt32)` and verifies a root ceremony over the derived
+address before initialization, consuming the creating assertion (the account starts at nonce 1). A
+squatter cannot produce the assertion, and a different root derives a different address. The baseline
+paragraph stays in place because this file is append-only; it describes history, not the present.
+
+**New trust surface:** none — creation became *harder* to reach, not easier.
+
+**Removed / narrowed:** front-run PDA squatting (`TOB-SQUADS-7` class), theft-if-funded-before-
+readback, and the procedural `rotate_nonce`-before-funding mitigation is no longer the only defence
+(the extension still performs readback as belt-and-braces). `MAX_MINTS_AT_CREATE` dropped 4 → 1 for
+packet budget.
+
+**New invariants:** `WRD-ROOT-01` (test-covered, CLOSED), plus the Task 2b rows per the ledger.
+
+**Residual, stated honestly:** the creation ceremony binds origin and cluster_tag as signed by the
+client; a compromised client that signs for the wrong cluster still creates a valid account there.
+The review round's thread id was not retained (REVIEW-RUNS.jsonl, `baseline-not-recorded`).
+
+## Phase 1B / Task 11 (L9 repo-side gates) — b320ecd, fixes d8e3f54 + 56c543b + d0072fd — 2026-08-19 — retrospective (A0), pending sign-off — **PARTIAL**
+
+**New trust surface:** none on-chain. New *process* surface: CI (`.github/workflows/ci.yml`),
+cargo-deny, a fail-closed supply-chain gate, release-integrity documentation, and a deployment-gate
+**specification**.
+
+**Removed / narrowed:** dependency drift (lockfile + cargo-deny + scoped audit fail closed), silent
+CI toolchain drift (pinned), unattributed third-party code (notices provenance committed).
+
+**Honest status:** `docs/security/DEPLOY-GATE.md:12` records "SPEC + partial dry-run implementation" —
+the RPC-dependent checks (ProgramData upgrade-authority assertion, multisig threshold/timelock
+readback) are **NOT IMPLEMENTED**. Task 11 is therefore **partial**; Task 11R (campaign plan G11) owns
+the non-dry-run implementation with deterministic fixtures before Task 9, and live-chain verification
+stays UNVERIFIED until a release candidate exists.
+
+**New invariants:** supply-chain/release rows per the ledger.
+
+**Residual, stated honestly:** three review rounds for this task ran with no retained thread ids
+(REVIEW-RUNS.jsonl). The deployment gate can currently be *read* but not *run* against a cluster.
