@@ -45,11 +45,12 @@ section; cross-cluster AAD and 7-iteration deploy-gate governance hardened.
 
 Remaining, in campaign-plan order:
 
-1. **Task 2** (next) — the two test programs Tasks 5/6 drive CPIs against, split
-   **2A** (`programs/test-mutator` + `tests/mutator_harness.rs`) then **2B**
-   (`programs/test-jup-mock` + `tests/jup_mock_harness.rs`); extend
-   `.claude/test-gate.sh`'s `.so` list to both. Whole-task Codex review.
-2. **Phase 1B program order** 3 → 4 → 5 → 6 → 8 → 9. Task 5 must wire the
+1. **Task 2 DONE** (2026-08-20, 2A `204a118` + 2B `4c8575a`, 4 review rounds → 0
+   findings): `test-mutator` + `test-jup-mock` + 18 harness smoke tests;
+   `.claude/test-gate.sh` builds/checks both new `.so`. Close-out in
+   `docs/program/PHASE1B-MEASUREMENTS.md`.
+2. **Task 3** (next) — `Registry` account + `init_registry` + `grant_session`
+   allowlist ids. Then **4 → 5 → 6 → 8 → 9**. Task 5 must wire the
    native-lamport SOL equation (not the `amount` cache — WRDF-0011) with a
    real-CPI `SyncNative`+`Transfer` regression, and cover the standalone-mint
    case through a real CPI. **C1a needs a program change** (`create_account` must
