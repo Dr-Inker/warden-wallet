@@ -105,8 +105,11 @@ adjudication against spec §5.2 rule 2a.
 
 ## A0 — assurance-record repair (campaign plan 2026-08-20)
 
-Not a program task: A0 repaired the assurance records so Task 9's close-out is
-auditable (campaign plan gaps G1/G2/G7/G10/G11). No program code changed.
+A0 began as assurance-record repair so Task 9's close-out is auditable (campaign
+plan gaps G1/G2/G7/G10/G11). It grew: seeding the conservation invariants made
+the review loop surface five real Task-1 fund-loss defects, so A0 also carries
+their program fixes. See the A0 close-out at the end of this file for the full
+list and the convergence decision.
 
 **What changed:**
 

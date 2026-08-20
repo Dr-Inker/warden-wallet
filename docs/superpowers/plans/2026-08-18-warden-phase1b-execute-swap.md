@@ -9,6 +9,7 @@
 
 | Task | Status | Landed SHA(s) | Review round(s) |
 |---|---|---|---|
+| A0 | DONE (2026-08-20) | 41806e4 … 05d7b556 | 11 rounds (REVIEW-RUNS.jsonl); 5 confirmed conservation fixes (WRDF-0008/-0011/-0012), assurance records + review lane; close-out in PHASE1B-MEASUREMENTS.md |
 | 0 | DONE | 26a8c1e + fix 050809e | 1 round (REVIEW-RUNS.jsonl, thread not retained) |
 | 10 | DONE | 8250e1b + fix 9f95b15 | 1 round (thread not retained) |
 | 1 | DONE | f0f38ca + fixes 2023902, d394b74 | 2 rounds (r1 = `01a018fa`, r2 thread not retained) |
