@@ -163,9 +163,21 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
       gitOk = false;
     }
     if (!gitOk) return; // not a git checkout — nothing to verify
+    const commitPresent = (sha: string) => {
+      try {
+        execFileSync("git", ["-C", REPO, "cat-file", "-e", `${sha}^{commit}`], { stdio: "pipe" });
+        return true;
+      } catch {
+        return false;
+      }
+    };
     for (const r of rows) {
       for (const e of r.evidence) {
         if (!e.name || !/^[0-9a-f]{7,40}$/.test(e.sha)) continue;
+        // Only skip when the commit is genuinely not in this clone (shallow CI). If the commit IS
+        // present, every subsequent step must succeed — a `git show` failure is now a FAIL, not a
+        // pass (WRDF-0013 round 8: the old catch-and-continue accepted missing objects/paths).
+        if (!commitPresent(e.sha)) continue;
         let blob: string;
         try {
           blob = execFileSync("git", ["-C", REPO, "show", `${e.sha}:${e.path}`], {
@@ -173,16 +185,24 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
             maxBuffer: 32 * 1024 * 1024,
           }).toString();
         } catch {
-          continue; // object not present locally (shallow clone) — cannot verify, do not fail
+          throw new Error(`${r.id}: evidence path ${e.path} does not exist at cited sha ${e.sha} (the commit is present, so this is a mis-pin, not a shallow clone)`);
         }
         const leaf = e.name.split("::").pop()!;
-        const present = e.path.endsWith(".rs")
-          ? new RegExp(`\\bfn\\s+${leaf}\\s*\\(`).test(blob)
-          : blob.includes(e.name);
-        expect(
-          present,
-          `${r.id}: evidence "${e.name}" is NOT present in ${e.path} at cited sha ${e.sha} (it may be pinned to a pre-fix commit)`,
-        ).toBe(true);
+        if (e.path.endsWith(".rs")) {
+          // Must be a real #[test], same rigor as the HEAD-side check — a helper or comment
+          // matching `fn name(` is not evidence.
+          const at = blob.indexOf(`fn ${leaf}(`);
+          const isTest = at >= 0 && blob.slice(Math.max(0, at - 200), at).includes("#[test]");
+          expect(
+            isTest,
+            `${r.id}: evidence "${e.name}" is not a #[test] in ${e.path} at cited sha ${e.sha}`,
+          ).toBe(true);
+        } else {
+          expect(
+            blob.includes(e.name),
+            `${r.id}: evidence "${e.name}" is NOT present in ${e.path} at cited sha ${e.sha}`,
+          ).toBe(true);
+        }
       }
     }
   });

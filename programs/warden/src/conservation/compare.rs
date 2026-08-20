@@ -292,20 +292,24 @@ pub fn compare_and_account(
 fn prescan_vault_mints(before: &[Snap], after: &[Snap], vault: &Pubkey) -> Result<()> {
     for (i, b) in before.iter().enumerate() {
         let a = after.get(i).ok_or(WardenError::ConservationViolated)?;
-        // WRDF-0012 round 7: `holds_authority` only sees the FOUR modeled
-        // authorities, so a standalone mint whose sole vault-held authority
-        // lives in an UNMODELED extension (Pausable, InterestBearing,
-        // MetadataPointer, …) would read as uncontrolled and never be scanned —
-        // the `check_mint` gate is only reached for a mint backing a vault
-        // token account. Fail closed here too, but scoped to a WRITABLE mint:
-        // a read-only mint cannot be mutated in this transaction, so a stranger
-        // token that merely passes its mint through read-only (a normal swap)
-        // is unaffected, while a writable mint we cannot fully model — the only
-        // shape whose unmodeled authority could actually change here — rejects.
-        let writable_unmodeled_mint = (b.is_writable || a.is_writable)
-            && (b.mint.as_ref().is_some_and(|m| m.has_unrecognized_ext)
-                || a.mint.as_ref().is_some_and(|m| m.has_unrecognized_ext));
-        if writable_unmodeled_mint {
+        // WRDF-0012 (rounds 7 & 8): `holds_authority` sees only the FOUR
+        // modeled authorities, and the `check_mint` danger gate is only reached
+        // for a mint backing a vault token account. So a STANDALONE mint whose
+        // vault-held authority lives in an extension `holds_authority` does not
+        // model is never scrutinised — and that is true both for an UNMODELED
+        // extension (round 7: Pausable, MetadataPointer, …) AND for a
+        // RECOGNIZED danger extension whose authority field we do not extract
+        // (round 8: `PermanentDelegate` type 12, `TransferHook`, …; the
+        // permanent delegate can authorize transfers and `SetAuthority` can
+        // replace it). Fail closed here for a WRITABLE mint carrying EITHER
+        // class — a read-only mint cannot be mutated in this transaction, so a
+        // normal swap passing a stranger mint read-only is unaffected.
+        let unmodelable = |m: &crate::conservation::MintSnap| {
+            m.has_unrecognized_ext || (m.dangerous_ext & !DANGER_TRANSFER_FEE) != 0
+        };
+        let writable_unmodelable_mint = (b.is_writable || a.is_writable)
+            && (b.mint.as_ref().is_some_and(unmodelable) || a.mint.as_ref().is_some_and(unmodelable));
+        if writable_unmodelable_mint {
             return Err(WardenError::Token2022ExtensionRejected.into());
         }
         let controlled = b.mint.as_ref().is_some_and(|m| m.holds_authority(vault))

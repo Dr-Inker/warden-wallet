@@ -1080,6 +1080,22 @@ fn a_standalone_writable_mint_with_an_unmodeled_extension_is_rejected() {
 }
 
 #[test]
+fn a_standalone_writable_mint_with_a_recognized_danger_extension_is_rejected() {
+    // WRDF-0012 round 8: `PermanentDelegate` (type 12) is a RECOGNIZED danger
+    // extension, so `has_unrecognized_ext` is false — and `holds_authority`
+    // does not inspect the permanent delegate. A standalone writable mint
+    // controlled by the vault solely through it would otherwise bypass the
+    // pre-scan entirely (no vault ATA ⇒ `check_mint`'s danger gate never runs).
+    let m = pk(7);
+    let mint = t22_mint_bytes(mint_bytes(None, 0, 6, None), &tlv(&[(12, vec![0u8; 32])]));
+    let before = vec![snap_t22(m, &mint, true)];
+    assert_eq!(
+        cmp(&before, &before, &[]).unwrap_err(),
+        err(WardenError::Token2022ExtensionRejected)
+    );
+}
+
+#[test]
 fn a_read_only_stranger_mint_with_an_unmodeled_extension_is_ignored() {
     // The mirror: a mint passed READ-ONLY cannot be mutated in this tx, so a
     // normal swap through a token carrying a metadata pointer must NOT reject.
