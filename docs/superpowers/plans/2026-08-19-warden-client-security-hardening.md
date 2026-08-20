@@ -234,8 +234,14 @@ account), and `WRD-ORG-01` moves to `test-covered` only on that evidence.
 
 - [ ] Store only a versioned AES-256-GCM envelope in persistent extension
   storage. Nonce uniqueness is mandatory; AAD binds the envelope to its account,
-  full extension origin, key kind, and schema version. Do not bind it to a
-  per-release build hash: normal extension updates must not brick old envelopes.
+  full extension origin, key kind, schema version, **the canonical cluster
+  identity (genesis hash), and the Warden program id (WRDF-0023)**. A SmartAccount
+  PDA is not network-qualified — its seeds carry no cluster identity, so the same
+  program id + root + salt yields the same address on multiple clusters; without
+  genesis + program id in the AAD an envelope transplanted between clusters
+  authenticates and decrypts, defeating the replayed-context rejection this
+  invariant promises. Do not bind it to a per-release build hash: normal extension
+  updates must not brick old envelopes.
 - [ ] PRF unlock is an optimization only after a real-device compatibility
   matrix demonstrates it. Keep an Argon2id password path that can always unlock
   the same envelope.
@@ -377,9 +383,15 @@ must be provable. Invariant: `WRD-QTE-01`.
   USDC while one demands 1 SOL and the other 2 SOL show 0 bps output divergence
   despite a 100 % input disagreement. So compare the **adverse** quantity by mode:
   **net output after all fees** for ExactIn, **total required input after all
-  fees** for ExactOut. Pin the denominator, use checked integer
-  cross-multiplication (no float), define the rounding, and set the threshold at
-  **300 bps** on that quantity. A required ExactOut fixture must catch the
+  fees** for ExactOut. **One exact predicate (WRDF-0019 round 3), no ambiguity:**
+  let `p` = the **primary** quote's adverse quantity (base units) and `c` = the
+  check quote's. The check **BLOCKS** iff `abs_diff(p, c) * 10_000 > 300 * p`,
+  computed in `u128` (no float, no pre-division, no rounding — multiply-then-
+  compare is exact); the **primary** quote is always the denominator; `p == 0` ⇒
+  VOID/block (never a 0-bps pass); the boundary is strict `>` (exactly 300 bps
+  passes). Worked boundary fixtures: `{p=100,c=97}` → `3*10000 == 300*100` → not
+  `>` → **pass** (exactly 300 bps), and `{p=100,c=96}` → `4*10000 > 300*100` →
+  **BLOCK** (400 bps). Add the symmetric `c=104` block and a required ExactOut
   worse-input case.
 - [ ] Record quote provenance for both the primary and the check quote: source
   id, upstream(s), fetch time, quote expiry, and route digest.

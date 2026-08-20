@@ -322,13 +322,18 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   Comparing `ProgramData.upgrade_authority_address` against an operator-supplied
   "expected authority" and *separately* checking that some 3-of-5 multisig is
   healthy is **insufficient** — an operator can pass a single-key authority as
-  "expected" plus an unrelated healthy multisig and get a false green while one
-  key keeps arbitrary upgrade power. Instead: pin the Squads program id and vault
-  index; owner-check and decode the multisig; **derive its canonical vault PDA
-  from the decoded multisig**; and require `ProgramData.upgrade_authority_address
-  == that derived vault PDA`. Then assert the multisig's threshold and time-lock
-  match spec §5.5 (3-of-5, 7 days). Never accept the authority and the multisig as
-  independent facts.
+  "expected" plus an unrelated healthy multisig and get a false green. But
+  structural checks are not enough either: a substituted Squads account with five
+  **attacker** members, threshold 3, a 7-day lock, and a derived vault that
+  currently owns `ProgramData` satisfies every structural assertion (WRDF-0017
+  round 3). The identity itself must be pinned. So: pin the **Warden program id,
+  the mainnet Squads program id, the expected multisig pubkey, and the expected
+  member-pubkey set** in **versioned, reviewed deployment configuration** (not CLI
+  input); assert the on-chain multisig account IS the pinned pubkey, is owned by
+  the pinned Squads program, has the pinned member set, threshold, and time-lock
+  (spec §5.5, 3-of-5, 7 days); derive its canonical vault PDA (pinned vault index)
+  and require `ProgramData.upgrade_authority_address == that vault PDA`. Never
+  accept the authority OR the multisig as unchecked identity.
 - [ ] Assert the on-chain program hash equals `solana-verify get-program-hash` of
   the release artifact; **refuse on any mismatch**.
 - [ ] **The checks must be explicit assertions, and each must have a valid-looking
@@ -338,9 +343,13 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   **pinned vault index**; and the **canonical vault PDA seed derivation**. A
   checker that decodes spoofed bytes without the owner/discriminator check, or
   hard-codes one vault index, or checks `threshold == 3` while ignoring
-  `member_count`, must FAIL a fixture — so add one negative fixture each: wrong
-  account owner, wrong discriminator, `member_count != 5`, wrong vault index, and
-  a spoofed non-Squads account whose bytes merely look like a healthy multisig.
+  `member_count`, or accepts **any** healthy-looking multisig instead of the
+  **pinned** one, must FAIL a fixture — so add one negative fixture each: wrong
+  account owner, wrong discriminator, `member_count != 5`, wrong vault index,
+  a spoofed non-Squads account whose bytes merely look like a healthy multisig,
+  and — the round-3 case — **a well-formed 3-of-5 / 7-day Squads multisig with
+  the wrong pubkey or an attacker member set** (structurally perfect, wrong
+  identity).
 - [ ] Deterministic pass/fail fixtures — recorded RPC responses (happy path plus
   each mismatch class above, plus authority ≠ derived vault PDA, single-key
   authority + a healthy but unrelated multisig, wrong threshold, wrong timelock,
