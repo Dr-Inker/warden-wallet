@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod mutator;
 pub mod passkey;
 pub mod token;
 

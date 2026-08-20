@@ -11,6 +11,10 @@ warden = "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2"
 # `root_verify::root_instruction_via_cpi_rejected` to prove root paths refuse
 # to run below transaction level. Never deployed — see programs/test-middleman.
 test_middleman = "FHWwDX1az7eAtFsogaRrFcoZkZhBEzSS3QMXPwovSiMN"
+# Test-only adversarial mutator used by `execute` conservation tests (Task 2A);
+# each instruction attempts one mutation §5.2 must catch. Never deployed —
+# programs/test-mutator. Id = sha256("WARDEN/test-mutator/v1").
+test_mutator = "An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W"
 
 [registry]
 url = "https://api.apr.dev"
