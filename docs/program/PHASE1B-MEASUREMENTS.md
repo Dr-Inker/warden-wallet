@@ -180,3 +180,11 @@ fails without the pre-scan gate. WRDF-0013: mis-pinned round-6 evidence
 (2170973 → the actual landing SHA d515db6) corrected, and
 `packages/core/test/security-ledger.test.ts` now resolves every evidence SHA in
 its git object rather than trusting HEAD.
+
+**A0 round-8 fix evidence (WRDF-0011/-0012/-0013):** `cargo test -p warden --lib`
+at `7fae2d530f358af44671c35023e884b8cca81f28` → `257 passed; 0 failed`. RED
+verified: `a_standalone_writable_mint_with_a_recognized_danger_extension_is_rejected`
+fails when the pre-scan gate rejects only unrecognized (not recognized-danger)
+extensions. Spec §5.2 rule 4/4a and the Phase-1B plan pseudocode corrected to the
+native-account lamport SOL equation; the evidence-at-SHA ledger test now fails
+closed on a present-but-mismatched commit and requires a real #[test].
