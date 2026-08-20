@@ -140,6 +140,14 @@ pub struct MintSnap {
     pub tlv_hash: [u8; 32],
     /// Bit flags over `DANGER_*` (spec §5.2 rule 5).
     pub dangerous_ext: u8,
+    /// The tail carries an extension type the scan does not explicitly model
+    /// (WRDF-0012). Several such extensions hold REASSIGNABLE authorities
+    /// (`MintCloseAuthority`, `InterestBearingConfig`, `MetadataPointer`,
+    /// group/member pointers, `ScaledUiAmountConfig`, `PausableConfig`) that
+    /// no compared field would see change — so in 1B a required mint carrying
+    /// one is rejected outright. Fail closed now; 1C may widen with per-type
+    /// authority extraction.
+    pub has_unrecognized_ext: bool,
     /// `PROGRAM_SPL` (0) or `PROGRAM_T22` (1).
     pub program: u8,
 }

@@ -237,8 +237,8 @@ pub fn compare_and_account(
             require!(a.lamports == b.lamports, WardenError::ConservationViolated);
         }
 
-        // (9) The amount.
-        account_amount(&mut net, bt, at)?;
+        // (9) The amount — for a native account, the LAMPORTS (WRDF-0011).
+        account_amount(&mut net, b, a, bt, at)?;
     }
 
     // Every intent must have been consumed exactly once. A leftover is a
@@ -422,6 +422,14 @@ pub(crate) fn check_mint(bm: &MintSnap, am: &MintSnap) -> Result<()> {
         (danger & DANGER_TRANSFER_FEE) == 0,
         WardenError::TransferFeeMintUnsupported
     );
+    // WRDF-0012: an extension the scan does not model may carry a reassignable
+    // authority no compared field would see change (tail hash is deliberately
+    // never compared for mints). 1B fails closed on such mints; 1C may widen
+    // with per-type extraction. Same error code — 1C can split it if needed.
+    require!(
+        !(bm.has_unrecognized_ext || am.has_unrecognized_ext),
+        WardenError::Token2022ExtensionRejected
+    );
 
     // Every authority field, byte for byte. `supply` is deliberately absent —
     // spec §5.2 rule 2a: a legitimate mint/burn through an allow-listed
@@ -446,30 +454,38 @@ pub(crate) fn check_mint(bm: &MintSnap, am: &MintSnap) -> Result<()> {
 /// lane. A WSOL entry must never appear in `by_mint`: `NATIVE_MINT` is also
 /// the cap-lookup key for native SOL, so two entries would debit one bucket
 /// twice for one movement.
-fn account_amount(net: &mut Netter, bt: &TokenSnap, at: &TokenSnap) -> Result<()> {
+fn account_amount(net: &mut Netter, b: &Snap, a: &Snap, bt: &TokenSnap, at: &TokenSnap) -> Result<()> {
     // Native is decided by `is_native` — the token program's own, unforgeable
-    // marker — OR by either program's native mint key (WRDF-0008): Token-2022
-    // wraps SOL under its own mint (`NATIVE_MINT_2022`), and a mint-key-only
-    // test would send that delta to `by_mint`, splitting one SOL movement
-    // across two cap/bucket keys. The mint-key half is belt-and-braces so a
-    // native MINT key can never appear in `by_mint` even if `is_native` were
-    // absent on a malformed account.
-    let native =
-        bt.is_native.is_some() || bt.mint == NATIVE_MINT || bt.mint == crate::constants::NATIVE_MINT_2022;
+    // marker (WRDF-0008): Token-2022 wraps SOL under its own mint
+    // (`NATIVE_MINT_2022`), so a mint-key-only test mis-lanes it. And the two
+    // signals must AGREE: under either real token program, `is_native` is set
+    // if and only if the mint is that program's native mint, so any mismatch
+    // is an impossible-on-chain shape wearing a token account's layout —
+    // rejected, never measured. This is also what keeps a native mint key out
+    // of `by_mint`, where it would collide with the SOL cap-lookup key.
+    let native_mint_key =
+        bt.mint == NATIVE_MINT || bt.mint == crate::constants::NATIVE_MINT_2022;
+    let native = bt.is_native.is_some();
+    require!(native == native_mint_key, WardenError::ConservationViolated);
+    if native {
+        // WRDF-0011: on a native account, `amount` is a CACHED VIEW of
+        // `lamports - rent_reserve` that only moves when something calls
+        // `SyncNative`. The lamports are the value. Measuring `amount` let a
+        // `SyncNative` + `Transfer` pair drain a legally-donated (unsynced)
+        // lamport balance with `amount` ending exactly where it began. The
+        // exemption from rule (8)'s lamports-unchanged requirement is matched
+        // here by counting the lamport delta itself.
+        if a.lamports < b.lamports {
+            net.add_sol_out(b.lamports.checked_sub(a.lamports).ok_or(WardenError::Overflow)?)?;
+        } else {
+            net.add_sol_in(a.lamports.checked_sub(b.lamports).ok_or(WardenError::Overflow)?)?;
+        }
+        return Ok(());
+    }
     if at.amount < bt.amount {
-        let d = bt.amount.checked_sub(at.amount).ok_or(WardenError::Overflow)?;
-        if native {
-            net.add_sol_out(d)?;
-        } else {
-            net.add_mint_out(&bt.mint, d)?;
-        }
+        net.add_mint_out(&bt.mint, bt.amount.checked_sub(at.amount).ok_or(WardenError::Overflow)?)?;
     } else {
-        let d = at.amount.checked_sub(bt.amount).ok_or(WardenError::Overflow)?;
-        if native {
-            net.add_sol_in(d)?;
-        } else {
-            net.add_mint_in(&bt.mint, d)?;
-        }
+        net.add_mint_in(&bt.mint, at.amount.checked_sub(bt.amount).ok_or(WardenError::Overflow)?)?;
     }
     Ok(())
 }

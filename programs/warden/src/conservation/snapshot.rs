@@ -253,6 +253,7 @@ fn parse_mint_fields(data: &[u8], tlv: core::ops::Range<usize>, program: u8) -> 
         max_fee: ext.max_fee,
         tlv_hash: hash_tail(tail),
         dangerous_ext: ext.dangerous_ext,
+        has_unrecognized_ext: ext.unrecognized_ext,
         program,
     })
 }
@@ -263,6 +264,8 @@ struct ExtensionScan {
     transfer_fee_config_authority: Option<Pubkey>,
     withdraw_withheld_authority: Option<Pubkey>,
     max_fee: u64,
+    /// Any extension type this scan does not explicitly model (WRDF-0012).
+    unrecognized_ext: bool,
 }
 
 /// Walk the TLV tail once, recording the danger flags and extracting the
@@ -306,7 +309,15 @@ fn scan_extensions(tlv: &[u8]) -> Option<ExtensionScan> {
             | EXT_CONFIDENTIAL_TRANSFER_FEE_CONFIG
             | EXT_CONFIDENTIAL_TRANSFER_FEE_AMOUNT
             | EXT_CONFIDENTIAL_MINT_BURN => out.dangerous_ext |= DANGER_CONFIDENTIAL,
-            _ => {}
+            // WRDF-0012: several other extensions carry REASSIGNABLE authority
+            // fields this scan does not model (MintCloseAuthority,
+            // InterestBearingConfig, MetadataPointer, Group/Member pointers,
+            // ScaledUiAmountConfig, PausableConfig, …), and `check_mint`
+            // deliberately never compares the tail hash. Recorded here; on a
+            // MINT the flag is a 1B reject (fail closed — 1C may widen with
+            // field-wise extraction). Token ACCOUNTS are unaffected: their
+            // tails are compared whole via `tlv_hash` identity.
+            _ => out.unrecognized_ext = true,
         }
         cursor = value_end;
     }

@@ -168,6 +168,23 @@ fn plain_mint(mint: Pubkey) -> Snap {
     snap_token(mint, &mint_bytes(None, 1_000_000, 6, None), false)
 }
 
+/// A REAL wrapped-SOL vault account: `is_native = Some(RENT)` and
+/// `lamports = RENT + amount`, the only shape the token program produces
+/// (WRDF-0011: native value is measured by LAMPORTS; `amount` is a cache).
+fn native_ata(key: Pubkey, amount: u64) -> Snap {
+    let d = token_bytes(
+        NATIVE_MINT,
+        vault(),
+        amount,
+        None,
+        0,
+        None,
+        AccountState::Initialized,
+        Some(RENT),
+    );
+    snapshot_one(&key, &SPL_TOKEN_ID, RENT.saturating_add(amount), &d, true)
+}
+
 fn cmp(before: &[Snap], after: &[Snap], closes: &[CloseIntent]) -> Result<Outflow> {
     compare_and_account(before, after, &vault(), closes, 0, 0)
 }
@@ -449,8 +466,8 @@ fn inflow_floors_to_zero_and_drops_the_mint_entry() {
 
 #[test]
 fn wsol_decrease_is_counted_in_sol_and_never_in_by_mint() {
-    let before = vec![vault_ata(pk(3), NATIVE_MINT, 5_000), plain_mint(NATIVE_MINT)];
-    let after = vec![vault_ata(pk(3), NATIVE_MINT, 1_000), plain_mint(NATIVE_MINT)];
+    let before = vec![native_ata(pk(3), 5_000), plain_mint(NATIVE_MINT)];
+    let after = vec![native_ata(pk(3), 1_000), plain_mint(NATIVE_MINT)];
     let out = cmp(&before, &after, &[]).expect("ok");
     assert_eq!(out.sol, 4_000);
     assert!(
@@ -483,7 +500,9 @@ fn t22_native_account_delta_is_counted_in_sol_not_by_mint() {
             &tlv(&[(7, vec![])]),
         )
     };
-    let mint = t22_mint_bytes(mint_bytes(None, 0, 9, None), &tlv(&[(7, vec![])]));
+    // An 82-byte classic-shape mint under the T22 program: extension-free, the
+    // only mint shape 1B accepts (an unmodeled mint extension now rejects).
+    let mint = mint_bytes(None, 0, 9, None);
     let before = vec![
         snapshot_one(&pk(3), &SPL_TOKEN_2022_ID, RENT + 5_000, &acct(5_000), true),
         snap_t22(NATIVE_MINT_2022, &mint, false),
@@ -498,32 +517,38 @@ fn t22_native_account_delta_is_counted_in_sol_not_by_mint() {
 }
 
 #[test]
-fn is_native_decides_the_sol_lane_regardless_of_mint_key() {
-    // `is_native` is the token program's own unforgeable marker — the design
-    // says it, not the mint key, decides wrapped SOL. Pin that the
-    // classification follows it even for a mint key the code has never heard
-    // of, so a future native mint cannot silently land in `by_mint`.
+fn an_is_native_flag_on_a_non_native_mint_is_rejected() {
+    // Under either real token program, `is_native` is set IFF the mint is that
+    // program's native mint. A mismatch either way is an impossible-on-chain
+    // shape wearing a token account's layout — rejected, never measured.
     let m = pk(9);
-    let acct = |amount: u64| {
-        token_bytes(m, vault(), amount, None, 0, None, AccountState::Initialized, Some(RENT))
-    };
+    let acct = token_bytes(m, vault(), 700, None, 0, None, AccountState::Initialized, Some(RENT));
     let before = vec![
-        snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT + 700, &acct(700), true),
+        snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT.saturating_add(700), &acct, true),
         plain_mint(m),
     ];
-    let after = vec![
-        snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT, &acct(0), true),
-        plain_mint(m),
-    ];
-    let out = cmp(&before, &after, &[]).expect("ok");
-    assert_eq!(out.sol, 700);
-    assert!(out.by_mint.is_empty());
+    assert_eq!(
+        cmp(&before, &before, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+}
+
+#[test]
+fn a_native_mint_key_without_is_native_is_rejected() {
+    // The mirror mismatch: mint == the native mint but `is_native` None.
+    // The real token program never creates this; measuring its `amount`
+    // (or its lamports) would be reasoning about a forgery.
+    let before = vec![vault_ata(pk(3), NATIVE_MINT, 5_000), plain_mint(NATIVE_MINT)];
+    assert_eq!(
+        cmp(&before, &before, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
 }
 
 #[test]
 fn wsol_and_pda_lamport_delta_merge_into_one_sol_number() {
-    let before = vec![vault_ata(pk(3), NATIVE_MINT, 5_000), plain_mint(NATIVE_MINT)];
-    let after = vec![vault_ata(pk(3), NATIVE_MINT, 1_000), plain_mint(NATIVE_MINT)];
+    let before = vec![native_ata(pk(3), 5_000), plain_mint(NATIVE_MINT)];
+    let after = vec![native_ata(pk(3), 1_000), plain_mint(NATIVE_MINT)];
     let out = compare_and_account(&before, &after, &vault(), &[], 10_000, 9_500).expect("ok");
     assert_eq!(out.sol, 4_500, "4_000 WSOL + 500 PDA lamports, one number");
     assert!(out.by_mint.is_empty());
@@ -545,8 +570,8 @@ fn pda_lamport_increase_floors_to_zero() {
 fn a_pda_inflow_offsets_a_wsol_outflow_before_the_floor() {
     // The floor is applied ONCE to the merged number, not to the PDA term on
     // its own — spec 5.2 rule 4a's "the SOL equation already sees it".
-    let before = vec![vault_ata(pk(3), NATIVE_MINT, 5_000), plain_mint(NATIVE_MINT)];
-    let after = vec![vault_ata(pk(3), NATIVE_MINT, 4_000), plain_mint(NATIVE_MINT)];
+    let before = vec![native_ata(pk(3), 5_000), plain_mint(NATIVE_MINT)];
+    let after = vec![native_ata(pk(3), 4_000), plain_mint(NATIVE_MINT)];
     let out = compare_and_account(&before, &after, &vault(), &[], 0, 400).expect("ok");
     assert_eq!(out.sol, 600);
 }
@@ -1020,6 +1045,24 @@ fn never_allowlistable_extensions_reject_with_token2022extensionrejected() {
 }
 
 #[test]
+fn a_required_mint_with_an_unmodeled_extension_is_rejected() {
+    // WRDF-0012: MetadataPointer, MintCloseAuthority, InterestBearingConfig,
+    // group/member pointers, ScaledUiAmountConfig and PausableConfig all carry
+    // REASSIGNABLE authority fields the snapshot does not model, and the mint
+    // tail hash is deliberately never compared. 1B fails closed: a required
+    // mint carrying ANY unmodeled extension rejects, unchanged or not.
+    // (Type 18 here = a MetadataPointer-shaped entry.)
+    let m = pk(2);
+    let mint = t22_mint_bytes(mint_bytes(None, 0, 6, None), &tlv(&[(18, vec![0u8; 64])]));
+    let base = t22_token_bytes(plain_token_bytes(m, vault(), 5), &tlv(&[(7, vec![])]));
+    let before = vec![snap_t22(pk(3), &base, true), snap_t22(m, &mint, false)];
+    assert_eq!(
+        cmp(&before, &before, &[]).unwrap_err(),
+        err(WardenError::Token2022ExtensionRejected)
+    );
+}
+
+#[test]
 fn a_danger_extension_added_mid_instruction_is_rejected() {
     let m = pk(2);
     let acct = t22_token_bytes(plain_token_bytes(m, vault(), 100), &tlv(&[(2, vec![0u8; 8])]));
@@ -1449,8 +1492,12 @@ fn c4_a_lamport_donation_to_a_non_native_vault_token_account_is_also_rejected() 
 }
 
 #[test]
-fn c4_a_native_account_may_move_lamports_because_the_amount_covers_them() {
-    // `is_native: Some(..)` is what says "these lamports back the `amount`".
+fn a_native_lamport_drain_with_unchanged_amount_is_sol_outflow() {
+    // WRDF-0011, superseding the earlier `c4_a_native_account_may_move_
+    // lamports_because_the_amount_covers_them`, whose premise WAS the bug:
+    // `amount` is a cached view that only moves on `SyncNative`, so a
+    // lamport-only drain with amount unchanged is real value leaving. It must
+    // be COUNTED (the caps decide), never zero.
     let d = token_bytes(
         NATIVE_MINT,
         vault(),
@@ -1467,6 +1514,56 @@ fn c4_a_native_account_may_move_lamports_because_the_amount_covers_them() {
     ];
     let after = vec![
         snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT, &d, true),
+        plain_mint(NATIVE_MINT),
+    ];
+    let out = cmp(&before, &after, &[]).expect("ok");
+    assert_eq!(out.sol, 5_000);
+    assert!(out.by_mint.is_empty());
+}
+
+#[test]
+fn sync_native_then_transfer_of_a_donation_is_counted_as_sol_outflow() {
+    // The WRDF-0011 exploit shape end to end: a legal unsynced donation
+    // (amount 0, lamports RENT+X), then inner `SyncNative` (amount <- X) and
+    // `Transfer X` (amount -X, lamports -X). Every compared token field ends
+    // exactly where it began; only the lamports show the theft.
+    let acct = |amount: u64| {
+        token_bytes(NATIVE_MINT, vault(), amount, None, 0, None, AccountState::Initialized, Some(RENT))
+    };
+    let before = vec![
+        snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT.saturating_add(9_000), &acct(0), true),
+        plain_mint(NATIVE_MINT),
+    ];
+    let after = vec![
+        snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT, &acct(0), true),
+        plain_mint(NATIVE_MINT),
+    ];
+    let out = cmp(&before, &after, &[]).expect("ok");
+    assert_eq!(out.sol, 9_000, "the drained donation is SOL outflow, not zero");
+}
+
+#[test]
+fn sync_native_alone_moves_no_value_and_counts_nothing() {
+    // `SyncNative` recomputes the cache; lamports do not move, so neither
+    // does the SOL equation.
+    let before = vec![
+        snapshot_one(
+            &pk(3),
+            &SPL_TOKEN_ID,
+            RENT.saturating_add(9_000),
+            &token_bytes(NATIVE_MINT, vault(), 0, None, 0, None, AccountState::Initialized, Some(RENT)),
+            true,
+        ),
+        plain_mint(NATIVE_MINT),
+    ];
+    let after = vec![
+        snapshot_one(
+            &pk(3),
+            &SPL_TOKEN_ID,
+            RENT.saturating_add(9_000),
+            &token_bytes(NATIVE_MINT, vault(), 9_000, None, 0, None, AccountState::Initialized, Some(RENT)),
+            true,
+        ),
         plain_mint(NATIVE_MINT),
     ];
     assert_eq!(cmp(&before, &after, &[]).expect("ok"), Outflow::default());
@@ -1605,13 +1702,13 @@ fn r2_a_partially_credited_close_is_rejected_even_with_other_sol_movement() {
     let before = vec![
         vault_ata_with_lamports(pk(3), m, 0, RENT.saturating_add(9_000)),
         plain_mint(m),
-        vault_ata(pk(4), NATIVE_MINT, 0),
+        native_ata(pk(4), 0),
         plain_mint(NATIVE_MINT),
     ];
     let after = vec![
         snap_closed(pk(3)),
         plain_mint(m),
-        vault_ata(pk(4), NATIVE_MINT, 50_000),
+        native_ata(pk(4), 50_000),
         plain_mint(NATIVE_MINT),
     ];
     assert_eq!(
