@@ -205,3 +205,14 @@ append-only rule they are corrected here, not rewritten in place.
   correct answer: the 192-bit nonce is CSPRNG; a CSPRNG failure, a reused job
   nonce, and a counter wrap each reject (`WRD-VAN-01`/`WRD-VAN-02`). The final
   eight bytes are deterministic by design and are not a keyspace weakness.
+
+### Deployment trust-root assumption (WRDF-0017) — 2026-08-20
+
+The deployment gate (`WRD-DEP-01`, Task 11R) authenticates Warden's ProgramData
+and the Squads multisig identity/governance/config-authority, and pins the
+**audited Squads program code hash**. Beyond that, **Squads' own upgrade
+governance is an accepted external trust assumption** — this gate does not, and
+cannot, recurse indefinitely into the governance of every dependency. The
+concrete anchor is the pinned audited Squads code hash; if Squads ships new code,
+the gate fails closed until the new hash is reviewed and re-pinned. This is the
+documented terminus of the on-chain deployment trust root.
