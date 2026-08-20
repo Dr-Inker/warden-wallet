@@ -318,22 +318,40 @@ Task 11 is therefore **PARTIAL** until this task closes the live checks.
 readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
 `docs/security/DEPLOY-GATE.md`.
 
-- [ ] Implement the live checks against a configurable RPC: read `ProgramData`
-  and assert `upgrade_authority_address` equals the expected Squads multisig;
-  read the multisig account and assert its threshold and time-lock match spec §5.5
-  (3-of-5, 7 days); assert the on-chain program hash equals `solana-verify
-  get-program-hash` of the release artifact; **refuse on any mismatch**.
+- [ ] **Upgrade-governance check (WRDF-0017, `WRD-DEP-01`), the load-bearing one.**
+  Comparing `ProgramData.upgrade_authority_address` against an operator-supplied
+  "expected authority" and *separately* checking that some 3-of-5 multisig is
+  healthy is **insufficient** — an operator can pass a single-key authority as
+  "expected" plus an unrelated healthy multisig and get a false green while one
+  key keeps arbitrary upgrade power. Instead: pin the Squads program id and vault
+  index; owner-check and decode the multisig; **derive its canonical vault PDA
+  from the decoded multisig**; and require `ProgramData.upgrade_authority_address
+  == that derived vault PDA`. Then assert the multisig's threshold and time-lock
+  match spec §5.5 (3-of-5, 7 days). Never accept the authority and the multisig as
+  independent facts.
+- [ ] Assert the on-chain program hash equals `solana-verify get-program-hash` of
+  the release artifact; **refuse on any mismatch**.
 - [ ] Deterministic pass/fail fixtures — recorded RPC responses (happy path plus
-  each mismatch class: wrong authority, wrong threshold, wrong timelock, wrong
-  hash, missing account, and RPC error ⇒ **fail closed**) driven through the same
-  code path via a `--fixtures` flag; **no network in CI**.
+  each mismatch class: authority ≠ derived vault PDA, single-key authority + a
+  healthy but unrelated multisig, wrong threshold, wrong timelock, wrong hash,
+  missing account, and RPC error ⇒ **fail closed**) driven through the same code
+  path via a `--fixtures` flag; **no network in CI**.
 - [ ] `DEPLOY-GATE.md` updated: "implemented, fixture-verified; live-chain run
   UNVERIFIED until a release candidate exists" — the honest residual, stated.
 - [ ] Commit `feat(security): deploy-gate RPC checks + deterministic fixtures`.
 
-**Task 11R acceptance:** the fixture suite is green at the merged SHA; a
-live-cluster run stays a release-time step, not claimed now. Task 11's status
-moves PARTIAL → DONE only when this lands.
+**Scope boundary (WRDF-0018).** Task 11R covers the ProgramData/governance and
+program-hash checks. It does **not** cover DEPLOY-GATE check 3 — adapter-selector
+re-derivation + on-chain `Registry` diffing (`WRD-DEP-02`) — because that needs
+the `Registry` account from Task 3 and the selector rules from Task 5. That check
+is its own deliverable, landed with or after the registry; do not fold it into
+11R's fixtures and do not let 11R's green stand in for it.
+
+**Task 11R acceptance:** the governance + hash fixture suite is green at the
+merged SHA (`WRD-DEP-01` → `test-covered`); a live-cluster run stays a
+release-time step. **Task 11 moves PARTIAL → DONE only when BOTH 11R and the
+`WRD-DEP-02` selector/registry check are green** — 11R alone does not complete
+Task 11.
 
 ---
 

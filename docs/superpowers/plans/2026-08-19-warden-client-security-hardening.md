@@ -192,17 +192,28 @@ stays `unimplemented` and V4/U7 stay blocked.
 - [ ] Record the owner's decision in the spec (§4/§6) and this plan; if "freeze",
   pin the production `key`/extension id in the `apps/extension` manifest metadata
   and document the CWS binding.
-- [ ] Red test: a stored-origin mismatch fails closed — an account created under
-  origin A rejects an assertion whose clientDataJSON origin is B, end to end
-  through the production transaction builder.
-- [ ] Red test: a dev-profile build refuses `create_account` against a mainnet
-  cluster_tag (build-time guard plus runtime check), so a dev-origin account
-  cannot become a funded production account.
+- [ ] Red test (the program-level boundary): a stored-origin mismatch fails
+  closed — an account created under origin A rejects an assertion whose
+  clientDataJSON origin is B, end to end through the production transaction
+  builder. **This origin binding — not `cluster_tag` — is WRD-ORG-01's real
+  guarantee:** `root_verify/transcript.rs:99-106` documents that `cluster_tag`
+  is caller-attested and does **not** identify the cluster a transaction lands
+  on, so a dev build or forwarding RPC can sign a devnet tag and submit to
+  mainnet. The freeze-production-id decision therefore rests on pinning the
+  permitted production `rp_id_hash`/origin (in deployment-specific config), so a
+  dev extension's origin is rejected at mainnet account creation regardless of
+  the tag it claims.
+- [ ] Red test (honest-client guard, explicitly NOT a security boundary): a
+  dev-profile build declines `create_account` against a mainnet `cluster_tag` at
+  the UI/build layer — this prevents accidental dev-to-mainnet use, but is not
+  relied on for the guarantee above, because `cluster_tag` is attacker-attestable.
 - [ ] Document (or implement, per the decision) the migration story; "deliberately
   refused" is an acceptable, recorded answer.
 
-**C1a acceptance:** the decision is recorded and its red tests pass at the merged
-SHA; `WRD-ORG-01` moves to `test-covered` only on executable evidence.
+**C1a acceptance:** the decision is recorded, the origin-binding red test passes
+at the merged SHA, and `WRD-ORG-01` (whose guarantee is the origin binding, with
+the cluster_tag check labeled an honest-client guard) moves to `test-covered`
+only on that executable evidence.
 
 ## C2 — Keyring lifecycle whose authentication controls key release
 
@@ -336,6 +347,19 @@ defence and is entirely off-chain. C4 keeps simulation/reputation advisory; pric
 sanity is the one place a second *source* is load-bearing, so its independence
 must be provable. Invariant: `WRD-QTE-01`.
 
+- [ ] **Define a canonical `QuoteIntent` and bind BOTH quotes to it (WRDF-0019).**
+  A dimensionless 3 % is meaningless until both values describe the *same*
+  economic quantity. `QuoteIntent` = { approval id + exact message digest,
+  account, cluster, input/output mint pubkeys **and decimals**, swap mode
+  (ExactIn vs ExactOut), amount in **base units**, slippage/fee convention }. Both
+  the primary and the check quote must be for that exact intent; a quote for a
+  different size, mode, decimal interpretation, or approval-bytes is not a
+  comparison and is rejected, not divergence-checked. A stale-primary re-quote
+  that would change the economic intent **invalidates the immutable approval**
+  rather than silently updating it.
+- [ ] **Specify the divergence math exactly:** the denominator (e.g. quoted
+  output in base units for ExactIn), the rounding rule, and the threshold as
+  **300 bps** on that normalized quantity — not a hand-wavy "3 %".
 - [ ] Record quote provenance for both the primary and the check quote: source
   id, upstream(s), fetch time, quote expiry, and route digest.
 - [ ] Fixtures with asserted outcomes: a **stale** primary quote (expired ⇒ WARN

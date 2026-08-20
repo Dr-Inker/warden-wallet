@@ -257,6 +257,7 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
       "WRD-TXI-01", "WRD-SIM-01", "WRD-SIM-02", "WRD-EXP-01",
       "WRD-REL-01", "WRD-REL-02", "WRD-REL-03",
       "WRD-ORG-01", "WRD-SIG-01", "WRD-QTE-01",
+      "WRD-DEP-01", "WRD-DEP-02",
       "WRD-VAN-01", "WRD-VAN-02", "WRD-VAN-03", "WRD-VAN-04",
       "WRD-EVT-01",
     ];
