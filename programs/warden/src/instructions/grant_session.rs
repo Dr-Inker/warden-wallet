@@ -314,11 +314,10 @@ fn validate_shape(b: &GrantBody) -> Result<()> {
 ///   violation).
 /// - every bit set in `ops_mask` must be set in `policy.session_ops_ceiling`
 ///   (`OpNotAllowed`).
-/// - `program_allowlist_id` must be 0 (`ProgramAllowlistUnsupported`). It
-///   names an entry in the adapter registry that Phase 1B introduces; until
-///   that registry exists there is no id to name, and storing a non-zero one
-///   would persist a dangling reference that 1B would then have to guess the
-///   meaning of. Round-1 review finding.
+/// - `program_allowlist_id` must be 0 ("no registry") or a structural list id
+///   (1..=8) in the account's registry (`InvalidAllowlistId`); a non-zero id
+///   additionally requires `SmartAccount.registry` to be set (Task 3), so it
+///   cannot name a list in a registry the account does not reference.
 /// - every cap's mint must have a `policy.session_ceiling` entry — looked up
 ///   **by mint**, since `Policy`'s arrays are keyed by the `caps` slot index,
 ///   not by wire position — and every `per_*` must be at or below it
@@ -346,13 +345,23 @@ fn validate_against_policy(account: &SmartAccount, b: &GrantBody, now: i64) -> R
         WardenError::OpNotAllowed
     );
 
-    // 1B: policy lookup — replace this with a check that the id names a live
-    // entry in the account's adapter registry (`SmartAccount.registry`), and
-    // that the registry is the one the policy points at.
-    require!(
-        b.program_allowlist_id == 0,
-        WardenError::ProgramAllowlistUnsupported
-    );
+    // Task 3: `program_allowlist_id` must be 0 ("no registry") or a structural
+    // list id (1..=8) in the account's registry. A non-zero id requires the
+    // account to actually HAVE a registry (`SmartAccount.registry` set at create,
+    // Task 3): an id naming a list in a registry the account does not reference
+    // is a dangling pointer. Whether that list is *non-empty* is not checked
+    // here — an empty list simply denies every CPI at `execute` time
+    // (`registry_allows`), so a grant against it is harmless, not a footgun.
+    if b.program_allowlist_id != 0 {
+        require!(
+            account.registry != Pubkey::default(),
+            WardenError::InvalidAllowlistId
+        );
+        require!(
+            crate::state::Registry::is_valid_list_id(b.program_allowlist_id),
+            WardenError::InvalidAllowlistId
+        );
+    }
 
     for c in b.caps.iter() {
         let (_, ceiling) =

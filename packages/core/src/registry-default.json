@@ -1,0 +1,170 @@
+{
+  "_comment": "Generated mirror of programs/warden/src/registry_default.rs default_adapters(). Source of truth is the Rust builder; tests/registry.rs::registry_default_parity asserts they agree. Do not hand-edit.",
+  "version": 1,
+  "adapters": [
+    {
+      "program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "selector": [
+        3
+      ],
+      "disc_len": 1,
+      "role_rules": 3,
+      "lists": [
+        1
+      ]
+    },
+    {
+      "program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "selector": [
+        12
+      ],
+      "disc_len": 1,
+      "role_rules": 3,
+      "lists": [
+        1
+      ]
+    },
+    {
+      "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "selector": [
+        1
+      ],
+      "disc_len": 1,
+      "role_rules": 0,
+      "lists": [
+        1
+      ]
+    },
+    {
+      "program_id": "11111111111111111111111111111111",
+      "selector": [
+        2,
+        0,
+        0,
+        0
+      ],
+      "disc_len": 4,
+      "role_rules": 1,
+      "lists": [
+        1
+      ]
+    },
+    {
+      "program_id": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+      "selector": [],
+      "disc_len": 0,
+      "role_rules": 0,
+      "lists": [
+        1
+      ]
+    },
+    {
+      "program_id": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+      "selector": [
+        229,
+        23,
+        203,
+        151,
+        122,
+        227,
+        173,
+        42
+      ],
+      "disc_len": 8,
+      "role_rules": 0,
+      "lists": [
+        1
+      ]
+    },
+    {
+      "program_id": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+      "selector": [
+        193,
+        32,
+        155,
+        51,
+        65,
+        214,
+        156,
+        129
+      ],
+      "disc_len": 8,
+      "role_rules": 0,
+      "lists": [
+        1
+      ]
+    },
+    {
+      "program_id": "An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W",
+      "selector": [
+        9,
+        178,
+        13,
+        115,
+        129,
+        35,
+        237,
+        102
+      ],
+      "disc_len": 8,
+      "role_rules": 0,
+      "lists": [
+        2
+      ]
+    },
+    {
+      "program_id": "An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W",
+      "selector": [
+        202,
+        137,
+        44,
+        229,
+        158,
+        255,
+        205,
+        174
+      ],
+      "disc_len": 8,
+      "role_rules": 3,
+      "lists": [
+        2
+      ]
+    },
+    {
+      "program_id": "3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU",
+      "selector": [
+        229,
+        23,
+        203,
+        151,
+        122,
+        227,
+        173,
+        42
+      ],
+      "disc_len": 8,
+      "role_rules": 0,
+      "lists": [
+        2
+      ]
+    },
+    {
+      "program_id": "3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU",
+      "selector": [
+        193,
+        32,
+        155,
+        51,
+        65,
+        214,
+        156,
+        129
+      ],
+      "disc_len": 8,
+      "role_rules": 0,
+      "lists": [
+        2
+      ]
+    }
+  ]
+}

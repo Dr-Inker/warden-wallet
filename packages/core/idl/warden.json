@@ -46,6 +46,36 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Optional (Task 3): the global adapter `Registry`. When passed, its key is",
+            "stored on the new `SmartAccount` so a later `grant_session` may reference",
+            "its lists; the seeds constraint requires the canonical `[\"registry\"]` PDA,",
+            "so a stranger cannot make the account point at a fake registry. When",
+            "omitted, `SmartAccount.registry` stays `Pubkey::default()` and only",
+            "`program_allowlist_id == 0` grants are possible. Not part of the root",
+            "transcript — the registry is stored, not authorised over."
+          ],
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
         }
       ],
       "args": [

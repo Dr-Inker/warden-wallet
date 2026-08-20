@@ -59,6 +59,52 @@ pub fn account_pda(owner_seed: &[u8; 32]) -> (Pubkey, u8) {
     Pubkey::find_program_address(&[ACCOUNT_SEED, owner_seed], &program_id())
 }
 
+/// The global adapter registry PDA (`["registry"]`).
+pub fn registry_pda() -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[b"registry"], &program_id())
+}
+
+/// The BPF upgradeable loader id.
+pub fn bpf_loader_upgradeable_id() -> Pubkey {
+    Pubkey::from_str_const("BPFLoaderUpgradeab1e11111111111111111111111")
+}
+
+/// Warden's canonical `ProgramData` address under the upgradeable loader.
+pub fn warden_program_data_address() -> Pubkey {
+    Pubkey::find_program_address(&[program_id().as_ref()], &bpf_loader_upgradeable_id()).0
+}
+
+/// Plant warden's `ProgramData` account with the given upgrade authority, so
+/// `init_registry`'s upgrade-authority check has a real account to read. The
+/// data is the 45-byte `UpgradeableLoaderState::ProgramData` header
+/// (bincode-serialized), which is all Anchor's `ProgramData` deserializer reads.
+pub fn set_program_data(svm: &mut LiteSVM, upgrade_authority: Option<Pubkey>) {
+    // bincode(UpgradeableLoaderState): enum variant as u32 LE (ProgramData = 3),
+    // then slot: u64 LE, then Option<Pubkey> (1-byte tag + 32).
+    let mut data = Vec::with_capacity(45);
+    data.extend_from_slice(&3u32.to_le_bytes());
+    data.extend_from_slice(&0u64.to_le_bytes()); // slot
+    match upgrade_authority {
+        Some(k) => {
+            data.push(1);
+            data.extend_from_slice(k.as_ref());
+        }
+        None => data.push(0),
+    }
+    assert_eq!(data.len(), if upgrade_authority.is_some() { 45 } else { 13 });
+    svm.set_account(
+        warden_program_data_address(),
+        Account {
+            lamports: 10_000_000_000,
+            data,
+            owner: bpf_loader_upgradeable_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account(program_data)");
+}
+
 /// The address `create_account` will derive for `(root_pubkey33, salt)` —
 /// `["account", Keccak256("WARDEN/seed/v1" ‖ root_pubkey33 ‖ salt)]`.
 ///
@@ -143,6 +189,8 @@ pub struct SmartAccountFixture {
     /// a policy that actually configures `session_ceiling` entries and an ops
     /// ceiling, since `grant_session` validates against exactly those.
     pub policy: PolicyArgs,
+    /// Task 3: the adapter registry key to store (None = Pubkey::default()).
+    pub registry: Option<Pubkey>,
 }
 
 impl Default for SmartAccountFixture {
@@ -158,6 +206,7 @@ impl Default for SmartAccountFixture {
             policy_version: 1,
             root_nonce: 1,
             policy: default_policy_args(),
+            registry: None,
         }
     }
 }
@@ -193,9 +242,46 @@ pub fn create_account_ix(payer: Pubkey, smart_account: Pubkey, args: &CreateAcco
             AccountMeta::new(smart_account, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
             AccountMeta::new_readonly(anchor_lang::system_program::ID, false),
+            // Optional `registry` (Task 3): the program id in this slot means
+            // "None" to Anchor, so accounts created via this helper carry no
+            // registry. `create_account_ix_with_registry` passes a real one.
+            AccountMeta::new_readonly(program_id(), false),
         ],
         data,
     }
+}
+
+/// Build an `init_registry` instruction (Task 3). `authority` is the signer that
+/// must equal warden's `ProgramData.upgrade_authority_address`.
+pub fn init_registry_ix(payer: Pubkey, authority: Pubkey, treasury: Pubkey) -> Instruction {
+    let (registry, _) = registry_pda();
+    let data = Sha256::digest(b"global:init_registry")[..8].to_vec();
+    Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(payer, true),
+            AccountMeta::new(registry, false),
+            AccountMeta::new_readonly(warden_program_data_address(), false),
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new_readonly(treasury, false),
+            AccountMeta::new_readonly(anchor_lang::system_program::ID, false),
+        ],
+        data,
+    }
+}
+
+/// Like `create_account_ix` but with the optional adapter `registry` account
+/// filled in, so the new `SmartAccount` records it (Task 3).
+pub fn create_account_ix_with_registry(
+    payer: Pubkey,
+    smart_account: Pubkey,
+    registry: Pubkey,
+    args: &CreateAccountArgs,
+) -> Instruction {
+    let mut ix = create_account_ix(payer, smart_account, args);
+    // Replace the None sentinel (last account) with the real registry PDA.
+    *ix.accounts.last_mut().unwrap() = AccountMeta::new_readonly(registry, false);
+    ix
 }
 
 /// A syntactically valid but *unsigned* `RootArgs`, for building a
@@ -376,7 +462,13 @@ pub fn create_smart_account(
         f.cluster_tag,
         creatable,
     );
-    let (pda, ixs) = sign_create(svm, payer.pubkey(), pk, &mut args);
+    let (pda, mut ixs) = sign_create(svm, payer.pubkey(), pk, &mut args);
+    // Task 3: if the fixture asks for a registry, swap the create instruction
+    // for the registry-carrying variant (the registry account is trailing and
+    // not part of the ceremony transcript). `ixs[1]` is the create instruction.
+    if let Some(registry) = f.registry {
+        ixs[1] = create_account_ix_with_registry(payer.pubkey(), pda, registry, &args);
+    }
     let tx = Transaction::new(&[payer], Message::new(&ixs, Some(&payer.pubkey())), svm.latest_blockhash());
     svm.send_transaction(tx)
         .unwrap_or_else(|e| panic!("create_account must succeed: {:?} {:#?}", e.err, e.meta.logs));
@@ -471,6 +563,9 @@ pub fn set_smart_account(svm: &mut LiteSVM, f: &SmartAccountFixture) -> Pubkey {
     acc.policy = f.policy.expand().expect("fixture policy must expand");
     acc.policy.version = f.policy_version;
     acc.root_nonce = f.root_nonce;
+    if let Some(reg) = f.registry {
+        acc.registry = reg;
+    }
 
     let mut data = SmartAccount::DISCRIMINATOR.to_vec();
     data.extend_from_slice(bytemuck::bytes_of(&acc));

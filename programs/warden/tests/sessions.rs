@@ -71,6 +71,7 @@ mod err {
     pub const INVALID_POLICY: u32 = 6027;
     pub const CHALLENGE_MISMATCH: u32 = 6018;
     pub const PROGRAM_ALLOWLIST_UNSUPPORTED: u32 = 6028;
+    pub const INVALID_ALLOWLIST_ID: u32 = 6055;
     pub const SESSION_DAY_CAPS_UNSUPPORTED: u32 = 6033;
     pub const SESSION_PRIOR_STATE_MISMATCH: u32 = 6035;
 }
@@ -1051,9 +1052,13 @@ fn revoke_close_then_regrant_gets_current_generation() {
 /// Phase 1B would then have to interpret.
 #[test]
 fn grant_with_unknown_allowlist_id_rejected() {
+    // Task 3: a non-zero allowlist id on an account that has no registry set is
+    // rejected — the id would name a list in a registry the account does not
+    // reference (`InvalidAllowlistId`). (An account WITH a registry and a valid
+    // list id is exercised in tests/registry.rs.)
     let session_key = Keypair::new();
     let body = GrantBody { program_allowlist_id: 1, ..one_cap_body(session_key.pubkey()) };
-    expect_grant_reject(body, err::PROGRAM_ALLOWLIST_UNSUPPORTED);
+    expect_grant_reject(body, err::INVALID_ALLOWLIST_ID);
 }
 
 /// The root ceremony authorizes WHERE THE RENT GOES as well as what is

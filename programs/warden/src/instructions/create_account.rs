@@ -203,6 +203,16 @@ pub struct CreateAccount<'info> {
     #[account(address = solana_instructions_sysvar::ID @ WardenError::BadInstructionLayout)]
     pub ix_sysvar: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
+
+    /// Optional (Task 3): the global adapter `Registry`. When passed, its key is
+    /// stored on the new `SmartAccount` so a later `grant_session` may reference
+    /// its lists; the seeds constraint requires the canonical `["registry"]` PDA,
+    /// so a stranger cannot make the account point at a fake registry. When
+    /// omitted, `SmartAccount.registry` stays `Pubkey::default()` and only
+    /// `program_allowlist_id == 0` grants are possible. Not part of the root
+    /// transcript — the registry is stored, not authorised over.
+    #[account(seeds = [crate::constants::REGISTRY_SEED], bump)]
+    pub registry: Option<AccountLoader<'info, crate::state::registry::Registry>>,
 }
 
 // Not `pub`: only `lib.rs`'s `#[program]` module calls this, by full path
@@ -318,6 +328,12 @@ pub(crate) fn handler(ctx: Context<CreateAccount>, args: CreateAccountArgs) -> R
     account.root_nonce = 1;
     account.set_frozen(&FrozenState::None);
     account.frozen_at = 0;
+    // Task 3: record the adapter registry if one was passed (the seeds
+    // constraint already proved it is the canonical PDA); otherwise it stays
+    // `Pubkey::default()` and only id-0 grants are possible.
+    if let Some(registry) = &ctx.accounts.registry {
+        account.registry = registry.key();
+    }
 
     // Expanded straight into the account rather than via a stack `Policy` —
     // 1,448 B does not fit beside everything else in this frame (see the
