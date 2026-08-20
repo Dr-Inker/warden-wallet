@@ -381,3 +381,37 @@ warden --all-targets` clean of `arithmetic_side_effects`; `pnpm --filter
 @warden/core test` → 104 passed. **Round-6 confirmation review pending** — Task 3
 is not DONE until it returns 0 findings (round-4's premature DONE is what
 WRDF-0043 flagged).
+
+## Task 4 (staging) — measured payload cap + gate evidence
+
+**MEASURED `stage_chunk` payload cap = 979 B** (replaces the PROVISIONAL 985 B,
+spec §5.1 / §12.3). `stage::stage_chunk_payload_cap_is_measured` binary-searches
+the largest payload a single `stage_chunk` transaction carries under the fixed
+3-account layout (`disc(8) ‖ offset:u32 ‖ len:u32 ‖ payload`) against the 1,232 B
+packet: the transaction at 979 B payload is exactly **1,232 B** and 980 B
+overflows — the assertion pins the boundary so the number cannot drift from the
+build. Chunk count for a staged payload = `ceil(len / 979)`. `MAX_DATA_LEN`
+(4,096 B) therefore stages in at most 5 chunks.
+
+**Gate at `d47d8ce` (2026-08-20):** `./.claude/test-gate.sh` green (all workspace
+suites + all `.so`); `cargo test -p warden --lib` → 283 passed (incl.
+`state::stage::header_len_matches_layout`, which pins `Stage::HEADER_LEN = 139`);
+`tests/stage.rs` → 21 integration tests; `cargo clippy -p warden --lib -- -D
+clippy::arithmetic_side_effects` clean; `pnpm --filter @warden/core test` → 104
+passed. `Stage::space(n)` uses `saturating_add` for the lint — `n` is bounded by
+`MAX_DATA_LEN` at the call site, so it can never saturate.
+
+**Squat class (ND-SQD3-LO-01 / Certora H-01) proved, not assumed.** The content
+address `["stage", account, hash]` is predictable, so a stranger can pre-open a
+victim's stage. Four tests show the defusing properties hold on-chain:
+`stranger_pre_opens_stage_at_our_hash_is_time_boxed` (victim reclaims after the
+≤1 h `expiry_ts`), `squat_rent_returns_to_the_squatter` (the squatter reabsorbs
+their own rent; the victim gains none), `stranger_cannot_chunk_or_early_close_victims_stage`
+(creator-only chunk/early-close), `open_rejects_expiry_beyond_max_ttl` (the
+window is TTL-bounded). Invariants `WRD-BUF-01`/`WRD-BUF-02` move to
+`test-covered`; `WRD-STAGE-01` (finalize records generation/policy_version +
+hash check) is `test-covered`; the consume half is split out as `WRD-STAGE-02`,
+`unimplemented`, owned by Task 5 (`execute`).
+
+**Review: pending** — whole-task Codex review (sol@max) to follow; Task 4 is not
+DONE until it converges to 0 findings.
