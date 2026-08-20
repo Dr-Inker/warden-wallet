@@ -363,6 +363,24 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   governance is an accepted, documented external assumption (recorded in
   `THREATMODEL.md`), not a thing this gate recurses into further — pinning the
   audited Squads code hash is the concrete anchor.
+- [ ] **No actionable stale governance state (WRDF-0028, distinct class).** The
+  current config being correct is not enough: `vault_transaction_execute` permits
+  a proposal **already Approved before it became stale**, so an upgrade tx created
+  and approved under an earlier weak threshold can still execute after the config
+  tightens. Require a **fresh, final-config** multisig/vault at authority handoff
+  — `transaction_index == stale_transaction_index == 0` (no pre-existing proposals)
+  — or exhaustively authenticate that no Approved/executable historical proposal
+  can touch the Warden upgrade authority.
+- [ ] **Every member's permission mask, and the completeness terminus (WRDF-0017
+  round 7).** Assert each pinned member's permission bits (a member with only a
+  subset, or an unexpected proposer/executor, changes the real control), not just
+  the member pubkey set. **This is where the pre-implementation spec terminates:**
+  `WRD-DEP-01` requires attesting the *complete* audited Squads configuration —
+  members and their permission masks, threshold, time-lock, `configAuthority`,
+  code hash, and no actionable stale state — and the **byte-level field list and
+  fixtures are finalized at Task 11R implementation against the pinned Squads
+  IDL**, not enumerated further here. "Attest the complete pinned configuration"
+  is the closed requirement; the field inventory is an implementation artifact.
 - [ ] Assert the on-chain program hash equals `solana-verify get-program-hash` of
   the release artifact; **refuse on any mismatch**.
 - [ ] **The checks must be explicit assertions, and each must have a valid-looking
