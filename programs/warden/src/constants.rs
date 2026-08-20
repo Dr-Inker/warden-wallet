@@ -129,6 +129,14 @@ pub const SPL_TOKEN_2022_ID: Pubkey = Pubkey::from_str_const("TokenzQdBNbLqP5VEh
 /// never touches the wrapped-SOL mint account.
 pub const NATIVE_MINT: Pubkey = Pubkey::from_str_const("So11111111111111111111111111111111111111112");
 
+/// Token-2022's DISTINCT native mint (`spl-token-2022 7.0.0`,
+/// `src/native_mint.rs: declare_id!("9pan…")` — verified against the vendored
+/// crate, WRDF-0008). Conservation must treat a wrapped-SOL account under
+/// either program as SOL: `by_mint` may never carry a native mint key, or one
+/// SOL movement would straddle two cap/bucket keys.
+pub const NATIVE_MINT_2022: Pubkey =
+    Pubkey::from_str_const("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP");
+
 /// Fixed-layout length of an SPL Token `Account`.
 pub const TOKEN_ACCOUNT_LEN: usize = 165;
 /// `spl_token::state::AccountState::Initialized` discriminant.

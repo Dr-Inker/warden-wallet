@@ -24,11 +24,10 @@
 #      came from reviewer SCOPE, not model identity.
 #   4. Runs `codex exec` (see below) with --output-schema, tool-free, blind, anti-rewrite.
 #   5. Validates the artefact with an INDEPENDENT validator against the expectations file.
-#   6. Appends exactly ONE run record to REVIEW-RUNS.jsonl — including for a ZERO-finding round —
-#      BEFORE touching the scorecard: the run appender re-validates and refuses replays, so a
-#      rejected round leaves every ledger untouched (WRDF-0007). The scorecard records findings;
-#      the run record records that the round happened at all (L3).
-#   7. Appends every finding — disputed and scoped-out included — to REVIEW-SCORECARD.jsonl.
+#   6. Hands the artefact to append-review-run.mjs, which re-validates it independently, refuses
+#      replays, and then writes BOTH ledgers in one process — exactly ONE run record to
+#      REVIEW-RUNS.jsonl (zero-finding rounds included) and every finding (disputed and scoped-out
+#      included) to REVIEW-SCORECARD.jsonl — rolling both back together on any failure (WRDF-0007).
 #
 # WHY `codex exec` AND NOT `codex exec review` (codex-cli 0.147.0, checked on this host)
 #   `codex exec review` looks like the right subcommand and is not usable here:
@@ -147,10 +146,11 @@ EXPECT="${OUT%.json}.expect.json"
 # did not seed them). And every unimplemented row is ALWAYS seeded, never displaced by a narrow
 # code hit: over-seeding is the safe direction, and a single-module diff must not suppress the
 # cross-cutting rows the fallback used to carry.
-LEDGER_DIFF="$(git diff "$BASE_SHA" "$HEAD_SHA" -- docs/security/invariants.jsonl | grep '^+{' || true)"
+# Whitespace-tolerant: a re-indented row is still that row (WRDF-0001 round-3 residual).
+LEDGER_DIFF="$(git diff "$BASE_SHA" "$HEAD_SHA" -- docs/security/invariants.jsonl | grep -E '^\+[[:space:]]*\{' || true)"
 # A published invariant id is immutable: it is retired in place (status/notes), never deleted. A
 # deleted row would otherwise vanish from seeding and pass the anti-silence gate (WRDF-0006).
-LEDGER_REMOVED="$(git diff "$BASE_SHA" "$HEAD_SHA" -- docs/security/invariants.jsonl | grep '^-{' || true)"
+LEDGER_REMOVED="$(git diff "$BASE_SHA" "$HEAD_SHA" -- docs/security/invariants.jsonl | grep -E '^-[[:space:]]*\{' || true)"
 DELETED_IDS="$(LEDGER_DIFF="$LEDGER_DIFF" LEDGER_REMOVED="$LEDGER_REMOVED" node -e '
 const parse = (s) => (s || "").split("\n").filter(Boolean)
   .map((l) => { try { return JSON.parse(l.slice(1)).id; } catch { return null; } }).filter(Boolean);
@@ -385,29 +385,11 @@ node scripts/validate-findings.mjs "$OUT" --schema "$SCHEMA" --expect "$EXPECT"
 # rejected run leaves the scorecard untouched (WRDF-0007). Model and thread are wrapper-
 # authoritative, and the artefact digest gives the run an immutable identity (WRDF-0002/-0003).
 node scripts/append-review-run.mjs "$OUT" --expect "$EXPECT" --kind "$KIND" \
-  --model "$MODEL@$EFFORT" --thread "$ROUND_ID" --effort "$EFFORT"
+  --model "$MODEL@$EFFORT" --thread "$ROUND_ID" --effort "$EFFORT" --scorecard "$SCORECARD"
 
-# ---- 8. append every finding to the scorecard (disputed and scoped-out too) --
-# reviewer_model and thread are the WRAPPER's values (WRDF-0002): the wrapper invoked the model, so
-# its record is authoritative; the model's self-report is unreliable and stays in the raw artefact.
-OUT="$OUT" WRAPPER_MODEL="$MODEL@$EFFORT" WRAPPER_THREAD="$ROUND_ID" node -e '
-const fs = require("fs");
-const doc = JSON.parse(fs.readFileSync(process.env.OUT, "utf8"));
-const date = new Date().toISOString().slice(0, 10);
-const lines = doc.findings.map((f) => JSON.stringify({
-  finding_id: f.id, thread: process.env.WRAPPER_THREAD, date,
-  reviewer_model: process.env.WRAPPER_MODEL,
-  base_sha: doc.base_sha, head_sha: doc.head_sha, severity: f.severity,
-  truth_status: f.truth_status, evidence_type: f.evidence_type,
-  invariant_ids: f.invariant_ids, prior_art_cited: f.prior_art_cited || [],
-  ruling: f.adjudication ? f.adjudication.ruling : "pending",
-  ruled_by: f.adjudication ? f.adjudication.by : null,
-  rationale: f.adjudication ? f.adjudication.rationale : f.rationale,
-  reproducer_verified: !!(f.reproducer && f.reproducer.verified),
-}));
-if (lines.length) fs.appendFileSync("docs/security/REVIEW-SCORECARD.jsonl", lines.join("\n") + "\n");
-console.error(`appended ${lines.length} finding(s) to docs/security/REVIEW-SCORECARD.jsonl`);
-'
+# (The scorecard append now lives INSIDE append-review-run.mjs — one process writes both ledgers,
+# run record first, with rollback on failure, so a rejected or interrupted round leaves neither a
+# run row nor orphan scorecard lines. WRDF-0007.)
 
 echo
 echo "Next: adjudicate every finding (disputed and scoped-out included), record the ruling in"

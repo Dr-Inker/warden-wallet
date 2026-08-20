@@ -447,7 +447,15 @@ pub(crate) fn check_mint(bm: &MintSnap, am: &MintSnap) -> Result<()> {
 /// the cap-lookup key for native SOL, so two entries would debit one bucket
 /// twice for one movement.
 fn account_amount(net: &mut Netter, bt: &TokenSnap, at: &TokenSnap) -> Result<()> {
-    let native = bt.mint == NATIVE_MINT;
+    // Native is decided by `is_native` — the token program's own, unforgeable
+    // marker — OR by either program's native mint key (WRDF-0008): Token-2022
+    // wraps SOL under its own mint (`NATIVE_MINT_2022`), and a mint-key-only
+    // test would send that delta to `by_mint`, splitting one SOL movement
+    // across two cap/bucket keys. The mint-key half is belt-and-braces so a
+    // native MINT key can never appear in `by_mint` even if `is_native` were
+    // absent on a malformed account.
+    let native =
+        bt.is_native.is_some() || bt.mint == NATIVE_MINT || bt.mint == crate::constants::NATIVE_MINT_2022;
     if at.amount < bt.amount {
         let d = bt.amount.checked_sub(at.amount).ok_or(WardenError::Overflow)?;
         if native {

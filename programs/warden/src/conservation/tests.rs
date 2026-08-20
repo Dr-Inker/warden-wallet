@@ -460,6 +460,67 @@ fn wsol_decrease_is_counted_in_sol_and_never_in_by_mint() {
 }
 
 #[test]
+fn t22_native_account_delta_is_counted_in_sol_not_by_mint() {
+    // WRDF-0008: Token-2022 wraps SOL under its OWN native mint
+    // (`NATIVE_MINT_2022`, spl-token-2022 7.0.0 `src/native_mint.rs`), so a
+    // mint-key-only native test would send this delta to
+    // `by_mint[9pan…]` — one SOL movement split across two cap/bucket keys.
+    let acct = |amount: u64| {
+        t22_token_bytes(
+            token_bytes(
+                NATIVE_MINT_2022,
+                vault(),
+                amount,
+                None,
+                0,
+                None,
+                AccountState::Initialized,
+                Some(RENT),
+            ),
+            // A 166-byte buffer (type byte, empty tail) is not a valid T22
+            // shape — `classify` mirrors the crate's `type_and_tlv_indices`
+            // there — so carry one benign zero-length entry (ImmutableOwner).
+            &tlv(&[(7, vec![])]),
+        )
+    };
+    let mint = t22_mint_bytes(mint_bytes(None, 0, 9, None), &tlv(&[(7, vec![])]));
+    let before = vec![
+        snapshot_one(&pk(3), &SPL_TOKEN_2022_ID, RENT + 5_000, &acct(5_000), true),
+        snap_t22(NATIVE_MINT_2022, &mint, false),
+    ];
+    let after = vec![
+        snapshot_one(&pk(3), &SPL_TOKEN_2022_ID, RENT + 1_000, &acct(1_000), true),
+        snap_t22(NATIVE_MINT_2022, &mint, false),
+    ];
+    let out = cmp(&before, &after, &[]).expect("ok");
+    assert_eq!(out.sol, 4_000);
+    assert!(out.by_mint.is_empty(), "a native mint key must never appear in by_mint");
+}
+
+#[test]
+fn is_native_decides_the_sol_lane_regardless_of_mint_key() {
+    // `is_native` is the token program's own unforgeable marker — the design
+    // says it, not the mint key, decides wrapped SOL. Pin that the
+    // classification follows it even for a mint key the code has never heard
+    // of, so a future native mint cannot silently land in `by_mint`.
+    let m = pk(9);
+    let acct = |amount: u64| {
+        token_bytes(m, vault(), amount, None, 0, None, AccountState::Initialized, Some(RENT))
+    };
+    let before = vec![
+        snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT + 700, &acct(700), true),
+        plain_mint(m),
+    ];
+    let after = vec![
+        snapshot_one(&pk(3), &SPL_TOKEN_ID, RENT, &acct(0), true),
+        plain_mint(m),
+    ];
+    let out = cmp(&before, &after, &[]).expect("ok");
+    assert_eq!(out.sol, 700);
+    assert!(out.by_mint.is_empty());
+}
+
+#[test]
 fn wsol_and_pda_lamport_delta_merge_into_one_sol_number() {
     let before = vec![vault_ata(pk(3), NATIVE_MINT, 5_000), plain_mint(NATIVE_MINT)];
     let after = vec![vault_ata(pk(3), NATIVE_MINT, 1_000), plain_mint(NATIVE_MINT)];

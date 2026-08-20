@@ -7,7 +7,7 @@
 // Without the first, review coverage is invisible; without the second, a garbage artefact could
 // buy a coverage line.
 import { describe, it, expect } from "vitest";
-import { readFileSync, writeFileSync, existsSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -163,47 +163,91 @@ describe("buildRunRecord (scripts/append-review-run.mjs)", () => {
 describe("append-review-run.mjs CLI", () => {
   const tmp = mkdtempSync(join(tmpdir(), "warden-review-runs-"));
   const runsFile = join(tmp, "runs.jsonl");
+  const cardFile = join(tmp, "scorecard.jsonl");
+  const cli = (artefact: string, ...extra: string[]) =>
+    execFileSync(
+      "node",
+      [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile, "--scorecard", cardFile, ...extra],
+      { stdio: "pipe" },
+    );
 
-  it("appends exactly one line for a validated zero-finding round", () => {
+  it("appends exactly one run line and ZERO scorecard lines for a validated zero-finding round", () => {
     const artefact = join(tmp, "zero.json");
     writeFileSync(artefact, JSON.stringify(zeroFinding()));
-    execFileSync("node", [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile, "--kind", "task-diff", "--effort", "max"]);
+    cli(artefact, "--kind", "task-diff", "--effort", "max");
     const lines = readFileSync(runsFile, "utf8").split("\n").filter((l) => l.trim());
     expect(lines.length).toBe(1);
     const rec = JSON.parse(lines[0]);
     expect(rec.findings_count).toBe(0);
     expect(rec.artefact).toBe(artefact);
     expect(rec.recorded_by).toBe("scripts/append-review-run.mjs");
+    expect(existsSync(cardFile)).toBe(false);
   });
 
-  it("appends NOTHING for an artefact that fails validation, and exits non-zero", () => {
+  it("appends one run line AND one scorecard line per finding, atomically (WRDF-0007)", () => {
+    const doc = fresh();
+    const artefact = join(tmp, "with-findings.json");
+    writeFileSync(artefact, JSON.stringify(doc));
+    cli(artefact, "--model", "gpt-5.6-sol@max", "--thread", "round-x");
+    const runs2 = readFileSync(runsFile, "utf8").split("\n").filter((l) => l.trim());
+    expect(runs2.length).toBe(2);
+    const card = readFileSync(cardFile, "utf8").split("\n").filter((l) => l.trim());
+    expect(card.length).toBe(doc.findings.length);
+    for (const l of card) {
+      const row = JSON.parse(l);
+      expect(row.thread).toBe("round-x");
+      expect(row.reviewer_model).toBe("gpt-5.6-sol@max");
+    }
+  });
+
+  it("appends NOTHING to either ledger for an artefact that fails validation", () => {
     const doc = fresh();
     doc.invariant_verdicts[0].verdict = "not_reviewed";
     const artefact = join(tmp, "invalid.json");
     writeFileSync(artefact, JSON.stringify(doc));
+    const beforeRuns = readFileSync(runsFile, "utf8");
+    const beforeCard = readFileSync(cardFile, "utf8");
+    expect(() => cli(artefact)).toThrow();
+    expect(readFileSync(runsFile, "utf8")).toBe(beforeRuns);
+    expect(readFileSync(cardFile, "utf8")).toBe(beforeCard);
+  });
+
+  it("REFUSES a replay of an already-recorded artefact, even with mutated self-report fields (WRDF-0003)", () => {
+    const doc = zeroFinding();
+    doc.thread = "totally-different-self-report";
+    const artefact = join(tmp, "zero-replay.json");
+    writeFileSync(artefact, JSON.stringify(doc));
     const before = readFileSync(runsFile, "utf8");
-    expect(() =>
-      execFileSync("node", [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile], { stdio: "pipe" }),
-    ).toThrow();
+    // The zero-finding artefact's SUBSTANCE was already recorded by the first CLI test above;
+    // changing the self-reported thread must not buy it a fresh digest.
+    expect(() => cli(artefact)).toThrow();
     expect(readFileSync(runsFile, "utf8")).toBe(before);
   });
 
-  it("REFUSES a byte-identical replay of an already-recorded artefact (WRDF-0003)", () => {
-    const artefact = join(tmp, "zero-replay.json");
-    writeFileSync(artefact, JSON.stringify(zeroFinding()));
-    const before = readFileSync(runsFile, "utf8");
-    // The zero-finding artefact was already recorded by the first CLI test above.
+  it("rolls BOTH ledgers back when the scorecard write fails mid-round (WRDF-0007)", () => {
+    const doc = fresh();
+    doc.findings[0].rationale += " (rollback variant)"; // fresh digest
+    const artefact = join(tmp, "rollback.json");
+    writeFileSync(artefact, JSON.stringify(doc));
+    const beforeRuns = readFileSync(runsFile, "utf8");
+    // A directory at the scorecard path makes appendFileSync throw AFTER the run record landed.
+    const cardDir = join(tmp, "scorecard-as-dir");
+    mkdirSync(cardDir);
     expect(() =>
-      execFileSync("node", [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile], { stdio: "pipe" }),
+      execFileSync(
+        "node",
+        [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile, "--scorecard", cardDir],
+        { stdio: "pipe" },
+      ),
     ).toThrow();
-    expect(readFileSync(runsFile, "utf8")).toBe(before);
+    expect(readFileSync(runsFile, "utf8")).toBe(beforeRuns);
   });
 
   it("--dry-run prints the record without appending", () => {
     const artefact = join(tmp, "zero2.json");
     writeFileSync(artefact, JSON.stringify(zeroFinding()));
     const before = readFileSync(runsFile, "utf8");
-    const out = execFileSync("node", [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile, "--dry-run"]);
+    const out = execFileSync("node", [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile, "--scorecard", cardFile, "--dry-run"]);
     expect(JSON.parse(out.toString()).findings_count).toBe(0);
     expect(readFileSync(runsFile, "utf8")).toBe(before);
   });
