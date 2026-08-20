@@ -167,6 +167,10 @@ pub struct CreateBody {
     pub cluster_tag: [u8; 32],
     /// `Keccak256(borsh(PolicyArgs))`.
     pub policy_hash: [u8; 32],
+    /// The adapter registry the account will record (`Pubkey::default()` = none)
+    /// — bound into the ceremony so an observer cannot swap the optional
+    /// `registry` account between signing and landing (WRDF-0034, Task 3).
+    pub registry: Pubkey,
 }
 
 #[derive(Accounts)]
@@ -269,11 +273,21 @@ pub(crate) fn handler(ctx: Context<CreateAccount>, args: CreateAccountArgs) -> R
     // overflows the frame — observed as "Access violation in stack frame N"
     // rather than as a compile error, so the split is load-bearing, not
     // stylistic.
+    // The registry the account will record — `Pubkey::default()` when the
+    // optional account is omitted. Bound into the ceremony below AND stored,
+    // from the same value, so the two cannot disagree.
+    let registry_key = ctx
+        .accounts
+        .registry
+        .as_ref()
+        .map(|r| r.key())
+        .unwrap_or_default();
     prove_possession(
         &args,
         root_pubkey33,
         computed_rp_id_hash,
         ctx.accounts.smart_account.key(),
+        registry_key,
         &ctx.accounts.ix_sysvar.to_account_info(),
         ctx.program_id,
         now,
@@ -328,12 +342,10 @@ pub(crate) fn handler(ctx: Context<CreateAccount>, args: CreateAccountArgs) -> R
     account.root_nonce = 1;
     account.set_frozen(&FrozenState::None);
     account.frozen_at = 0;
-    // Task 3: record the adapter registry if one was passed (the seeds
-    // constraint already proved it is the canonical PDA); otherwise it stays
-    // `Pubkey::default()` and only id-0 grants are possible.
-    if let Some(registry) = &ctx.accounts.registry {
-        account.registry = registry.key();
-    }
+    // Task 3: record the adapter registry (the same value bound into the
+    // ceremony above). The seeds constraint already proved a passed account is
+    // the canonical PDA; an omitted one leaves this `Pubkey::default()`.
+    account.registry = registry_key;
 
     // Expanded straight into the account rather than via a stack `Policy` —
     // 1,448 B does not fit beside everything else in this frame (see the
@@ -366,6 +378,7 @@ fn prove_possession(
     root_pubkey33: [u8; 33],
     rp_id_hash: [u8; 32],
     account_key: Pubkey,
+    registry: Pubkey,
     ix_sysvar: &AccountInfo,
     program_id: &Pubkey,
     now: i64,
@@ -379,6 +392,7 @@ fn prove_possession(
         origin: args.origin.clone(),
         cluster_tag: args.cluster_tag,
         policy_hash: solana_keccak_hasher::hashv(&[&policy_bytes]).to_bytes(),
+        registry,
     };
     let mut body_bytes = Vec::new();
     body.serialize(&mut body_bytes)?;
@@ -630,7 +644,7 @@ mod tests {
     /// Pinned with the same INDEPENDENT Keccak provenance as the seed vector
     /// above, over the exact borsh encoding of `CreateBody`:
     /// `salt(32) ‖ rp_id_hash(32) ‖ len(u32 LE) ‖ origin ‖ cluster_tag(32) ‖
-    /// policy_hash(32)` = 183 B for the canonical 51-byte origin, hashed as
+    /// policy_hash(32) ‖ registry(32)` = 215 B for the canonical 51-byte origin, hashed as
     /// `Keccak256(0x06 ‖ body)`.
     ///
     /// Mirrored verbatim in `packages/core/test/transcript.test.ts`; if the
@@ -644,13 +658,14 @@ mod tests {
             origin: b"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi".to_vec(),
             cluster_tag: [0x5Au8; 32],
             policy_hash: [0x66u8; 32],
+            registry: Pubkey::default(),
         };
         let mut encoded = Vec::new();
         body.serialize(&mut encoded).unwrap();
-        assert_eq!(encoded.len(), 183, "borsh layout of CreateBody");
+        assert_eq!(encoded.len(), 215, "borsh layout of CreateBody (with 32-byte registry)");
         assert_eq!(
             hex::encode(action_hash(OP_CREATE, &encoded)),
-            "d833a9c4d6dae3169175caadc86f1d1308996eacc2918b4af5465dc6be4a4020"
+            "748fb53596c08c44303df545bec9432220ec1cdadae3413ef4ca267614d4d59a"
         );
     }
 
@@ -665,6 +680,7 @@ mod tests {
             origin: b"chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi".to_vec(),
             cluster_tag: [3u8; 32],
             policy_hash: [4u8; 32],
+            registry: Pubkey::new_from_array([5u8; 32]),
         };
         let enc = |b: &CreateBody| {
             let mut v = Vec::new();
@@ -688,6 +704,9 @@ mod tests {
         variants.push(v);
         let mut v = base.clone();
         v.policy_hash[0] ^= 1;
+        variants.push(v);
+        let mut v = base.clone();
+        v.registry = Pubkey::new_from_array([6u8; 32]);
         variants.push(v);
         for (i, v) in variants.iter().enumerate() {
             assert_ne!(base_h, h(v), "CreateBody field {i} does not affect the digest");

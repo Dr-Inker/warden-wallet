@@ -133,7 +133,7 @@ fn create_without_a_ceremony_is_rejected() {
     let (mut svm, payer) = setup_at_now();
     let pk = TestPasskey::new(3);
     let mut args = args_for(&pk, [1u8; 32]);
-    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, solana_sdk::pubkey::Pubkey::default());
 
     // Drop the precompile: a REAL, correctly-signed assertion is still in the
     // instruction data, so the only thing missing is the runtime's
@@ -155,7 +155,7 @@ fn create_with_an_assertion_by_the_wrong_passkey_is_rejected() {
     let mut args = args_for(&victim, [1u8; 32]);
     // `sign_create` signs with `attacker` but derives the address (and the
     // transcript) from `args.root_key`, which is the victim's.
-    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &attacker, &mut args);
+    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &attacker, &mut args, solana_sdk::pubkey::Pubkey::default());
 
     expect_custom(&mut svm, &payer, &ixs, 1, err::PRECOMPILE_BINDING_MISMATCH);
     assert!(svm.get_account(&pda).is_none(), "nothing may be created");
@@ -170,7 +170,7 @@ fn create_through_a_middleman_cpi_is_rejected() {
     let middleman = common::add_middleman(&mut svm);
     let pk = TestPasskey::new(3);
     let mut args = args_for(&pk, [2u8; 32]);
-    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, solana_sdk::pubkey::Pubkey::default());
     let (precompile_ix, warden_ix) = (ixs[0].clone(), ixs[1].clone());
 
     // ---- (a) through the middleman: rejected -----------------------------
@@ -197,7 +197,7 @@ fn a_stale_creation_ceremony_is_rejected() {
     let (mut svm, payer) = setup_at_now();
     let pk = TestPasskey::new(3);
     let mut args = args_for(&pk, [3u8; 32]);
-    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, solana_sdk::pubkey::Pubkey::default());
     svm.warp_to_slot(NOW_SLOT + MAX_ROOT_SLOT_AGE);
     expect_custom(&mut svm, &payer, &ixs, 1, err::ROOT_SLOT_STALE);
     assert!(svm.get_account(&pda).is_none());
@@ -214,7 +214,7 @@ fn a_substituted_salt_is_a_challenge_mismatch() {
     let (mut svm, payer) = setup_at_now();
     let pk = TestPasskey::new(3);
     let mut args = args_for(&pk, [4u8; 32]);
-    let (_pda, _ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+    let (_pda, _ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, solana_sdk::pubkey::Pubkey::default());
 
     // Keep the assertion, change the salt, and submit at the address the NEW
     // salt derives (submitting at the old address would only trip Anchor's
@@ -238,7 +238,7 @@ fn a_substituted_policy_is_a_challenge_mismatch() {
     let (mut svm, payer) = setup_at_now();
     let pk = TestPasskey::new(3);
     let mut args = args_for(&pk, [6u8; 32]);
-    let (pda, _ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+    let (pda, _ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, solana_sdk::pubkey::Pubkey::default());
 
     let mut swapped = args.clone();
     swapped.policy.max_session_life_secs -= 1; // still a VALID policy — just not the signed one
@@ -254,7 +254,7 @@ fn a_substituted_cluster_tag_is_a_challenge_mismatch() {
     let (mut svm, payer) = setup_at_now();
     let pk = TestPasskey::new(3);
     let mut args = args_for(&pk, [7u8; 32]);
-    let (pda, _ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+    let (pda, _ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, solana_sdk::pubkey::Pubkey::default());
 
     let mut swapped = args.clone();
     swapped.cluster_tag = [0x11u8; 32];
@@ -304,7 +304,7 @@ fn squat_race_attacker_cannot_reach_the_victims_address() {
 
     // ---- (a) attacker's own root, victim's salt: lands ELSEWHERE ---------
     let mut a_args = args_for(&attacker, observed_salt);
-    let (attacker_pda, a_ixs) = sign_create(&svm, payer.pubkey(), &attacker, &mut a_args);
+    let (attacker_pda, a_ixs) = sign_create(&svm, payer.pubkey(), &attacker, &mut a_args, solana_sdk::pubkey::Pubkey::default());
     assert_ne!(
         attacker_pda, victim_pda,
         "same salt + different root MUST derive a different address"
@@ -313,7 +313,7 @@ fn squat_race_attacker_cannot_reach_the_victims_address() {
 
     // ---- (b) victim's root, victim's salt, attacker's signature: nothing --
     let mut b_args = args_for(&victim, observed_salt);
-    let (b_pda, b_ixs) = sign_create(&svm, payer.pubkey(), &attacker, &mut b_args);
+    let (b_pda, b_ixs) = sign_create(&svm, payer.pubkey(), &attacker, &mut b_args, solana_sdk::pubkey::Pubkey::default());
     assert_eq!(b_pda, victim_pda, "with the victim's root the address IS the victim's");
     expect_custom(&mut svm, &payer, &b_ixs, 1, err::PRECOMPILE_BINDING_MISMATCH);
 
@@ -323,7 +323,7 @@ fn squat_race_attacker_cannot_reach_the_victims_address() {
 
     // ---- the victim's own creation lands, unaffected ---------------------
     let mut v_args = args_for(&victim, observed_salt);
-    let (v_pda, v_ixs) = sign_create(&svm, payer.pubkey(), &victim, &mut v_args);
+    let (v_pda, v_ixs) = sign_create(&svm, payer.pubkey(), &victim, &mut v_args, solana_sdk::pubkey::Pubkey::default());
     assert_eq!(v_pda, victim_pda);
     send(&mut svm, &payer, &v_ixs).expect("the victim's own create must land");
     let acc = read_smart_account(&svm, &victim_pda);
@@ -346,7 +346,7 @@ fn the_creating_assertion_cannot_be_replayed_for_a_second_salt() {
     let (mut svm, payer) = setup_at_now();
     let pk = TestPasskey::new(3);
     let mut args = args_for(&pk, [0x10u8; 32]);
-    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, solana_sdk::pubkey::Pubkey::default());
     send(&mut svm, &payer, &ixs).expect("first create must land");
 
     // The same RootArgs, re-pointed at a second salt / second address.
@@ -382,7 +382,7 @@ fn off_curve_root_cannot_be_created_because_no_assertion_verifies() {
     args.root_key = RootKey::P256Passkey { pubkey: off_curve };
     // A ceremony signed by a real key, but claiming the off-curve root: the
     // precompile is handed `off_curve` as the public key.
-    let (pda, mut ixs) = sign_create(&svm, payer.pubkey(), &signer, &mut args);
+    let (pda, mut ixs) = sign_create(&svm, payer.pubkey(), &signer, &mut args, solana_sdk::pubkey::Pubkey::default());
     ixs[0] = passkey::precompile_ix_custom(
         &off_curve,
         &[0u8; 64],
@@ -418,7 +418,7 @@ fn a_malformed_root_encoding_is_still_refused_by_validate_root() {
     bad[0] = 0x04; // uncompressed-point prefix
     let mut args = args_for(&pk, [0x21u8; 32]);
     args.root_key = RootKey::P256Passkey { pubkey: bad };
-    let (_pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+    let (_pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, solana_sdk::pubkey::Pubkey::default());
     expect_custom(&mut svm, &payer, &ixs, 1, err::INVALID_ROOT_KEY);
 }
 
@@ -434,7 +434,7 @@ fn creation_consumes_its_nonce_and_the_next_ceremony_starts_at_one() {
     let (mut svm, payer) = setup_at_now();
     let pk = TestPasskey::new(3);
     let mut args = args_for(&pk, [0x30u8; 32]);
-    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, solana_sdk::pubkey::Pubkey::default());
     send(&mut svm, &payer, &ixs).expect("create must land");
     assert_eq!(read_smart_account(&svm, &pda).root_nonce, 1);
 
@@ -496,19 +496,24 @@ fn creation_consumes_its_nonce_and_the_next_ceremony_starts_at_one() {
 fn create_with_pop_transaction_sizes_are_measured_and_bounded() {
     let (svm, payer) = setup_at_now();
     let pk = TestPasskey::new(3);
+    // Measure the WORST shape: a registry IS attached (Task 3, WRDF-0036), which
+    // adds a distinct account key (+32 B) over the None sentinel — the None case
+    // reuses the program id already in the message and is strictly smaller. If
+    // the registry-bearing shape fits, so does the registry-less one.
+    let registry = solana_sdk::pubkey::Pubkey::new_unique();
     let mut fits: Vec<usize> = Vec::new();
     for n in 0..=8usize {
         let mut args = args_for(&pk, [n as u8; 32]);
         args.policy = n_mints_policy(n);
-        let (_pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+        let (_pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, registry);
         let tx = Transaction::new(&[&payer], Message::new(&ixs, Some(&payer.pubkey())), svm.latest_blockhash());
         let len = bincode::serialize(&tx).unwrap().len();
-        println!("create_account + PoP, {n} mints: {len} B");
+        println!("create_account + PoP + registry, {n} mints: {len} B");
         if len <= PACKET_DATA_SIZE {
             fits.push(n);
         }
     }
-    let largest = *fits.last().expect("a zero-mint create must fit");
+    let largest = *fits.last().expect("a zero-mint create with a registry must fit");
     println!("largest mint count that fits with PoP: {largest}");
     assert_eq!(
         largest, MAX_MINTS_AT_CREATE,
@@ -525,7 +530,7 @@ fn max_mints_at_create_with_pop_actually_lands() {
     let pk = TestPasskey::new(3);
     let mut args = args_for(&pk, [0x40u8; 32]);
     args.policy = n_mints_policy(MAX_MINTS_AT_CREATE);
-    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args);
+    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &pk, &mut args, solana_sdk::pubkey::Pubkey::default());
     let tx = Transaction::new(&[&payer], Message::new(&ixs, Some(&payer.pubkey())), svm.latest_blockhash());
     let len = bincode::serialize(&tx).unwrap().len();
     assert!(len <= PACKET_DATA_SIZE, "{MAX_MINTS_AT_CREATE}-mint create with PoP is {len} B");

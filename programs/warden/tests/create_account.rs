@@ -139,7 +139,7 @@ fn build_tx(
     svm: &litesvm::LiteSVM,
     args: &mut CreateAccountArgs,
 ) -> (usize, Transaction) {
-    let (_pda, ixs) = sign_create(svm, payer.pubkey(), &root_key(), args);
+    let (_pda, ixs) = sign_create(svm, payer.pubkey(), &root_key(), args, solana_sdk::pubkey::Pubkey::default());
     let tx = Transaction::new(&[payer], Message::new(&ixs, Some(&payer.pubkey())), svm.latest_blockhash());
     let len = bincode::serialize(&tx).unwrap().len();
     (len, tx)
@@ -162,7 +162,7 @@ fn send(
     payer: &solana_sdk::signature::Keypair,
     args: &mut CreateAccountArgs,
 ) -> litesvm::types::TransactionResult {
-    let (_pda, ixs) = sign_create(svm, payer.pubkey(), &root_key(), args);
+    let (_pda, ixs) = sign_create(svm, payer.pubkey(), &root_key(), args, solana_sdk::pubkey::Pubkey::default());
     let tx = Transaction::new(&[payer], Message::new(&ixs, Some(&payer.pubkey())), svm.latest_blockhash());
     svm.send_transaction(tx)
 }
@@ -223,7 +223,7 @@ fn discriminator_is_sha256_of_global_create_account() {
 fn creates_with_defaults() {
     let (mut svm, payer) = common::setup();
     let mut args = honest_args([3u8; 32]);
-    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &root_key(), &mut args);
+    let (pda, ixs) = sign_create(&svm, payer.pubkey(), &root_key(), &mut args, solana_sdk::pubkey::Pubkey::default());
     let (_, expected_bump) = account_pda_for(&root_key().pubkey33(), &args.salt);
 
     let tx_bytes_ix = ixs[1].data.len();

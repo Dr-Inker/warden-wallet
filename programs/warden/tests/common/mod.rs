@@ -336,6 +336,10 @@ pub fn sign_create(
     payer: Pubkey,
     pk: &passkey::TestPasskey,
     args: &mut CreateAccountArgs,
+    // Task 3: the registry the account will record (`Pubkey::default()` = none).
+    // Bound into the ceremony body AND carried by the create instruction so the
+    // two agree — an observer cannot swap the optional registry account.
+    registry: Pubkey,
 ) -> (Pubkey, Vec<Instruction>) {
     let clock: Clock = svm.get_sysvar();
     let expiry_ts = clock.unix_timestamp + 60;
@@ -361,6 +365,7 @@ pub fn sign_create(
         origin: args.origin.clone(),
         cluster_tag: args.cluster_tag,
         policy_hash: solana_keccak_hasher::hashv(&[&policy_bytes]).to_bytes(),
+        registry,
     };
     let mut body_bytes = Vec::new();
     body.serialize(&mut body_bytes).unwrap();
@@ -388,10 +393,12 @@ pub fn sign_create(
         expiry_ts,
         signed_slot,
     };
-    let ixs = vec![
-        passkey::precompile_ix(&assertion, &pk.pubkey33()),
-        create_account_ix(payer, pda, args),
-    ];
+    let create_ix = if registry == Pubkey::default() {
+        create_account_ix(payer, pda, args)
+    } else {
+        create_account_ix_with_registry(payer, pda, registry, args)
+    };
+    let ixs = vec![passkey::precompile_ix(&assertion, &pk.pubkey33()), create_ix];
     (pda, ixs)
 }
 
@@ -462,13 +469,7 @@ pub fn create_smart_account(
         f.cluster_tag,
         creatable,
     );
-    let (pda, mut ixs) = sign_create(svm, payer.pubkey(), pk, &mut args);
-    // Task 3: if the fixture asks for a registry, swap the create instruction
-    // for the registry-carrying variant (the registry account is trailing and
-    // not part of the ceremony transcript). `ixs[1]` is the create instruction.
-    if let Some(registry) = f.registry {
-        ixs[1] = create_account_ix_with_registry(payer.pubkey(), pda, registry, &args);
-    }
+    let (pda, ixs) = sign_create(svm, payer.pubkey(), pk, &mut args, f.registry.unwrap_or_default());
     let tx = Transaction::new(&[payer], Message::new(&ixs, Some(&payer.pubkey())), svm.latest_blockhash());
     svm.send_transaction(tx)
         .unwrap_or_else(|e| panic!("create_account must succeed: {:?} {:#?}", e.err, e.meta.logs));

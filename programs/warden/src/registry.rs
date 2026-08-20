@@ -18,7 +18,13 @@ use anchor_lang::prelude::*;
 use crate::constants::SPL_TOKEN_ID;
 use crate::state::registry::Registry;
 
-/// `role_rules` bit: the vault PDA must appear as a signer in the CPI accounts.
+/// `role_rules` bit: the vault PDA must be the SPL Token **authority** (the
+/// account at the instruction's authority position) AND sign — not merely appear
+/// as some signer. The authority position is selector-specific: `Transfer(3)`
+/// puts it at index 2 (`[source, dest, authority]`), `TransferChecked(12)` at
+/// index 3 (`[source, mint, dest, authority]`). Checking only "the vault signs
+/// somewhere" would accept a transfer of a multisig-owned account where the
+/// vault is one of several signers but not the authority (WRDF-0035).
 pub const ROLE_VAULT_SIGNER: u8 = 1 << 0;
 /// `role_rules` bit: the SPL Token program must be present in the CPI accounts.
 pub const ROLE_REQUIRES_TOKEN_PROGRAM: u8 = 1 << 1;
@@ -55,16 +61,56 @@ pub fn registry_allows(
     if !reg.list_contains(list_id, idx) {
         return false;
     }
-    let role_rules = reg.entries[idx].role_rules;
-    role_validator_passes(role_rules, accounts, vault)
+    let entry = &reg.entries[idx];
+    role_validator_passes(entry.role_rules, &entry.selector[..entry.disc_len as usize], accounts, vault)
 }
 
-/// The structural half of role validation (what `(accounts, vault)` can decide).
-fn role_validator_passes(role_rules: u8, accounts: &[AccountMetaLike], vault: &Pubkey) -> bool {
+/// The SPL Token instruction index of the **authority** account for a selector
+/// whose role demands the vault be that authority. `None` means "this selector
+/// has no fixed authority position", in which case `ROLE_VAULT_SIGNER` falls
+/// back to requiring the vault to sign at all (still stricter than nothing, but
+/// selectors that carry `ROLE_VAULT_SIGNER` should name their position here).
+fn spl_authority_index(selector: &[u8]) -> Option<usize> {
+    match selector {
+        [3] => Some(2),  // Transfer:        [source, dest, authority]
+        [12] => Some(3), // TransferChecked: [source, mint, dest, authority]
+        _ => None,
+    }
+}
+
+/// The structural half of role validation (what `(selector, accounts, vault)`
+/// can decide). The value half — that a source is *the vault's own* ATA, and
+/// conservation of value — is `execute`/`conservation`'s (Task 5).
+fn role_validator_passes(
+    role_rules: u8,
+    selector: &[u8],
+    accounts: &[AccountMetaLike],
+    vault: &Pubkey,
+) -> bool {
     if role_rules & ROLE_VAULT_SIGNER != 0 {
-        let vault_signs = accounts.iter().any(|a| a.pubkey == *vault && a.is_signer);
-        if !vault_signs {
-            return false;
+        // The vault must be the AUTHORITY at the selector's authority position
+        // AND sign there (WRDF-0035): "signs somewhere" would accept a
+        // multisig-owned transfer where the vault is a co-signer, not the owner.
+        match spl_authority_index(selector) {
+            Some(i) => {
+                let ok = accounts
+                    .get(i)
+                    .is_some_and(|a| a.pubkey == *vault && a.is_signer);
+                if !ok {
+                    return false;
+                }
+            }
+            None => {
+                // Selector with ROLE_VAULT_SIGNER but no known authority index
+                // (e.g. System Transfer, whose `from`/authority is index 0 and
+                // must sign). Require the vault to be the FIRST account and sign.
+                let ok = accounts
+                    .first()
+                    .is_some_and(|a| a.pubkey == *vault && a.is_signer);
+                if !ok {
+                    return false;
+                }
+            }
         }
     }
     if role_rules & ROLE_REQUIRES_TOKEN_PROGRAM != 0 {
@@ -156,25 +202,59 @@ mod tests {
     }
 
     #[test]
-    fn role_vault_signer_requires_the_vault_to_sign() {
-        let prog = pk(1);
+    fn role_vault_signer_requires_the_vault_at_the_authority_position() {
+        // SPL Transfer(3): authority is index 2 ([source, dest, authority]).
+        let spl = crate::constants::SPL_TOKEN_ID;
         let vault = pk(9);
-        let reg = reg_with(prog, &[3], ROLE_VAULT_SIGNER);
-        // vault present but not signing → deny
-        assert!(!registry_allows(&reg, 1, &prog, &[3], &[meta(vault, false, true)], &vault));
-        // vault signing → allow
-        assert!(registry_allows(&reg, 1, &prog, &[3], &[meta(vault, true, true)], &vault));
-        // a different signer is not the vault → deny
-        assert!(!registry_allows(&reg, 1, &prog, &[3], &[meta(pk(8), true, true)], &vault));
+        let reg = reg_with(spl, &[3], ROLE_VAULT_SIGNER);
+        let src = meta(pk(5), false, true);
+        let dst = meta(pk(6), false, true);
+        // vault is the signing authority at index 2 → allow
+        assert!(registry_allows(&reg, 1, &spl, &[3], &[src, dst, meta(vault, true, false)], &vault));
+        // vault at the authority position but not signing → deny
+        assert!(!registry_allows(&reg, 1, &spl, &[3], &[src, dst, meta(vault, false, false)], &vault));
+        // a different authority → deny (even if the vault signs elsewhere)
+        assert!(!registry_allows(&reg, 1, &spl, &[3], &[src, dst, meta(pk(8), true, false)], &vault));
+    }
+
+    #[test]
+    fn a_multisig_transfer_with_the_vault_as_a_cosigner_not_the_authority_is_denied() {
+        // WRDF-0035: the vault SIGNS but the authority (index 2) is a multisig,
+        // so the transfer would move a multisig-owned account, not the vault's.
+        // "vault signs somewhere" must NOT accept this.
+        let spl = crate::constants::SPL_TOKEN_ID;
+        let vault = pk(9);
+        let multisig = pk(7);
+        let reg = reg_with(spl, &[3], ROLE_VAULT_SIGNER | ROLE_REQUIRES_TOKEN_PROGRAM);
+        let accounts = [
+            meta(pk(5), false, true),       // 0 source (external)
+            meta(pk(6), false, true),       // 1 dest
+            meta(multisig, true, false),    // 2 authority = multisig, signs
+            meta(vault, true, false),       // 3 vault also signs, but is NOT the authority
+            meta(SPL_TOKEN_ID, false, false),
+        ];
+        assert!(!registry_allows(&reg, 1, &spl, &[3], &accounts, &vault));
     }
 
     #[test]
     fn role_requires_token_program_needs_it_present() {
-        let prog = pk(1);
+        let spl = crate::constants::SPL_TOKEN_ID;
         let vault = pk(9);
-        let reg = reg_with(prog, &[3], ROLE_REQUIRES_TOKEN_PROGRAM);
-        assert!(!registry_allows(&reg, 1, &prog, &[3], &[meta(pk(7), false, false)], &vault));
-        assert!(registry_allows(&reg, 1, &prog, &[3], &[meta(SPL_TOKEN_ID, false, false)], &vault));
+        let reg = reg_with(spl, &[3], ROLE_REQUIRES_TOKEN_PROGRAM);
+        // No ROLE_VAULT_SIGNER here, so only the token-program presence matters.
+        assert!(!registry_allows(&reg, 1, &spl, &[3], &[meta(pk(7), false, false)], &vault));
+        assert!(registry_allows(&reg, 1, &spl, &[3], &[meta(SPL_TOKEN_ID, false, false)], &vault));
+    }
+
+    #[test]
+    fn system_transfer_requires_the_vault_as_the_from_authority_at_index_0() {
+        // System Transfer(2) has no SPL authority index; the None fallback
+        // requires the vault to be the FIRST account (`from`) and sign.
+        let system = Pubkey::default();
+        let vault = pk(9);
+        let reg = reg_with(system, &[2, 0, 0, 0], ROLE_VAULT_SIGNER);
+        assert!(registry_allows(&reg, 1, &system, &[2, 0, 0, 0], &[meta(vault, true, true), meta(pk(6), false, true)], &vault));
+        assert!(!registry_allows(&reg, 1, &system, &[2, 0, 0, 0], &[meta(pk(5), true, true), meta(vault, true, true)], &vault), "vault not the from");
     }
 
     #[test]

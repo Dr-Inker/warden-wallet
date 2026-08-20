@@ -16,7 +16,7 @@
 | 2b | DONE | 50dc590, evidence pinned b6ec220 | 1 round (thread not retained) |
 | 11 | **PARTIAL** | b320ecd + fixes d8e3f54, 56c543b, d0072fd | 3 rounds (threads not retained). Deploy gate = spec + partial dry-run (`DEPLOY-GATE.md:12`); **Task 11R** (campaign plan G11) owns the RPC checks before Task 9 |
 | 2 | DONE (2026-08-20) | 2A 204a118, 2B 4c8575a | 4 rounds, converged 0 findings (WRDF-0031/-0032/-0033 adopted); test-mutator + test-jup-mock + 18 harness tests |
-| 3 | IN PROGRESS | core landed a7b7824+dd78316 (Registry state, registry_allows, defaults, init_registry; 277 lib tests) | not yet reviewed. Remaining: grant_session allowlist validation, create_account registry store, TS registry-default.json parity, init/grant integration suite, whole-task review |
+| 3 | CODE COMPLETE (a7b7824…e98eb5c) | Registry state + registry_allows + defaults + init_registry (upgrade-auth-gated) + grant_session allowlist validation + create_account registry + TS parity + init/grant integ suite; 277 lib + 7 integ tests | whole-task Codex review IN PROGRESS |
 | 4 | not started | — | — |
 | 5 | not started | — | — |
 | 6 | not started | — | — |

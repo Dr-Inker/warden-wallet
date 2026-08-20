@@ -122,6 +122,11 @@ mod err {
     pub const DENY_LISTED: u32 = 6050;
     // Appended by Task 1's round-1 review fix (Codex C2).
     pub const NEW_VAULT_ACCOUNT_REJECTED: u32 = 6051;
+    // Task 3 (registry), appended 6052..=6055.
+    pub const REGISTRY_FULL: u32 = 6052;
+    pub const REGISTRY_UNAUTHORIZED: u32 = 6053;
+    pub const REGISTRY_ALREADY_INITIALIZED: u32 = 6054;
+    pub const INVALID_ALLOWLIST_ID: u32 = 6055;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -130,7 +135,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 52] = [
+    let pairs: [(u32, WardenError, &str); 56] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -219,6 +224,10 @@ fn pinned_error_codes_match_the_enum_today() {
             WardenError::NewVaultAccountRejected,
             "NewVaultAccountRejected",
         ),
+        (err::REGISTRY_FULL, WardenError::RegistryFull, "RegistryFull"),
+        (err::REGISTRY_UNAUTHORIZED, WardenError::RegistryUnauthorized, "RegistryUnauthorized"),
+        (err::REGISTRY_ALREADY_INITIALIZED, WardenError::RegistryAlreadyInitialized, "RegistryAlreadyInitialized"),
+        (err::INVALID_ALLOWLIST_ID, WardenError::InvalidAllowlistId, "InvalidAllowlistId"),
     ];
     for (pinned, variant, name) in pairs {
         assert_eq!(

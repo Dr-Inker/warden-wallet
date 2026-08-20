@@ -349,7 +349,7 @@ describe("create_account (OP_CREATE, 0x06)", () => {
   // prefix.
   it("matches the Rust-pinned CreateBody action hash (create_body_action_hash_matches_pinned_vector)", () => {
     const origin = new TextEncoder().encode("chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi");
-    const body = new Uint8Array(32 + 32 + 4 + origin.length + 32 + 32);
+    const body = new Uint8Array(32 + 32 + 4 + origin.length + 32 + 32 + 32);
     let o = 0;
     body.set(SALT, o);
     o += 32;
@@ -362,10 +362,12 @@ describe("create_account (OP_CREATE, 0x06)", () => {
     body.set(fill(32, 0x5a), o); // cluster_tag
     o += 32;
     body.set(fill(32, 0x66), o); // policy_hash
-    expect(body.length).toBe(183);
+    o += 32;
+    body.set(fill(32, 0x00), o); // registry (Pubkey::default() = none) — Task 3, WRDF-0034
+    expect(body.length).toBe(215);
 
     expect(hex(actionHash(OP_CREATE, body))).toBe(
-      "d833a9c4d6dae3169175caadc86f1d1308996eacc2918b4af5465dc6be4a4020",
+      "748fb53596c08c44303df545bec9432220ec1cdadae3413ef4ca267614d4d59a",
     );
   });
 });
