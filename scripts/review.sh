@@ -235,8 +235,36 @@ HDR
 # ---- 4. build the codex invocation ------------------------------------------
 # Plain `codex exec`, NOT `codex exec review` — see the header. Read-only sandbox: the model needs a
 # shell to run `git diff` and read files, and must not be able to write.
+#
+# The schema handed to --output-schema is a RELAXED derivation of the canonical one: OpenAI's
+# structured-output subset rejects `allOf`/`if`/`then` (observed live 2026-08-20: 400
+# invalid_json_schema, "'allOf' is not permitted"), so those conditional blocks are stripped for the
+# API call only. Stripping constraints can only ADMIT more outputs, never exclude a valid one, and
+# step 6's independent validator enforces the FULL canonical schema afterwards — the API-side schema
+# shapes generation; the validator is the gate.
+API_SCHEMA="$OUT_DIR/warden-findings.openai.json"
+SCHEMA="$SCHEMA" API_SCHEMA="$API_SCHEMA" node -e '
+const fs = require("fs");
+const strip = (n) => {
+  if (Array.isArray(n)) return n.map(strip);
+  if (n && typeof n === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(n)) {
+      if (k === "allOf" || k === "if" || k === "then" || k === "else" || k === "format") continue;
+      // oneOf is outside the subset; anyOf is inside it. For disjoint branches (ours are
+      // object-vs-null) the two admit the same set, and where branches overlap anyOf only ADMITS
+      // more — still a relaxation, still caught by the canonical validator.
+      out[k === "oneOf" ? "anyOf" : k] = strip(v);
+    }
+    return out;
+  }
+  return n;
+};
+fs.writeFileSync(process.env.API_SCHEMA,
+  JSON.stringify(strip(JSON.parse(fs.readFileSync(process.env.SCHEMA, "utf8"))), null, 2) + "\n");
+'
 CODEX_ARGS=(exec
-  --output-schema "$SCHEMA"
+  --output-schema "$API_SCHEMA"
   --ephemeral
   -s read-only
   -C "$REPO_ROOT"
