@@ -367,10 +367,16 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   current config being correct is not enough: `vault_transaction_execute` permits
   a proposal **already Approved before it became stale**, so an upgrade tx created
   and approved under an earlier weak threshold can still execute after the config
-  tightens. Require a **fresh, final-config** multisig/vault at authority handoff
-  — `transaction_index == stale_transaction_index == 0` (no pre-existing proposals)
-  — or exhaustively authenticate that no Approved/executable historical proposal
-  can touch the Warden upgrade authority.
+  tightens. This covers **every** executable pending-governance mechanism —
+  VaultTransactions **and ConfigTransactions** (a ConfigTransaction can itself
+  rewrite members/threshold/authority) and any batch/proposal state (WRDF-0029).
+  Require a **fresh, final-config** multisig/vault at authority handoff — no
+  actionable pending proposal of any kind (`transaction_index ==
+  stale_transaction_index == 0` and the equivalent for config transactions) — or
+  exhaustively authenticate that no Approved/executable historical proposal can
+  touch the Warden upgrade authority. The exhaustive per-mechanism index list is a
+  Task 11R implementation artifact against the pinned Squads IDL; the closed
+  requirement is "no actionable stale governance state of any kind".
 - [ ] **Every member's permission mask, and the completeness terminus (WRDF-0017
   round 7).** Assert each pinned member's permission bits (a member with only a
   subset, or an unexpected proposer/executor, changes the real control), not just
