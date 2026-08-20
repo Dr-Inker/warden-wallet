@@ -153,3 +153,9 @@ NOT rerun here and still owned elsewhere: the deployment gate
 (`scripts/deploy-gate.sh`) remains SPEC + partial dry-run (Task 11R); cargo /
 anchor builds and the Rust suite were not part of A0's lease (no Rust source
 changed; the serialized-build rule reserves them for Task 2).
+
+**A0 round-1 fix evidence (WRDF-0004):** `cargo test -p warden --lib` at
+`d2c6a01e1a631af394107dc231e71c0973a06472` → `248 passed; 0 failed` — the
+executable gate behind every `WRD-CONS-*` `test-covered` row; their evidence
+SHAs cite this run. Review round 1 (wrapper thread in REVIEW-RUNS.jsonl):
+5 findings, all adopted; rulings in REVIEW-SCORECARD.jsonl.
