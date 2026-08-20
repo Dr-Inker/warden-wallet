@@ -213,8 +213,10 @@ pub struct CreateAccount<'info> {
     /// its lists; the seeds constraint requires the canonical `["registry"]` PDA,
     /// so a stranger cannot make the account point at a fake registry. When
     /// omitted, `SmartAccount.registry` stays `Pubkey::default()` and only
-    /// `program_allowlist_id == 0` grants are possible. Not part of the root
-    /// transcript — the registry is stored, not authorised over.
+    /// `program_allowlist_id == 0` grants are possible. **Bound into the root
+    /// ceremony** (`CreateBody.registry`, WRDF-0034): the value stored here is
+    /// the same one the assertion signs, so the account cannot be committed to a
+    /// registry the root did not authorise.
     #[account(seeds = [crate::constants::REGISTRY_SEED], bump)]
     pub registry: Option<AccountLoader<'info, crate::state::registry::Registry>>,
 }

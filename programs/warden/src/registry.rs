@@ -62,55 +62,66 @@ pub fn registry_allows(
         return false;
     }
     let entry = &reg.entries[idx];
-    role_validator_passes(entry.role_rules, &entry.selector[..entry.disc_len as usize], accounts, vault)
+    role_validator_passes(
+        entry.role_rules,
+        &entry.program_id,
+        &entry.selector[..entry.disc_len as usize],
+        accounts,
+        vault,
+    )
 }
 
-/// The SPL Token instruction index of the **authority** account for a selector
-/// whose role demands the vault be that authority. `None` means "this selector
-/// has no fixed authority position", in which case `ROLE_VAULT_SIGNER` falls
-/// back to requiring the vault to sign at all (still stricter than nothing, but
-/// selectors that carry `ROLE_VAULT_SIGNER` should name their position here).
-fn spl_authority_index(selector: &[u8]) -> Option<usize> {
-    match selector {
-        [3] => Some(2),  // Transfer:        [source, dest, authority]
-        [12] => Some(3), // TransferChecked: [source, mint, dest, authority]
-        _ => None,
+/// The account index of the **authority** for a `(program, selector)` that
+/// carries `ROLE_VAULT_SIGNER` — the position the vault PDA must occupy and
+/// sign. Keyed by the PAIR, because the authority position is a property of the
+/// specific adapter's account layout, not of a selector value alone (the
+/// test-mutator's `transfer_out` sighash and SPL `Transfer` are unrelated
+/// selectors that both put the authority at index 2). Every adapter that
+/// carries `ROLE_VAULT_SIGNER` MUST be listed here; an unlisted one returns
+/// `None` and is DENIED (fail closed, WRDF-0041) rather than guessing an index.
+fn authority_index(program: &Pubkey, selector: &[u8]) -> Option<usize> {
+    use crate::constants::{SYSTEM_PROGRAM_ID, TEST_MUTATOR_ID};
+    if *program == SPL_TOKEN_ID {
+        return match selector {
+            [3] => Some(2),  // Transfer:        [source, dest, authority]
+            [12] => Some(3), // TransferChecked: [source, mint, dest, authority]
+            _ => None,
+        };
     }
+    if *program == SYSTEM_PROGRAM_ID && selector == [2, 0, 0, 0] {
+        return Some(0); // Transfer: [from(authority), to]
+    }
+    if *program == TEST_MUTATOR_ID {
+        // test-mutator `transfer_out`: [source, destination, authority, token_program].
+        if selector == crate::registry_default::sighash("transfer_out") {
+            return Some(2);
+        }
+    }
+    None
 }
 
-/// The structural half of role validation (what `(selector, accounts, vault)`
-/// can decide). The value half — that a source is *the vault's own* ATA, and
-/// conservation of value — is `execute`/`conservation`'s (Task 5).
+/// The structural half of role validation (what `(program, selector, accounts,
+/// vault)` can decide). The value half — that a source is *the vault's own* ATA,
+/// and conservation of value — is `execute`/`conservation`'s (Task 5).
 fn role_validator_passes(
     role_rules: u8,
+    program: &Pubkey,
     selector: &[u8],
     accounts: &[AccountMetaLike],
     vault: &Pubkey,
 ) -> bool {
     if role_rules & ROLE_VAULT_SIGNER != 0 {
-        // The vault must be the AUTHORITY at the selector's authority position
+        // The vault must be the AUTHORITY at the adapter's authority position
         // AND sign there (WRDF-0035): "signs somewhere" would accept a
         // multisig-owned transfer where the vault is a co-signer, not the owner.
-        match spl_authority_index(selector) {
-            Some(i) => {
-                let ok = accounts
-                    .get(i)
-                    .is_some_and(|a| a.pubkey == *vault && a.is_signer);
-                if !ok {
-                    return false;
-                }
-            }
-            None => {
-                // Selector with ROLE_VAULT_SIGNER but no known authority index
-                // (e.g. System Transfer, whose `from`/authority is index 0 and
-                // must sign). Require the vault to be the FIRST account and sign.
-                let ok = accounts
-                    .first()
-                    .is_some_and(|a| a.pubkey == *vault && a.is_signer);
-                if !ok {
-                    return false;
-                }
-            }
+        // An adapter carrying ROLE_VAULT_SIGNER but not listed in
+        // `authority_index` is DENIED (fail closed, WRDF-0041) — never guessed.
+        let Some(i) = authority_index(program, selector) else {
+            return false;
+        };
+        let ok = accounts.get(i).is_some_and(|a| a.pubkey == *vault && a.is_signer);
+        if !ok {
+            return false;
         }
     }
     if role_rules & ROLE_REQUIRES_TOKEN_PROGRAM != 0 {
@@ -255,6 +266,37 @@ mod tests {
         let reg = reg_with(system, &[2, 0, 0, 0], ROLE_VAULT_SIGNER);
         assert!(registry_allows(&reg, 1, &system, &[2, 0, 0, 0], &[meta(vault, true, true), meta(pk(6), false, true)], &vault));
         assert!(!registry_allows(&reg, 1, &system, &[2, 0, 0, 0], &[meta(pk(5), true, true), meta(vault, true, true)], &vault), "vault not the from");
+    }
+
+    #[test]
+    fn the_test_mutator_transfer_out_authority_is_validated_at_index_2() {
+        // WRDF-0041: the mutator's transfer_out (8-byte sighash) has its
+        // authority at index 2, keyed by the (program, selector) pair — not the
+        // wrong index-0 fallback a selector-only dispatch used to pick.
+        let mutator = crate::constants::TEST_MUTATOR_ID;
+        let sel = crate::registry_default::sighash("transfer_out").to_vec();
+        let vault = pk(9);
+        let reg = reg_with(mutator, &sel, ROLE_VAULT_SIGNER | ROLE_REQUIRES_TOKEN_PROGRAM);
+        let accounts = [
+            meta(pk(5), false, true),        // 0 source
+            meta(pk(6), false, true),        // 1 destination
+            meta(vault, true, false),        // 2 authority = vault, signs
+            meta(SPL_TOKEN_ID, false, false),
+        ];
+        assert!(registry_allows(&reg, 1, &mutator, &sel, &accounts, &vault));
+        // vault at index 0 (the source position) → deny
+        let bad = [meta(vault, true, true), meta(pk(6), false, true), meta(pk(7), true, false), meta(SPL_TOKEN_ID, false, false)];
+        assert!(!registry_allows(&reg, 1, &mutator, &sel, &bad, &vault));
+    }
+
+    #[test]
+    fn an_adapter_with_role_vault_signer_but_no_known_authority_index_is_denied() {
+        // Fail closed (WRDF-0041): a made-up program carrying ROLE_VAULT_SIGNER
+        // has no authority_index entry, so it is denied rather than guessed.
+        let prog = pk(1); // not SPL/System/mutator
+        let vault = pk(9);
+        let reg = reg_with(prog, &[9, 9, 9, 9, 9, 9, 9, 9], ROLE_VAULT_SIGNER);
+        assert!(!registry_allows(&reg, 1, &prog, &[9, 9, 9, 9, 9, 9, 9, 9], &[meta(vault, true, true)], &vault));
     }
 
     #[test]
