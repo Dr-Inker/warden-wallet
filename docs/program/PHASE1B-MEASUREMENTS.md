@@ -255,3 +255,42 @@ harness at diminishing return.
 - A Task-5 real-CPI regression for the native-lamport SOL equation and the
   through-CPI standalone-mint case is owed when `execute` is wired (the unit layer
   is proven; the end-to-end `WRD-EXEC-*` rows stay `unimplemented` until Task 5).
+
+## C0+V0 tranche close-out (2026-08-20)
+
+**C0+V0 is complete.** 9 adversarial docs-review rounds (Codex `gpt-5.6-sol@max`,
+all in `REVIEW-RUNS.jsonl` + `REVIEW-SCORECARD.jsonl`).
+
+**What it delivered.** 26 seeded invariant rows at honest `unimplemented` status
+(client `WRD-KEY/EXT/APR/TXI/SIM/EXP/REL`, vanity `WRD-VAN`, and new
+`WRD-ORG-01`/`WRD-SIG-01`/`WRD-QTE-01`/`WRD-DEP-01`/`WRD-DEP-02`/`WRD-EVT-01`) with
+a required-id presence test; C0/V0 threat-model rows; a spec §6.1 vanity-onboarding
+section; and the campaign-plan tasks written into their source plans (C1a, C2a,
+C4b, Task 5E, Task 11R, the Task 2 split) with corrected V4/U7/V2 gating.
+
+**Seeding worked — the review hardened the specs before any code exists.** As with
+A0's conservation seeding, seeding these invariants let the loop find real design
+gaps in the *task definitions*: the deploy-gate governance check went through
+**seven critical iterations** (WRDF-0017) — expected-authority vs derived Squads
+vault PDA → pinned multisig identity + member set → `member_count`/discriminator →
+`configAuthority == default` → ProgramData authentication chain → Squads code hash
++ trust-root terminus → per-member permission masks — plus distinct new classes:
+the stale pre-approved Squads proposal (WRDF-0028/-0029), origin-vs-cluster_tag
+(WRDF-0016), a mode-dependent swap-divergence counterexample (WRDF-0019),
+cross-cluster keyring and recovery-envelope AAD (WRDF-0023/-0026), UI-port
+origin+path vs id-only (WRDF-0021), and event finalized-status + idempotence
+(WRDF-0022). All adopted; none is program code (all target unimplemented specs).
+
+**Convergence + the terminus device.** To stop an infinite "one more Squads field"
+regress on WRDF-0017, `WRD-DEP-01`/`WRD-DEP-02` now state a *completeness*
+requirement — "attest the COMPLETE reviewed config" — and explicitly scope the
+byte-level field inventory to the implementation task (Task 11R / Task 3) against
+the pinned IDL. That terminus held: round 8 stopped mining Squads fields, and the
+final rounds moved to adjacent invariants and single peripheral items. C0+V0 is
+closed here on judgment; the acceptance criterion (seeded, addressable, honest
+`unimplemented`, `gen-invariants --check` green, required-id test) was met at the
+first commit and the rounds hardened the specs far beyond it.
+
+**Owed to the implementing tasks:** the byte-level Squads-config and Registry-config
+attestation field lists (Task 11R / Task 3), and every invariant here moves off
+`unimplemented` only when its named task lands executable evidence.
