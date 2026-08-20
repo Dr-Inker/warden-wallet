@@ -160,8 +160,15 @@ must be rewritten from the spike, never imported from it.
 - [ ] Derive page origin, tab id, frame id, and extension sender identity from
   `Port.sender`/browser APIs in the service worker. Strip any page-supplied
   `$ctx`, `origin`, `tabId`, `frameId`, `approved`, or policy verdict.
-- [ ] Require extension-id equality for privileged UI ports. Separate provider,
-  popup, full-page approval, and internal test message schemas.
+- [ ] Authorize a privileged UI port only when `sender.id == chrome.runtime.id`
+  **AND** browser-owned `sender.url`/`sender.origin` is the exact
+  `chrome-extension://<id>` origin at an allowed extension-page path.
+  **Extension-id equality alone is insufficient (WRDF-0021):** an extension-owned
+  content script has `sender.id == chrome.runtime.id` and may call
+  `runtime.connect` ([Chrome runtime docs](https://developer.chrome.com/docs/extensions/reference/api/runtime)),
+  so id-only would let a content script impersonate privileged UI and defeat
+  `WRD-EXT-02`. Separate provider, popup, full-page approval, and internal test
+  message schemas.
 - [ ] Validate every message with a closed schema, size limits, method allowlist,
   and rejection of unknown fields where ambiguity could matter.
 - [ ] Use cryptographically random request ids. Bind a request to its originating
@@ -192,28 +199,36 @@ stays `unimplemented` and V4/U7 stay blocked.
 - [ ] Record the owner's decision in the spec (§4/§6) and this plan; if "freeze",
   pin the production `key`/extension id in the `apps/extension` manifest metadata
   and document the CWS binding.
-- [ ] Red test (the program-level boundary): a stored-origin mismatch fails
-  closed — an account created under origin A rejects an assertion whose
-  clientDataJSON origin is B, end to end through the production transaction
-  builder. **This origin binding — not `cluster_tag` — is WRD-ORG-01's real
-  guarantee:** `root_verify/transcript.rs:99-106` documents that `cluster_tag`
-  is caller-attested and does **not** identify the cluster a transaction lands
-  on, so a dev build or forwarding RPC can sign a devnet tag and submit to
-  mainnet. The freeze-production-id decision therefore rests on pinning the
-  permitted production `rp_id_hash`/origin (in deployment-specific config), so a
-  dev extension's origin is rejected at mainnet account creation regardless of
-  the tag it claims.
+**The program is the boundary, and it needs a change (WRDF-0016).** Today
+`create_account` only checks `rp_id_hash == SHA-256(caller-supplied origin)`
+(`create_account.rs:237-252`) — it never compares that origin against a permitted
+*production* value, so a dev extension creates under its own origin A, stores
+`SHA-256(A)`, and keeps authenticating as A. A post-creation A/B mismatch test
+passes even if creation accepts every origin, so it does **not** establish the
+guarantee. Pinning a manifest key constrains a store build but not a direct
+program call. The real control is a **program-enforced permitted production
+`rp_id_hash`**:
+
+- [ ] Name and land the mechanism: a permitted production `rp_id_hash` as either
+  a compile-time constant in the mainnet build **or** a governed on-chain config
+  account, and make `create_account` **reject** any origin that does not match it
+  when creating on mainnet. (This is a `programs/warden` change scheduled with
+  C1a's implementation, past Task 8 — specify the const-vs-governed choice with
+  the owner as part of the freeze/migration decision.)
+- [ ] Red test (the guarantee): a `create_account` attempt with a **non-production
+  origin is REFUSED** at the program level — not merely a post-creation mismatch.
+  Cover a dev origin, a look-alike origin, and the production origin (accepted).
 - [ ] Red test (honest-client guard, explicitly NOT a security boundary): a
   dev-profile build declines `create_account` against a mainnet `cluster_tag` at
-  the UI/build layer — this prevents accidental dev-to-mainnet use, but is not
-  relied on for the guarantee above, because `cluster_tag` is attacker-attestable.
+  the UI/build layer. `cluster_tag` is caller-attested (`transcript.rs:99-106`)
+  and does not identify the landing cluster, so this only prevents accidental
+  dev-to-mainnet use; the guarantee rests on the origin refusal above.
 - [ ] Document (or implement, per the decision) the migration story; "deliberately
   refused" is an acceptable, recorded answer.
 
-**C1a acceptance:** the decision is recorded, the origin-binding red test passes
-at the merged SHA, and `WRD-ORG-01` (whose guarantee is the origin binding, with
-the cluster_tag check labeled an honest-client guard) moves to `test-covered`
-only on that executable evidence.
+**C1a acceptance:** the decision is recorded, the **creation-refusal** red test
+passes at the merged SHA (a non-production origin cannot create a mainnet
+account), and `WRD-ORG-01` moves to `test-covered` only on that evidence.
 
 ## C2 — Keyring lifecycle whose authentication controls key release
 
@@ -357,9 +372,15 @@ must be provable. Invariant: `WRD-QTE-01`.
   comparison and is rejected, not divergence-checked. A stale-primary re-quote
   that would change the economic intent **invalidates the immutable approval**
   rather than silently updating it.
-- [ ] **Specify the divergence math exactly:** the denominator (e.g. quoted
-  output in base units for ExactIn), the rounding rule, and the threshold as
-  **300 bps** on that normalized quantity — not a hand-wavy "3 %".
+- [ ] **The compared quantity is mode-dependent (WRDF-0019).** Divergence-checking
+  the output alone is wrong for ExactOut: two quotes each delivering exactly 100
+  USDC while one demands 1 SOL and the other 2 SOL show 0 bps output divergence
+  despite a 100 % input disagreement. So compare the **adverse** quantity by mode:
+  **net output after all fees** for ExactIn, **total required input after all
+  fees** for ExactOut. Pin the denominator, use checked integer
+  cross-multiplication (no float), define the rounding, and set the threshold at
+  **300 bps** on that quantity. A required ExactOut fixture must catch the
+  worse-input case.
 - [ ] Record quote provenance for both the primary and the check quote: source
   id, upstream(s), fetch time, quote expiry, and route digest.
 - [ ] Fixtures with asserted outcomes: a **stale** primary quote (expired ⇒ WARN
