@@ -327,3 +327,25 @@ Findings adopted along the way (all in `REVIEW-SCORECARD.jsonl`):
 both new `.so` built); `cargo clippy` clean on both new crates;
 `node scripts/gen-invariants.mjs --check` green; supply-chain gate PASS.
 Next: Task 3 (`Registry` + `init_registry` + `grant_session` allowlist ids).
+
+## Task 3 (registry) — gate evidence + review
+
+**Gate at `dd60d129` (2026-08-20):** `./.claude/test-gate.sh` green (all workspace
+suites + all `.so`); `cargo test -p warden --lib` → 279 passed; `cargo clippy -p
+warden --lib -- -D clippy::arithmetic_side_effects` clean; `node scripts/
+gen-invariants.mjs --check` green; supply-chain gate PASS; `pnpm --filter
+@warden/core test` → 104 passed. Integration: `tests/registry.rs` 7 tests
+(init_registry upgrade-auth-gated + rejections + defaults + TS/Rust parity +
+create-stores-registry).
+
+**Review: WRDF-0034..0038 (Codex sol@max), all adopted.** WRDF-0035 (SPL role
+authority-position, closing a multisig-cosigner bypass) and WRDF-0034 (the create
+ceremony now binds the stored registry — wire format 183→215 B, pinned Rust+TS
+vectors regenerated) were the important ones; WRDF-0037 (new errors 6052-6055 in
+the append-only pin table), WRDF-0036 (worst-case registry-bearing packet
+measured), WRDF-0038 (this evidence block) the minor/info.
+
+**Known residual:** `registry_allows`' role validators do the STRUCTURAL half
+(authority position, token-program presence). The VALUE half — a source is *the
+vault's own* ATA, and conservation — is `execute`/`conservation`'s (Task 5), by
+design; Jupiter's validator is Task 6's.
