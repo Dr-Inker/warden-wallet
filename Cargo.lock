@@ -4404,6 +4404,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-jup-mock"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+]
+
+[[package]]
 name = "test-middleman"
 version = "0.1.0"
 dependencies = [

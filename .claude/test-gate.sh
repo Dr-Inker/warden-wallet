@@ -47,11 +47,11 @@ if ls programs/*/Cargo.toml >/dev/null 2>&1; then
   # `test-middleman` is the test-only CPI caller the root `stack_height` gate
   # needs (programs/test-middleman); it is built here, never deployed.
   needs_build=0
-  for so in target/deploy/warden.so target/deploy/test_middleman.so target/deploy/test_mutator.so; do
+  for so in target/deploy/warden.so target/deploy/test_middleman.so target/deploy/test_mutator.so target/deploy/test_jup_mock.so; do
     [ -f "$so" ] || needs_build=1
   done
   if [ "$needs_build" -eq 0 ]; then
-    for so in target/deploy/warden.so target/deploy/test_middleman.so target/deploy/test_mutator.so; do
+    for so in target/deploy/warden.so target/deploy/test_middleman.so target/deploy/test_mutator.so target/deploy/test_jup_mock.so; do
       if [ -n "$(find programs -name '*.rs' -newer "$so" | head -1)" ] \
         || [ -n "$(find programs -name 'Cargo.toml' -newer "$so" | head -1)" ] \
         || [ Cargo.toml -nt "$so" ] \
@@ -68,6 +68,7 @@ if ls programs/*/Cargo.toml >/dev/null 2>&1; then
       nice -n 10 cargo-build-sbf --manifest-path programs/warden/Cargo.toml
       nice -n 10 cargo-build-sbf --manifest-path programs/test-middleman/Cargo.toml
       nice -n 10 cargo-build-sbf --manifest-path programs/test-mutator/Cargo.toml
+      nice -n 10 cargo-build-sbf --manifest-path programs/test-jup-mock/Cargo.toml
     fi
   fi
   # anchor build regenerates target/idl/warden.json from the program source;
