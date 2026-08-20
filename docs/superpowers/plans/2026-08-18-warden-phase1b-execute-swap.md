@@ -16,7 +16,7 @@
 | 2b | DONE | 50dc590, evidence pinned b6ec220 | 1 round (thread not retained) |
 | 11 | **PARTIAL** | b320ecd + fixes d8e3f54, 56c543b, d0072fd | 3 rounds (threads not retained). Deploy gate = spec + partial dry-run (`DEPLOY-GATE.md:12`); **Task 11R** (campaign plan G11) owns the RPC checks before Task 9 |
 | 2 | DONE (2026-08-20) | 2A 204a118, 2B 4c8575a | 4 rounds, converged 0 findings (WRDF-0031/-0032/-0033 adopted); test-mutator + test-jup-mock + 18 harness tests |
-| 3 | DONE (a7b7824…727d34c) | Registry + registry_allows (authority-position role, fail-closed) + defaults + init_registry (upgrade-auth-gated) + grant_session allowlist + create_account registry (ceremony-bound) + TS parity + integ; 281 lib + 104 TS + 7 integ | 3 rounds, WRDF-0034..0043 adopted; final gate 2b8ac40 |
+| 3 | **CONFIRMATION PENDING** (a7b7824…3361d2c) | Registry + registry_allows (authority-position role, fail-closed) + defaults + init_registry (upgrade-auth-gated) + grant_session allowlist (now LOADS registry + requires `is_allocated_list`, WRDF-0044) + create_account registry (ceremony-bound) + canonical `encodeCreateBody` (WRDF-0042) + TS parity + integ; 282 lib + 104 TS + 42 integ. Full `./.claude/test-gate.sh` at **3361d2c** | 5 rounds WRDF-0034..0044 adopted; round 6 raised only WRDF-0043 (info, this doc row). **DONE gated on a subsequent zero-finding confirmation** (round 6 was non-zero) |
 | 4 | not started | — | — |
 | 5 | not started | — | — |
 | 6 | not started | — | — |
