@@ -350,11 +350,34 @@ measured), WRDF-0038 (this evidence block) the minor/info.
 vault's own* ATA, and conservation — is `execute`/`conservation`'s (Task 5), by
 design; Jupiter's validator is Task 6's.
 
-**Task 3 final gate (`2b8ac40`, after review rounds 1-3):** `./.claude/test-gate.sh`
-green (all workspace suites + all `.so`); `cargo test -p warden --lib` → 281
-passed; `cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects`
-clean; `pnpm --filter @warden/core test` → 104 passed. Review rounds 2-3 adopted:
-WRDF-0039 (honest create-records-registry claim), WRDF-0040 (parity gate rejects
-out-of-range + version), WRDF-0041 ((program,selector) authority dispatch, fail
-closed), WRDF-0042 (ceremony-binds-registry docs consistency), WRDF-0043 (this
-evidence + doc reconciliation).
+**Gate at `2b8ac40` (after review rounds 1-3):** `./.claude/test-gate.sh` green;
+`cargo test -p warden --lib` → 281 passed; clippy clean; `pnpm --filter
+@warden/core test` → 104 passed. Rounds 2-3 adopted WRDF-0039 (honest
+create-records-registry claim), WRDF-0040 (parity gate rejects out-of-range +
+version), WRDF-0041 ((program,selector) authority dispatch, fail closed).
+
+**This was NOT the final gate.** Rounds 4-5 (threads `5aa1e637`, `dca7168b`,
+`7da30756`) raised three findings that `2b8ac40` did not resolve — the
+authoritative record is `docs/security/REVIEW-SCORECARD.jsonl`, and an earlier
+version of this block mislabeled them:
+
+- **WRDF-0044 (important)** — `grant_session` accepted a structurally-valid but
+  UNALLOCATED `program_allowlist_id`. Round-4 added the `allocated_lists` bitmask
+  + documented a 1C prerequisite; round 5 rejected that deferral and required the
+  real gate: `grant_session` now loads the account's `Registry` and enforces
+  `is_allocated_list`. On-chain RED/GREEN `grant_with_{unallocated,allocated}_
+  allowlist_id_*`; `WRD-SESS-07` inverted to "must resolve to an allocated list".
+- **WRDF-0042 (important)** — the published `@warden/core` `CreateBody` contract
+  still documented 183 B / `policy_hash`-last after the ceremony grew the 32-byte
+  `registry` word. Fixed by exporting a canonical `encodeCreateBody` (215 B) and
+  correcting the doc; the pinned action-hash vector now validates the API.
+- **WRDF-0043 (info)** — Task 3 was marked DONE against the `2b8ac40` gate while
+  later commits changed program state; the close-out cited only library tests.
+
+**Task 3 final gate (`3361d2c`, after review rounds 1-5):** `./.claude/test-gate.sh`
+green (all workspace suites + all `.so`); `cargo test -p warden --lib` → 282
+passed; 42 integration (sessions/transfer/freeze/registry); `cargo clippy -p
+warden --all-targets` clean of `arithmetic_side_effects`; `pnpm --filter
+@warden/core test` → 104 passed. **Round-6 confirmation review pending** — Task 3
+is not DONE until it returns 0 findings (round-4's premature DONE is what
+WRDF-0043 flagged).

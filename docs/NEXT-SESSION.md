@@ -49,18 +49,34 @@ Remaining, in campaign-plan order:
    findings): `test-mutator` + `test-jup-mock` + 18 harness smoke tests;
    `.claude/test-gate.sh` builds/checks both new `.so`. Close-out in
    `docs/program/PHASE1B-MEASUREMENTS.md`.
-2. **Task 3 DONE** (`a7b7824`…`727d34c`, 3 review rounds → WRDF-0034..0043
-   adopted; final gate at `2b8ac40`, 281 lib + 104 TS tests): Registry zero-copy
+2. **Task 3 — round-6 confirmation pending** (`a7b7824`…`3361d2c`, 5 review
+   rounds → WRDF-0034..0044 all adopted+fixed; full gate re-run at the fix SHA,
+   282 lib + 42 integration + 104 TS tests, clippy clean): Registry zero-copy
    state, selector-derivation rule (match on the `(program_id, selector)` pair;
    disc_len 8/1/4/0), `registry_allows` with `(program,selector)` authority-
    position role validators (fail-closed), default adapters, `init_registry`
    (upgrade-authority-gated), `grant_session` allowlist validation, `create_account`
    optional registry (**bound into the root ceremony**, CreateBody 183→215 B),
    TS/Rust parity, integration suite. NB: the System program id IS
-   `Pubkey::default()`, so used slots are bounded by `n_entries`. Documented
-   follow-up: a positive on-chain grant-with-registry test (needs the grant
-   ceremony currently private to `tests/sessions.rs`).
-   **NEXT: Task 4** (`stage_open`/`stage_chunk`/`stage_finalize`/`stage_close`),
+   `Pubkey::default()`, so used slots are bounded by `n_entries`.
+   **Round 5** (`3361d2c`) closed the round-4 deferrals for real:
+   - **WRDF-0044** — `grant_session` now takes the account's `Registry` account,
+     loads it, and requires `is_allocated_list(program_allowlist_id)` (not just
+     structural `is_valid_list_id`) for any non-zero id. A grant can no longer
+     persist a dangling list id that a Phase-1C mutable-registry update could
+     silently activate without a fresh root ceremony. On-chain RED/GREEN:
+     `grant_with_unallocated_allowlist_id_rejected` (id 3 → `InvalidAllowlistId`)
+     and `grant_with_allocated_allowlist_id_accepted` (id 1 stored) — the latter
+     is the positive on-chain grant that was the documented follow-up, now
+     delivered. `WRD-SESS-07` inverted from "must be 0" to "must resolve to an
+     allocated list".
+   - **WRDF-0042** — TS core exports a canonical `encodeCreateBody` (215 B incl.
+     the trailing registry `Pubkey`); doc corrected from 183 B; the pinned
+     action-hash vector now validates the exported API, not a hand-roll.
+   - **WRDF-0043** — full `./.claude/test-gate.sh` re-run on the fix SHA.
+   Round-6 confirmation review must return 0 findings before this flips to DONE
+   (round-4's premature DONE is exactly what round 5 disputed).
+   **NEXT: close Task 3 (round 6), then Task 4** (`stage_open`/`stage_chunk`/`stage_finalize`/`stage_close`),
    then **5 → 6 → 8 → 9**. Task 5 must wire the
    native-lamport SOL equation (not the `amount` cache — WRDF-0011) with a
    real-CPI `SyncNative`+`Transfer` regression, and cover the standalone-mint
