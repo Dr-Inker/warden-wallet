@@ -342,6 +342,16 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   pin and independently attest an explicitly approved config authority. Add a
   negative fixture: a structurally-perfect multisig with a non-default
   `configAuthority`.
+- [ ] **Authenticate Warden's canonical ProgramData first (WRDF-0017 round 5).**
+  Do not compare "an unnamed ProgramData account" to the vault — an attacker could
+  present some *other* program's ProgramData whose authority happens to be the
+  Squads vault. Instead: fetch the **pinned Warden `Program` account**, require it
+  is owned by the **BPF Upgradeable Loader** and is the `Program` state variant,
+  read the **canonical ProgramData address it encodes**, then owner-check and
+  decode *that exact* ProgramData before reading `upgrade_authority_address`.
+  Negative fixtures: a `Program` account not owned by the loader, a wrong Program
+  state variant, and a ProgramData address that does not match the one Warden's
+  Program encodes.
 - [ ] Assert the on-chain program hash equals `solana-verify get-program-hash` of
   the release artifact; **refuse on any mismatch**.
 - [ ] **The checks must be explicit assertions, and each must have a valid-looking

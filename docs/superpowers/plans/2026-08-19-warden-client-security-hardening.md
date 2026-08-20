@@ -415,8 +415,14 @@ outcomes asserted; `WRD-QTE-01` moves to `test-covered`.
 - [ ] Recovery reveal/export requires a fresh passkey ceremony or a full Argon2id
   unlock that cryptographically unwraps the recovery envelope; an already-unlocked
   UI, cached password comparison, PIN overlay, or recent navigation is insufficient.
-- [ ] Preserve the design’s 128-bit recovery code, Argon2id envelope, versioning,
-  and AAD `account || version` (extend AAD only through an explicit migration).
+- [ ] Preserve the design’s 128-bit recovery code, Argon2id envelope, and
+  versioning; but **the recovery-envelope AAD must also bind the canonical cluster
+  identity (genesis hash) and the Warden program id (WRDF-0026)** — a SmartAccount
+  PDA is not network-qualified, so an `account || version` AAD lets this
+  threshold-weight bearer envelope authenticate after transplant to another
+  cluster. Version the format through the explicit migration C5 already requires
+  and bind at least account, genesis hash, program id, recovery-key context, and
+  version (matching the `WRD-KEY-04` keyring rule).
 - [ ] Never create a password-only portable vault whose offline resistance is the
   user’s password. If device-to-device transfer is added, use recipient-bound
   public-key encryption/handshake and bind both devices and the account.
