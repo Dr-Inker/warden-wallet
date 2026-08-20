@@ -263,6 +263,42 @@ loading/offline/stale/partial/error/interruption; top-20 dApp compatibility;
 large text/zoom; RTL/pseudolocale; reduced motion; high contrast; and a `Sheet`
 used in situ.
 
+## 2026-08-20 — "Fable — Receipt Exploration" page (additive, unreviewed)
+
+New page `Fable — Receipt Exploration` (`12:158`) explores the U4 Warden Receipt as a
+"stamped instrument": four independent railed evidence seal-cells (origin / decode /
+simulation / policy — separate fills, separate rails, no shared verdict), numbered
+receipt chapters, and a request-fingerprint barcode band derived from the digest.
+Frames are **exploration, not replacements** — the audited `Screens` frames are untouched.
+Legacy `ConfirmField`/`NavBar` are deliberately not instantiated; `Button` instances are.
+
+| Frame | light | dark |
+|---|---|---|
+| R-06 Receipt / transfer to known recipient (360×600) | `16:2` | `22:3` |
+| R-06a Receipt / first-seen recipient — attention check typed | `17:4` | `22:103` |
+| R-06b Receipt / authority change — blocked | `18:6` | `22:204` |
+| R-06c Receipt / dust lookalike — blocked | `18:98` | `22:294` |
+| R-06W Receipt / approval window — request-bound (720×600) | `19:10` | `22:378` |
+| 02H Home v2 / protect-first + action dock | `23:22` | `24:2` |
+
+Deep links: `…/design/GOBwNsRgT5I36H2oGjfSbi?node-id=<id with ':'→'-'>`.
+Designer's note card on the page: `24:90`. All content bounds verified ≤600 (589–600),
+zero horizontal text overflows, both modes (programmatic check 2026-08-20).
+
+**New variable:** `color/warn-ind` (`VariableID:12:159`) — warning *indicator* for rails/dots.
+Light `#A87005`: **3.87:1 on bg, 3.64:1 on surface** (clears the 3:1 non-text minimum with margin);
+Dark `#D79628`: 7.86:1 / 7.41:1. Used for first-time-recipient dot, passkey+hold policy rail,
+pending-timelock rail. `warn` itself is untouched and still must not be used as a light-mode
+indicator. Not yet exported to `packages/ui-tokens` (export still gated on U0–U2 acceptance).
+
+Security semantics in these frames follow the 2026-08-19 binding corrections: the typed
+check reads "Characters matched — identity still unverified" with no ok dot and no gate
+release; R-06c blocks by default, shows the full THEIRS/YOURS address comparison with the
+matching ends emphasized and differing middle dimmed, and its secondary action is
+"Start over from a trusted source" (fresh entry + passkey; typing never releases the block);
+R-06b has no approve path. Evidence axes never merge; R-06b/R-06c deliberately show
+green simulation/decode next to a blocked policy.
+
 ## Process note
 
 The Figma MCP asks that `/figma-use` be loaded before `use_figma`. That skill is **not installed** in this environment
