@@ -269,6 +269,9 @@ const walk = (n) => {
     if (k === "allOf" || k === "if" || k === "then" || k === "else" || k === "format") continue;
     out[k === "oneOf" ? "anyOf" : k] = walk(v);
   }
+  // Strict mode forbids keywords beside $ref (drops only annotations like description here —
+  // constraint keywords never ride beside $ref in the canonical schema).
+  if (out.$ref) return { $ref: out.$ref };
   // Strict mode requires an explicit `type` on every schema node; `const`/`enum` alone are
   // rejected. Infer it from the literal(s) — pure annotation, admits nothing new.
   if (!out.type && !out.$ref && !out.anyOf) {
