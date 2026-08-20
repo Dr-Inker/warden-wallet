@@ -3,7 +3,16 @@
 //! The pure matching/list logic is unit-tested in `warden::state::registry` and
 //! `warden::registry`; this suite proves the on-chain instruction path: the
 //! upgrade-authority authorisation, singleton-ness, the default contents, the
-//! TS/Rust default parity, and the create→grant allowlist wiring.
+//! TS/Rust default parity, and that `create_account` records a passed registry.
+//!
+//! The `grant_session` allowlist validation is covered at its two ends: the
+//! *logic* (`is_valid_list_id`, and the `account.registry != default` guard) by
+//! unit tests, and the *negative* on-chain path (a non-zero id on an account
+//! with no registry → `InvalidAllowlistId`) by `tests/sessions.rs::
+//! grant_with_unknown_allowlist_id_rejected`. A positive on-chain grant against a
+//! registry-backed account is a documented follow-up (it needs the grant root
+//! ceremony currently private to `tests/sessions.rs`); the create-stores-registry
+//! test below closes the create end of that wiring.
 
 mod common;
 
@@ -111,16 +120,16 @@ fn init_registry_twice_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// create → grant allowlist wiring
+// create records the registry (the create end of the allowlist wiring)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn create_account_with_a_registry_records_its_key() {
-    // The create→grant wiring: an account created with the optional registry
-    // account stores its key, which is what makes a non-zero `program_allowlist_id`
-    // grant legal (grant_session checks `account.registry != default`). The grant
-    // rejection paths are covered in tests/sessions.rs
-    // (`grant_with_unknown_allowlist_id_rejected`).
+    // An account created with the optional registry account stores its key,
+    // which is what makes a non-zero `program_allowlist_id` grant legal
+    // (grant_session checks `account.registry != default`). The grant rejection
+    // path is in tests/sessions.rs (`grant_with_unknown_allowlist_id_rejected`);
+    // the positive grant is the documented follow-up in the module header.
     let (mut svm, payer) = svm_with_program();
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), 1_000_000_000).unwrap();
@@ -157,20 +166,28 @@ fn registry_default_json_matches_the_rust_source_of_truth() {
     ))
     .expect("registry-default.json exists");
     let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+    // Compare the top-level version (WRDF-0040): a version mismatch is drift.
+    assert_eq!(v["version"].as_u64().expect("version"), 1, "registry-default version");
     let adapters = v["adapters"].as_array().expect("adapters array");
     let rust = default_adapters();
     assert_eq!(adapters.len(), rust.len(), "adapter count");
+
+    // Convert each JSON number into its TARGET type, rejecting out-of-range
+    // values instead of narrowing them (WRDF-0040): `as u8` would make selector
+    // 259 compare equal to 3, list 65537 equal to 1, etc.
+    let as_u8 = |x: &serde_json::Value, what: &str| -> u8 {
+        u8::try_from(x.as_u64().unwrap_or_else(|| panic!("{what} not a number"))).unwrap_or_else(|_| panic!("{what} out of u8 range"))
+    };
+    let as_u16 = |x: &serde_json::Value, what: &str| -> u16 {
+        u16::try_from(x.as_u64().unwrap_or_else(|| panic!("{what} not a number"))).unwrap_or_else(|_| panic!("{what} out of u16 range"))
+    };
     for (i, (j, r)) in adapters.iter().zip(rust.iter()).enumerate() {
-        assert_eq!(
-            j["program_id"].as_str().unwrap(),
-            r.program_id.to_string(),
-            "adapter {i} program_id"
-        );
-        let sel: Vec<u8> = j["selector"].as_array().unwrap().iter().map(|x| x.as_u64().unwrap() as u8).collect();
+        assert_eq!(j["program_id"].as_str().unwrap(), r.program_id.to_string(), "adapter {i} program_id");
+        let sel: Vec<u8> = j["selector"].as_array().unwrap().iter().map(|x| as_u8(x, "selector byte")).collect();
         assert_eq!(sel, r.selector, "adapter {i} selector");
-        assert_eq!(j["disc_len"].as_u64().unwrap() as usize, r.selector.len(), "adapter {i} disc_len");
-        assert_eq!(j["role_rules"].as_u64().unwrap() as u8, r.role_rules, "adapter {i} role_rules");
-        let lists: Vec<u16> = j["lists"].as_array().unwrap().iter().map(|x| x.as_u64().unwrap() as u16).collect();
+        assert_eq!(as_u8(&j["disc_len"], "disc_len") as usize, r.selector.len(), "adapter {i} disc_len");
+        assert_eq!(as_u8(&j["role_rules"], "role_rules"), r.role_rules, "adapter {i} role_rules");
+        let lists: Vec<u16> = j["lists"].as_array().unwrap().iter().map(|x| as_u16(x, "list id")).collect();
         assert_eq!(lists, r.lists, "adapter {i} lists");
     }
 }
