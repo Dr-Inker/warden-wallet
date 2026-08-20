@@ -349,3 +349,12 @@ measured), WRDF-0038 (this evidence block) the minor/info.
 (authority position, token-program presence). The VALUE half — a source is *the
 vault's own* ATA, and conservation — is `execute`/`conservation`'s (Task 5), by
 design; Jupiter's validator is Task 6's.
+
+**Task 3 final gate (`2b8ac40`, after review rounds 1-3):** `./.claude/test-gate.sh`
+green (all workspace suites + all `.so`); `cargo test -p warden --lib` → 281
+passed; `cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects`
+clean; `pnpm --filter @warden/core test` → 104 passed. Review rounds 2-3 adopted:
+WRDF-0039 (honest create-records-registry claim), WRDF-0040 (parity gate rejects
+out-of-range + version), WRDF-0041 ((program,selector) authority dispatch, fail
+closed), WRDF-0042 (ceremony-binds-registry docs consistency), WRDF-0043 (this
+evidence + doc reconciliation).
