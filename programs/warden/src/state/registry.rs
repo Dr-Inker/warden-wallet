@@ -114,7 +114,18 @@ pub struct Registry {
     pub entries: [RegistryEntry; MAX_REGISTRY_ENTRIES],
     /// `lists[k]` = list id `k + 1`; id 0 means "no registry / deny every CPI".
     pub lists: [ListMask; MAX_REGISTRY_LISTS],
-    pub _reserved: [u8; 256],
+    /// Bitmask of which list ids (bit `k` = id `k+1`) were ALLOCATED at init —
+    /// i.e. given at least one entry. Distinct from "structurally in range"
+    /// (`is_valid_list_id`): the default registry allocates only lists 1 and 2,
+    /// leaving 3..8 as capacity. **1B does not yet gate grants on this** (an
+    /// empty list denies every CPI at `execute`, so a grant against one is inert
+    /// today), but recording it now is the WRDF-0044 prerequisite: **before
+    /// Phase 1C makes the registry mutable, `grant_session` MUST load the
+    /// registry and require the selected list to be allocated** — otherwise a
+    /// 1C update that later populates a previously-empty list would silently
+    /// activate every session already granted that id, with no fresh ceremony.
+    pub allocated_lists: u8,
+    pub _reserved: [u8; 255],
 }
 
 impl Registry {
@@ -140,10 +151,21 @@ impl Registry {
         }
     }
 
-    /// Is `list_id` a usable id for a `grant_session` allowlist? 0 (no
-    /// registry) and any id past the table are not.
+    /// Is `list_id` STRUCTURALLY in range (1..=8)? This is capacity, NOT
+    /// allocation — see `is_allocated_list`. `grant_session` uses this in 1B
+    /// (lists are immutable); 1C must switch to `is_allocated_list` before the
+    /// registry becomes mutable (WRDF-0044).
     pub fn is_valid_list_id(list_id: u16) -> bool {
         (1..=MAX_REGISTRY_LISTS as u16).contains(&list_id)
+    }
+
+    /// Was `list_id` ALLOCATED (given ≥1 entry) at init? The forward-safe check
+    /// a mutable-registry world (1C) must gate grants on.
+    pub fn is_allocated_list(&self, list_id: u16) -> bool {
+        match list_id.checked_sub(1) {
+            Some(i) if (i as usize) < MAX_REGISTRY_LISTS => (self.allocated_lists >> i) & 1 == 1,
+            _ => false,
+        }
     }
 }
 
@@ -171,7 +193,8 @@ mod tests {
             + 2 + 6                     // n_entries, _pad2
             + entry * MAX_REGISTRY_ENTRIES
             + 8 * MAX_REGISTRY_LISTS    // lists
-            + 256; // _reserved
+            + 1                         // allocated_lists
+            + 255; // _reserved
         assert_eq!(Registry::LEN, 8 + hand);
     }
 
@@ -274,7 +297,8 @@ mod tests {
                 _pad: [0; 6],
             }),
             lists: core::array::from_fn(|_| ListMask { bits: [0; 1] }),
-            _reserved: [0; 256],
+            allocated_lists: 0,
+            _reserved: [0; 255],
         };
         // entry 0 is a real SPL Transfer; entries 1..64 are zeroed (default id,
         // disc_len 0) and would match a System call if scanned.

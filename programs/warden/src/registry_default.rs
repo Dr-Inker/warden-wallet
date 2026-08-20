@@ -90,6 +90,8 @@ pub fn write_defaults(reg: &mut Registry) -> Result<()> {
             if let Some(li) = list_id.checked_sub(1) {
                 if (li as usize) < MAX_REGISTRY_LISTS {
                     reg.lists[li as usize].set(idx);
+                    // Mark this list ALLOCATED (WRDF-0044): it now has ≥1 entry.
+                    reg.allocated_lists |= 1u8 << li;
                 }
             }
         }
@@ -110,6 +112,21 @@ mod tests {
         let mut h = Sha256::new();
         h.update(b"global:route");
         assert_eq!(sighash("route"), h.finalize()[..8]);
+    }
+
+    #[test]
+    fn write_defaults_marks_only_lists_1_and_2_allocated() {
+        // WRDF-0044: allocated_lists records which lists actually got entries.
+        let mut reg: Registry = bytemuck::Zeroable::zeroed();
+        write_defaults(&mut reg).unwrap();
+        assert!(reg.is_allocated_list(1), "list 1 (production) allocated");
+        assert!(reg.is_allocated_list(2), "list 2 (test) allocated");
+        for id in 3..=8u16 {
+            assert!(!reg.is_allocated_list(id), "list {id} is capacity, not allocated");
+        }
+        assert!(!reg.is_allocated_list(0));
+        // Structural validity is broader than allocation.
+        assert!(Registry::is_valid_list_id(3) && !reg.is_allocated_list(3));
     }
 
     #[test]

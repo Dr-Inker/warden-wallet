@@ -167,7 +167,8 @@ mod tests {
                 _pad: [0; 6],
             }),
             lists: core::array::from_fn(|_| ListMask { bits: [0; 1] }),
-            _reserved: [0; 256],
+            allocated_lists: 0,
+            _reserved: [0; 255],
         };
         let mut sel = [0u8; MAX_SELECTOR_LEN];
         sel[..selector.len()].copy_from_slice(selector);
