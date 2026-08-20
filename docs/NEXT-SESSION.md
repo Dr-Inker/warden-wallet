@@ -22,31 +22,54 @@ RETURN / Merged SHA; `git status`; exact commands and results at that SHA; invar
 
 ## Where to resume
 
-At the implementation base, Phase 1B has landed the L0 harness gate, slot
-freshness, conservation, proof-of-possession at account creation, the original
-invariant ledger, and repo supply-chain gates. Registry, test programs, staging,
-`execute`, `swap`, the TypeScript payload builder, and close-out remain. Confirm
-the branch and plan state rather than assuming the historical base is still
-HEAD.
+**The governing document is now
+[`2026-08-20-warden-research-adjudication-and-campaign-plan.md`](superpowers/plans/2026-08-20-warden-research-adjudication-and-campaign-plan.md)**
+(joint Claude + Codex `sol@max` adjudication of this whole research corpus,
+SHIP-DOC after three rounds). It sets the order and supersedes the priority list
+that was here. Confirm branch/plan state rather than assuming the historical base
+is still HEAD.
 
-Priority remains:
+Landed base: the L0 harness gate, slot freshness, conservation, proof-of-
+possession at account creation, the invariant ledger, and repo supply-chain
+gates — **plus the 2026-08-20 A0 assurance pass** (executable review lane;
+`REVIEW-RUNS.jsonl` recording every round incl. zero-finding; retrospective
+threat-model deltas; five RED-verified conservation fund-loss fixes;
+`WRD-CONS-*` unit-layer ledger rows). A0 close-out and the five fixes are in
+`docs/program/PHASE1B-MEASUREMENTS.md`.
 
-1. Continue the Phase 1B task order in `CLAUDE.md`.
-2. At a clean boundary, client C0 and vanity V0 may seed their security rows and
-   threat-model requirements with honest `unimplemented` status. UI U0–U2 may
-   correct semantics and expand the Figma system under an explicit design lease.
-3. Do not implement client C1–C5 or vanity V1–V6 against provisional SDK
-   interfaces. Vanity V4 additionally waits for client C1's production extension
-   trust boundary.
-4. Client C1's trust boundary precedes UI U7 and vanity V4. Client release work,
-   generated UI tokens, and vanity reproducible worker/build work must converge
-   on one shipped-artifact and CSP review; no plan may weaken another.
+Remaining, in campaign-plan order:
+
+1. **C0 + V0 combined documentation tranche** (next) — seed the client/vanity
+   invariants and write the new tasks the campaign plan introduced into their
+   source plans: **C1a** (production origin / build-ID migration, blocks public
+   account creation), **C2a** (strict-DER + mandatory low-S assertion
+   normalization, blocks C3/V4), **C4b** (swap quote-source independence),
+   **5E** (structured events, a Task-5 completion requirement), **Task 11R**
+   (deploy-gate RPC checks, before Task 9), and the **Task 2 split** (2A mutator
+   / 2B jup-mock). Also correct the gating below in this file.
+2. **Phase 1B program order** 2 → 3 → 4 → 5 → 6 → 8 → 9. Task 5 must wire the
+   native-lamport SOL equation (not the `amount` cache — WRDF-0011) with a
+   real-CPI `SyncNative`+`Transfer` regression, and cover the standalone-mint
+   case through a real CPI.
+3. Corrected gating (was C1-only): **V4 waits for C1a + C2a + C3 + C4**; **U7
+   token export waits for U0–U2 acceptance** (and live receipt rendering for
+   C3 + C4). Client C1's trust boundary still precedes UI U7 and vanity V4.
+4. **Task 11 is PARTIAL** — its deployment gate is spec + partial dry-run
+   (`docs/security/DEPLOY-GATE.md`); Task 11R owns the RPC checks before Task 9.
 5. Keep native mobile at prototype/research scope until the owner authorizes an
    implementation framework and real-device spikes close credential, verified-
    link, MWA, and capture/privacy uncertainties.
 
+Owner decisions owed (none block C0+V0 or Task 2): the C1a freeze-production-ID
+vs authenticated-migration choice; a U0–U2 Figma design lease (for a session
+after the current two); scheduling the real-device WebAuthn PRF spike; the
+Certora quote at 1B close-out; a Task-9 baseline exception for the pre-A0 review
+rounds that were never recorded (recommended: approve, gap named honestly); and
+CI `fetch-depth: 0` so the evidence-at-SHA ledger gate is load-bearing in CI.
+
 ## Plans to carry forward
 
+- [`2026-08-20-warden-research-adjudication-and-campaign-plan.md`](superpowers/plans/2026-08-20-warden-research-adjudication-and-campaign-plan.md) — **governing order**
 - [`2026-08-19-warden-client-security-hardening.md`](superpowers/plans/2026-08-19-warden-client-security-hardening.md)
 - [`2026-08-19-warden-vanity-primary-account.md`](superpowers/plans/2026-08-19-warden-vanity-primary-account.md)
 - [`2026-08-19-wallet-ui-extension-mobile.md`](research/2026-08-19-wallet-ui-extension-mobile.md)
