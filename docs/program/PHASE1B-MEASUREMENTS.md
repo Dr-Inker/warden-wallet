@@ -294,3 +294,36 @@ first commit and the rounds hardened the specs far beyond it.
 **Owed to the implementing tasks:** the byte-level Squads-config and Registry-config
 attestation field lists (Task 11R / Task 3), and every invariant here moves off
 `unimplemented` only when its named task lands executable evidence.
+
+## Task 2 close-out (2026-08-20)
+
+**Task 2 (2A + 2B) is complete.** Two never-deployed test programs plus their
+LiteSVM harnesses:
+- `programs/test-mutator` (2A, `204a118`) — 10 adversarial instructions, each
+  attempting one mutation §5.2 must catch; 11 harness smoke tests
+  (`mutator_harness.rs`) drive each with a payer authority.
+- `programs/test-jup-mock` (2B, `4c8575a`) — Jupiter v6-shaped `route` /
+  `shared_accounts_route`; 7 harness smoke tests (`jup_mock_harness.rs`).
+
+Program ids are nothing-up-my-sleeve (`sha256("WARDEN/test-mutator/v1")` /
+`…/test-jup-mock/v1`); no keypairs committed. `.claude/test-gate.sh` builds and
+freshness-checks both new `.so`.
+
+**Review: 4 rounds (Codex sol@max), converged at round 4 with zero findings.**
+Findings adopted along the way (all in `REVIEW-SCORECARD.jsonl`):
+- WRDF-0031: the mock now speaks Jupiter v6's real argument field order
+  (empty-`route_plan` case); full RoutePlanStep + optional-account + non-empty-plan
+  fidelity against the pinned IDL is scoped to Task 6 (its plan checkbox).
+- WRDF-0032: the negative smokes (drain, re-enter) assert the handler actually
+  RAN (Anchor instruction-name log) and failed on the specific path, not any
+  pre-handler failure.
+- WRDF-0033: the mock always pays the passed `platform_fee_account`; the
+  "fee to a non-treasury account" case is a caller account-substitution warden's
+  pre-CPI meta check rejects — there is no mock divert branch, because an
+  external-to-external divert is invisible to both the meta check and vault-only
+  conservation.
+
+**Gate at the final SHA:** `./.claude/test-gate.sh` green (all workspace suites +
+both new `.so` built); `cargo clippy` clean on both new crates;
+`node scripts/gen-invariants.mjs --check` green; supply-chain gate PASS.
+Next: Task 3 (`Registry` + `init_registry` + `grant_session` allowlist ids).
