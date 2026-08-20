@@ -399,6 +399,12 @@ merged SHA and expose identical owner seed, address, and bump.
 
 ## V2 — Build the source-controlled search engine and worker boundary
 
+**Schedule (campaign plan 2026-08-20):** the benchmark may run after Phase 1B
+Task 8; the **final TS/WASM choice, CSP delta, and shipped-build byte-comparison
+wait for C2** (the CSP/WASM posture) and are re-validated by **C6** on the shipped
+artifact. C6 is downstream revalidation, not a V2 start-blocker — but no vanity
+artifact ships before C6 re-validates it.
+
 **Files:** new `packages/vanity-pda/**`, its deterministic build script, worker
 schemas, unit/property tests, benchmark, and supply-chain metadata.
 
@@ -444,8 +450,12 @@ and property tests.
 
 ## V4 — Integrate the onboarding state machine
 
-**Schedule:** after client-plan C1 establishes the production extension's port,
-sender, storage, and worker boundaries.
+**Schedule (corrected, campaign plan 2026-08-20):** after **C1a + C2a + C3 + C4**,
+not C1 alone. The final `create_account` ceremony consumes `assertionToCompact()`
+(C2a's strict-DER + low-S output) and binds to the immutable approval record (C3);
+confirmed readback gates on C4's decode contract; and no funded account may be
+created before C1a settles the production origin. C1 remains the trust boundary
+these build on.
 
 **Files:** production `apps/extension/**` onboarding, background state, storage,
 and Playwright tests. Never import from `spikes/**`.

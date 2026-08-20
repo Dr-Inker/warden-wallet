@@ -388,7 +388,14 @@ and result. Simulator-only evidence remains labeled `UNVERIFIED`.
 
 ## U7 — Export the design contract into implementation
 
-**Start only after:** Phase 1B Task 8 and client C1 have stable interfaces.
+**Start only after (split, campaign plan 2026-08-20):** the semantic-model and
+deterministic-fixture *scaffolding* may follow Phase 1B Task 8 + client C1; but
+**token export additionally requires U0–U2 acceptance** — U1/U2 create the
+variable collections and component contracts the export manifests reference, so
+there is nothing to export before them — and **live approval rendering
+additionally requires C3 + C4** (the immutable request record and exact-bytes
+decode it binds to). Do not export tokens or render a live Receipt against
+provisional interfaces.
 
 - [ ] Define a source-controlled Figma export manifest: collection, variable id,
   modes, component/node ids, export timestamp, and file version.

@@ -174,6 +174,36 @@ nested/cross-origin iframe; same tab after navigation; tab-id reuse; oversized
 payload; unknown method; stale port; worker restart mid-request; popup opening a
 request belonging to another origin/account.
 
+## C1a — Production origin and build-ID lifecycle (blocking subgate of C1)
+
+**Why here (campaign plan 2026-08-20 G4; research L9 "Passkey origin / build-id
+migration"):** `rp_id_hash` = `SHA-256("chrome-extension://<id>")` is **immutable
+SmartAccount state** (`state/smart_account.rs`), the extension id differs between
+a dev-loaded and a store build, and no migration instruction exists. Without a
+decided policy, a development-origin account silently becomes a funded production
+account no production build can ever produce assertions for — or both builds
+create accounts and users fund the wrong one. Invariant: `WRD-ORG-01`.
+
+**Owner decision required before any public account creation:** freeze one
+production extension id (dev builds refuse mainnet account creation), or fund an
+authenticated origin-migration design in Phase 1C. Until decided, `WRD-ORG-01`
+stays `unimplemented` and V4/U7 stay blocked.
+
+- [ ] Record the owner's decision in the spec (§4/§6) and this plan; if "freeze",
+  pin the production `key`/extension id in the `apps/extension` manifest metadata
+  and document the CWS binding.
+- [ ] Red test: a stored-origin mismatch fails closed — an account created under
+  origin A rejects an assertion whose clientDataJSON origin is B, end to end
+  through the production transaction builder.
+- [ ] Red test: a dev-profile build refuses `create_account` against a mainnet
+  cluster_tag (build-time guard plus runtime check), so a dev-origin account
+  cannot become a funded production account.
+- [ ] Document (or implement, per the decision) the migration story; "deliberately
+  refused" is an acceptable, recorded answer.
+
+**C1a acceptance:** the decision is recorded and its red tests pass at the merged
+SHA; `WRD-ORG-01` moves to `test-covered` only on executable evidence.
+
 ## C2 — Keyring lifecycle whose authentication controls key release
 
 - [ ] Store only a versioned AES-256-GCM envelope in persistent extension
@@ -209,6 +239,34 @@ unknown version; password and PRF derive the intended unwrap keys; wrong passwor
 idle boundary; hard boundary; clock advance while worker is asleep; worker death
 and wake; lock during pending signing; rejection after expiry even if an alarm did
 not fire. Do not derive expected ciphertext from the implementation under test.
+
+## C2a — Assertion conversion: strict DER parsing and mandatory low-S normalization
+
+**Why here (campaign plan 2026-08-20 G3; spec §Passkeys):** the spec is binding —
+low-S normalization is mandatory client-side because the secp256r1 precompile
+rejects high-S signatures and Chrome emitted a high-S signature on the very first
+real sample. Today only test helpers normalize; no production client task owned
+this, so every real root ceremony could fail despite correct on-chain code.
+Invariant: `WRD-SIG-01`. Blocks C3 and V4 — both consume its output.
+
+- [ ] Implement `assertionToCompact()` in `packages/core`: strict DER
+  `Ecdsa-Sig-Value` parsing (reject trailing bytes, non-minimal INTEGER lengths,
+  negative/oversized INTEGERs, `r`/`s` ≥ n), fixed 64-byte compact output, and
+  **unconditional low-S normalization** (`s > n/2 ⇒ s = n − s`).
+- [ ] Vector: the recorded real high-S Chrome assertion from the Phase 0 spike,
+  carried `normalize → production transaction builder → precompile ACCEPT` on
+  LiteSVM with `with_mainnet_features()`.
+- [ ] Red vectors: a malformed-DER set (truncated, trailing garbage, non-minimal
+  INTEGER, `r = 0`, `s = 0`, `s = n`) each returns a typed error, not a panic;
+  and a **high-S signature left unnormalized must FAIL the precompile** — proving
+  the normalization is load-bearing, not decorative.
+- [ ] Property test: for random valid signatures, `normalize∘normalize =
+  normalize` and the verifier accepts iff low-S.
+- [ ] Fuzz the DER parser over a bounded corpus; no input panics.
+
+**C2a acceptance:** the high-S end-to-end vector and the malformed-DER red set
+pass at the merged SHA; `WRD-SIG-01` moves to `test-covered`. C3 signing and V4's
+create ceremony consume **only** `assertionToCompact()` output.
 
 ## C3 — Immutable, single-use approval-to-signature binding
 
@@ -269,6 +327,30 @@ the authorization stays stale.
 another signer/cluster; stale report; RPC lies about balance; parser vs simulator
 disagreement; System `assign` hidden beside a transfer; Token-2022 extensions;
 address poisoning; Unicode/lookalike labels; transaction changes after preview.
+
+## C4b — Quote-source independence for swaps
+
+**Why here (campaign plan 2026-08-20 G5; research L9 "Oracle / slippage / MEV"):**
+the swap quote-sanity check (a second source, >3 % blocks) is the **only** price
+defence and is entirely off-chain. C4 keeps simulation/reputation advisory; price
+sanity is the one place a second *source* is load-bearing, so its independence
+must be provable. Invariant: `WRD-QTE-01`.
+
+- [ ] Record quote provenance for both the primary and the check quote: source
+  id, upstream(s), fetch time, quote expiry, and route digest.
+- [ ] Fixtures with asserted outcomes: a **stale** primary quote (expired ⇒ WARN
+  + re-quote, never silent reuse); a **sandwiched** route (check-quote divergence
+  >3 % ⇒ BLOCK, both quotes shown); a **shared-upstream** "second source" (same
+  upstream id ⇒ the check is VOID — rendered as "no independent check", never as
+  agreement).
+- [ ] The outcome semantics are explicit and tested: BLOCK cannot be overridden
+  by simulation or reputation; WARN requires fresh user action; VOID never renders
+  green.
+- [ ] The independence rule is data-driven (an upstream registry), not a
+  hardcoded vendor pair.
+
+**C4b acceptance:** all fixtures pass at the merged SHA with the block/warn/void
+outcomes asserted; `WRD-QTE-01` moves to `test-covered`.
 
 ## C5 — Fresh authentication for export and recovery
 

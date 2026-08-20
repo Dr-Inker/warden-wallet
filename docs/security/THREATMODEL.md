@@ -151,3 +151,37 @@ stays UNVERIFIED until a release candidate exists.
 
 **Residual, stated honestly:** three review rounds for this task ran with no retained thread ids
 (REVIEW-RUNS.jsonl). The deployment gate can currently be *read* but not *run* against a cluster.
+
+## Phase 1B / C0+V0 seeding (client + vanity threat surface) — 2026-08-20 — seeded, unimplemented
+
+_These rows are the threat surface the client-security (C0/C1a/C2a/C4b) and vanity (V0) invariants
+defend. They are seeded now, at honest `unimplemented` status, so every future review of that code is
+armed — no `apps/extension` or vanity worker exists yet. Carried by the campaign plan 2026-08-20._
+
+**Client / extension (C0, C1a, C2a, C4b):**
+
+| # | Threat | v1 answer | Ledger rows |
+|---|---|---|---|
+| C-1 | Compromised dApp page forges origin/account/approval to a privileged method | Privileged background methods derive origin/id/tab/frame from browser-owned sender metadata only; page-supplied context is stripped | `WRD-EXT-01`, `WRD-EXT-02` |
+| C-2 | Malicious iframe / cross-frame request | Same browser-owned provenance; the request is bound to its originating port/tab/frame and cancelled on navigation | `WRD-EXT-01`, `WRD-APR-01` |
+| C-3 | Service-worker (MV3) suspension drops or races unlock state | Absolute wall-clock idle/hard deadlines checked on every key use and after every wake; expiry clears session material; alarms are a wake aid, not the authority | `WRD-KEY-03` |
+| C-4 | Approval UI race — approve twice / resolve the wrong request | One atomic winner; single-use immutable approval record; signer rechecks the digest immediately before signing | `WRD-APR-01`, `WRD-APR-02`, `WRD-APR-03` |
+| C-5 | Poisoned simulator/reputation response shows a false "safe" | Simulation bound to digest/account/cluster/freshness; advisory only; can neither authorize a denied action nor bypass policy | `WRD-SIM-01`, `WRD-SIM-02` |
+| C-6 | Sandwiched / stale / shared-upstream swap quote | Quote provenance recorded; stale re-quotes, >3% divergence blocks unoverridably, shared-upstream renders as no independent check | `WRD-QTE-01` |
+| C-7 | Dependency / build compromise ships a malicious payload (Trust Wallet / Shai-Hulud class) | Byte-reproducible payload from two isolated builders; published store payload compared to the approved artifact; lockfile pinning + provenance | `WRD-REL-01`, `WRD-REL-02` |
+| C-8 | Publisher-account takeover (leaked CWS credential) | Least-privilege, phishing-resistant, two-person publisher authority; no long-lived publishing secret in CI | `WRD-REL-03` |
+| C-9 | Build-ID change strands an account, or a dev account becomes a funded production account | Stored-origin mismatch fails closed; dev build cannot create a funded mainnet account; production id frozen or authenticated 1C migration | `WRD-ORG-01` |
+| C-10 | High-S browser assertion silently bricks every root ceremony, or a malformed DER is mis-parsed | Strict DER parse + mandatory low-S normalization before submission; recorded real high-S sample proven end to end | `WRD-SIG-01` |
+| C-11 | Key export / recovery reveal without fresh authentication | Any reveal/export needs a fresh ceremony; root/session secrets never exportable; recovery envelope keeps 128-bit strength + contextual AAD | `WRD-EXP-01`, `WRD-KEY-01`, `WRD-KEY-02`, `WRD-KEY-04` |
+
+**Vanity address feature (V0):**
+
+| # | Threat | v1 answer | Ledger rows |
+|---|---|---|---|
+| V-1 | Malicious worker/binary returns a private key or a salt for an attacker-controlled address | The worker returns only salt/owner-seed/address/bump metadata; the trusted client independently re-derives; a static+runtime test rejects secret-shaped fields | `WRD-VAN-01`, `WRD-VAN-04` |
+| V-2 | Stale program config / frozen-target drift makes the searched address wrong | Program id, cluster/config, account seed, and seed-domain version are frozen before any long search; the create ceremony re-binds them | `WRD-VAN-03` |
+| V-3 | Overlapping worker ranges / reused job nonce / counter wrap corrupts the search | Disjoint nonce/counter search; stale jobs discarded by job id + config digest; boundary/property tests | `WRD-VAN-02` |
+| V-4 | Predictable salt nonce or CSPRNG failure narrows the keyspace | Salt is a full 32-byte CSPRNG value; a CSPRNG exception aborts rather than degrades | `WRD-VAN-01` |
+| V-5 | CPU/battery denial of service from an unbounded search | Cancellation bounded by a tested maximum batch duration; calibrated 50%/95% probability windows, not a fake countdown | `WRD-VAN-02` |
+| V-6 | Server-side metadata linkage deanonymizes the wallet | v1 generation is local, bundled, and emits no wallet-linkable telemetry | `WRD-VAN-04` |
+| V-7 | Vanity treated as identity / address poisoning | Vanity is cosmetic, never identity; full-address comparison, saved-contact provenance, and the poisoning controls ship with it (see the UI research binding correction) | `WRD-VAN-03` |

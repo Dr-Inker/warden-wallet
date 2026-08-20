@@ -101,7 +101,7 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
       expect(r.title.length, r.id).toBeGreaterThan(0);
       expect(r.statement.length, r.id).toBeGreaterThan(20);
       expect(r.spec_ref, r.id).toBeTruthy();
-      expect(["1A", "1B", "1C"], r.id).toContain(r.phase);
+      expect(["1A", "1B", "1C", "client", "vanity"], r.id).toContain(r.phase);
       expect(Array.isArray(r.prior_art), r.id).toBe(true);
       expect(Array.isArray(r.evidence), r.id).toBe(true);
       expect(r.last_reviewed?.thread, r.id).toBeTruthy();
@@ -243,6 +243,24 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
     for (const n of ["NONCE", "CAP", "SESS", "EXEC", "FRZ", "ROOT", "DENY", "BUF", "STAGE"]) {
       expect(ns.has(n), `namespace WRD-${n}-* is not seeded`).toBe(true);
     }
+  });
+
+  // C0/V0 acceptance (campaign plan 2026-08-20): a required client/release/vanity invariant id must
+  // never silently disappear. This is the "test that fails if a required id disappears" the plans ask
+  // for — the ids are the seeded contract, not a suggestion.
+  it("seeds every required client / release / vanity / new-task invariant id", () => {
+    const ids = new Set(rows.map((r) => r.id));
+    const required = [
+      "WRD-KEY-01", "WRD-KEY-02", "WRD-KEY-03", "WRD-KEY-04",
+      "WRD-EXT-01", "WRD-EXT-02",
+      "WRD-APR-01", "WRD-APR-02", "WRD-APR-03",
+      "WRD-TXI-01", "WRD-SIM-01", "WRD-SIM-02", "WRD-EXP-01",
+      "WRD-REL-01", "WRD-REL-02", "WRD-REL-03",
+      "WRD-ORG-01", "WRD-SIG-01", "WRD-QTE-01",
+      "WRD-VAN-01", "WRD-VAN-02", "WRD-VAN-03", "WRD-VAN-04",
+      "WRD-EVT-01",
+    ];
+    for (const id of required) expect(ids.has(id), `required invariant ${id} is missing`).toBe(true);
   });
 
   it("is fully rendered into INVARIANTS.md (run `node scripts/gen-invariants.mjs` if this fails)", () => {
