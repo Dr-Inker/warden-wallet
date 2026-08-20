@@ -92,6 +92,10 @@ export function canonicalJson(node, key = null) {
     if (key === "seeded_invariants") items = [...new Set(node)].sort();
     else if (key === "invariant_verdicts")
       items = [...node].sort((a, b) => String(a?.invariant_id).localeCompare(String(b?.invariant_id)));
+    else if (key === "findings")
+      // Findings are keyed by id to the ledger; order carries no meaning, so it carries none to the
+      // digest either (WRDF-0003 round 11). Every other array stays ordered.
+      items = [...node].sort((a, b) => String(a?.id).localeCompare(String(b?.id)));
     return `[${items.map((x) => canonicalJson(x, null)).join(",")}]`;
   }
   if (node && typeof node === "object") {
@@ -112,6 +116,10 @@ export function canonicalJson(node, key = null) {
  * under claimed_* fields; only a human editing the committed scorecard (or evidence) promotes.
  */
 export function buildScorecardLines(doc, record) {
+  // The scorecard is the COMMITTED record; the raw artefact under .superpowers/reviews is
+  // session-local by policy (never committed — CLAUDE.md). So the line must be self-sufficient
+  // (WRDF-0015): it carries the finding's substance — title, location, reproducer intent — not just
+  // its id, so a fresh clone can read what was found without the gitignored artefact.
   return doc.findings.map((f) =>
     JSON.stringify({
       finding_id: f.id,
@@ -121,11 +129,16 @@ export function buildScorecardLines(doc, record) {
       base_sha: doc.base_sha,
       head_sha: doc.head_sha,
       severity: f.severity,
+      title: f.title ?? null,
+      file: f.file ?? null,
+      line: f.line ?? null,
       truth_status: "POTENTIAL",
       claimed_truth_status: f.truth_status,
       evidence_type: f.evidence_type,
       invariant_ids: f.invariant_ids,
       prior_art_cited: f.prior_art_cited || [],
+      reproducer_infeasible_reason: f.reproducer_infeasible_reason ?? null,
+      suggested_fix: f.suggested_fix ?? null,
       ruling: "pending",
       ruled_by: null,
       rationale: f.rationale,

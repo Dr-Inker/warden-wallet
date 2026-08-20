@@ -167,8 +167,10 @@ against the pre-fix mint-key-only classification). `NATIVE_MINT_2022`
 provenance: vendored `spl-token-2022 7.0.0` `src/native_mint.rs`
 `declare_id!("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP")`.
 
-**A0 round-6 fix evidence (WRDF-0011/-0012):** `cargo test -p warden --lib` →
-`254 passed; 0 failed`. RED verified separately: `sync_native_then_transfer_of_a_donation_is_counted_as_sol_outflow`
+**A0 round-6 fix evidence (WRDF-0011/-0012):** `cargo test -p warden --lib` at
+`d515db669fd6a360b0670826636099dbf20650ee` (where these tests land) →
+`254 passed; 0 failed`. RED verified separately by a manual temp-patch attestation
+this session (not a committed reproducer): `sync_native_then_transfer_of_a_donation_is_counted_as_sol_outflow`
 fails when native value is measured by `amount` instead of lamports;
 `a_required_mint_with_an_unmodeled_extension_is_rejected` fails without the
 unmodeled-extension gate. Evidence SHAs pinned to the round-6 fix commit.
