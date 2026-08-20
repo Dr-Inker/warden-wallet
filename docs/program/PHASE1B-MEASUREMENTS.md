@@ -172,3 +172,11 @@ provenance: vendored `spl-token-2022 7.0.0` `src/native_mint.rs`
 fails when native value is measured by `amount` instead of lamports;
 `a_required_mint_with_an_unmodeled_extension_is_rejected` fails without the
 unmodeled-extension gate. Evidence SHAs pinned to the round-6 fix commit.
+
+**A0 round-7 fix evidence (WRDF-0011/-0012/-0013):** `cargo test -p warden --lib`
+at `23d6eaa0a2e536d20ab3385741d71fff35f72e28` → `256 passed; 0 failed`. RED
+verified: `a_standalone_writable_mint_with_an_unmodeled_extension_is_rejected`
+fails without the pre-scan gate. WRDF-0013: mis-pinned round-6 evidence
+(2170973 → the actual landing SHA d515db6) corrected, and
+`packages/core/test/security-ledger.test.ts` now resolves every evidence SHA in
+its git object rather than trusting HEAD.
