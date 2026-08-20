@@ -37,20 +37,24 @@ threat-model deltas; five RED-verified conservation fund-loss fixes;
 `WRD-CONS-*` unit-layer ledger rows). A0 close-out and the five fixes are in
 `docs/program/PHASE1B-MEASUREMENTS.md`.
 
+Also **C0+V0 DONE** (2026-08-20, 9 Codex docs rounds, close-out in
+`docs/program/PHASE1B-MEASUREMENTS.md`): 26 client/vanity/deploy invariants seeded
+at honest `unimplemented`; C1a / C2a / C4b / Task 5E / Task 11R / the Task 2 split
+written into their source plans; V4/U7/V2 gating corrected; spec §6.1 vanity
+section; cross-cluster AAD and 7-iteration deploy-gate governance hardened.
+
 Remaining, in campaign-plan order:
 
-1. **C0 + V0 combined documentation tranche** (next) — seed the client/vanity
-   invariants and write the new tasks the campaign plan introduced into their
-   source plans: **C1a** (production origin / build-ID migration, blocks public
-   account creation), **C2a** (strict-DER + mandatory low-S assertion
-   normalization, blocks C3/V4), **C4b** (swap quote-source independence),
-   **5E** (structured events, a Task-5 completion requirement), **Task 11R**
-   (deploy-gate RPC checks, before Task 9), and the **Task 2 split** (2A mutator
-   / 2B jup-mock). Also correct the gating below in this file.
-2. **Phase 1B program order** 2 → 3 → 4 → 5 → 6 → 8 → 9. Task 5 must wire the
+1. **Task 2** (next) — the two test programs Tasks 5/6 drive CPIs against, split
+   **2A** (`programs/test-mutator` + `tests/mutator_harness.rs`) then **2B**
+   (`programs/test-jup-mock` + `tests/jup_mock_harness.rs`); extend
+   `.claude/test-gate.sh`'s `.so` list to both. Whole-task Codex review.
+2. **Phase 1B program order** 3 → 4 → 5 → 6 → 8 → 9. Task 5 must wire the
    native-lamport SOL equation (not the `amount` cache — WRDF-0011) with a
    real-CPI `SyncNative`+`Transfer` regression, and cover the standalone-mint
-   case through a real CPI.
+   case through a real CPI. **C1a needs a program change** (`create_account` must
+   compare against a pinned production `rp_id_hash`, not just self-consistency —
+   WRDF-0016/0027) plus the owner's freeze-vs-migration decision.
 3. Corrected gating (was C1-only): **V4 waits for C1a + C2a + C3 + C4**; **U7
    token export waits for U0–U2 acceptance** (and live receipt rendering for
    C3 + C4). Client C1's trust boundary still precedes UI U7 and vanity V4.
