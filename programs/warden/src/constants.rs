@@ -3,6 +3,18 @@ use anchor_lang::prelude::Pubkey;
 pub const ACCOUNT_SEED: &[u8] = b"account";
 pub const SESSION_SEED: &[u8] = b"session";
 pub const REGISTRY_SEED: &[u8] = b"registry";
+/// PDA seed prefix for a `Stage` (Task 4): `["stage", account, hash]`.
+pub const STAGE_SEED: &[u8] = b"stage";
+/// Largest payload a single `Stage` may hold (spec §5.1). A staged payload is
+/// instruction-data relief only — the account list still rides in the `execute`
+/// transaction — so 4 KiB is comfortably above any real compiled payload while
+/// bounding the PDA's rent and the `stage_open` allocation.
+pub const STAGE_MAX_DATA_LEN: usize = 4096;
+/// Longest a `Stage` may live from `stage_open` (spec §5.1). Bounds the
+/// content-address squat window (ND-SQD3-LO-01 / Certora H-01): a stranger who
+/// pre-opens `["stage", victim, hash]` can grief the victim for at most this
+/// long before anyone may close it and reclaim the address.
+pub const STAGE_MAX_TTL_SECS: i64 = 3600;
 pub const MAX_CLIENT_DATA_LEN: usize = 512;
 pub const MAX_ROOT_EXPIRY_SECS: i64 = 600;
 /// Maximum age, **in slots**, of a root passkey ceremony (spec §4, rev 8).

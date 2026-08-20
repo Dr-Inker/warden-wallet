@@ -84,6 +84,29 @@ pub mod warden {
     pub fn unfreeze(ctx: Context<Unfreeze>, args: RootArgs) -> Result<()> {
         instructions::unfreeze::handler(ctx, args)
     }
+
+    /// Open a content-addressed `Stage` for a large `execute`/`swap` payload
+    /// (Phase 1B Task 4). See `instructions::stage`.
+    pub fn stage_open(ctx: Context<StageOpen>, args: StageOpenArgs) -> Result<()> {
+        instructions::stage::open(ctx, args)
+    }
+
+    /// Append one sequential slice to an open `Stage` (creator only).
+    pub fn stage_chunk(ctx: Context<StageChunk>, args: StageChunkArgs) -> Result<()> {
+        instructions::stage::chunk(ctx, args)
+    }
+
+    /// Seal a fully-uploaded `Stage`, checking `Keccak256(data) == hash` and
+    /// recording the account's `generation`/`policy_version` (creator only).
+    pub fn stage_finalize(ctx: Context<StageFinalize>) -> Result<()> {
+        instructions::stage::finalize(ctx)
+    }
+
+    /// Close a `Stage` and refund its rent to the creator: the creator before
+    /// finalize, or anyone after `expiry_ts`.
+    pub fn stage_close(ctx: Context<StageClose>) -> Result<()> {
+        instructions::stage::close(ctx)
+    }
 }
 #[derive(Accounts)]
 pub struct Ping {}

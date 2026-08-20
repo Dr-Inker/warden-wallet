@@ -483,6 +483,258 @@
       ]
     },
     {
+      "name": "stage_chunk",
+      "docs": [
+        "Append one sequential slice to an open `Stage` (creator only)."
+      ],
+      "discriminator": [
+        255,
+        14,
+        196,
+        193,
+        233,
+        80,
+        240,
+        46
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "stage",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  103,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "stage.account",
+                "account": "Stage"
+              },
+              {
+                "kind": "account",
+                "path": "stage.hash",
+                "account": "Stage"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "StageChunkArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "stage_close",
+      "docs": [
+        "Close a `Stage` and refund its rent to the creator: the creator before",
+        "finalize, or anyone after `expiry_ts`."
+      ],
+      "discriminator": [
+        122,
+        2,
+        158,
+        116,
+        25,
+        108,
+        100,
+        168
+      ],
+      "accounts": [
+        {
+          "name": "closer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "stage",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  103,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "stage.account",
+                "account": "Stage"
+              },
+              {
+                "kind": "account",
+                "path": "stage.hash",
+                "account": "Stage"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "docs": [
+            "in the handler, so the rent always returns to whoever opened the stage",
+            "no matter who submits the close (this is what makes squatting cost the",
+            "squatter). `close = creator` above transfers the lamports on exit."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "stage_finalize",
+      "docs": [
+        "Seal a fully-uploaded `Stage`, checking `Keccak256(data) == hash` and",
+        "recording the account's `generation`/`policy_version` (creator only)."
+      ],
+      "discriminator": [
+        179,
+        50,
+        30,
+        159,
+        103,
+        17,
+        219,
+        198
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "signer": true
+        },
+        {
+          "name": "stage",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  103,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "stage.account",
+                "account": "Stage"
+              },
+              {
+                "kind": "account",
+                "path": "stage.hash",
+                "account": "Stage"
+              }
+            ]
+          }
+        },
+        {
+          "name": "smart_account",
+          "docs": [
+            "The SmartAccount this stage is bound to, read for its live `generation`",
+            "and `policy_version`. Its key must equal `stage.account`, and its PDA is",
+            "re-derived from the seed it stores so a byte-identical planted copy",
+            "cannot supply a different generation."
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "stage_open",
+      "docs": [
+        "Open a content-addressed `Stage` for a large `execute`/`swap` payload",
+        "(Phase 1B Task 4). See `instructions::stage`."
+      ],
+      "discriminator": [
+        41,
+        9,
+        126,
+        139,
+        3,
+        148,
+        177,
+        177
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "stage",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  103,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "args.account"
+              },
+              {
+                "kind": "arg",
+                "path": "args.hash"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "StageOpenArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "transfer",
       "docs": [
         "Move SOL or an SPL balance out of the vault — session key (within its",
@@ -653,6 +905,19 @@
         95,
         223,
         112
+      ]
+    },
+    {
+      "name": "Stage",
+      "discriminator": [
+        128,
+        95,
+        240,
+        157,
+        209,
+        159,
+        69,
+        179
       ]
     }
   ],
@@ -2094,6 +2359,185 @@
                 8
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Stage",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "docs": [
+              "Schema version; `1` for the only shape Phase 1B writes. `0` is exactly",
+              "\"this PDA has not been initialised\", mirroring `SessionKey`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "The canonical bump for `[\"stage\", account, hash]`, stored so a later",
+              "instruction re-derives the address from the account itself rather than",
+              "trusting a passed bump."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "account",
+            "docs": [
+              "The SmartAccount this payload is destined for (bound into the PDA seeds)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "docs": [
+              "Who opened the stage. The rent-refund destination on every close, so the",
+              "cost of a content-address squat lands on the squatter (module docs)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "hash",
+            "docs": [
+              "`Keccak256(data)`, also the third PDA seed. `stage_finalize` re-hashes",
+              "`data` and rejects a mismatch."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "len",
+            "docs": [
+              "Total payload length agreed at `stage_open`. `data` is allocated to",
+              "exactly this size; `written` walks up to it."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "written",
+            "docs": [
+              "Bytes written so far. `stage_chunk` requires `offset == written`",
+              "(strictly sequential, no gaps, no overwrite); finalize requires",
+              "`written == len`."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "finalized",
+            "docs": [
+              "Set by `stage_finalize` once `written == len` and the hash matches.",
+              "Only a finalized stage may be consumed by `execute`."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "generation",
+            "docs": [
+              "The account `generation` captured at finalize. `execute` requires it to",
+              "still be current (spec §5.3 item 6). `0` until finalize."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "policy_version",
+            "docs": [
+              "The account `policy_version` captured at finalize; same consume rule.",
+              "`0` until finalize."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "expiry_ts",
+            "docs": [
+              "Absolute unix seconds after which anyone may close the stage. `≤ now +",
+              "STAGE_MAX_TTL_SECS`, checked at open."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "data",
+            "docs": [
+              "The staged payload bytes. Grows by chunk; its final `Keccak256` equals",
+              "`hash`."
+            ],
+            "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StageChunkArgs",
+      "docs": [
+        "One sequential slice of the payload. Serialized as `offset: u32 LE ‖",
+        "bytes.len(): u32 LE ‖ bytes` — exactly the `offset ‖ len ‖ payload` wire",
+        "layout spec §5.1 fixes (borsh's `Vec<u8>` prefix supplies the length word)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "offset",
+            "type": "u32"
+          },
+          {
+            "name": "bytes",
+            "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StageOpenArgs",
+      "docs": [
+        "Everything `stage_open` fixes about a stage. `account` and `hash` are the",
+        "two variable PDA seeds, so they are arguments rather than passed accounts:",
+        "a stage may be opened for an account that is not itself passed (the binding",
+        "is checked when `execute` consumes it), and the payload need not exist",
+        "on-chain anywhere else."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "account",
+            "docs": [
+              "The SmartAccount this payload is destined for (PDA seed)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "hash",
+            "docs": [
+              "`Keccak256(payload)` (PDA seed); `stage_finalize` re-hashes and checks."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "len",
+            "docs": [
+              "Total payload length. `data` is allocated to exactly this size."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "expiry_ts",
+            "docs": [
+              "Absolute unix seconds after which anyone may close the stage."
+            ],
+            "type": "i64"
           }
         ]
       }

@@ -4,6 +4,7 @@ pub mod grant_session;
 pub mod registry_admin;
 pub mod revoke_session;
 pub mod rotate_nonce;
+pub mod stage;
 pub mod transfer;
 pub mod unfreeze;
 
@@ -13,5 +14,6 @@ pub use grant_session::*;
 pub use registry_admin::*;
 pub use revoke_session::*;
 pub use rotate_nonce::*;
+pub use stage::*;
 pub use transfer::*;
 pub use unfreeze::*;
