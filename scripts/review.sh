@@ -250,8 +250,14 @@ const fs = require("fs");
 const nullable = (s) => {
   if (s && typeof s === "object") {
     if (s.$ref || s.anyOf) return { anyOf: [...(s.anyOf ?? [s]), { type: "null" }] };
-    if (typeof s.type === "string") return { ...s, type: [s.type, "null"] };
-    if (Array.isArray(s.type) && !s.type.includes("null")) return { ...s, type: [...s.type, "null"] };
+    const withNullType =
+      typeof s.type === "string" ? { ...s, type: [s.type, "null"] }
+      : Array.isArray(s.type) && !s.type.includes("null") ? { ...s, type: [...s.type, "null"] }
+      : s;
+    // A nullable enum needs null IN the enum, not just in the type union.
+    if (Array.isArray(withNullType.enum) && !withNullType.enum.includes(null))
+      return { ...withNullType, enum: [...withNullType.enum, null] };
+    return withNullType;
   }
   return s;
 };
@@ -262,6 +268,13 @@ const walk = (n) => {
   for (const [k, v] of Object.entries(n)) {
     if (k === "allOf" || k === "if" || k === "then" || k === "else" || k === "format") continue;
     out[k === "oneOf" ? "anyOf" : k] = walk(v);
+  }
+  // Strict mode requires an explicit `type` on every schema node; `const`/`enum` alone are
+  // rejected. Infer it from the literal(s) — pure annotation, admits nothing new.
+  if (!out.type && !out.$ref && !out.anyOf) {
+    const sample = "const" in out ? out.const : Array.isArray(out.enum) ? out.enum[0] : undefined;
+    if (sample !== undefined)
+      out.type = sample === null ? "null" : Array.isArray(sample) ? "array" : typeof sample === "number" ? (Number.isInteger(sample) ? "integer" : "number") : typeof sample;
   }
   if (out.properties && typeof out.properties === "object") {
     const originallyRequired = new Set(Array.isArray(out.required) ? out.required : []);
