@@ -188,3 +188,30 @@ fails when the pre-scan gate rejects only unrecognized (not recognized-danger)
 extensions. Spec §5.2 rule 4/4a and the Phase-1B plan pseudocode corrected to the
 native-account lamport SOL equation; the evidence-at-SHA ledger test now fails
 closed on a present-but-mismatched commit and requires a real #[test].
+
+## A0 consolidated final verification (WRDF-0004) — SHA-bound
+
+Every A0 evidence block above cites the SHA its run happened at. This block
+binds the FINAL A0 state, re-run on the committed HEAD so no count is a floating
+claim:
+
+```
+# at 8225d073077a924bf72ee1d4b9d68e3a44f812fa
+$ cargo test -p warden --lib            -> 258 passed; 0 failed
+$ pnpm --filter @warden/core test       -> 103 passed
+$ node scripts/gen-invariants.mjs --check-> INVARIANTS.md up to date (59)
+$ ./scripts/supply-chain-gate.sh         -> L9 supply-chain gate: PASS
+```
+
+The per-round RED/GREEN directions (WRDF-0008/-0011/-0012) were each verified at
+their own fix commit, recorded in the round blocks above; those are the
+authoritative RED attestations. Earlier round blocks' pass counts are the counts
+at THAT round's fix commit, not this HEAD (the suite grew as regressions landed).
+
+**Accepted residual (WRDF-0013 round 10):** the ledger's evidence-at-SHA test
+(`packages/core/test/security-ledger.test.ts`) skips a cited commit only in a
+genuinely shallow clone. CI (`.github/workflows/ci.yml`) does not fetch full
+history, so historical evidence objects take the shallow-skip path there. To make
+the at-SHA check load-bearing in CI, set the checkout `fetch-depth: 0` (or fetch
+the cited objects). **Owner/CI action — not a fund-loss issue:** the program
+suite and HEAD-side ledger checks run fully in CI regardless.
