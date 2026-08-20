@@ -22,8 +22,8 @@ mod common;
 use anchor_lang::{AnchorSerialize, Discriminator};
 use common::passkey::{self, TestPasskey, FLAGS_UP_UV, TEST_ORIGIN};
 use common::{
-    bump_generation, create_smart_account, read_session, read_smart_account, session_pda,
-    write_session, SmartAccountFixture,
+    bump_generation, create_smart_account, init_registry_ix, read_session, read_smart_account,
+    registry_pda, session_pda, set_program_data, write_session, SmartAccountFixture,
 };
 use litesvm::LiteSVM;
 use sha2::{Digest, Sha256};
@@ -70,7 +70,6 @@ mod err {
     pub const BAD_INSTRUCTION_LAYOUT: u32 = 6010;
     pub const INVALID_POLICY: u32 = 6027;
     pub const CHALLENGE_MISMATCH: u32 = 6018;
-    pub const PROGRAM_ALLOWLIST_UNSUPPORTED: u32 = 6028;
     pub const INVALID_ALLOWLIST_ID: u32 = 6055;
     pub const SESSION_DAY_CAPS_UNSUPPORTED: u32 = 6033;
     pub const SESSION_PRIOR_STATE_MISMATCH: u32 = 6035;
@@ -198,6 +197,35 @@ fn live() -> (LiteSVM, Keypair, TestPasskey, Pubkey) {
     (svm, payer, pk, account)
 }
 
+/// Like `live`, but the account is bound to a real, on-chain `Registry`
+/// (init'd from the upgrade authority, carrying the default lists 1 & 2). This
+/// is what a non-zero `program_allowlist_id` grant needs: the account records a
+/// registry key, and the registry itself exists for `grant_session` to load and
+/// check list allocation against (Task 3, WRDF-0044). Returns the registry PDA
+/// too, since the grant instruction must carry it.
+fn live_with_registry() -> (LiteSVM, Keypair, TestPasskey, Pubkey, Pubkey) {
+    let (mut svm, payer) = common::setup();
+    set_clock(&mut svm, NOW);
+    // The registry is init'd by the program's upgrade authority (init_registry
+    // reads ProgramData). Plant that authority, then init.
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 1_000_000_000).unwrap();
+    set_program_data(&mut svm, Some(authority.pubkey()));
+    let (registry, _) = registry_pda();
+    let init = init_registry_ix(payer.pubkey(), authority.pubkey(), Pubkey::new_unique());
+    send(&mut svm, &[&payer, &authority], &[init]).expect("init_registry");
+
+    let pk = TestPasskey::new(3);
+    let f = SmartAccountFixture {
+        root_pubkey33: pk.pubkey33(),
+        policy: session_policy(),
+        registry: Some(registry),
+        ..Default::default()
+    };
+    let account = create_smart_account(&mut svm, &payer, &f, &pk);
+    (svm, payer, pk, account, registry)
+}
+
 fn grant_ix(payer: Pubkey, smart_account: Pubkey, session: Pubkey, args: &GrantSessionArgs) -> Instruction {
     let mut data = Sha256::digest(b"global:grant_session")[..8].to_vec();
     args.serialize(&mut data).unwrap();
@@ -209,6 +237,10 @@ fn grant_ix(payer: Pubkey, smart_account: Pubkey, session: Pubkey, args: &GrantS
             AccountMeta::new(session, false),
             AccountMeta::new_readonly(sysvar::instructions::ID, false),
             AccountMeta::new_readonly(anchor_lang::system_program::ID, false),
+            // Optional `registry` (Task 3, WRDF-0044): the program-id sentinel
+            // encodes `None`. Every grant here is `program_allowlist_id == 0` or
+            // an account with no registry, so the handler never dereferences it.
+            AccountMeta::new_readonly(common::program_id(), false),
         ],
         data,
     }
@@ -316,6 +348,24 @@ fn grant_ixs(
     body: GrantBody,
 ) -> Vec<Instruction> {
     grant_ixs_tampered(svm, payer, account, pk, &body.clone(), body)
+}
+
+/// The honest grant ceremony, but carrying the real `registry` account instead
+/// of the `None` sentinel (Task 3, WRDF-0044): the only shape under which a
+/// non-zero `program_allowlist_id` can be validated against list allocation.
+fn grant_ixs_with_registry(
+    svm: &LiteSVM,
+    payer: &Keypair,
+    account: &Pubkey,
+    pk: &TestPasskey,
+    registry: Pubkey,
+    body: GrantBody,
+) -> Vec<Instruction> {
+    let mut ixs = grant_ixs(svm, payer, account, pk, body);
+    // Replace the trailing `None` sentinel (see `grant_ix`) with the registry.
+    *ixs.last_mut().unwrap().accounts.last_mut().unwrap() =
+        AccountMeta::new_readonly(registry, false);
+    ixs
 }
 
 /// `session_account` and `submitted_payer` are passed separately from the
@@ -1059,6 +1109,38 @@ fn grant_with_unknown_allowlist_id_rejected() {
     let session_key = Keypair::new();
     let body = GrantBody { program_allowlist_id: 1, ..one_cap_body(session_key.pubkey()) };
     expect_grant_reject(body, err::INVALID_ALLOWLIST_ID);
+}
+
+#[test]
+fn grant_with_unallocated_allowlist_id_rejected() {
+    // WRDF-0044: on an account bound to a real registry, a structurally-valid
+    // but UNALLOCATED list id (3 — the defaults populate only 1 & 2) is refused
+    // at grant time, not merely denied later at `execute`. Before the
+    // allocation gate this grant was accepted and the dangling id sat in the
+    // session, ready to activate the moment a Phase 1C update populated list 3.
+    let (mut svm, payer, pk, account, registry) = live_with_registry();
+    let session_key = Keypair::new();
+    let body = GrantBody { program_allowlist_id: 3, ..one_cap_body(session_key.pubkey()) };
+    let ixs = grant_ixs_with_registry(&svm, &payer, &account, &pk, registry, body);
+    expect_reject(&mut svm, &[&payer], &ixs, 1, err::INVALID_ALLOWLIST_ID);
+}
+
+#[test]
+fn grant_with_allocated_allowlist_id_accepted() {
+    // The positive on-chain counterpart (previously a documented follow-up):
+    // list 1 IS allocated by the defaults, so a grant naming it, carrying the
+    // registry the account is bound to, is accepted and the id is stored.
+    let (mut svm, payer, pk, account, registry) = live_with_registry();
+    let session_key = Keypair::new();
+    let (session, _) = session_pda(&account, &session_key.pubkey());
+    let body = GrantBody { program_allowlist_id: 1, ..one_cap_body(session_key.pubkey()) };
+    let ixs = grant_ixs_with_registry(&svm, &payer, &account, &pk, registry, body);
+    expect_ok(&mut svm, &[&payer], &ixs);
+    assert_eq!(
+        read_session(&svm, &session).program_allowlist_id,
+        1,
+        "an allocated allowlist id is stored on the session"
+    );
 }
 
 /// The root ceremony authorizes WHERE THE RENT GOES as well as what is

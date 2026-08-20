@@ -10,6 +10,7 @@ import {
   OP_UNFREEZE,
   OP_TRANSFER,
   OP_CREATE,
+  encodeCreateBody,
   OWNER_SEED_DOMAIN,
   deriveOwnerSeed,
 } from "../src/index.js";
@@ -348,22 +349,16 @@ describe("create_account (OP_CREATE, 0x06)", () => {
   // the program agree on the field order and on `Vec<u8>`'s u32 LE length
   // prefix.
   it("matches the Rust-pinned CreateBody action hash (create_body_action_hash_matches_pinned_vector)", () => {
-    const origin = new TextEncoder().encode("chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi");
-    const body = new Uint8Array(32 + 32 + 4 + origin.length + 32 + 32 + 32);
-    let o = 0;
-    body.set(SALT, o);
-    o += 32;
-    body.set(fill(32, 0x55), o); // rp_id_hash
-    o += 32;
-    new DataView(body.buffer).setUint32(o, origin.length, true); // borsh Vec<u8> length
-    o += 4;
-    body.set(origin, o);
-    o += origin.length;
-    body.set(fill(32, 0x5a), o); // cluster_tag
-    o += 32;
-    body.set(fill(32, 0x66), o); // policy_hash
-    o += 32;
-    body.set(fill(32, 0x00), o); // registry (Pubkey::default() = none) — Task 3, WRDF-0034
+    // Build through the canonical exported encoder (WRDF-0042): the pinned
+    // vector must validate the API clients actually use, not a hand-roll.
+    const body = encodeCreateBody({
+      salt: SALT,
+      rpIdHash: fill(32, 0x55),
+      origin: "chrome-extension://maikadpaobbjkmaomnpnhjglpabllaoi",
+      clusterTag: fill(32, 0x5a),
+      policyHash: fill(32, 0x66),
+      // registry omitted → Pubkey::default() = none (Task 3, WRDF-0034)
+    });
     expect(body.length).toBe(215);
 
     expect(hex(actionHash(OP_CREATE, body))).toBe(

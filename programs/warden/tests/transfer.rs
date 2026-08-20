@@ -227,6 +227,9 @@ fn grant_ix(payer: Pubkey, smart_account: Pubkey, session: Pubkey, args: &GrantS
             AccountMeta::new(session, false),
             AccountMeta::new_readonly(sysvar::instructions::ID, false),
             AccountMeta::new_readonly(anchor_lang::system_program::ID, false),
+            // Optional `registry` (Task 3, WRDF-0044): program-id sentinel = None.
+            // These grants are `program_allowlist_id == 0`, so it is never read.
+            AccountMeta::new_readonly(common::program_id(), false),
         ],
         data,
     }

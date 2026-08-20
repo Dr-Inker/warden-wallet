@@ -127,9 +127,14 @@ export const OP_TRANSFER = 0x05;
  * `programs/warden/src/instructions/create_account.rs`):
  * `salt: [u8; 32]`, `rp_id_hash: [u8; 32]`, `origin: Vec<u8>` (u32 LE length
  * prefix, then the bytes), `cluster_tag: [u8; 32]`,
- * `policy_hash: [u8; 32]` — 183 B for the canonical 51-byte
- * `chrome-extension://…` origin. `policy_hash` is
- * `Keccak256(borsh(PolicyArgs))`.
+ * `policy_hash: [u8; 32]`, `registry: Pubkey` (32 B) — 215 B for the
+ * canonical 51-byte `chrome-extension://…` origin. `policy_hash` is
+ * `Keccak256(borsh(PolicyArgs))`. `registry` is the supported-version
+ * Registry PDA the account binds to (Task 3, WRDF-0034); pass the
+ * all-zero `Pubkey::default()` to bind no registry. Build the body with
+ * {@link encodeCreateBody} — do not hand-roll it, or the omitted trailing
+ * `registry` word signs a different action hash and the program answers
+ * `ChallengeMismatch` (6018).
  *
  * Three things a client must get right, because each one is signed but not
  * transmitted in the body:
@@ -150,6 +155,63 @@ export const OP_TRANSFER = 0x05;
  * from it, so substituting it cannot produce a valid challenge.
  */
 export const OP_CREATE = 0x06;
+
+/** Fields of a `create_account` ceremony body. All hashes/keys are 32 bytes. */
+export interface CreateBodyFields {
+  /** 32 client-chosen random bytes. */
+  salt: Uint8Array;
+  /** `Sha256(rp_id)` — 32 bytes. */
+  rpIdHash: Uint8Array;
+  /** The WebAuthn origin string, e.g. `chrome-extension://…` (UTF-8 encoded here). */
+  origin: string;
+  /** 32-byte cluster domain separator. */
+  clusterTag: Uint8Array;
+  /** `Keccak256(borsh(PolicyArgs))` — 32 bytes. */
+  policyHash: Uint8Array;
+  /**
+   * The supported-version Registry PDA this account binds to (32 bytes).
+   * Omit or pass the all-zero key to bind no registry (`Pubkey::default()`).
+   */
+  registry?: Uint8Array;
+}
+
+/** 32 all-zero bytes — `Pubkey::default()`, the "no registry" sentinel. */
+const PUBKEY_DEFAULT = new Uint8Array(32);
+
+/**
+ * Serialize a {@link CreateBodyFields} into the exact `borsh(CreateBody)` the
+ * program hashes (see the {@link OP_CREATE} field order). This is the ONE
+ * supported construction — clients MUST NOT hand-roll the byte layout, because
+ * the trailing `registry` word is signed but not otherwise transmitted, so
+ * omitting it silently signs a different action hash (`ChallengeMismatch`).
+ *
+ * `origin` is length-prefixed with a borsh `Vec<u8>` u32 LE prefix.
+ */
+export function encodeCreateBody(f: CreateBodyFields): Uint8Array {
+  require32(f.salt, "salt");
+  require32(f.rpIdHash, "rpIdHash");
+  require32(f.clusterTag, "clusterTag");
+  require32(f.policyHash, "policyHash");
+  const registry = f.registry ?? PUBKEY_DEFAULT;
+  require32(registry, "registry");
+  const origin = new TextEncoder().encode(f.origin);
+  const body = new Uint8Array(32 + 32 + 4 + origin.length + 32 + 32 + 32);
+  let o = 0;
+  body.set(f.salt, o);
+  o += 32;
+  body.set(f.rpIdHash, o);
+  o += 32;
+  new DataView(body.buffer).setUint32(o, origin.length, true); // borsh Vec<u8> length
+  o += 4;
+  body.set(origin, o);
+  o += origin.length;
+  body.set(f.clusterTag, o);
+  o += 32;
+  body.set(f.policyHash, o);
+  o += 32;
+  body.set(registry, o);
+  return body;
+}
 
 /**
  * Domain separator for the `create_account` PDA seed derivation. Mirrors

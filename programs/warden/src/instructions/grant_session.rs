@@ -156,6 +156,16 @@ pub struct GrantSession<'info> {
     #[account(address = solana_instructions_sysvar::ID @ WardenError::BadInstructionLayout)]
     pub ix_sysvar: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
+
+    /// Optional (Task 3, WRDF-0044): the account's adapter `Registry`. Required
+    /// when `body.program_allowlist_id != 0` — the handler loads it and refuses
+    /// a grant against a list that is not *allocated* (has ≥1 live entry), not
+    /// merely one that is structurally in range. The `seeds` constraint pins the
+    /// canonical `["registry"]` PDA, and the handler additionally requires its
+    /// key to equal `SmartAccount.registry`, so a grant cannot be validated
+    /// against a registry the account is not bound to. Omit for a `0` grant.
+    #[account(seeds = [crate::constants::REGISTRY_SEED], bump)]
+    pub registry: Option<AccountLoader<'info, crate::state::registry::Registry>>,
 }
 
 // Not `pub`: only `lib.rs`'s `#[program]` module calls this, by full path —
@@ -210,6 +220,33 @@ pub(crate) fn handler(ctx: Context<GrantSession>, args: GrantSessionArgs) -> Res
 
     validate_shape(&args.body)?;
     validate_against_policy(&account, &args.body, now)?;
+
+    // Task 3 (WRDF-0044): a non-zero allowlist id must name an ALLOCATED list —
+    // one that actually holds ≥1 adapter entry — in THE account's registry, not
+    // merely a structurally in-range id. `validate_against_policy` has already
+    // proven the id is structurally valid and the account has a registry; here
+    // we load that registry and refuse an id whose list is unallocated. This is
+    // stored authority, so it is gated at grant time rather than left to
+    // execute-time denial: a grant may not persist a dangling list id that a
+    // future (Phase 1C) mutable-registry update could silently populate and
+    // thereby activate without a fresh root ceremony. The `registry` account is
+    // pinned to the canonical PDA by its `seeds` constraint; requiring its key
+    // to equal `SmartAccount.registry` binds the check to the one registry the
+    // account committed to at creation (and, since that PDA is never the default
+    // key, doubles as the "account has a registry" guard).
+    if args.body.program_allowlist_id != 0 {
+        let reg_loader = ctx
+            .accounts
+            .registry
+            .as_ref()
+            .ok_or(WardenError::InvalidAllowlistId)?;
+        require_keys_eq!(reg_loader.key(), account.registry, WardenError::InvalidAllowlistId);
+        let reg = reg_loader.load()?;
+        require!(
+            reg.is_allocated_list(args.body.program_allowlist_id),
+            WardenError::InvalidAllowlistId
+        );
+    }
 
     // ---- upsert -----------------------------------------------------------
     let generation = account.generation;
@@ -317,7 +354,9 @@ fn validate_shape(b: &GrantBody) -> Result<()> {
 /// - `program_allowlist_id` must be 0 ("no registry") or a structural list id
 ///   (1..=8) in the account's registry (`InvalidAllowlistId`); a non-zero id
 ///   additionally requires `SmartAccount.registry` to be set (Task 3), so it
-///   cannot name a list in a registry the account does not reference.
+///   cannot name a list in a registry the account does not reference. This is
+///   the *pure* half of the check; the handler additionally loads that registry
+///   and requires the id to name an ALLOCATED list (WRDF-0044).
 /// - every cap's mint must have a `policy.session_ceiling` entry — looked up
 ///   **by mint**, since `Policy`'s arrays are keyed by the `caps` slot index,
 ///   not by wire position — and every `per_*` must be at or below it

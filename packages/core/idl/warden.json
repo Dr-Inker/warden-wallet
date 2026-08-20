@@ -206,6 +206,36 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Optional (Task 3, WRDF-0044): the account's adapter `Registry`. Required",
+            "when `body.program_allowlist_id != 0` — the handler loads it and refuses",
+            "a grant against a list that is not *allocated* (has ≥1 live entry), not",
+            "merely one that is structurally in range. The `seeds` constraint pins the",
+            "canonical `[\"registry\"]` PDA, and the handler additionally requires its",
+            "key to equal `SmartAccount.registry`, so a grant cannot be validated",
+            "against a registry the account is not bound to. Omit for a `0` grant."
+          ],
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
         }
       ],
       "args": [
