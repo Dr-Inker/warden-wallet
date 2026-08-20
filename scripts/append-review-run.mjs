@@ -15,6 +15,7 @@
 // independent validation review.sh uses (scripts/validate-findings.mjs against the wrapper's
 // expectations file), so invoking it directly on garbage cannot log a run.
 import { readFileSync, appendFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -54,17 +55,21 @@ export async function buildRunRecord(doc, expect, opts = {}) {
     );
   }
 
+  // Provenance is WRAPPER-authoritative where the wrapper supplies it (WRDF-0002): the caller
+  // invoked the model, so its record wins over the model's self-report. The artefact digest gives
+  // the run an immutable identity independent of the mutable, gitignored artefact path (WRDF-0003).
   return {
     date: new Date().toISOString().slice(0, 10),
     kind,
     base_sha: doc.base_sha,
     head_sha: doc.head_sha,
-    thread: doc.thread,
-    reviewer_model: doc.reviewer_model,
+    thread: opts.thread ?? doc.thread,
+    reviewer_model: opts.model ?? doc.reviewer_model,
     effort,
     seeded_count: doc.seeded_invariants.length,
     findings_count: doc.findings.length,
     artefact,
+    artefact_sha256: createHash("sha256").update(JSON.stringify(doc)).digest("hex"),
     recorded_by: "scripts/append-review-run.mjs",
   };
 }
@@ -76,6 +81,8 @@ async function main(argv) {
   let runsPath = DEFAULT_RUNS;
   let kind = "task-diff";
   let effort = null;
+  let model = null;
+  let thread = null;
   let dryRun = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -83,6 +90,8 @@ async function main(argv) {
     else if (a === "--runs") runsPath = args[++i];
     else if (a === "--kind") kind = args[++i];
     else if (a === "--effort") effort = args[++i];
+    else if (a === "--model") model = args[++i];
+    else if (a === "--thread") thread = args[++i];
     else if (a === "--dry-run") dryRun = true;
     else if (a.startsWith("-")) throw new Error(`unknown option ${a}`);
     else findingsPath = a;
@@ -94,10 +103,17 @@ async function main(argv) {
   if (!existsSync(findingsPath)) throw new Error(`no such file: ${findingsPath}`);
   const doc = JSON.parse(readFileSync(findingsPath, "utf8"));
   const expect = JSON.parse(readFileSync(expectPath, "utf8"));
-  const record = await buildRunRecord(doc, expect, { kind, effort, artefact: findingsPath });
+  const record = await buildRunRecord(doc, expect, { kind, effort, model, thread, artefact: findingsPath });
   if (dryRun) {
     console.log(JSON.stringify(record));
     return;
+  }
+  // A byte-identical artefact is a REPLAY, not a second round — refuse it (WRDF-0003).
+  if (existsSync(runsPath)) {
+    const dup = readFileSync(runsPath, "utf8").split("\n").filter((l) => l.trim())
+      .map((l) => JSON.parse(l))
+      .find((r) => r.artefact_sha256 && r.artefact_sha256 === record.artefact_sha256);
+    if (dup) throw new Error(`refusing replay: an identical artefact (sha256 ${record.artefact_sha256.slice(0, 12)}…) is already recorded as thread ${dup.thread}`);
   }
   appendFileSync(runsPath, JSON.stringify(record) + "\n");
   console.error(`recorded 1 run (${record.findings_count} finding(s)) in ${runsPath}`);

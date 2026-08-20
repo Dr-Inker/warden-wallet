@@ -76,7 +76,7 @@ describe("review-run record (docs/security/REVIEW-RUNS.jsonl)", () => {
     }
   });
 
-  it("gives every LIVE run full provenance and counts", () => {
+  it("gives every LIVE run full provenance, counts, and an immutable artefact digest", () => {
     for (const r of runs.filter((x) => x.artefact !== "not-recorded")) {
       const at = `line ${r.__line}`;
       expect(r.base_sha, at).toMatch(/^[0-9a-f]{7,40}$/);
@@ -85,8 +85,16 @@ describe("review-run record (docs/security/REVIEW-RUNS.jsonl)", () => {
       expect(r.reviewer_model, at).toBeTruthy();
       expect(typeof r.findings_count, at).toBe("number");
       expect(typeof r.seeded_count, at).toBe("number");
+      expect((r as Run & { artefact_sha256?: string }).artefact_sha256, at).toMatch(/^[0-9a-f]{64}$/);
       expect(r.kind, `${at}: a live run may not claim the baseline kind`).not.toBe("baseline-not-recorded");
     }
+  });
+
+  it("never records two live runs with the same artefact digest (replay guard)", () => {
+    const digests = runs
+      .map((r) => (r as Run & { artefact_sha256?: string }).artefact_sha256)
+      .filter(Boolean);
+    expect(new Set(digests).size).toBe(digests.length);
   });
 
   it("makes every NOT-RECORDED baseline entry say so honestly", () => {
@@ -139,6 +147,17 @@ describe("buildRunRecord (scripts/append-review-run.mjs)", () => {
       buildRunRecord(fresh(), expectations(), { kind: "baseline-not-recorded" }),
     ).rejects.toThrow(/hand-written/);
   });
+
+  it("wrapper-supplied model/thread override the model's self-report (WRDF-0002)", async () => {
+    const rec = await buildRunRecord(fresh(), expectations(), {
+      kind: "task-diff",
+      model: "gpt-5.6-sol@max",
+      thread: "wrapper-round-1",
+    });
+    expect(rec.reviewer_model).toBe("gpt-5.6-sol@max");
+    expect(rec.thread).toBe("wrapper-round-1");
+    expect(rec.artefact_sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
 });
 
 describe("append-review-run.mjs CLI", () => {
@@ -163,6 +182,17 @@ describe("append-review-run.mjs CLI", () => {
     const artefact = join(tmp, "invalid.json");
     writeFileSync(artefact, JSON.stringify(doc));
     const before = readFileSync(runsFile, "utf8");
+    expect(() =>
+      execFileSync("node", [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile], { stdio: "pipe" }),
+    ).toThrow();
+    expect(readFileSync(runsFile, "utf8")).toBe(before);
+  });
+
+  it("REFUSES a byte-identical replay of an already-recorded artefact (WRDF-0003)", () => {
+    const artefact = join(tmp, "zero-replay.json");
+    writeFileSync(artefact, JSON.stringify(zeroFinding()));
+    const before = readFileSync(runsFile, "utf8");
+    // The zero-finding artefact was already recorded by the first CLI test above.
     expect(() =>
       execFileSync("node", [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile], { stdio: "pipe" }),
     ).toThrow();

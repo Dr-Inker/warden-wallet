@@ -135,20 +135,35 @@ CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
 [[ -n "$CHANGED" ]] || die "no changes between $BASE_SHA and $HEAD_SHA"
 
 mkdir -p "$OUT_DIR"
-[[ -n "$OUT" ]] || OUT="$OUT_DIR/${HEAD_SHA:0:12}.json"
+# Round id and artefact path are WRAPPER-owned (WRDF-0002/-0003): the timestamp keeps a re-round
+# over the same head from overwriting the previous artefact, and the round id — not the model's
+# self-report — is what lands in the scorecard and run record.
+ROUND_ID="${HEAD_SHA:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
+[[ -n "$OUT" ]] || OUT="$OUT_DIR/$ROUND_ID.json"
 EXPECT="${OUT%.json}.expect.json"
 
-SEED_JSON="$(CHANGED="$CHANGED" node -e '
+# Rows whose LEDGER ENTRY changed in the range are seeded too — a review of the commit that adds
+# or edits an invariant must rule on that invariant (WRDF-0001: the round introducing WRD-CONS-*
+# did not seed them). And every unimplemented row is ALWAYS seeded, never displaced by a narrow
+# code hit: over-seeding is the safe direction, and a single-module diff must not suppress the
+# cross-cutting rows the fallback used to carry.
+LEDGER_DIFF="$(git diff "$BASE_SHA" "$HEAD_SHA" -- docs/security/invariants.jsonl | grep '^+{' || true)"
+SEED_JSON="$(CHANGED="$CHANGED" LEDGER_DIFF="$LEDGER_DIFF" node -e '
 const fs = require("fs");
 const changed = (process.env.CHANGED || "").split("\n").filter(Boolean);
 const rows = fs.readFileSync("docs/security/invariants.jsonl", "utf8")
   .split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
 const touches = (p) => { if (!p) return false; const f = p.split(":")[0].split(" ")[0];
   return changed.some((c) => c === f || f.startsWith(c + "/") || c.startsWith(f)); };
-const hit = rows.filter((r) => touches(r.code_ref) || (r.evidence || []).some((e) => touches(e.path)));
-// A diff that adds a brand-new surface touches no existing code_ref. Falling back to every
-// unimplemented row over-seeds; over-seeding is the safe direction, under-seeding is not.
-const out = hit.length ? hit : rows.filter((r) => r.status === "unimplemented");
+const changedRowIds = new Set((process.env.LEDGER_DIFF || "").split("\n").filter(Boolean)
+  .map((l) => { try { return JSON.parse(l.slice(1)).id; } catch { return null; } }).filter(Boolean));
+const ids = new Set();
+for (const r of rows) {
+  if (touches(r.code_ref) || (r.evidence || []).some((e) => touches(e.path))) ids.add(r.id);
+  if (changedRowIds.has(r.id)) ids.add(r.id);
+  if (r.status === "unimplemented") ids.add(r.id);
+}
+const out = rows.filter((r) => ids.has(r.id));
 process.stdout.write(JSON.stringify(out.map((r) => ({ id: r.id, title: r.title, statement: r.statement,
   status: r.status, spec_ref: r.spec_ref, prior_art: r.prior_art, notes: r.notes })), null, 1));
 ')"
@@ -352,13 +367,15 @@ fs.writeFileSync(process.env.OUT, JSON.stringify(doc, null, 2) + "\n");
 node scripts/validate-findings.mjs "$OUT" --schema "$SCHEMA" --expect "$EXPECT"
 
 # ---- 7. append every finding to the scorecard (disputed and scoped-out too) --
-OUT="$OUT" node -e '
+# reviewer_model and thread are the WRAPPER's values (WRDF-0002): the wrapper invoked the model, so
+# its record is authoritative; the model's self-report is unreliable and stays in the raw artefact.
+OUT="$OUT" WRAPPER_MODEL="$MODEL@$EFFORT" WRAPPER_THREAD="$ROUND_ID" node -e '
 const fs = require("fs");
 const doc = JSON.parse(fs.readFileSync(process.env.OUT, "utf8"));
 const date = new Date().toISOString().slice(0, 10);
 const lines = doc.findings.map((f) => JSON.stringify({
-  finding_id: f.id, thread: doc.thread, date,
-  reviewer_model: f.reviewer_model || doc.reviewer_model || null,
+  finding_id: f.id, thread: process.env.WRAPPER_THREAD, date,
+  reviewer_model: process.env.WRAPPER_MODEL,
   base_sha: doc.base_sha, head_sha: doc.head_sha, severity: f.severity,
   truth_status: f.truth_status, evidence_type: f.evidence_type,
   invariant_ids: f.invariant_ids, prior_art_cited: f.prior_art_cited || [],
@@ -372,8 +389,10 @@ console.error(`appended ${lines.length} finding(s) to docs/security/REVIEW-SCORE
 '
 
 # ---- 8. record the RUN itself — zero-finding rounds included -----------------
-# Re-validates independently before appending; a failed round records nothing.
-node scripts/append-review-run.mjs "$OUT" --expect "$EXPECT" --kind "$KIND" --effort "$EFFORT"
+# Re-validates independently before appending; a failed round records nothing. Model and thread are
+# wrapper-authoritative, and the artefact digest gives the run an immutable identity (WRDF-0002/-0003).
+node scripts/append-review-run.mjs "$OUT" --expect "$EXPECT" --kind "$KIND" \
+  --model "$MODEL@$EFFORT" --thread "$ROUND_ID" --effort "$EFFORT"
 
 echo
 echo "Next: adjudicate every finding (disputed and scoped-out included), record the ruling in"
