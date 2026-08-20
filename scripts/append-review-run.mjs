@@ -58,9 +58,9 @@ export async function buildRunRecord(doc, expect, opts = {}) {
   // Provenance is WRAPPER-authoritative where the wrapper supplies it (WRDF-0002): the caller
   // invoked the model, so its record wins over the model's self-report. The artefact digest gives
   // the run an immutable identity independent of the mutable, gitignored artefact path (WRDF-0003);
-  // it is computed over the artefact NORMALIZED without the self-report provenance fields, so a
-  // copied artefact cannot buy a fresh digest by mutating a field nothing else trusts anyway.
-  const { thread: _t, reviewer_model: _m, ...substance } = doc;
+  // it is computed over a CANONICAL form — keys sorted recursively, the untrusted self-report
+  // provenance fields (thread / reviewer_model, at every level) removed — so neither key order nor
+  // a semantically ignored field can buy a copied artefact a fresh digest.
   return {
     date: new Date().toISOString().slice(0, 10),
     kind,
@@ -72,12 +72,31 @@ export async function buildRunRecord(doc, expect, opts = {}) {
     seeded_count: new Set(doc.seeded_invariants).size,
     findings_count: doc.findings.length,
     artefact,
-    artefact_sha256: createHash("sha256").update(JSON.stringify(substance)).digest("hex"),
+    artefact_sha256: createHash("sha256").update(canonicalJson(doc)).digest("hex"),
     recorded_by: "scripts/append-review-run.mjs",
   };
 }
 
-/** Scorecard lines for every finding — disputed and scoped-out included (L3). */
+/** Deterministic serialization for hashing: sorted keys, self-report provenance stripped. */
+export function canonicalJson(node) {
+  if (Array.isArray(node)) return `[${node.map(canonicalJson).join(",")}]`;
+  if (node && typeof node === "object") {
+    const keys = Object.keys(node)
+      .filter((k) => k !== "thread" && k !== "reviewer_model")
+      .sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(node[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(node);
+}
+
+/**
+ * Scorecard lines for every finding — disputed and scoped-out included (L3).
+ *
+ * NOTHING adjudicative is copied from the artefact (WRDF-0009): the model's `adjudication`
+ * object, a self-claimed CONFIRMED, and a self-claimed verified reproducer are all untrusted model
+ * output. Every finding ENTERS the scorecard as pending/POTENTIAL, with the model's claims kept
+ * under claimed_* fields; only a human editing the committed scorecard (or evidence) promotes.
+ */
 export function buildScorecardLines(doc, record) {
   return doc.findings.map((f) =>
     JSON.stringify({
@@ -88,14 +107,15 @@ export function buildScorecardLines(doc, record) {
       base_sha: doc.base_sha,
       head_sha: doc.head_sha,
       severity: f.severity,
-      truth_status: f.truth_status,
+      truth_status: "POTENTIAL",
+      claimed_truth_status: f.truth_status,
       evidence_type: f.evidence_type,
       invariant_ids: f.invariant_ids,
       prior_art_cited: f.prior_art_cited || [],
-      ruling: f.adjudication ? f.adjudication.ruling : "pending",
-      ruled_by: f.adjudication ? f.adjudication.by : null,
-      rationale: f.adjudication ? f.adjudication.rationale : f.rationale,
-      reproducer_verified: !!(f.reproducer && f.reproducer.verified),
+      ruling: "pending",
+      ruled_by: null,
+      rationale: f.rationale,
+      claimed_reproducer_verified: !!(f.reproducer && f.reproducer.verified),
     }),
   );
 }
@@ -143,12 +163,25 @@ async function main(argv) {
       .find((r) => r.artefact_sha256 && r.artefact_sha256 === record.artefact_sha256);
     if (dup) throw new Error(`refusing replay: an identical artefact (sha256 ${record.artefact_sha256.slice(0, 12)}…) is already recorded as thread ${dup.thread}`);
   }
-  // BOTH ledgers are written by this one process, run record first, and rolled back together on
-  // failure — a rejected or interrupted round leaves neither a run row nor orphan scorecard lines
-  // (WRDF-0007). Rollback is a truncate-to-previous-content, safe because these files are only ever
-  // appended to.
-  const prevRuns = existsSync(runsPath) ? readFileSync(runsPath, "utf8") : "";
-  const prevCard = existsSync(scorecardPath) ? readFileSync(scorecardPath, "utf8") : "";
+  // Cross-ledger consistency preflight (WRDF-0007 residual): a hard kill between the two appends
+  // below cannot be prevented without a journal, but it CAN be detected — the last run row would
+  // claim findings the scorecard does not carry. Refuse to extend an inconsistent pair; both files
+  // are git-tracked, so the repair is a visible edit, not a silent overwrite.
+  const readOr = (p) => { try { return existsSync(p) ? readFileSync(p, "utf8") : ""; } catch { return ""; } };
+  const prevRuns = readOr(runsPath);
+  const prevCard = readOr(scorecardPath);
+  const lastRun = prevRuns.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l)).pop();
+  if (lastRun && lastRun.artefact !== "not-recorded" && lastRun.findings_count > 0) {
+    const carried = prevCard.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+      .filter((r) => r.thread === lastRun.thread).length;
+    if (carried === 0)
+      throw new Error(
+        `inconsistent ledgers: last run (thread ${lastRun.thread}) claims ${lastRun.findings_count} finding(s) but the scorecard carries none — a previous round was interrupted mid-write; repair the committed files before recording new rounds`,
+      );
+  }
+  // BOTH ledgers are written by this one process, run record first, and rolled back together on a
+  // synchronous failure. Rollback is a truncate-to-previous-content, safe because these files are
+  // only ever appended to.
   try {
     appendFileSync(runsPath, JSON.stringify(record) + "\n");
     const lines = buildScorecardLines(doc, record);
@@ -156,8 +189,8 @@ async function main(argv) {
     console.error(`recorded 1 run (${record.findings_count} finding(s)) in ${runsPath}`);
     if (lines.length) console.error(`appended ${lines.length} finding(s) to ${scorecardPath}`);
   } catch (e) {
-    writeFileSync(runsPath, prevRuns);
-    writeFileSync(scorecardPath, prevCard);
+    try { writeFileSync(runsPath, prevRuns); } catch { /* restore is best-effort per file */ }
+    try { writeFileSync(scorecardPath, prevCard); } catch { /* a dir/unwritable target was never modified */ }
     throw new Error(`cross-ledger write failed and was rolled back: ${e.message}`);
   }
 }

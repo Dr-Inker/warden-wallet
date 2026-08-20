@@ -7,7 +7,7 @@
 // Without the first, review coverage is invisible; without the second, a garbage artefact could
 // buy a coverage line.
 import { describe, it, expect } from "vitest";
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdtempSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -200,6 +200,21 @@ describe("append-review-run.mjs CLI", () => {
     }
   });
 
+  it("never copies model adjudication or self-claimed truth into the scorecard (WRDF-0009)", () => {
+    // The worked example deliberately carries an adjudication object and a CONFIRMED finding —
+    // both are untrusted model output and must enter as pending/POTENTIAL claims.
+    const doc = fresh();
+    expect(doc.findings.some((f: { adjudication?: unknown }) => f.adjudication)).toBe(true);
+    expect(doc.findings.some((f: { truth_status: string }) => f.truth_status === "CONFIRMED")).toBe(true);
+    const card = readFileSync(cardFile, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+    for (const row of card) {
+      expect(row.ruling).toBe("pending");
+      expect(row.ruled_by).toBeNull();
+      expect(row.truth_status).toBe("POTENTIAL");
+    }
+    expect(card.some((r) => r.claimed_truth_status === "CONFIRMED")).toBe(true);
+  });
+
   it("appends NOTHING to either ledger for an artefact that fails validation", () => {
     const doc = fresh();
     doc.invariant_verdicts[0].verdict = "not_reviewed";
@@ -212,35 +227,58 @@ describe("append-review-run.mjs CLI", () => {
     expect(readFileSync(cardFile, "utf8")).toBe(beforeCard);
   });
 
-  it("REFUSES a replay of an already-recorded artefact, even with mutated self-report fields (WRDF-0003)", () => {
+  it("REFUSES a replay of an already-recorded artefact — mutated self-report fields and reordered keys included (WRDF-0003)", () => {
     const doc = zeroFinding();
     doc.thread = "totally-different-self-report";
+    // Key order must not matter either: rebuild the object with reversed key insertion order.
+    const reordered = Object.fromEntries(Object.entries(doc).reverse());
     const artefact = join(tmp, "zero-replay.json");
-    writeFileSync(artefact, JSON.stringify(doc));
+    writeFileSync(artefact, JSON.stringify(reordered));
     const before = readFileSync(runsFile, "utf8");
     // The zero-finding artefact's SUBSTANCE was already recorded by the first CLI test above;
-    // changing the self-reported thread must not buy it a fresh digest.
+    // neither the self-reported thread nor property order buys it a fresh digest.
     expect(() => cli(artefact)).toThrow();
     expect(readFileSync(runsFile, "utf8")).toBe(before);
   });
 
-  it("rolls BOTH ledgers back when the scorecard write fails mid-round (WRDF-0007)", () => {
+  it("rolls the run record back when the scorecard write fails mid-round (WRDF-0007)", () => {
+    // A fresh, empty runs file: the preflight passes, the run record lands, and THEN the
+    // scorecard append fails (its parent directory does not exist) — the rollback must leave the
+    // runs file exactly as it was.
     const doc = fresh();
-    doc.findings[0].rationale += " (rollback variant)"; // fresh digest
     const artefact = join(tmp, "rollback.json");
     writeFileSync(artefact, JSON.stringify(doc));
-    const beforeRuns = readFileSync(runsFile, "utf8");
-    // A directory at the scorecard path makes appendFileSync throw AFTER the run record landed.
-    const cardDir = join(tmp, "scorecard-as-dir");
-    mkdirSync(cardDir);
+    const runsFile2 = join(tmp, "runs-rollback.jsonl");
+    const missingCard = join(tmp, "no-such-dir", "scorecard.jsonl");
     expect(() =>
       execFileSync(
         "node",
-        [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile, "--scorecard", cardDir],
+        [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", runsFile2, "--scorecard", missingCard],
         { stdio: "pipe" },
       ),
     ).toThrow();
-    expect(readFileSync(runsFile, "utf8")).toBe(beforeRuns);
+    expect(existsSync(runsFile2) ? readFileSync(runsFile2, "utf8") : "").toBe("");
+  });
+
+  it("REFUSES to extend an inconsistent ledger pair — a run claiming findings the scorecard lacks (WRDF-0007)", () => {
+    const orphanRuns = join(tmp, "runs-orphan.jsonl");
+    writeFileSync(
+      orphanRuns,
+      JSON.stringify({ date: "2026-08-20", kind: "task-diff", base_sha: "a".repeat(40), head_sha: "b".repeat(40), thread: "orphan-round", reviewer_model: "x", effort: null, seeded_count: 1, findings_count: 3, artefact: "gone.json", artefact_sha256: "c".repeat(64), recorded_by: "test" }) + "\n",
+    );
+    const emptyCard = join(tmp, "card-orphan.jsonl");
+    writeFileSync(emptyCard, "");
+    const doc = zeroFinding();
+    doc.invariant_verdicts[0].rationale += " (orphan variant)"; // fresh digest
+    const artefact = join(tmp, "orphan-next.json");
+    writeFileSync(artefact, JSON.stringify(doc));
+    expect(() =>
+      execFileSync(
+        "node",
+        [APPENDER, artefact, "--expect", EXPECT_FILE, "--runs", orphanRuns, "--scorecard", emptyCard],
+        { stdio: "pipe" },
+      ),
+    ).toThrow(/inconsistent ledgers/);
   });
 
   it("--dry-run prints the record without appending", () => {
