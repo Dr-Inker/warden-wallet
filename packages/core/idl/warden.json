@@ -188,6 +188,82 @@
       ]
     },
     {
+      "name": "init_registry",
+      "docs": [
+        "Create the global adapter registry, authorised by warden's on-chain",
+        "upgrade authority — see `instructions::registry_admin`. Singleton;",
+        "immutable in 1B."
+      ],
+      "discriminator": [
+        131,
+        22,
+        4,
+        103,
+        24,
+        94,
+        163,
+        239
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_data",
+          "docs": [
+            "Warden's `ProgramData` account. Its address and its",
+            "`upgrade_authority_address` are both checked in the handler — the address",
+            "against the canonical `[program_id]` derivation under the upgradeable",
+            "loader, the authority against the `authority` signer below."
+          ]
+        },
+        {
+          "name": "authority",
+          "docs": [
+            "The upgrade authority, signing to prove control. Must equal",
+            "`program_data.upgrade_authority_address`."
+          ],
+          "signer": true
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "The drinkerlabs treasury SmartAccount whose ATA receives swap fees",
+            "(Task 6). Stored as `Registry.treasury`; only its key is read here.",
+            "SmartAccount when a swap uses it (Task 6), not here."
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "ping",
       "discriminator": [
         173,
@@ -479,6 +555,19 @@
   ],
   "accounts": [
     {
+      "name": "Registry",
+      "discriminator": [
+        47,
+        174,
+        110,
+        246,
+        184,
+        182,
+        252,
+        218
+      ]
+    },
+    {
       "name": "SessionKey",
       "discriminator": [
         93,
@@ -765,6 +854,26 @@
       "code": 6051,
       "name": "NewVaultAccountRejected",
       "msg": "a CPI created, or converted an existing account into, an account the vault owns"
+    },
+    {
+      "code": 6052,
+      "name": "RegistryFull",
+      "msg": "the registry already holds the maximum number of entries"
+    },
+    {
+      "code": 6053,
+      "name": "RegistryUnauthorized",
+      "msg": "init_registry must be signed by the program's upgrade authority"
+    },
+    {
+      "code": 6054,
+      "name": "RegistryAlreadyInitialized",
+      "msg": "the registry is already initialized"
+    },
+    {
+      "code": 6055,
+      "name": "InvalidAllowlistId",
+      "msg": "program_allowlist_id is not 0 and not an existing list in the account's registry"
     }
   ],
   "types": [
@@ -975,6 +1084,30 @@
               "defined": {
                 "name": "GrantBody"
               }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ListMask",
+      "docs": [
+        "A bitmask over the 64 entry slots — membership of one curated list."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bits",
+            "type": {
+              "array": [
+                "u64",
+                1
+              ]
             }
           }
         ]
@@ -1262,6 +1395,161 @@
           {
             "name": "session_ops_ceiling",
             "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Registry",
+      "docs": [
+        "The global adapter registry. Immutable after `init_registry` in 1B."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "type": {
+              "array": [
+                "u8",
+                6
+              ]
+            }
+          },
+          {
+            "name": "authority",
+            "docs": [
+              "The key authorised to `init_registry` (= warden's upgrade authority at",
+              "init: dev keypair on localnet/devnet, Squads multisig on mainnet)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "docs": [
+              "The drinkerlabs treasury SmartAccount — the swap-fee ATA owner (Task 6).",
+              "A first-class field, set at init, never overloaded onto `authority`."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "n_entries",
+            "type": "u16"
+          },
+          {
+            "name": "_pad2",
+            "type": {
+              "array": [
+                "u8",
+                6
+              ]
+            }
+          },
+          {
+            "name": "entries",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "RegistryEntry"
+                  }
+                },
+                64
+              ]
+            }
+          },
+          {
+            "name": "lists",
+            "docs": [
+              "`lists[k]` = list id `k + 1`; id 0 means \"no registry / deny every CPI\"."
+            ],
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "ListMask"
+                  }
+                },
+                8
+              ]
+            }
+          },
+          {
+            "name": "_reserved",
+            "type": {
+              "array": [
+                "u8",
+                256
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "RegistryEntry",
+      "docs": [
+        "One curated `(program, selector)` adapter. `disc_len` bytes of `selector`",
+        "are significant (8 = Anchor sighash, 1 = SPL/System tag, 4 = a 4-byte tag);",
+        "`role_rules` selects the per-adapter account validator (`crate::registry`)."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "program_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "selector",
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "disc_len",
+            "docs": [
+              "Significant bytes of `selector`: 8 Anchor, 1 SPL/System/Memo, 4 for a",
+              "4-byte tag. Never assume 8."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "role_rules",
+            "docs": [
+              "Bitflags selecting the account-role validator (`crate::registry`):",
+              "`ROLE_VAULT_SIGNER` (1), `ROLE_REQUIRES_TOKEN_PROGRAM` (2), … A bare",
+              "`(program, selector)` match is not sufficient when this is non-zero."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "type": {
+              "array": [
+                "u8",
+                6
+              ]
+            }
           }
         ]
       }

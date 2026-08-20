@@ -6,6 +6,7 @@ pub mod constants;
 pub mod errors;
 pub mod instructions;
 pub mod registry;
+pub mod registry_default;
 pub mod root_verify;
 pub mod state;
 
@@ -42,6 +43,13 @@ pub mod warden {
     /// merging caps by mint — see `instructions::grant_session`.
     pub fn grant_session(ctx: Context<GrantSession>, args: GrantSessionArgs) -> Result<()> {
         instructions::grant_session::handler(ctx, args)
+    }
+
+    /// Create the global adapter registry, authorised by warden's on-chain
+    /// upgrade authority — see `instructions::registry_admin`. Singleton;
+    /// immutable in 1B.
+    pub fn init_registry(ctx: Context<InitRegistry>) -> Result<()> {
+        instructions::registry_admin::handler(ctx)
     }
 
     /// Close a session PDA under a root passkey ceremony.

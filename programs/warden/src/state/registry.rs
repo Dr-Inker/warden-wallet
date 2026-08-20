@@ -134,10 +134,10 @@ impl Registry {
     /// Is `entry_idx` a member of list id `list_id` (1..=8)? id 0 is never a
     /// member of anything (it means "no registry").
     pub fn list_contains(&self, list_id: u16, entry_idx: usize) -> bool {
-        if list_id == 0 || (list_id as usize) > MAX_REGISTRY_LISTS {
-            return false;
+        match list_id.checked_sub(1) {
+            Some(i) if (i as usize) < MAX_REGISTRY_LISTS => self.lists[i as usize].contains(entry_idx),
+            _ => false, // 0 ("no registry") or past the table
         }
-        self.lists[(list_id - 1) as usize].contains(entry_idx)
     }
 
     /// Is `list_id` a usable id for a `grant_session` allowlist? 0 (no

@@ -140,4 +140,15 @@ pub enum WardenError {
     // ---------------------------------------------------------------------
     #[msg("a CPI created, or converted an existing account into, an account the vault owns")]
     NewVaultAccountRejected,
+    // ---------------------------------------------------------------------
+    // Task 3 (registry). APPEND ONLY — see above.
+    // ---------------------------------------------------------------------
+    #[msg("the registry already holds the maximum number of entries")]
+    RegistryFull,
+    #[msg("init_registry must be signed by the program's upgrade authority")]
+    RegistryUnauthorized,
+    #[msg("the registry is already initialized")]
+    RegistryAlreadyInitialized,
+    #[msg("program_allowlist_id is not 0 and not an existing list in the account's registry")]
+    InvalidAllowlistId,
 }

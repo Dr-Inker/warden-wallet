@@ -2,6 +2,7 @@ use anchor_lang::prelude::Pubkey;
 
 pub const ACCOUNT_SEED: &[u8] = b"account";
 pub const SESSION_SEED: &[u8] = b"session";
+pub const REGISTRY_SEED: &[u8] = b"registry";
 pub const MAX_CLIENT_DATA_LEN: usize = 512;
 pub const MAX_ROOT_EXPIRY_SECS: i64 = 600;
 /// Maximum age, **in slots**, of a root passkey ceremony (spec §4, rev 8).
@@ -117,6 +118,20 @@ pub const SPL_TOKEN_ID: Pubkey = Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGK
 /// SPL Token-2022 program id — declared only so `transfer` can reject it with
 /// an honest error instead of "not the token program".
 pub const SPL_TOKEN_2022_ID: Pubkey = Pubkey::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+
+/// Program ids for the default registry adapters (Task 3). The System program's
+/// id is the all-zeros pubkey — a real key, not an "unused" sentinel (see
+/// `state::registry::find_entry`).
+pub const SYSTEM_PROGRAM_ID: Pubkey = Pubkey::new_from_array([0u8; 32]);
+pub const MEMO_PROGRAM_ID: Pubkey = Pubkey::from_str_const("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+pub const ATA_PROGRAM_ID: Pubkey = Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+/// Jupiter aggregator v6 — the pinned swap program (Task 6 verifies its route
+/// discriminators against the IDL).
+pub const JUPITER_V6_ID: Pubkey = Pubkey::from_str_const("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
+/// Test-only program ids (mirrored from `programs/test-mutator` and
+/// `programs/test-jup-mock`), used only by the registry's test list.
+pub const TEST_MUTATOR_ID: Pubkey = Pubkey::from_str_const("An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W");
+pub const TEST_JUP_MOCK_ID: Pubkey = Pubkey::from_str_const("3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU");
 
 /// Wrapped-SOL mint (`So11111111111111111111111111111111111111112`) — the key
 /// a native-SOL transfer looks its caps up under.
