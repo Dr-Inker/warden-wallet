@@ -217,3 +217,38 @@ history, so historical evidence objects take the shallow-skip path there. To mak
 the at-SHA check load-bearing in CI, set the checkout `fetch-depth: 0` (or fetch
 the cited objects). **Owner/CI action — not a fund-loss issue:** the program
 suite and HEAD-side ledger checks run fully in CI regardless.
+
+## A0 close-out (2026-08-20)
+
+**A0 is complete.** 11 adversarial review rounds (Codex `gpt-5.6-sol@max`, all
+recorded in `docs/security/REVIEW-RUNS.jsonl` + `REVIEW-SCORECARD.jsonl`).
+
+**What A0 delivered beyond its charter.** A0 was scoped as assurance-record
+repair (campaign plan G1/G2/G7/G10/G11). Seeding the `WRD-CONS-*` invariants did
+its job: the review loop surfaced **five genuine, previously-unnoticed fund-loss
+defects** in the Task-1 conservation module that Phase 1B review had passed —
+each CONFIRMED by a RED-verified regression:
+- WRDF-0008: Token-2022 native SOL mis-laned into `by_mint` (double-bucket).
+- WRDF-0011: native value measured by the `SyncNative`-updated `amount` cache —
+  a `SyncNative`+`Transfer` pair could drain a donated balance invisibly.
+- WRDF-0012 (rounds 7+8): standalone mints controlled via an unmodeled OR a
+  recognized-danger extension bypassed the authority pre-scan.
+Plus the spec §5.2 / plan SOL equation was corrected to match (WRDF-0011 r8).
+The warden lib suite grew 248 → 258 tests over these fixes.
+
+**Convergence decision.** Rounds 10 and 11 produced ZERO program-security
+findings — only assurance-tooling refinements (digest canonicalization, scorecard
+self-sufficiency, evidence-at-SHA CI depth). That is the security-relevant
+convergence signal: two consecutive rounds with no fund-loss issue. A0 is closed
+here on judgment, not exhaustion; further rounds would keep polishing the review
+harness at diminishing return.
+
+**Accepted residuals (owner/CI, not fund-loss):**
+- The evidence-at-SHA ledger test needs CI `fetch-depth: 0` to be load-bearing in
+  CI (WRDF-0013); it is correct and load-bearing locally.
+- Raw review artefacts under `.superpowers/reviews` are session-local by policy;
+  the committed scorecard is self-sufficient and `artefact_sha256` authenticates a
+  locally-retained artefact (WRDF-0015).
+- A Task-5 real-CPI regression for the native-lamport SOL equation and the
+  through-CPI standalone-mint case is owed when `execute` is wired (the unit layer
+  is proven; the end-to-end `WRD-EXEC-*` rows stay `unimplemented` until Task 5).
