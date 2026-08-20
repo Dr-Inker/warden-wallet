@@ -185,3 +185,23 @@ armed — no `apps/extension` or vanity worker exists yet. Carried by the campai
 | V-5 | CPU/battery denial of service from an unbounded search | Cancellation bounded by a tested maximum batch duration; calibrated 50%/95% probability windows, not a fake countdown | `WRD-VAN-02` |
 | V-6 | Server-side metadata linkage deanonymizes the wallet | v1 generation is local, bundled, and emits no wallet-linkable telemetry | `WRD-VAN-04` |
 | V-7 | Vanity treated as identity / address poisoning | Vanity is cosmetic, never identity; full-address comparison, saved-contact provenance, and the poisoning controls ship with it (see the UI research binding correction) | `WRD-VAN-03` |
+
+### C0+V0 seeding corrections (append-only, same tranche) — 2026-08-20
+
+Two rows in the C0+V0 seeding block above are wrong as written; per this file's
+append-only rule they are corrected here, not rewritten in place.
+
+- **C-11 overclaims (WRDF-0024).** "root/session secrets never exportable" is the
+  broad claim removed from `WRD-KEY-01`/`WRD-EXP-01` in round 3. The correct,
+  enforceable statement: **Warden exposes no root/session export API and root
+  material never enters extension memory; a recovery-secret reveal/export requires
+  a fresh ceremony.** A backup-eligible *synced* passkey remains movable by the
+  platform (WebAuthn L3 / FIDO) — that is threat **T7**, outside Warden's
+  enforcement, not a Warden guarantee.
+- **V-4 salt construction (WRDF-0025).** "Salt is a full 32-byte CSPRNG value" is
+  wrong: the authoritative construction (vanity plan §V2) is
+  `salt32 = job_nonce24 ‖ counter64_le` — a **192-bit CSPRNG job nonce** plus a
+  disjoint `u64` counter so parallel workers have non-overlapping lanes. The
+  correct answer: the 192-bit nonce is CSPRNG; a CSPRNG failure, a reused job
+  nonce, and a counter wrap each reject (`WRD-VAN-01`/`WRD-VAN-02`). The final
+  eight bytes are deterministic by design and are not a keyspace weakness.

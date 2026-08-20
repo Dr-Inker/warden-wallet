@@ -333,7 +333,15 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   the pinned Squads program, has the pinned member set, threshold, and time-lock
   (spec §5.5, 3-of-5, 7 days); derive its canonical vault PDA (pinned vault index)
   and require `ProgramData.upgrade_authority_address == that vault PDA`. Never
-  accept the authority OR the multisig as unchecked identity.
+  accept the authority OR the multisig as unchecked identity. **And assert
+  `Multisig.configAuthority == Pubkey::default()` — the autonomous case (WRDF-0017
+  round 4):** per the pinned Squads IDL a *non-default* `configAuthority` can
+  change members/threshold directly (signer-only `multisigChangeThreshold` /
+  `multisigSetTimeLock`), so a pinned 3-of-5 / 7-day multisig with a controlled
+  config authority is a single key in disguise. Require the autonomous default, or
+  pin and independently attest an explicitly approved config authority. Add a
+  negative fixture: a structurally-perfect multisig with a non-default
+  `configAuthority`.
 - [ ] Assert the on-chain program hash equals `solana-verify get-program-hash` of
   the release artifact; **refuse on any mismatch**.
 - [ ] **The checks must be explicit assertions, and each must have a valid-looking
