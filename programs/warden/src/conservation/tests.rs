@@ -1063,6 +1063,33 @@ fn a_required_mint_with_an_unmodeled_extension_is_rejected() {
 }
 
 #[test]
+fn a_standalone_writable_mint_with_an_unmodeled_extension_is_rejected() {
+    // WRDF-0012 round 7: a mint whose ONLY vault-held authority lives in an
+    // unmodeled extension reads as uncontrolled to `holds_authority`, so the
+    // `check_mint` gate (reached only via a vault token account) never sees it.
+    // A writable such mint standing alone in the snapshot set must still reject
+    // — a PDA-signed Pause/authority transition on it is otherwise invisible.
+    // (Type 18 = a MetadataPointer-shaped entry; no vault ATA in the set.)
+    let m = pk(7);
+    let mint = t22_mint_bytes(mint_bytes(None, 0, 6, None), &tlv(&[(18, vec![0u8; 64])]));
+    let before = vec![snap_t22(m, &mint, true)];
+    assert_eq!(
+        cmp(&before, &before, &[]).unwrap_err(),
+        err(WardenError::Token2022ExtensionRejected)
+    );
+}
+
+#[test]
+fn a_read_only_stranger_mint_with_an_unmodeled_extension_is_ignored() {
+    // The mirror: a mint passed READ-ONLY cannot be mutated in this tx, so a
+    // normal swap through a token carrying a metadata pointer must NOT reject.
+    let m = pk(7);
+    let mint = t22_mint_bytes(mint_bytes(None, 0, 6, None), &tlv(&[(18, vec![0u8; 64])]));
+    let before = vec![snap_t22(m, &mint, false)];
+    assert_eq!(cmp(&before, &before, &[]).expect("ok"), Outflow::default());
+}
+
+#[test]
 fn a_danger_extension_added_mid_instruction_is_rejected() {
     let m = pk(2);
     let acct = t22_token_bytes(plain_token_bytes(m, vault(), 100), &tlv(&[(2, vec![0u8; 8])]));
@@ -1306,9 +1333,13 @@ fn c1_a_standalone_vault_controlled_mint_supply_change_is_still_ok() {
 
 #[test]
 fn c1_a_vault_controlled_mint_tlv_tail_change_is_rejected() {
-    // For a mint the vault CONTROLS, the whole-tail hash IS compared — see the
-    // note in `compare::prescan_vault_mints` on why that is safe here and
-    // wrong for the token-account-backed path.
+    // A writable mint carrying an UNMODELED extension (type 18) now rejects at
+    // the WRDF-0012 gate — earlier than, and superseding, the tail-hash
+    // comparison it used to hit. Both are rejects; the earlier gate is the
+    // stronger statement (it does not even depend on the tail CHANGING). The
+    // whole-tail-hash comparison for controlled mints remains in
+    // `prescan_vault_mints` as defense in depth for any future modeled-only
+    // tail; here the more specific error is the correct verdict.
     let m = pk(2);
     let b = t22_mint_bytes(
         mint_bytes(Some(vault()), 1, 6, None),
@@ -1322,7 +1353,7 @@ fn c1_a_vault_controlled_mint_tlv_tail_change_is_rejected() {
     let after = vec![snap_t22(m, &a, true)];
     assert_eq!(
         cmp(&before, &after, &[]).unwrap_err(),
-        err(WardenError::ConservationViolated)
+        err(WardenError::Token2022ExtensionRejected)
     );
 }
 

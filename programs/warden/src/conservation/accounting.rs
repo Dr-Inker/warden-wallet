@@ -24,11 +24,13 @@
 //!
 //! ```text
 //! outflow[SOL] = (pda_lamports_before − pda_lamports_after)
-//!              + Σ_{vault WSOL accounts}(amount_before − amount_after)
+//!              + Σ_{vault native accounts}(account_lamports_before − account_lamports_after)
 //! ```
 //!
-//! and WSOL token accounts' own *lamports* are never counted separately —
-//! they back the `amount`. `by_mint` therefore never contains `NATIVE_MINT`;
+//! A native account's value is its **lamports**, not its `amount` (WRDF-0011:
+//! `amount` is a cache the token program only refreshes on `SyncNative`, so a
+//! `SyncNative`+`Transfer` pair could drain a donated balance while `amount`
+//! stayed put). `by_mint` therefore never contains a native mint key;
 //! `outflow_never_lists_native_mint_in_by_mint` asserts it.
 //!
 //! The floor is applied **once, at the end, to the merged figure** — not to

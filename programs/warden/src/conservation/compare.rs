@@ -292,6 +292,22 @@ pub fn compare_and_account(
 fn prescan_vault_mints(before: &[Snap], after: &[Snap], vault: &Pubkey) -> Result<()> {
     for (i, b) in before.iter().enumerate() {
         let a = after.get(i).ok_or(WardenError::ConservationViolated)?;
+        // WRDF-0012 round 7: `holds_authority` only sees the FOUR modeled
+        // authorities, so a standalone mint whose sole vault-held authority
+        // lives in an UNMODELED extension (Pausable, InterestBearing,
+        // MetadataPointer, …) would read as uncontrolled and never be scanned —
+        // the `check_mint` gate is only reached for a mint backing a vault
+        // token account. Fail closed here too, but scoped to a WRITABLE mint:
+        // a read-only mint cannot be mutated in this transaction, so a stranger
+        // token that merely passes its mint through read-only (a normal swap)
+        // is unaffected, while a writable mint we cannot fully model — the only
+        // shape whose unmodeled authority could actually change here — rejects.
+        let writable_unmodeled_mint = (b.is_writable || a.is_writable)
+            && (b.mint.as_ref().is_some_and(|m| m.has_unrecognized_ext)
+                || a.mint.as_ref().is_some_and(|m| m.has_unrecognized_ext));
+        if writable_unmodeled_mint {
+            return Err(WardenError::Token2022ExtensionRejected.into());
+        }
         let controlled = b.mint.as_ref().is_some_and(|m| m.holds_authority(vault))
             || a.mint.as_ref().is_some_and(|m| m.holds_authority(vault));
         if !controlled {

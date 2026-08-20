@@ -151,6 +151,42 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
     }
   });
 
+  // WRDF-0013: a name existing at HEAD is not proof it existed at the SHA the row cites — a fix's
+  // evidence can be mis-pinned to a pre-fix commit. This resolves each cited (sha, path, name) in
+  // the actual git object. Skipped gracefully when git or the object is unavailable (shallow CI).
+  it("cites test names that exist AT the SHA each evidence entry names, not merely at HEAD", () => {
+    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+    let gitOk = true;
+    try {
+      execFileSync("git", ["-C", REPO, "rev-parse", "--is-inside-work-tree"], { stdio: "pipe" });
+    } catch {
+      gitOk = false;
+    }
+    if (!gitOk) return; // not a git checkout — nothing to verify
+    for (const r of rows) {
+      for (const e of r.evidence) {
+        if (!e.name || !/^[0-9a-f]{7,40}$/.test(e.sha)) continue;
+        let blob: string;
+        try {
+          blob = execFileSync("git", ["-C", REPO, "show", `${e.sha}:${e.path}`], {
+            stdio: ["pipe", "pipe", "pipe"],
+            maxBuffer: 32 * 1024 * 1024,
+          }).toString();
+        } catch {
+          continue; // object not present locally (shallow clone) — cannot verify, do not fail
+        }
+        const leaf = e.name.split("::").pop()!;
+        const present = e.path.endsWith(".rs")
+          ? new RegExp(`\\bfn\\s+${leaf}\\s*\\(`).test(blob)
+          : blob.includes(e.name);
+        expect(
+          present,
+          `${r.id}: evidence "${e.name}" is NOT present in ${e.path} at cited sha ${e.sha} (it may be pinned to a pre-fix commit)`,
+        ).toBe(true);
+      }
+    }
+  });
+
   it("leaves unimplemented rows honest: no evidence, no code_ref", () => {
     for (const r of rows.filter((x) => x.status === "unimplemented")) {
       expect(r.evidence.length, `${r.id} is unimplemented but cites evidence`).toBe(0);
