@@ -40,30 +40,54 @@ pub const POOL_SEED: &[u8] = b"pool";
 /// fee *destination*).
 const FEE: u64 = 1;
 
+// The mock speaks Jupiter v6's REAL argument FIELD ORDER (WRDF-0031), so
+// warden's `swap` adapter (Task 6) decodes `in_amount` at the same offsets it
+// will on-chain, rather than against a private ABI:
+//
+//   route:                route_plan:Vec || in_amount:u64 || quoted_out_amount:u64 || slippage_bps:u16 || platform_fee_bps:u8
+//   shared_accounts_route:  id:u8 || <the same tail>
+//
+// Two deliberate mock-only simplifications, neither of which shifts a Jupiter
+// field warden reads: `route_plan` is modelled as an empty `Vec<u8>` (an empty
+// vec is a bare `u32` zero regardless of element type, so the bytes up to
+// `in_amount` are byte-identical to a real empty-route_plan Jupiter call — the
+// only shape the adapter needs to decode deterministically), and the
+// misbehaviour selector rides as a **trailing** `u8` AFTER every Jupiter field,
+// where the real Jupiter program and warden both ignore it. The IDL provenance
+// (repo commit + SHA-256) is pinned in PHASE1B-MEASUREMENTS.md by Task 6, which
+// owns the byte/account fixtures generated from it.
 #[program]
 pub mod test_jup_mock {
     use super::*;
 
-    /// Jupiter `route` account layout.
+    /// Jupiter `route` argument + account layout.
+    #[allow(clippy::too_many_arguments)]
     pub fn route<'info>(
         ctx: Context<'info, Route<'info>>,
+        _route_plan: Vec<u8>,
         in_amount: u64,
-        min_out: u64,
+        quoted_out_amount: u64,
+        _slippage_bps: u16,
+        _platform_fee_bps: u8,
         misbehave: u8,
     ) -> Result<()> {
-        do_route(&ctx.accounts.common(), ctx.remaining_accounts, in_amount, min_out, misbehave, ctx.bumps.pool_authority)
+        do_route(&ctx.accounts.common(), ctx.remaining_accounts, in_amount, quoted_out_amount, misbehave, ctx.bumps.pool_authority)
     }
 
-    /// Jupiter `shared_accounts_route` — same as `route` plus a leading
-    /// `program_authority` account the mock does not use (Jupiter's shared
-    /// program authority). Present so warden validates the shared layout.
+    /// Jupiter `shared_accounts_route` — a leading `id:u8`, the same argument
+    /// tail, and a leading `program_authority` account the mock does not use.
+    #[allow(clippy::too_many_arguments)]
     pub fn shared_accounts_route<'info>(
         ctx: Context<'info, SharedRoute<'info>>,
+        _id: u8,
+        _route_plan: Vec<u8>,
         in_amount: u64,
-        min_out: u64,
+        quoted_out_amount: u64,
+        _slippage_bps: u16,
+        _platform_fee_bps: u8,
         misbehave: u8,
     ) -> Result<()> {
-        do_route(&ctx.accounts.common(), ctx.remaining_accounts, in_amount, min_out, misbehave, ctx.bumps.pool_authority)
+        do_route(&ctx.accounts.common(), ctx.remaining_accounts, in_amount, quoted_out_amount, misbehave, ctx.bumps.pool_authority)
     }
 }
 
@@ -110,7 +134,7 @@ fn do_route<'info>(
     c: &Common<'_, 'info>,
     remaining: &[AccountInfo<'info>],
     in_amount: u64,
-    min_out: u64,
+    quoted_out_amount: u64,
     misbehave: u8,
     pool_bump: u8,
 ) -> Result<()> {
@@ -150,7 +174,7 @@ fn do_route<'info>(
     }
 
     // (2) Credit the output from the pool, signed by the pool PDA.
-    let out_amount = if misbehave == 1 { min_out.saturating_sub(1) } else { min_out };
+    let out_amount = if misbehave == 1 { quoted_out_amount.saturating_sub(1) } else { quoted_out_amount };
     spl_transfer(
         c.token_program,
         c.pool_out_ata,

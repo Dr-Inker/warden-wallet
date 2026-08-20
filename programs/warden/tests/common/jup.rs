@@ -56,11 +56,18 @@ pub struct RouteAccounts {
     pub extra: Option<Pubkey>,
 }
 
-fn args(in_amount: u64, min_out: u64, misbehave: u8) -> Vec<u8> {
+/// Jupiter v6 `route` argument tail in real field order (WRDF-0031): an empty
+/// `route_plan` (`u32` len 0), `in_amount`, `quoted_out_amount`, `slippage_bps`,
+/// `platform_fee_bps`, then the mock-only trailing `misbehave` byte. The
+/// `platform_fee_bps` is fixed at 85 to match warden's required value.
+fn route_tail(in_amount: u64, quoted_out_amount: u64, misbehave: u8) -> Vec<u8> {
     let mut a = Vec::new();
+    a.extend_from_slice(&0u32.to_le_bytes()); // route_plan: empty Vec
     a.extend_from_slice(&in_amount.to_le_bytes());
-    a.extend_from_slice(&min_out.to_le_bytes());
-    a.push(misbehave);
+    a.extend_from_slice(&quoted_out_amount.to_le_bytes());
+    a.extend_from_slice(&50u16.to_le_bytes()); // slippage_bps (unused by the mock)
+    a.push(85u8); // platform_fee_bps (warden requires 85)
+    a.push(misbehave); // trailing mock selector
     a
 }
 
@@ -85,13 +92,13 @@ fn base_metas(a: &RouteAccounts) -> Vec<AccountMeta> {
     m
 }
 
-pub fn route(a: &RouteAccounts, in_amount: u64, min_out: u64, misbehave: u8) -> Instruction {
+pub fn route(a: &RouteAccounts, in_amount: u64, quoted_out_amount: u64, misbehave: u8) -> Instruction {
     let mut data = disc("route").to_vec();
-    data.extend_from_slice(&args(in_amount, min_out, misbehave));
+    data.extend_from_slice(&route_tail(in_amount, quoted_out_amount, misbehave));
     Instruction { program_id: jup_program_id(), accounts: base_metas(a), data }
 }
 
-pub fn shared_accounts_route(a: &RouteAccounts, in_amount: u64, min_out: u64, misbehave: u8) -> Instruction {
+pub fn shared_accounts_route(a: &RouteAccounts, in_amount: u64, quoted_out_amount: u64, misbehave: u8) -> Instruction {
     let (pool, _) = pool_authority();
     let mut metas = vec![
         AccountMeta::new_readonly(token_program_id(), false),
@@ -110,7 +117,8 @@ pub fn shared_accounts_route(a: &RouteAccounts, in_amount: u64, min_out: u64, mi
         metas.push(AccountMeta::new(extra, false));
     }
     let mut data = disc("shared_accounts_route").to_vec();
-    data.extend_from_slice(&args(in_amount, min_out, misbehave));
+    data.push(0u8); // id:u8 (shared-route prefix)
+    data.extend_from_slice(&route_tail(in_amount, quoted_out_amount, misbehave));
     Instruction { program_id: jup_program_id(), accounts: metas, data }
 }
 

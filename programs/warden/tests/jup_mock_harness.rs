@@ -141,9 +141,12 @@ fn misbehave_3_sends_fee_to_a_non_treasury_account() {
     let mut s = scene(1_000);
     let a = s.accounts(None);
     s.send(jup::route(&a, 400, 380, 3)).expect("route runs");
+    // Assert the full honest transition ALSO happened (WRDF-0032), so this
+    // proves the handler ran and only diverted the FEE — not that it failed
+    // early leaving the treasury at zero for an unrelated reason.
+    assert_eq!(token_amount(&s.svm, &s.source), 600, "in_amount taken");
+    assert_eq!(token_amount(&s.svm, &s.destination), 381, "min_out + the diverted fee");
     assert_eq!(token_amount(&s.svm, &s.treasury), 0, "treasury got no fee");
-    // The fee landed in the pool's in-sink instead (the mock's stand-in for a
-    // non-treasury account); we only assert the treasury was starved.
 }
 
 #[test]

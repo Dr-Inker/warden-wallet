@@ -179,7 +179,14 @@ fn drain_lamports_on_a_foreign_account_fails() {
     let dest = Pubkey::new_unique();
 
     let err = send(&mut svm, &payer, mutator::drain_lamports(source, dest, 1_000_000)).unwrap_err();
-    assert!(!err.is_empty(), "drain must fail");
+    // The handler must have RUN and then been rejected — not failed before it
+    // (a bad discriminator or decode failure would also leave the source
+    // untouched, WRDF-0032). Anchor logs the instruction name on entry.
+    assert!(err.contains("Instruction: DrainLamports"), "drain handler must have run: {err}");
+    assert!(
+        err.contains("ExternalAccountLamportSpend") || err.contains("lamport") || err.contains("owner"),
+        "must fail on the foreign-lamport write specifically: {err}"
+    );
     assert_eq!(svm.get_account(&source).unwrap().lamports, 5_000_000, "source untouched");
 }
 
@@ -198,7 +205,14 @@ fn reenter_warden_with_forged_input_fails() {
 
     let ix = mutator::reenter_warden(warden, vec![0xde, 0xad, 0xbe, 0xef], vec![]);
     let err = send(&mut svm, &payer, ix).unwrap_err();
-    assert!(!err.is_empty(), "re-entry with a forged warden instruction must fail");
+    // The mutator handler must have run and attempted the CPI (WRDF-0032): the
+    // failure must come from the inner warden invocation, not from the mutator
+    // never being reached.
+    assert!(err.contains("Instruction: ReenterWarden"), "reenter handler must have run: {err}");
+    assert!(
+        err.contains(&warden.to_string()),
+        "the inner warden CPI must be what failed: {err}"
+    );
 }
 
 #[test]
