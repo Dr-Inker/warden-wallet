@@ -85,7 +85,13 @@ export async function buildRunRecord(doc, expect, opts = {}) {
  */
 export function canonicalJson(node, key = null) {
   if (Array.isArray(node)) {
-    const items = key === "seeded_invariants" ? [...node].sort() : node;
+    // Set-semantics arrays are order- and duplicate-insensitive to the validator, so they are so
+    // to the digest too (WRDF-0003): seeded_invariants dedups+sorts; invariant_verdicts is keyed by
+    // invariant_id and sorted on it. Every other array keeps its order and multiplicity.
+    let items = node;
+    if (key === "seeded_invariants") items = [...new Set(node)].sort();
+    else if (key === "invariant_verdicts")
+      items = [...node].sort((a, b) => String(a?.invariant_id).localeCompare(String(b?.invariant_id)));
     return `[${items.map((x) => canonicalJson(x, null)).join(",")}]`;
   }
   if (node && typeof node === "object") {

@@ -217,11 +217,16 @@ fn t22_identifier_constants_match_independent_literals() {
         Pubkey::from_str_const("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP"),
         "native_mint.rs declare_id!"
     );
-    // ExtensionType discriminants (spl-token-2022 7.0.0 `extension/mod.rs`).
+    // Every consumed ExtensionType discriminant (spl-token-2022 7.0.0
+    // `extension/mod.rs`), not just the modeled-authority ones — WRDF-0014.
     assert_eq!(EXT_TRANSFER_FEE_CONFIG, 1);
     assert_eq!(EXT_CONFIDENTIAL_TRANSFER_MINT, 4);
+    assert_eq!(EXT_CONFIDENTIAL_TRANSFER_ACCOUNT, 5);
     assert_eq!(EXT_PERMANENT_DELEGATE, 12);
     assert_eq!(EXT_TRANSFER_HOOK, 14);
+    assert_eq!(EXT_CONFIDENTIAL_TRANSFER_FEE_CONFIG, 16);
+    assert_eq!(EXT_CONFIDENTIAL_TRANSFER_FEE_AMOUNT, 17);
+    assert_eq!(EXT_CONFIDENTIAL_MINT_BURN, 24);
     // AccountType bytes.
     assert_eq!(T22_ACCOUNT_TYPE_MINT, 1);
     assert_eq!(T22_ACCOUNT_TYPE_ACCOUNT, 2);
