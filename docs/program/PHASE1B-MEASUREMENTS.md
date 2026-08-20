@@ -133,5 +133,23 @@ auditable (campaign plan gaps G1/G2/G7/G10/G11). No program code changed.
 **Task 11 gate evidence, rerun at the A0 SHA (campaign plan: record only what
 actually passes; the deployment gate stays partial until Task 11R):**
 
-<!-- A0-GATE-EVIDENCE: pinned by the evidence commit that follows the A0 commit,
-     because the evidence must name the committed SHA it ran at. -->
+Run at `41806e4ecbf087cfce48b10f4f3f9c3bc37f4a81` (2026-08-20):
+
+```
+$ node scripts/gen-invariants.mjs --check
+INVARIANTS.md is up to date (59 invariants).
+$ scripts/review.sh --selftest        # codex CLI contract
+selftest OK
+$ pnpm --filter @warden/core test
+ Test Files  5 passed (5)
+      Tests  95 passed (95)
+$ ./scripts/supply-chain-gate.sh
+== L9 supply-chain gate: PASS ==
+$ git diff --check b008190..41806e4
+(clean)
+```
+
+NOT rerun here and still owned elsewhere: the deployment gate
+(`scripts/deploy-gate.sh`) remains SPEC + partial dry-run (Task 11R); cargo /
+anchor builds and the Rust suite were not part of A0's lease (no Rust source
+changed; the serialized-build rule reserves them for Task 2).
