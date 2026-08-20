@@ -236,32 +236,44 @@ HDR
 # Plain `codex exec`, NOT `codex exec review` — see the header. Read-only sandbox: the model needs a
 # shell to run `git diff` and read files, and must not be able to write.
 #
-# The schema handed to --output-schema is a RELAXED derivation of the canonical one: OpenAI's
-# structured-output subset rejects `allOf`/`if`/`then` (observed live 2026-08-20: 400
-# invalid_json_schema, "'allOf' is not permitted"), so those conditional blocks are stripped for the
-# API call only. Stripping constraints can only ADMIT more outputs, never exclude a valid one, and
-# step 6's independent validator enforces the FULL canonical schema afterwards — the API-side schema
-# shapes generation; the validator is the gate.
+# The schema handed to --output-schema is DERIVED from the canonical one at runtime, because
+# OpenAI's structured-output subset (observed live, 2026-08-20, two 400s) differs from JSON Schema:
+#   * `allOf`/`if`/`then`, `oneOf` and `format` are rejected  → stripped / oneOf→anyOf;
+#   * every property must appear in `required`               → optionals become required-but-
+#     nullable, and step 6 strips those explicit nulls back out before validation.
+# The transformations only change the ENCODING of optionality, never admit a value the canonical
+# schema forbids — and step 6's independent validator enforces the FULL canonical schema on the
+# canonicalized output. The API-side schema shapes generation; the validator is the gate.
 API_SCHEMA="$OUT_DIR/warden-findings.openai.json"
 SCHEMA="$SCHEMA" API_SCHEMA="$API_SCHEMA" node -e '
 const fs = require("fs");
-const strip = (n) => {
-  if (Array.isArray(n)) return n.map(strip);
-  if (n && typeof n === "object") {
-    const out = {};
-    for (const [k, v] of Object.entries(n)) {
-      if (k === "allOf" || k === "if" || k === "then" || k === "else" || k === "format") continue;
-      // oneOf is outside the subset; anyOf is inside it. For disjoint branches (ours are
-      // object-vs-null) the two admit the same set, and where branches overlap anyOf only ADMITS
-      // more — still a relaxation, still caught by the canonical validator.
-      out[k === "oneOf" ? "anyOf" : k] = strip(v);
-    }
-    return out;
+const nullable = (s) => {
+  if (s && typeof s === "object") {
+    if (s.$ref || s.anyOf) return { anyOf: [...(s.anyOf ?? [s]), { type: "null" }] };
+    if (typeof s.type === "string") return { ...s, type: [s.type, "null"] };
+    if (Array.isArray(s.type) && !s.type.includes("null")) return { ...s, type: [...s.type, "null"] };
   }
-  return n;
+  return s;
+};
+const walk = (n) => {
+  if (Array.isArray(n)) return n.map(walk);
+  if (!n || typeof n !== "object") return n;
+  const out = {};
+  for (const [k, v] of Object.entries(n)) {
+    if (k === "allOf" || k === "if" || k === "then" || k === "else" || k === "format") continue;
+    out[k === "oneOf" ? "anyOf" : k] = walk(v);
+  }
+  if (out.properties && typeof out.properties === "object") {
+    const originallyRequired = new Set(Array.isArray(out.required) ? out.required : []);
+    for (const key of Object.keys(out.properties)) {
+      if (!originallyRequired.has(key)) out.properties[key] = nullable(out.properties[key]);
+    }
+    out.required = Object.keys(out.properties);
+  }
+  return out;
 };
 fs.writeFileSync(process.env.API_SCHEMA,
-  JSON.stringify(strip(JSON.parse(fs.readFileSync(process.env.SCHEMA, "utf8"))), null, 2) + "\n");
+  JSON.stringify(walk(JSON.parse(fs.readFileSync(process.env.SCHEMA, "utf8"))), null, 2) + "\n");
 '
 CODEX_ARGS=(exec
   --output-schema "$API_SCHEMA"
@@ -298,7 +310,29 @@ fi
 codex "${CODEX_ARGS[@]}" - < "$PROMPT_FILE"
 [[ -s "$OUT" ]] || die "codex produced no output at $OUT"
 
-# ---- 6. validate independently, against the WRAPPER's expectations ----------
+# ---- 6. canonicalize, then validate independently against the WRAPPER's expectations --------
+# The API-side schema forces optionals to be present-but-null (see step 4). Strip those explicit
+# nulls back out — EXCEPT `reproducer`, where null is meaningful in the canonical schema (it means
+# "infeasible", and must co-occur with reproducer_infeasible_reason) — then validate the result
+# against the FULL canonical schema. The raw model output is preserved alongside as *.raw.json.
+cp "$OUT" "${OUT%.json}.raw.json"
+OUT="$OUT" node -e '
+const fs = require("fs");
+const strip = (n, key) => {
+  if (Array.isArray(n)) return n.map((x) => strip(x, null));
+  if (n && typeof n === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(n)) {
+      if (v === null && k !== "reproducer") continue;
+      out[k] = strip(v, k);
+    }
+    return out;
+  }
+  return n;
+};
+const doc = strip(JSON.parse(fs.readFileSync(process.env.OUT, "utf8")), null);
+fs.writeFileSync(process.env.OUT, JSON.stringify(doc, null, 2) + "\n");
+'
 node scripts/validate-findings.mjs "$OUT" --schema "$SCHEMA" --expect "$EXPECT"
 
 # ---- 7. append every finding to the scorecard (disputed and scoped-out too) --
