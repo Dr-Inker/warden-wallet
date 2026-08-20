@@ -159,3 +159,10 @@ changed; the serialized-build rule reserves them for Task 2).
 executable gate behind every `WRD-CONS-*` `test-covered` row; their evidence
 SHAs cite this run. Review round 1 (wrapper thread in REVIEW-RUNS.jsonl):
 5 findings, all adopted; rulings in REVIEW-SCORECARD.jsonl.
+
+**A0 round-3 fix evidence (WRDF-0008):** `cargo test -p warden --lib` at
+`7bf6b2f2c2c1f87db58a36e25425098d2a5f54f0` → `250 passed; 0 failed` (RED
+verified: `t22_native_account_delta_is_counted_in_sol_not_by_mint` fails
+against the pre-fix mint-key-only classification). `NATIVE_MINT_2022`
+provenance: vendored `spl-token-2022 7.0.0` `src/native_mint.rs`
+`declare_id!("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP")`.
