@@ -137,22 +137,22 @@ fn misbehave_2_debits_a_second_source_ata() {
 }
 
 #[test]
-fn misbehave_3_sends_fee_to_a_non_treasury_account() {
+fn fee_goes_to_the_passed_account_so_a_substituted_one_is_observable() {
+    // Plan "misbehave 3" is a CALLER account substitution, not a mock branch
+    // (WRDF-0033): the mock honestly pays whatever is in the platform_fee_account
+    // slot, so putting a non-treasury account there sends the fee there and
+    // starves the treasury. Task 6 asserts warden's pre-CPI meta check
+    // (platform_fee_account == Registry.treasury) rejects this before the CPI.
     let mut s = scene(1_000);
-    // A NON-VAULT output-mint account the mock will divert the fee to, while the
-    // honest treasury stays in the validated meta (WRDF-0033). Warden's pre-CPI
-    // check would pass on the honest meta; only the post-state (fee to a
-    // stranger) reveals the diversion.
     let wrong_fee = ata(&Pubkey::new_unique(), &s.out_mint);
     set_token_account(&mut s.svm, &wrong_fee, &s.out_mint, &Pubkey::new_unique(), 0);
-    let a = s.accounts(Some(wrong_fee));
-    s.send(jup::route(&a, 400, 380, 3)).expect("route runs");
-    // Full honest transition ALSO happened (WRDF-0032): handler ran, only the
-    // fee was diverted.
+    let mut a = s.accounts(None);
+    a.platform_fee_account = wrong_fee; // substitute a non-treasury account
+    s.send(jup::route(&a, 400, 380, 0)).expect("route runs");
     assert_eq!(token_amount(&s.svm, &s.source), 600, "in_amount taken");
     assert_eq!(token_amount(&s.svm, &s.destination), 380, "min_out credited");
     assert_eq!(token_amount(&s.svm, &s.treasury), 0, "treasury got no fee");
-    assert!(token_amount(&s.svm, &wrong_fee) >= 1, "fee went to the non-treasury account");
+    assert!(token_amount(&s.svm, &wrong_fee) >= 1, "fee went to the substituted account");
 }
 
 #[test]

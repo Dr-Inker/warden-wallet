@@ -11,9 +11,11 @@
 //!   `platform_fee_account`.
 //! - `1` credits **less** than `min_out`.
 //! - `2` also debits a **second** source ATA (passed as a remaining account).
-//! - `3` sends the fee to a **non-treasury** account (a caller-supplied
-//!   non-vault output-mint ATA passed as the extra remaining account) while
-//!   still presenting the honest treasury in the validated meta.
+//! - `3` (plan) "fee to a non-treasury account" — realised by the CALLER
+//!   passing a non-treasury account in the `platform_fee_account` slot; the mock
+//!   honestly pays whatever it is given, and warden's pre-CPI meta check
+//!   (`platform_fee_account == Registry.treasury`) is what rejects it. There is
+//!   deliberately no mock branch for it (WRDF-0033).
 //! - `4` sets a **delegate** (SPL `Approve`) on the source ATA.
 //!
 //! The pool ATAs are owned by a program PDA (`["pool"]`); the mock signs their
@@ -194,19 +196,17 @@ fn do_route<'info>(
         Some(pool_seeds),
     )?;
 
-    // (3) Platform fee (output mint). Honest: to the passed `platform_fee_account`
-    // (which warden validates == Registry.treasury). Misbehave 3: divert the fee
-    // to a caller-supplied NON-VAULT account (the `extra` remaining account) while
-    // presenting the honest treasury in the validated meta — so warden's pre-CPI
-    // account check passes but the post-state shows the fee leaving to a stranger,
-    // which only conservation can catch (WRDF-0033). The divert target is an
-    // output-mint account, so the transfer is mint-valid.
-    let fee_dest = if misbehave == 3 {
-        remaining.first().expect("misbehave 3 needs a non-treasury fee account")
-    } else {
-        c.platform_fee_account
-    };
-    spl_transfer(c.token_program, c.pool_out_ata, fee_dest, c.pool_authority, FEE, Some(pool_seeds))?;
+    // (3) Platform fee (output mint) — ALWAYS to the passed `platform_fee_account`
+    // (WRDF-0033). The mock never diverts the fee itself: a real Jupiter route
+    // pays the platform-fee account it is given, and warden's control is a
+    // pre-CPI check that that account == `Registry.treasury`. The "fee to a
+    // non-treasury account" case (plan misbehave 3) is therefore realised by the
+    // CALLER substituting a non-treasury account into this validated slot, not by
+    // a mock branch — an internal divert between two external accounts would be
+    // invisible to both warden's meta check and its vault-only conservation, so
+    // it would model a threat warden does not (and need not) defend against.
+    let _ = misbehave; // 3 is a caller-side account substitution, not a mock branch
+    spl_transfer(c.token_program, c.pool_out_ata, c.platform_fee_account, c.pool_authority, FEE, Some(pool_seeds))?;
 
     Ok(())
 }
