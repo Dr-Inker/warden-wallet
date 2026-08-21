@@ -156,6 +156,44 @@ pub fn parse_payload(bytes: &[u8]) -> Result<ExecutePayload> {
     Ok(ExecutePayload { ixs })
 }
 
+/// How an inner instruction targeting SPL Token / Token-2022 is classified
+/// against the fixed deny-list (spec §5.2 rule 1a). The classification is a pure
+/// function of the instruction data's tag byte; the handler applies it only when
+/// the resolved program is SPL Token or Token-2022, on BOTH the session and root
+/// paths, before any registry lookup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplTokenOp {
+    /// `Approve` / `Revoke` / `SetAuthority` / `ApproveChecked` — refused
+    /// unconditionally (`DenyListed`); no registry entry and no policy can
+    /// re-enable them.
+    DeniedUnconditional,
+    /// `CloseAccount` — permitted ONLY as the vault-sweep exception the handler
+    /// proves against the snapshot (`amount_before == 0`, decoded destination is
+    /// the SmartAccount PDA, direct payload instruction); otherwise denied.
+    CloseAccount,
+    /// Anything else (e.g. `Transfer`, `TransferChecked`) — the deny-list does
+    /// not apply; it proceeds to the registry / conservation checks.
+    Other,
+}
+
+/// Classify an SPL Token / Token-2022 inner instruction by its tag byte. Empty
+/// data (no tag) is `Other` — a malformed token instruction the CPI itself
+/// rejects, not a deny-list case.
+pub fn classify_spl_token_op(data: &[u8]) -> SplTokenOp {
+    use crate::constants::{
+        TOKEN_IX_APPROVE, TOKEN_IX_APPROVE_CHECKED, TOKEN_IX_CLOSE_ACCOUNT, TOKEN_IX_REVOKE,
+        TOKEN_IX_SET_AUTHORITY,
+    };
+    match data.first().copied() {
+        Some(TOKEN_IX_APPROVE)
+        | Some(TOKEN_IX_REVOKE)
+        | Some(TOKEN_IX_SET_AUTHORITY)
+        | Some(TOKEN_IX_APPROVE_CHECKED) => SplTokenOp::DeniedUnconditional,
+        Some(TOKEN_IX_CLOSE_ACCOUNT) => SplTokenOp::CloseAccount,
+        _ => SplTokenOp::Other,
+    }
+}
+
 /// One entry of the logical account list, as `accounts_hash` sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LogicalAccount {
@@ -283,6 +321,44 @@ mod tests {
         // The duplicate rule is per-inner-instruction, not global.
         let bytes = encode(&[(9, &[(3, 0)], &[]), (9, &[(3, FLAG_WRITABLE)], &[])]);
         assert!(parse_payload(&bytes).is_ok());
+    }
+
+    #[test]
+    fn classify_spl_token_op_maps_the_deny_tags() {
+        assert_eq!(classify_spl_token_op(&[4]), SplTokenOp::DeniedUnconditional); // Approve
+        assert_eq!(classify_spl_token_op(&[5]), SplTokenOp::DeniedUnconditional); // Revoke
+        assert_eq!(classify_spl_token_op(&[6]), SplTokenOp::DeniedUnconditional); // SetAuthority
+        assert_eq!(classify_spl_token_op(&[13]), SplTokenOp::DeniedUnconditional); // ApproveChecked
+        assert_eq!(classify_spl_token_op(&[9]), SplTokenOp::CloseAccount);
+        assert_eq!(classify_spl_token_op(&[3]), SplTokenOp::Other); // Transfer
+        assert_eq!(classify_spl_token_op(&[12]), SplTokenOp::Other); // TransferChecked
+        assert_eq!(classify_spl_token_op(&[]), SplTokenOp::Other); // no tag
+    }
+
+    /// The deny-list tag constants are re-derived from the pinned `spl-token`
+    /// crate's `TokenInstruction` encoding, never memorised — a wrong tag is a
+    /// silent hole, not a compile error.
+    #[test]
+    fn deny_list_tags_match_spl_token() {
+        use crate::constants::*;
+        use spl_token::instruction::{AuthorityType, TokenInstruction};
+        use spl_token::solana_program::program_option::COption;
+        assert_eq!(TokenInstruction::Transfer { amount: 0 }.pack()[0], TOKEN_IX_TRANSFER);
+        assert_eq!(TokenInstruction::Approve { amount: 0 }.pack()[0], TOKEN_IX_APPROVE);
+        assert_eq!(TokenInstruction::Revoke.pack()[0], TOKEN_IX_REVOKE);
+        assert_eq!(
+            TokenInstruction::SetAuthority {
+                authority_type: AuthorityType::AccountOwner,
+                new_authority: COption::None,
+            }
+            .pack()[0],
+            TOKEN_IX_SET_AUTHORITY
+        );
+        assert_eq!(TokenInstruction::CloseAccount.pack()[0], TOKEN_IX_CLOSE_ACCOUNT);
+        assert_eq!(
+            TokenInstruction::ApproveChecked { amount: 0, decimals: 0 }.pack()[0],
+            TOKEN_IX_APPROVE_CHECKED
+        );
     }
 
     #[test]

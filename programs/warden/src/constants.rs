@@ -184,6 +184,26 @@ pub const TOKEN_STATE_INITIALIZED: u8 = 1;
 /// `spl_token::instruction::TokenInstruction::Transfer` tag.
 pub const TOKEN_IX_TRANSFER: u8 = 3;
 
+// The fixed deny-list tags (spec §5.2 rule 1a). SPL Token AND Token-2022 share
+// the same `TokenInstruction` tag byte for each of these. Re-derived from the
+// pinned `spl-token` crate's `TokenInstruction` encoding and pinned exactly by
+// `payload::tests::deny_list_tags_match_spl_token` — a wrong tag here is a
+// silent hole, not a compile error, so it is asserted against the crate.
+/// `TokenInstruction::Approve` — delegates spending authority. Denied.
+pub const TOKEN_IX_APPROVE: u8 = 4;
+/// `TokenInstruction::Revoke` — clears a delegate. Denied (a session must not
+/// touch delegation at all).
+pub const TOKEN_IX_REVOKE: u8 = 5;
+/// `TokenInstruction::SetAuthority` — reassigns owner/close/mint/freeze
+/// authority. Denied.
+pub const TOKEN_IX_SET_AUTHORITY: u8 = 6;
+/// `TokenInstruction::CloseAccount` — reclaims rent. NOT unconditionally denied:
+/// permitted only as the vault-sweep exception the handler proves (spec §5.2
+/// rule 1a), otherwise denied.
+pub const TOKEN_IX_CLOSE_ACCOUNT: u8 = 9;
+/// `TokenInstruction::ApproveChecked` — decimal-checked `Approve`. Denied.
+pub const TOKEN_IX_APPROVE_CHECKED: u8 = 13;
+
 // ---------------------------------------------------------------------------
 // Conservation (Phase 1B Task 1) — SPL Token / Token-2022 layout constants.
 //
