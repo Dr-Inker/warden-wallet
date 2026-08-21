@@ -57,10 +57,20 @@ describe("deploy-gate CLI logic (WRDF-0088)", () => {
 
   it("parseReleaseRow rejects abbreviated SHAs, zero rows, ambiguous rows, and a missing token", () => {
     expect(() => parseReleaseRow(rowMd(DEV_SHA), "f0f38ca")).toThrow(/full 40-hex/);
-    expect(() => parseReleaseRow("| no matching row |", DEV_SHA)).toThrow(/no RELEASE-INTEGRITY row contains/);
+    expect(() => parseReleaseRow("| no matching row |", DEV_SHA)).toThrow(/no RELEASE-INTEGRITY row has release-sha .* in its Git-SHA column/);
     expect(() => parseReleaseRow(rowMd(DEV_SHA) + "\n" + rowMd(DEV_SHA), DEV_SHA)).toThrow(/ambiguous/);
     const noToken = `| dev | \`${DEV_SHA}\` | \`${"2a".repeat(32)}\` | id |`;
-    expect(() => parseReleaseRow(noToken, DEV_SHA)).toThrow(/no manifest:<name>@<digest> token/);
+    expect(() => parseReleaseRow(noToken, DEV_SHA)).toThrow(/has 0 manifest:<name>@<digest> tokens/);
+  });
+
+  it("anchors to the Git-SHA COLUMN, not a substring in notes (WRDF-0085 round 6)", () => {
+    // A row for release B whose NOTES mention A must not bind when invoked for A.
+    const A = "1".repeat(40);
+    const B = "2".repeat(40);
+    const rowForB = `| dev | \`${B}\` | \`${"2a".repeat(32)}\` | id | x | y | supersedes \`${A}\` manifest:synthetic@${digest()} | v |`;
+    expect(() => parseReleaseRow(rowForB, A)).toThrow(/no RELEASE-INTEGRITY row has release-sha .* in its Git-SHA column/);
+    // Invoked for B (its actual column) it parses fine.
+    expect(parseReleaseRow(rowForB, B).manifestName).toBe("synthetic");
   });
 
   it("bindReleaseManifest refuses a name mismatch and a digest mismatch", () => {

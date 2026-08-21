@@ -79,14 +79,13 @@ run_gov_hash_verifier() {
 # identifiers, never trusted values it derived itself.
 RELEASE_FULL_SHA=""
 if [ "$DRY_RUN" -eq 0 ] && [ -z "$FIXTURE_CASE" ] && [ -n "$MANIFEST" ]; then
-  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-    fail "live run requires a CLEAN working tree (uncommitted changes could alter the manifest or gate code)"
-  fi
-  RELEASE_FULL_SHA="$(git rev-parse --verify "$RELEASE_SHA^{commit}" 2>/dev/null || echo '')"
-  if [ -z "$RELEASE_FULL_SHA" ]; then
-    fail "release-sha '$RELEASE_SHA' does not resolve to a commit in this repo"
-  elif ! git merge-base --is-ancestor "$RELEASE_FULL_SHA" HEAD 2>/dev/null; then
-    fail "release-sha $RELEASE_FULL_SHA is not an ancestor of HEAD — the gate must run at a reviewed commit that contains the release + its attestation row (WRDF-0085)"
+  # The git-only checkout binding lives in the separately-tested deploy-preflight.sh
+  # (clean tree + release-sha resolves + ancestor-of-HEAD). Merge stdout+stderr:
+  # on success stdout is the full SHA; on refusal stderr carries the reason.
+  if pf_out="$(bash "$(dirname "$0")/deploy-preflight.sh" "$RELEASE_SHA" 2>&1)"; then
+    RELEASE_FULL_SHA="$pf_out"
+  else
+    fail "${pf_out#REFUSE: }"
   fi
 fi
 

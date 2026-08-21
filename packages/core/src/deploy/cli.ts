@@ -71,22 +71,42 @@ export interface ReleaseRow {
  * 64-hex value). Throws on any of: bad SHA form, zero/multiple rows, missing
  * token, or an indeterminable artifact hash.
  */
+// RELEASE-INTEGRITY table column layout (0-based over `row.split("|")`, whose
+// [0] is the empty lead cell): [1] label, [2] git SHA, [3] artifact sha256, then
+// program id / statuses / a governance cell carrying the manifest token. The
+// designated cells carry their value FIRST in backticks (followed by free-text
+// caveats), so the value is the leading backtick-wrapped token of the column.
+const COL_GIT_SHA = 2;
+const COL_ARTIFACT_HASH = 3;
+/** The first backtick-wrapped token matching `re` inside a table cell, or null. */
+function backtickToken(cell: string | undefined, re: RegExp): string | null {
+  const m = (cell ?? "").match(new RegExp("`(" + re.source + ")`"));
+  return m ? m[1]! : null;
+}
+
 export function parseReleaseRow(md: string, releaseSha: string): ReleaseRow {
   if (!/^[0-9a-f]{40}$/.test(releaseSha)) {
     throw new Error(`release-sha '${releaseSha}' must be a full 40-hex commit id (no abbreviations)`);
   }
-  const rows = md.split("\n").filter((l) => l.startsWith("| ") && l.includes(releaseSha));
-  if (rows.length === 0) throw new Error(`no RELEASE-INTEGRITY row contains release-sha ${releaseSha}`);
-  if (rows.length > 1) throw new Error(`${rows.length} RELEASE-INTEGRITY rows contain release-sha ${releaseSha} — ambiguous`);
-  const row = rows[0]!;
-  const tok = row.match(/manifest:([A-Za-z0-9_.-]+)@([0-9a-f]{64})/);
-  if (!tok) throw new Error(`RELEASE-INTEGRITY row for ${releaseSha} has no manifest:<name>@<digest> token`);
-  const manifestName = tok[1]!;
-  const manifestDigest = tok[2]!;
-  const hashes = [...row.matchAll(/\b[0-9a-f]{64}\b/g)].map((m) => m[0]).filter((h) => h !== manifestDigest);
-  const unique = [...new Set(hashes)];
-  if (unique.length !== 1) throw new Error(`RELEASE-INTEGRITY row for ${releaseSha} has ${unique.length} candidate artifact hashes (expected exactly 1)`);
-  return { artifactHashHex: unique[0]!, manifestName, manifestDigest };
+  // Column-anchored selection (WRDF-0085 round 6): the row's designated Git-SHA
+  // COLUMN (its leading backtick-wrapped 40-hex) must equal releaseSha — never a
+  // substring anywhere in the row, so a row for release B that merely mentions A
+  // in its notes cannot bind for A.
+  const rows = md
+    .split("\n")
+    .filter((l) => l.startsWith("| "))
+    .filter((l) => backtickToken(l.split("|")[COL_GIT_SHA], /[0-9a-f]{40}/) === releaseSha);
+  if (rows.length === 0) throw new Error(`no RELEASE-INTEGRITY row has release-sha ${releaseSha} in its Git-SHA column`);
+  if (rows.length > 1) throw new Error(`${rows.length} RELEASE-INTEGRITY rows have release-sha ${releaseSha} in their Git-SHA column — ambiguous`);
+  const cols = rows[0]!.split("|");
+
+  const artifactHashHex = backtickToken(cols[COL_ARTIFACT_HASH], /[0-9a-f]{64}/);
+  if (!artifactHashHex) {
+    throw new Error(`RELEASE-INTEGRITY row for ${releaseSha} has no backtick-wrapped 64-hex artifact hash in the artifact-hash column`);
+  }
+  const tokens = [...rows[0]!.matchAll(/manifest:([A-Za-z0-9_.-]+)@([0-9a-f]{64})/g)];
+  if (tokens.length !== 1) throw new Error(`RELEASE-INTEGRITY row for ${releaseSha} has ${tokens.length} manifest:<name>@<digest> tokens (expected exactly 1)`);
+  return { artifactHashHex, manifestName: tokens[0]![1]!, manifestDigest: tokens[0]![2]! };
 }
 
 /**
