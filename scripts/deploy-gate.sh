@@ -17,7 +17,13 @@ cd "$(dirname "$0")/.."
 
 usage() {
   cat >&2 <<'EOF'
-Usage: scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> [--dry-run] [--rpc-url <url>]
+Usage: scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> [options]
+  --dry-run                 print the plan, run only the local checks (no RPC)
+  --fixtures <case>         run checks 1/2/4a against a deterministic scenario (no RPC)
+  --manifest <name> --rpc-url <url>
+                            live run: pin from the COMMITTED manifest registry (never a file);
+                            requires a clean tree with HEAD == the release-sha commit (WRDF-0085).
+                            The per-proposal governance audit fails closed in-tool (WRDF-0028).
 EOF
   exit 2
 }
@@ -35,7 +41,6 @@ DRY_RUN=0
 RPC_URL="${SOLANA_RPC_URL:-}"
 FIXTURE_CASE=""   # Task 11R: run the governance+hash checks against a deterministic scenario
 MANIFEST=""       # Task 11R: a COMMITTED manifest NAME for a real run (WRDF-0085, never a file path)
-PROPOSAL_AUDIT="" # Task 11R: operator attestation ref for the live per-proposal governance sweep (WRDF-0028)
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -43,10 +48,26 @@ while [ "$#" -gt 0 ]; do
     --rpc-url) RPC_URL="${2:-}"; shift 2 ;;
     --fixtures) FIXTURE_CASE="${2:-}"; shift 2 ;;
     --manifest) MANIFEST="${2:-}"; shift 2 ;;
-    --proposal-audit-attested) PROPOSAL_AUDIT="${2:-}"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; usage ;;
   esac
 done
+
+# Checkout binding (WRDF-0085): a live run must execute AT the exact reviewed
+# release commit on a clean tree, so the committed manifest it selects IS the
+# reviewed release's manifest — not a later checkout or a local edit. Skipped for
+# --dry-run and --fixtures (which make no live trust claim).
+if [ "$DRY_RUN" -eq 0 ] && [ -z "$FIXTURE_CASE" ] && [ -n "$MANIFEST" ]; then
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    fail "live run requires a CLEAN working tree (uncommitted changes could alter the manifest or gate code)"
+  fi
+  resolved_head="$(git rev-parse HEAD 2>/dev/null || echo '')"
+  resolved_release="$(git rev-parse "$RELEASE_SHA^{commit}" 2>/dev/null || echo '')"
+  if [ -z "$resolved_release" ]; then
+    fail "release-sha '$RELEASE_SHA' does not resolve to a commit in this repo"
+  elif [ "$resolved_head" != "$resolved_release" ]; then
+    fail "HEAD ($resolved_head) != resolved release-sha ($resolved_release) — a live gate must run AT the reviewed release commit (WRDF-0085)"
+  fi
+fi
 
 # The Task 11R governance+hash verifier (DEPLOY-GATE.md checks 1, 2, 4a). Hand-rolled
 # in packages/core/src/deploy (no @sqds dependency); run via the workspace's tsx.
@@ -113,15 +134,12 @@ elif [ -n "$FIXTURE_CASE" ]; then
   fi
 elif [ -n "$MANIFEST" ] && [ -n "$RPC_URL" ]; then
   # Forward the REQUIRED shell identities so the verifier cross-checks them against
-  # the committed manifest + derived vault (WRDF-0085), and forward the operator's
-  # per-proposal audit attestation if supplied (WRDF-0028).
-  audit_args=()
-  [ -n "$PROPOSAL_AUDIT" ] && audit_args=(--proposal-audit-attested "$PROPOSAL_AUDIT")
+  # the committed manifest + derived vault (WRDF-0085). The per-proposal governance
+  # audit fails closed in-tool with NO bypass (WRDF-0028).
   if [ -z "$recorded_hash" ]; then
     fail "cannot run the live governance+hash checks without a release-integrity hash"
   elif run_gov_hash_verifier --rpc-url "$RPC_URL" --manifest "$MANIFEST" --expected-hash "$recorded_hash" \
-        --expect-warden-program "$PROGRAM_ID" --expect-multisig "$SQUADS_MULTISIG" --expect-authority "$EXPECTED_AUTHORITY" \
-        "${audit_args[@]}"; then
+        --expect-warden-program "$PROGRAM_ID" --expect-multisig "$SQUADS_MULTISIG" --expect-authority "$EXPECTED_AUTHORITY"; then
     echo "   OK: live governance+hash checks passed against $RPC_URL"
   else
     fail "live governance+hash checks failed (see output above)"

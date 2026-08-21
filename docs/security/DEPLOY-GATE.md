@@ -17,10 +17,10 @@ shrink supply-chain surface, so it does not add npm surface); the script invokes
 it via `packages/core/scripts/deploy-gate-verify.ts`. Two ways to run the RPC
 checks: `--fixtures <case>` drives a deterministic in-process scenario (no
 network — `happy` passes, every other case tampers with one field so the gate
-refuses), and `--pin <config.json> --rpc-url <url>` runs the REAL checks against a
-live cluster with a **reviewed pinned config** (the load-bearing WRDF-0017
-requirement — CLI pubkeys alone cannot pin the member set / masks / audited code
-hash). Check 3 (adapter-selector re-derivation vs the on-chain Registry) is a
+refuses), and `--manifest <name> --rpc-url <url>` runs the REAL checks against a live cluster
+with a pin selected from the COMMITTED manifest registry (WRDF-0085; never an
+arbitrary file), on a clean tree at the release commit, with the shell's
+program/multisig/authority cross-checked. Check 3 (adapter-selector re-derivation vs the on-chain Registry) is a
 separate deliverable from Task 11R (scope boundary WRDF-0018) and still refuses.
 Every RPC-dependent path **fails closed**. The 20-case fixture suite is
 `packages/core/test/deploy-gate.test.ts`; the byte-exact match against
@@ -29,7 +29,12 @@ Every RPC-dependent path **fails closed**. The 20-case fixture suite is
 ## Invocation
 
 ```sh
-scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> [--dry-run] [--rpc-url <url>]
+# fixture-verified (no network):
+scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> --fixtures happy
+# live (checks 1/2/4a): pin from the COMMITTED manifest registry, clean tree at the release commit:
+scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> --manifest <name> --rpc-url <url>
+# dry-run (plan + local checks only):
+scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> --dry-run
 ```
 
 | Argument | Meaning |
@@ -40,6 +45,8 @@ scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <rele
 | `<release-sha>` | The git SHA being deployed — looked up as a row key in `docs/security/RELEASE-INTEGRITY.md`. |
 | `--dry-run` | Perform only the checks that need no RPC (arg validation, local `.so` hash lookup/comparison per 4b, scoped TODO/unimplemented!/#[ignore] grep per check 5); print, but do not execute, the RPC-dependent checks (1, 2, 3, 4a). **The final banner in `--dry-run` always reads `DRY RUN — NOT VERIFIED`, never `ALL CHECKS PASSED`** — a dry run is a shape check on the tool, not a deploy verdict. |
 | `--rpc-url <url>` | RPC endpoint for the real run. Defaults to `$SOLANA_RPC_URL` if set. Ignored in `--dry-run`. |
+| `--fixtures <case>` | Run checks 1/2/4a against a deterministic in-process scenario (no RPC); `happy` passes, others refuse. |
+| `--manifest <name>` | Live run only: select the pin BY NAME from the COMMITTED `MANIFESTS` registry (`config.ts`), never a file. Requires a clean tree with HEAD == the release-sha commit (WRDF-0085). The per-proposal governance audit fails closed in-tool with no bypass (WRDF-0028). |
 
 Exit code is non-zero if **any** check fails or is unimplemented in a
 non-dry-run invocation (fail-closed).
@@ -81,7 +88,7 @@ non-dry-run invocation (fail-closed).
 
 ## Implementation status by check (post Task 11R)
 
-| Check | `--dry-run` | `--fixtures <case>` | Live (`--pin` + `--rpc-url`) |
+| Check | `--dry-run` | `--fixtures <case>` | Live (`--manifest` + `--rpc-url`) |
 | --- | --- | --- | --- |
 | 1. Upgrade authority (+ Program→ProgramData chain, vault-PDA binding) | Prints the plan | **Runs** — `verifyDeployGate` over a deterministic scenario | **Runs** the real check; UNVERIFIED until a release candidate |
 | 2. Squads governance (pinned identity + owner/discriminator + 3-of-5 exact + member set + masks + 7-day floor + autonomous configAuthority + no stale state) | Prints the plan | **Runs** | **Runs**; UNVERIFIED until release |
