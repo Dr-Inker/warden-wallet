@@ -1022,3 +1022,11 @@ ALL ADOPTED and fixed at `64d4fb283cc338ae731620ae369a9c6627ffbfc7`.
 WRD-EXEC-11/12 evidence refreshed to `64d4fb2` (subset guard, writable-signer
 reject, frame-boundary validation, cross-language coalesced-hash oracle). Gate
 evidence on the immutable ledger HEAD below.
+
+### Round-3 gate evidence
+
+**Gate re-run on the immutable ledger HEAD `9afa0f82707b4ad084cc7d869e5a869b257868ba`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, **all suites green** —
+`@warden/core` **145 passed (145)** (incl. the round-3 wrap regressions + the
+cross-language coalesced-hash oracle), `ui-tokens` 11/11, and the full Rust
+workspace under `--features test-jup` (0 failed).
