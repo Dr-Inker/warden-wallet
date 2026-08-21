@@ -525,6 +525,11 @@
               },
               {
                 "kind": "account",
+                "path": "stage.creator",
+                "account": "Stage"
+              },
+              {
+                "kind": "account",
                 "path": "stage.hash",
                 "account": "Stage"
               }
@@ -591,6 +596,11 @@
               },
               {
                 "kind": "account",
+                "path": "stage.creator",
+                "account": "Stage"
+              },
+              {
+                "kind": "account",
                 "path": "stage.hash",
                 "account": "Stage"
               }
@@ -648,6 +658,11 @@
               {
                 "kind": "account",
                 "path": "stage.account",
+                "account": "Stage"
+              },
+              {
+                "kind": "account",
+                "path": "stage.creator",
                 "account": "Stage"
               },
               {
@@ -710,6 +725,10 @@
               {
                 "kind": "arg",
                 "path": "args.account"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
               },
               {
                 "kind": "arg",

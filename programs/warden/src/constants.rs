@@ -10,11 +10,20 @@ pub const STAGE_SEED: &[u8] = b"stage";
 /// transaction — so 4 KiB is comfortably above any real compiled payload while
 /// bounding the PDA's rent and the `stage_open` allocation.
 pub const STAGE_MAX_DATA_LEN: usize = 4096;
-/// Longest a `Stage` may live from `stage_open` (spec §5.1). Bounds the
-/// content-address squat window (ND-SQD3-LO-01 / Certora H-01): a stranger who
-/// pre-opens `["stage", victim, hash]` can grief the victim for at most this
-/// long before anyone may close it and reclaim the address.
+/// Longest a `Stage` may live from `stage_open` (spec §5.1). Bounds how long an
+/// abandoned or GC'd stage sits before anyone may close it (Certora H-01
+/// lifecycle GC). The ND-SQD3-LO-01 squat itself is closed by binding the
+/// `creator` into the PDA seeds, not by this bound.
 pub const STAGE_MAX_TTL_SECS: i64 = 3600;
+/// The client contract for the largest payload a single `stage_chunk`
+/// transaction may carry under the fixed 3-account layout (spec §5.1). MEASURED
+/// against the built program and pinned exactly by
+/// `stage::stage_chunk_payload_cap_is_measured` (the transaction at this cap is
+/// exactly 1,232 B; one more byte overflows). A client splits a payload into
+/// `ceil(len / STAGE_CHUNK_PAYLOAD_CAP)` chunks, so this number is a wire
+/// contract, not a soft estimate — the test fails loudly if a layout change
+/// moves it, forcing this constant and PHASE1B-MEASUREMENTS.md to move with it.
+pub const STAGE_CHUNK_PAYLOAD_CAP: usize = 979;
 pub const MAX_CLIENT_DATA_LEN: usize = 512;
 pub const MAX_ROOT_EXPIRY_SECS: i64 = 600;
 /// Maximum age, **in slots**, of a root passkey ceremony (spec §4, rev 8).

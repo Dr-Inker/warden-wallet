@@ -17,12 +17,14 @@
 //!
 //! **Authorization is deliberately thin.** Any payer may `stage_open` (a stage
 //! is not an authorization, it is a byte buffer — the root ceremony in
-//! `execute` is what authorizes). Only the recorded `creator` may `stage_chunk`
-//! or `stage_finalize` (so a third party cannot corrupt an in-flight upload),
-//! and only the creator may `stage_close` before finalize; after `expiry_ts`
-//! anyone may close it. Every close refunds the `creator`, which is what makes
-//! the content-address squat (ND-SQD3-LO-01 / Certora H-01) cost the attacker
-//! and pay the victim nothing — see `state::stage` for the full argument.
+//! `execute` is what authorizes). The PDA is `["stage", account, creator,
+//! hash]`, so each opener gets their *own* address for a given `(account,
+//! content)` and no stranger can occupy the victim's (ND-SQD3-LO-01 squat
+//! closed by construction — see `state::stage`). Only the recorded `creator`
+//! may `stage_chunk` or `stage_finalize` (so a third party cannot corrupt an
+//! in-flight upload), and only the creator may `stage_close` before finalize;
+//! after `expiry_ts` anyone may close it (Certora H-01 lifecycle GC). Every
+//! close refunds the `creator`.
 //!
 //! **Staging relieves instruction-data size, not the account list.** Every CPI
 //! program, account and LUT still rides in the `execute` transaction.
@@ -66,7 +68,10 @@ pub struct StageOpen<'info> {
         // hostile `len` fails cheaply rather than as an allocation error.
         constraint = (args.len as usize) <= Stage::MAX_DATA_LEN @ WardenError::StageInvalid,
         space = Stage::space(args.len as usize),
-        seeds = [STAGE_SEED, args.account.as_ref(), args.hash.as_ref()],
+        // `creator` is in the seeds (WRDF-0045): a stranger cannot occupy the
+        // victim's stage address, so the ND-SQD3-LO-01 squat is impossible by
+        // construction rather than merely time-boxed.
+        seeds = [STAGE_SEED, args.account.as_ref(), creator.key().as_ref(), args.hash.as_ref()],
         bump
     )]
     pub stage: Account<'info, Stage>,
@@ -127,7 +132,7 @@ pub struct StageChunk<'info> {
     pub creator: Signer<'info>,
     #[account(
         mut,
-        seeds = [STAGE_SEED, stage.account.as_ref(), stage.hash.as_ref()],
+        seeds = [STAGE_SEED, stage.account.as_ref(), stage.creator.as_ref(), stage.hash.as_ref()],
         bump = stage.bump
     )]
     pub stage: Account<'info, Stage>,
@@ -171,7 +176,7 @@ pub struct StageFinalize<'info> {
     pub creator: Signer<'info>,
     #[account(
         mut,
-        seeds = [STAGE_SEED, stage.account.as_ref(), stage.hash.as_ref()],
+        seeds = [STAGE_SEED, stage.account.as_ref(), stage.creator.as_ref(), stage.hash.as_ref()],
         bump = stage.bump
     )]
     pub stage: Account<'info, Stage>,
@@ -240,7 +245,7 @@ pub struct StageClose<'info> {
     #[account(
         mut,
         close = creator,
-        seeds = [STAGE_SEED, stage.account.as_ref(), stage.hash.as_ref()],
+        seeds = [STAGE_SEED, stage.account.as_ref(), stage.creator.as_ref(), stage.hash.as_ref()],
         bump = stage.bump
     )]
     pub stage: Account<'info, Stage>,

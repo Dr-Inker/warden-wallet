@@ -7,23 +7,29 @@
 //! §12.2). Staging relieves **instruction-data** size only: every CPI program,
 //! account and LUT still rides in the `execute` transaction's own account list.
 //!
-//! ## Content-addressed, and why that is both the point and a hazard
+//! ## Content-addressed AND creator-bound, and why both seeds are load-bearing
 //!
-//! The PDA is `["stage", account, hash]` where `hash == Keccak256(data)`. That
-//! makes a stage tamper-evident (finalize re-hashes the bytes and rejects a
-//! mismatch) and lets the root ceremony bind only the 32-byte hash instead of
-//! the whole payload. But a content address is *predictable*: anyone who sees a
-//! payload can compute its hash and open the PDA first, and the victim's own
-//! `stage_open` then fails on an already-initialised account — the exact
-//! Squads v3 buffer-squat shape (Neodyme `ND-SQD3-LO-01`, Certora `H-01`).
+//! The PDA is `["stage", account, creator, hash]` where `hash ==
+//! Keccak256(data)`. The `hash` makes a stage tamper-evident (finalize re-hashes
+//! the bytes and rejects a mismatch) and lets the root ceremony bind only the
+//! 32-byte hash instead of the whole payload. The `creator` closes the Squads v3
+//! buffer-squat class (Neodyme `ND-SQD3-LO-01`, Certora `H-01`) **by
+//! construction**: a content address alone is predictable, so a stranger who
+//! observes a payload could pre-open `["stage", account, hash]`, block the
+//! victim, and — worse — re-open it the instant anyone closed it, renewing the
+//! grief every cycle. With the creator in the seeds the stranger's stage and the
+//! victim's stage are simply *different addresses*: the victim opens their own
+//! `["stage", account, victim, hash]` regardless of any stranger. ND-SQD3's own
+//! remedy was exactly this — "seeds must bind the creator." A stage is therefore
+//! per-`(account, creator, content)`: unbounded, but each one cheap and
+//! independently cleanable.
 //!
-//! Two properties defuse it, and both are tested rather than assumed:
-//! - **`creator` owns the rent.** Whoever opened the stage is recorded, and
-//!   every close refunds *them*. Squatting therefore costs the attacker and
-//!   pays the victim nothing.
-//! - **`expiry_ts ≤ now + `[`STAGE_MAX_TTL_SECS`]. After it, *anyone* may
-//!   close the stage and free the address, so the grief is time-boxed to at
-//!   most an hour, never permanent.
+//! Two further properties, both tested rather than assumed:
+//! - **`creator` owns the rent.** Every close refunds the recorded creator, so
+//!   an abandoned or GC'd stage never pays anyone but its opener.
+//! - **`expiry_ts ≤ now + `[`STAGE_MAX_TTL_SECS`]. After it, *anyone* may close
+//!   the stage (Certora `H-01` lifecycle GC) and reclaim the rent for its
+//!   creator — so no stage, finalized or not, can be parked forever.
 //!
 //! ## Bound to the state it was staged against
 //!
