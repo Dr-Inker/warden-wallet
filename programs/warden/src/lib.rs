@@ -5,6 +5,7 @@ pub mod conservation;
 pub mod constants;
 pub mod errors;
 pub mod instructions;
+pub mod payload;
 pub mod registry;
 pub mod registry_default;
 pub mod root_verify;
