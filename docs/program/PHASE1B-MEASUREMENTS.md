@@ -912,3 +912,41 @@ zero program-logic issues; only the two adjudicated-`deferred` items remain
 Task 5E/WRDF-0052), neither a 1B code defect. Realized fund-loss bound stacked
 four deep (route_hash + treasury-fee-taken + writable-vault pinning +
 canonical-ATA pinning) over net conservation and the caps.
+
+## Task 8 review round 1 — Codex sol@max (thread d098d32ba5ff-20260821T162119Z)
+
+Adversarial review of the Task 8 client (`3fdca69..d098d32`, seeded=44) raised
+5 findings (3 important, 1 minor, 1 info); all ADOPTED and fixed at
+`814ad69fee7a4303eed8cccd22757f4123ed3295`:
+
+- **WRDF-0071** (important) — fee-payer privilege coalescing. The handler hashes
+  the logical list from **runtime** AccountInfo flags (`execute.rs:317`) and the
+  runtime promotes the fee payer to signer+writable, so the common self-submit
+  case (`payer == signer`) produced an `accountsHash` that fails
+  ChallengeMismatch. Fixed: `WrapOptions.payer` (default `signer`); any logical
+  account equal to the payer is hashed signer+writable. Seeds **WRD-EXEC-11**.
+- **WRDF-0072** (important) — mandatory heap frame. `execute`'s caps are
+  HEAP-bound; the documented client contract requires a `RequestHeapFrame` for
+  large shapes and the wrapper never emitted one, and it treated any one
+  ComputeBudget ix as covering all dimensions. Fixed: `normalizeComputeBudget()`
+  guarantees a `SetComputeUnitLimit`, injects a 128 KiB `RequestHeapFrame` past
+  `HEAP_FRAME_TRIGGER_REMAINING = 22`, rejects undersized/duplicate requests, and
+  enforces the account caps client-side. Seeds **WRD-EXEC-12**.
+- **WRDF-0073** (minor) — writable-PDA codec parity. `parse_payload` accepts a
+  writable idx-0 structurally; the TS codec still rejected it, so the sanctioned
+  CloseAccount rent-destination shape was unbuildable via the SDK. Fixed: pure
+  codec accepts writable idx-0; cross-language fixture
+  `payload_writable_pda_close.bin` + a Rust reader pin the parity. The general
+  foreign-dApp wrapper still refuses a writable PDA fail-closed. Note on
+  **WRD-DENY-01**.
+- **WRDF-0074** (important) — privilege-equivalent wrapping. The wrapper silently
+  zeroed a third-party signer bit. Fixed: reject fail-closed (the ABI propagates
+  a signer only for logical 0/1). Seeds **WRD-EXEC-11**.
+- **WRDF-0075** (info) — gate evidence. **Gate re-run on the immutable
+  remediation commit `814ad69fee7a4303eed8cccd22757f4123ed3295`:**
+  `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → **all suites green** — `@warden/core`
+  **136 passed (136)** incl. the security ledger, `ui-tokens` 11/11, and the full
+  Rust workspace under `--features test-jup` (0 failed). The one prior red — the
+  `invariant ledger … AT the SHA` test — was the documented post-build
+  git-under-load timeout flake and passes 40/40 standalone; it is green on the
+  retry recorded here.
