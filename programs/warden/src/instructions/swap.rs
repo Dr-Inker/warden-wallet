@@ -1,0 +1,489 @@
+//! `swap` — `execute` specialised to Jupiter v6 (Phase 1B Task 6, spec §5.2.7).
+//!
+//! One inner CPI, pinned to the Jupiter aggregator (`SWAP_TARGET_PROGRAM`), with
+//! the adapter preflight generic `execute` cannot do. It is the ONLY path a
+//! session or root may reach Jupiter (generic `execute` fails closed on the
+//! Jupiter id — WRDF-0051).
+//!
+//! ## The adapter-decoded source limit (spec §5.2 rule 4b) — a design BET
+//!
+//! A before/after snapshot measures what a route LEFT BEHIND, not what it MOVED:
+//! a route that takes 100 out and returns 99.5 within its own execution nets to
+//! 0.5, and no snapshot granularity sees the 100. So the net diff is not the
+//! only control. **Before the CPI runs** this adapter also:
+//!
+//! 1. **Decodes the route's declared `in_amount` from the instruction's own
+//!    bytes** — the fixed 19-byte argument tail (`in_amount ‖ quoted_out ‖
+//!    slippage_bps ‖ platform_fee_bps`) sits at the END of the data, after the
+//!    variable `route_plan`, so it is read at a fixed negative offset with no
+//!    `route_plan` parsing — and requires it `≤ max_in`, the authorized bound,
+//!    which is itself checked against the caps BEFORE any CPI.
+//! 2. **Pins the source.** `user_source_token_account` must be a vault-owned
+//!    token account of `in_mint`, and `user_transfer_authority` the vault PDA.
+//!    The value at risk is then bounded by an account the program NAMED.
+//!
+//! The net before/after check still runs afterwards and still applies — the two
+//! are redundant on purpose (`max_in` bounds authorised input; the net diff
+//! bounds realised outflow; the debit is taken on the net so an honest partial
+//! fill is not overcharged). **This bounds the value the program can see being
+//! authorised; it does NOT close the intra-CPI blind spot, because nothing
+//! does** (research §4 item 15). Price sanity (Jupiter quote vs a second source)
+//! is the extension's job, not the program's.
+//!
+//! ## Fee, mints, caps
+//!
+//! `platform_fee_bps` must be exactly `SWAP_PLATFORM_FEE_BPS` (85) so a route
+//! cannot skip the treasury fee, and `platform_fee_account` must be a token
+//! account owned by `Registry.treasury` of `in_mint` or `out_mint`. Session:
+//! `out_mint` must have a session cap OR be in `ALLOWED_OUT_MINTS_DEFAULT`;
+//! the `in_mint` outflow debits the session per_tx/lifetime + the account-wide
+//! buckets. Root: bounded by `large_threshold` + the same buckets. Root binds
+//! `SwapBody{ in_mint, out_mint, max_in, min_out, discriminator, accounts_hash }`
+//! (the same `accounts_hash` construction as `ExecuteBody`).
+
+use anchor_lang::prelude::*;
+use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
+use anchor_lang::solana_program::program::invoke_signed;
+use anchor_lang::AccountsClose;
+
+use crate::buckets::{self, find_cap};
+use crate::constants::{
+    ACCOUNT_SEED, ALLOWED_OUT_MINTS_DEFAULT, JUP_ROUTE_DISC, JUP_SHARED_ROUTE_DISC,
+    MAX_EXECUTE_ACCOUNTS_TOTAL, MAX_EXECUTE_WRITABLE, NATIVE_MINT, SWAP_PLATFORM_FEE_BPS,
+    SWAP_TARGET_PROGRAM, STAGE_SEED,
+};
+use crate::conservation::{self, compare_and_account, Snap, TokenSnap};
+use crate::errors::WardenError;
+use crate::instructions::transfer::authorize_session;
+use crate::payload::{compute_accounts_hash, LogicalAccount};
+use crate::root_verify::transcript::{action_hash, OP_SWAP_ACTION};
+use crate::root_verify::{verify_and_consume, RootArgs};
+use crate::state::{FrozenState, MintCap, Registry, SessionKey, SmartAccount, Stage, OP_SWAP};
+
+/// `variant`: 0 = `route`, 1 = `shared_accounts_route`.
+pub const SWAP_VARIANT_ROUTE: u8 = 0;
+pub const SWAP_VARIANT_SHARED: u8 = 1;
+
+/// Jupiter's fixed 19-byte argument tail — `in_amount(8) ‖ quoted_out(8) ‖
+/// slippage_bps(2) ‖ platform_fee_bps(1)` — read from the END of the route data
+/// so the variable `route_plan` (which comes first) never has to be parsed.
+const SWAP_TAIL_LEN: usize = 8 + 8 + 2 + 1;
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SwapArgs {
+    /// `Some` = root path (requires `ix_sysvar`), `None` = session path.
+    pub root: Option<RootArgs>,
+    /// `SWAP_VARIANT_ROUTE` or `SWAP_VARIANT_SHARED`.
+    pub variant: u8,
+    pub in_mint: Pubkey,
+    pub out_mint: Pubkey,
+    /// The authorized maximum input, in `in_mint` base units. The route's
+    /// decoded `in_amount` must be `≤ max_in`, and `max_in ≤ caps`.
+    pub max_in: u64,
+    /// The minimum the vault out ATA must gain (inclusive).
+    pub min_out: u64,
+    /// The compiled Jupiter instruction data (inline). `None` ⇒ consume `stage`.
+    pub route_data: Option<Vec<u8>>,
+}
+
+/// Exactly what the passkey signs on the ROOT path (spec §5.2.7). Every field is
+/// rebuilt on-chain; `accounts_hash` uses the same logical-list construction
+/// `ExecuteBody` binds.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SwapBody {
+    pub in_mint: Pubkey,
+    pub out_mint: Pubkey,
+    pub max_in: u64,
+    pub min_out: u64,
+    /// The 8-byte Jupiter route selector (`route` or `shared_accounts_route`).
+    pub discriminator: [u8; 8],
+    pub accounts_hash: [u8; 32],
+}
+
+#[derive(Accounts)]
+pub struct Swap<'info> {
+    #[account(mut)]
+    pub smart_account: AccountLoader<'info, SmartAccount>,
+    pub signer: Signer<'info>,
+    #[account(mut)]
+    pub session: Option<Account<'info, SessionKey>>,
+    /// CHECK: Instructions sysvar (root path). Address-constrained; read only via
+    /// the checked loaders.
+    #[account(address = solana_instructions_sysvar::ID @ WardenError::BadInstructionLayout)]
+    pub ix_sysvar: Option<UncheckedAccount<'info>>,
+    /// The staged route data to consume (`args.route_data == None`).
+    #[account(mut)]
+    pub stage: Option<Account<'info, Stage>>,
+    /// THE account's adapter registry — REQUIRED: `Registry.treasury` is the
+    /// swap-fee destination owner, so a swap without a bound registry has no
+    /// treasury to validate the fee against.
+    pub registry: AccountLoader<'info, Registry>,
+    /// CHECK: the stage creator — rent destination for the consume-close.
+    #[account(mut)]
+    pub stage_creator: Option<UncheckedAccount<'info>>,
+    // remaining_accounts = the Jupiter route's account list, in v6 order.
+}
+
+// Not `pub`: called only by `lib.rs`'s `#[program]` module, by full path.
+pub(crate) fn handler<'info>(
+    ctx: Context<'info, Swap<'info>>,
+    args: SwapArgs,
+) -> Result<()> {
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
+    let slot = clock.slot;
+    let program_id = ctx.program_id;
+    let account_key = ctx.accounts.smart_account.key();
+    let signer_key = ctx.accounts.signer.key();
+
+    // Exactly one auth shape and one data source, checked before loading.
+    require!(
+        args.root.is_some() != ctx.accounts.session.is_some(),
+        WardenError::BadInstructionLayout
+    );
+    require!(
+        args.route_data.is_some() != ctx.accounts.stage.is_some(),
+        WardenError::BadInstructionLayout
+    );
+    require!(
+        args.variant == SWAP_VARIANT_ROUTE || args.variant == SWAP_VARIANT_SHARED,
+        WardenError::SwapBadDiscriminator
+    );
+
+    let mut account = ctx.accounts.smart_account.load_mut()?;
+    let expected = Pubkey::create_program_address(
+        &[ACCOUNT_SEED, account.owner_seed.as_ref(), &[account.bump]],
+        program_id,
+    )
+    .map_err(|_| WardenError::Unauthorized)?;
+    require_keys_eq!(account_key, expected, WardenError::Unauthorized);
+    require!(matches!(account.frozen()?, FrozenState::None), WardenError::Frozen);
+
+    // ---- route data (inline or staged) -----------------------------------
+    let route_data: Vec<u8> = match &args.route_data {
+        Some(bytes) => bytes.clone(),
+        None => {
+            let stage = ctx.accounts.stage.as_ref().ok_or(WardenError::BadInstructionLayout)?;
+            let expected_stage = Pubkey::create_program_address(
+                &[STAGE_SEED, stage.account.as_ref(), stage.creator.as_ref(), stage.hash.as_ref(), &[stage.bump]],
+                program_id,
+            )
+            .map_err(|_| WardenError::StageInvalid)?;
+            require_keys_eq!(stage.key(), expected_stage, WardenError::StageInvalid);
+            require!(stage.version == 1, WardenError::StageInvalid);
+            require_keys_eq!(stage.account, account_key, WardenError::StageInvalid);
+            require!(stage.finalized, WardenError::StageInvalid);
+            require!(now < stage.expiry_ts, WardenError::StageExpired);
+            require!(stage.generation == account.generation, WardenError::StageInvalid);
+            require!(stage.policy_version == account.policy.version, WardenError::StageInvalid);
+            let creator = ctx.accounts.stage_creator.as_ref().ok_or(WardenError::BadInstructionLayout)?;
+            require_keys_eq!(creator.key(), stage.creator, WardenError::StageInvalid);
+            stage.data.clone()
+        }
+    };
+
+    // ---- discriminator + fixed-tail decode -------------------------------
+    // The disc is the first 8 bytes; the tail is the LAST 19 (module docs).
+    require!(route_data.len() >= 8, WardenError::SwapDataTooShort);
+    let disc: [u8; 8] = route_data[..8].try_into().map_err(|_| WardenError::SwapDataTooShort)?;
+    let expected_disc = match args.variant {
+        SWAP_VARIANT_ROUTE => JUP_ROUTE_DISC,
+        _ => JUP_SHARED_ROUTE_DISC,
+    };
+    require!(disc == expected_disc, WardenError::SwapBadDiscriminator);
+
+    let len = route_data.len();
+    let tail_start = len.checked_sub(SWAP_TAIL_LEN).ok_or(WardenError::SwapDataTooShort)?;
+    // The tail must not overlap the discriminator (a degenerate tiny payload).
+    require!(tail_start >= 8, WardenError::SwapDataTooShort);
+    let tail = &route_data[tail_start..];
+    let declared_in = u64::from_le_bytes(tail[0..8].try_into().unwrap());
+    let platform_fee_bps = tail[SWAP_TAIL_LEN - 1];
+    require!(platform_fee_bps == SWAP_PLATFORM_FEE_BPS, WardenError::SwapPlatformFeeBps);
+    require!(declared_in <= args.max_in, WardenError::SwapMaxInExceeded);
+
+    // ---- account-position map (real Jupiter v6 IDL, fixed positions) ------
+    // route:  auth 1, source 2, dest 3, destMint 5, fee 6
+    // shared: auth 2, source 3, dest 6, destMint 8, fee 9
+    let (authority_idx, source_idx, dest_idx, dest_mint_idx, fee_idx) = match args.variant {
+        SWAP_VARIANT_ROUTE => (1usize, 2, 3, 5, 6),
+        _ => (2usize, 3, 6, 8, 9),
+    };
+
+    let remaining = ctx.remaining_accounts;
+    // Same provisional account caps as `execute` (heap-bound; the wrapper injects
+    // the heap frame for Jupiter-scale routes — PHASE1B-MEASUREMENTS §Task 6).
+    require!(remaining.len() <= MAX_EXECUTE_ACCOUNTS_TOTAL, WardenError::TooManyExecuteAccounts);
+    let writable_count = remaining.iter().filter(|ai| ai.is_writable).count();
+    require!(writable_count <= MAX_EXECUTE_WRITABLE, WardenError::TooManyExecuteWritable);
+
+    let account_at = |idx: usize| -> Result<&AccountInfo> {
+        remaining.get(idx).ok_or(WardenError::SwapDataTooShort.into())
+    };
+    // Authority must be the vault PDA.
+    require_keys_eq!(account_at(authority_idx)?.key(), account_key, WardenError::SwapAuthorityNotVault);
+    // destination_mint account must be out_mint.
+    require_keys_eq!(account_at(dest_mint_idx)?.key(), args.out_mint, WardenError::SwapDestNotVaultAta);
+
+    // ---- root ceremony / session authorization ---------------------------
+    // Build the logical list [smart_account, signer] ++ remaining for the hash.
+    let sa_info = ctx.accounts.smart_account.to_account_info();
+    let mut logical_infos: Vec<AccountInfo> = Vec::with_capacity(remaining.len().saturating_add(2));
+    logical_infos.push(sa_info.clone());
+    logical_infos.push(ctx.accounts.signer.to_account_info());
+    logical_infos.extend_from_slice(remaining);
+
+    if let Some(root) = &args.root {
+        let ix_sysvar = ctx.accounts.ix_sysvar.as_ref().ok_or(WardenError::BadInstructionLayout)?.to_account_info();
+        let logical_hash: Vec<LogicalAccount> = logical_infos
+            .iter()
+            .map(|ai| LogicalAccount { key: *ai.key, is_signer: ai.is_signer, is_writable: ai.is_writable })
+            .collect();
+        let body = SwapBody {
+            in_mint: args.in_mint,
+            out_mint: args.out_mint,
+            max_in: args.max_in,
+            min_out: args.min_out,
+            discriminator: disc,
+            accounts_hash: compute_accounts_hash(&logical_hash),
+        };
+        let mut body_bytes = Vec::new();
+        body.serialize(&mut body_bytes)?;
+        verify_and_consume(&mut account, &ix_sysvar, root, program_id, &account_key, action_hash(OP_SWAP_ACTION, &body_bytes), now, slot)?;
+    } else {
+        let session_account_key = ctx.accounts.session.as_ref().ok_or(WardenError::BadInstructionLayout)?.key();
+        let session = ctx.accounts.session.as_ref().ok_or(WardenError::BadInstructionLayout)?;
+        authorize_session(session, &session_account_key, &signer_key, &account_key, account.generation, program_id, now, OP_SWAP)?;
+    }
+
+    // ---- max_in against the caps, BEFORE the CPI (spec §5.2.7 step 1) -----
+    // Session: `max_in ≤ per_tx[in_mint]` and out_mint must be swappable.
+    // Root: `max_in ≤ large_threshold[in_mint]`. The actual net outflow (≤ max_in)
+    // is what the buckets are debited AFTER the CPI, so a partial fill is not
+    // overcharged.
+    if args.root.is_some() {
+        let (_, threshold) = find_cap(&account.policy.large_threshold, &args.in_mint).ok_or(WardenError::CapExceeded)?;
+        require!(args.max_in <= threshold.per_tx, WardenError::CapExceeded);
+    } else {
+        let session = ctx.accounts.session.as_ref().ok_or(WardenError::BadInstructionLayout)?;
+        let (_, cap) = find_cap(&session.caps, &args.in_mint).ok_or(WardenError::CapExceeded)?;
+        require!(args.max_in <= cap.per_tx, WardenError::CapExceeded);
+        // out_mint must have a session cap OR be a default-allowed out mint.
+        let out_allowed = find_cap(&session.caps, &args.out_mint).is_some()
+            || ALLOWED_OUT_MINTS_DEFAULT.contains(&args.out_mint);
+        require!(out_allowed, WardenError::SwapOutMintNotAllowed);
+    }
+
+    // Seeds for the CPI, captured before the borrow is released.
+    let owner_seed = account.owner_seed;
+    let bump = account.bump;
+    let account_registry = account.registry;
+    drop(account);
+
+    // THE account's registry — required and matched, for the treasury.
+    require_keys_eq!(ctx.accounts.registry.key(), account_registry, WardenError::SwapFeeAccountNotTreasury);
+    let treasury = ctx.accounts.registry.load()?.treasury;
+
+    // ---- BEFORE snapshot + position validation ---------------------------
+    let before = conservation::snapshot(remaining, &account_key)?;
+    let pda_lamports_before = sa_info.lamports();
+
+    // Source: a vault-owned token account of in_mint.
+    let src = vault_token(&before, source_idx, &account_key)?;
+    require_keys_eq!(src.mint, args.in_mint, WardenError::SwapSourceNotVaultAta);
+    let src_before_amount = src.amount;
+    let src_key = *account_at(source_idx)?.key;
+    // Destination: a vault-owned token account of out_mint.
+    let dst = vault_token(&before, dest_idx, &account_key)?;
+    require_keys_eq!(dst.mint, args.out_mint, WardenError::SwapDestNotVaultAta);
+    let dst_before_amount = dst.amount;
+    let dst_key = *account_at(dest_idx)?.key;
+    // Platform fee: a token account owned by the treasury, of in_mint or out_mint.
+    let fee = before.get(fee_idx).ok_or(WardenError::SwapFeeAccountNotTreasury)?;
+    let fee_tok = fee.token.as_ref().ok_or(WardenError::SwapFeeAccountNotTreasury)?;
+    require_keys_eq!(fee_tok.owner, treasury, WardenError::SwapFeeAccountNotTreasury);
+    require!(
+        fee_tok.mint == args.in_mint || fee_tok.mint == args.out_mint,
+        WardenError::SwapFeeAccountNotTreasury
+    );
+
+    // ---- CPI: pinned Jupiter, PDA-signed ---------------------------------
+    // The authority position is the vault PDA: it SIGNS (via invoke_signed) but
+    // is passed read-only to Jupiter (it is the `smart_account` named account,
+    // writable there for the bucket update, but Jupiter never writes the
+    // authority — forcing it read-only in the CPI keeps the PDA's message-level
+    // writability from leaking into the route).
+    let metas: Vec<AccountMeta> = remaining
+        .iter()
+        .enumerate()
+        .map(|(i, ai)| AccountMeta {
+            pubkey: *ai.key,
+            is_signer: i == authority_idx,
+            is_writable: ai.is_writable && i != authority_idx,
+        })
+        .collect();
+    // The program account itself must be present among the infos for invoke.
+    require!(
+        remaining.iter().any(|ai| *ai.key == SWAP_TARGET_PROGRAM),
+        WardenError::SwapProgramNotPinned
+    );
+    // Move `route_data` into the instruction (no clone) and pass `remaining`
+    // directly as the infos — SBF heap is the swap account cap's binding
+    // constraint (Task 6 sweep), so the handler avoids every superfluous
+    // allocation.
+    let ix = Instruction { program_id: SWAP_TARGET_PROGRAM, accounts: metas, data: route_data };
+    invoke_signed(&ix, remaining, &[&[ACCOUNT_SEED, owner_seed.as_ref(), &[bump]]])?;
+
+    // ---- AFTER snapshot + conservation -----------------------------------
+    let mut before = before;
+    let mut after = conservation::snapshot(remaining, &account_key)?;
+    let pda_lamports_after = sa_info.lamports();
+    // The vault PDA sits at the authority position of the route account list;
+    // its own lamports are tracked separately (`pda_lamports_*`). At the message
+    // level it is the WRITABLE `smart_account`, so its snapshot carries
+    // `is_writable = true`, which would trip conservation's warden-owned-writable
+    // reject. Neutralize that in place (it is not a token account, so once
+    // read-only it is simply ignored) rather than cloning the whole slice.
+    for s in before.iter_mut().chain(after.iter_mut()) {
+        if s.key == account_key {
+            s.is_writable = false;
+        }
+    }
+    let outflow = compare_and_account(&before, &after, &account_key, &[], pda_lamports_before, pda_lamports_after)?;
+
+    // Source decreased by the ACTUAL input; must be ≤ max_in.
+    let src_after = find_token(&after, &src_key).ok_or(WardenError::ConservationViolated)?;
+    let actual_in = src_before_amount.checked_sub(src_after.amount).ok_or(WardenError::SwapUnexpectedOutflow)?;
+    require!(actual_in <= args.max_in, WardenError::SwapMaxInExceeded);
+    // Destination gained at least min_out.
+    let dst_after = find_token(&after, &dst_key).ok_or(WardenError::ConservationViolated)?;
+    let gained = dst_after.amount.checked_sub(dst_before_amount).ok_or(WardenError::SwapMinOutNotMet)?;
+    require!(gained >= args.min_out, WardenError::SwapMinOutNotMet);
+
+    // The ONLY net vault outflow may be `in_mint` (≤ max_in) plus, if in_mint is
+    // native, the merged SOL figure. Any other mint leaving is a route that
+    // moved value the adapter did not authorize (misbehave 2's second source).
+    for (mint, amt) in &outflow.by_mint {
+        require!(*mint == args.in_mint, WardenError::SwapUnexpectedOutflow);
+        require!(*amt <= args.max_in, WardenError::SwapMaxInExceeded);
+    }
+    // A non-native swap must not move raw SOL out of the vault.
+    if args.in_mint != NATIVE_MINT {
+        require!(outflow.sol == 0, WardenError::SwapUnexpectedOutflow);
+    }
+
+    // ---- charge the caps on the NET in_mint outflow ----------------------
+    let charged = outflow.by_mint.iter().find(|(m, _)| *m == args.in_mint).map(|(_, a)| *a).unwrap_or(0);
+    let sol_charge = if args.in_mint == NATIVE_MINT { outflow.sol } else { 0 };
+    let in_charge = charged.checked_add(sol_charge).ok_or(WardenError::Overflow)?;
+
+    let mut account = ctx.accounts.smart_account.load_mut()?;
+    if args.root.is_none() {
+        let session = ctx.accounts.session.as_mut().ok_or(WardenError::BadInstructionLayout)?;
+        let (slot_idx, cap) = find_cap(&session.caps, &args.in_mint).ok_or(WardenError::CapExceeded)?;
+        require!(in_charge <= cap.per_tx, WardenError::CapExceeded);
+        let spent = *session.lifetime_spent.get(slot_idx).ok_or(WardenError::InvalidAccountData)?;
+        let lifetime = *session.lifetime_cap.get(slot_idx).ok_or(WardenError::InvalidAccountData)?;
+        let new_spent = spent.checked_add(in_charge).ok_or(WardenError::Overflow)?;
+        require!(new_spent <= lifetime, WardenError::CapExceeded);
+        *session.lifetime_spent.get_mut(slot_idx).ok_or(WardenError::InvalidAccountData)? = new_spent;
+    }
+    // Account-wide buckets — every outflow path converges here.
+    let (idx, account_cap) = find_cap(&account.policy.caps, &args.in_mint).ok_or(WardenError::CapExceeded)?;
+    let account_cap: MintCap = *account_cap;
+    let bucket = account.buckets.get_mut(idx).ok_or(WardenError::InvalidAccountData)?;
+    buckets::debit(bucket, &account_cap, in_charge, now)?;
+    drop(account);
+
+    // ---- consume the stage on success ------------------------------------
+    if args.route_data.is_none() {
+        let stage = ctx.accounts.stage.as_ref().ok_or(WardenError::BadInstructionLayout)?;
+        let creator = ctx.accounts.stage_creator.as_ref().ok_or(WardenError::BadInstructionLayout)?;
+        stage.close(creator.to_account_info())?;
+    }
+
+    Ok(())
+}
+
+/// The `TokenSnap` at `remaining[idx]`, required to be a vault-owned token
+/// account (owner == the PDA). The mint is checked by the caller.
+fn vault_token<'a>(before: &'a [Snap], idx: usize, vault: &Pubkey) -> Result<&'a TokenSnap> {
+    let snap = before.get(idx).ok_or(WardenError::SwapSourceNotVaultAta)?;
+    let tok = snap.token.as_ref().ok_or(WardenError::SwapSourceNotVaultAta)?;
+    require_keys_eq!(tok.owner, *vault, WardenError::SwapSourceNotVaultAta);
+    Ok(tok)
+}
+
+/// Find a token account by key in a snapshot slice.
+fn find_token<'a>(snaps: &'a [Snap], key: &Pubkey) -> Option<&'a TokenSnap> {
+    snaps.iter().find(|s| s.key == *key).and_then(|s| s.token.as_ref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swap_target_program_is_pinned() {
+        #[cfg(feature = "test-jup")]
+        assert_eq!(SWAP_TARGET_PROGRAM, crate::constants::TEST_JUP_MOCK_ID);
+        #[cfg(not(feature = "test-jup"))]
+        assert_eq!(SWAP_TARGET_PROGRAM, crate::constants::JUPITER_V6_ID);
+    }
+
+    #[test]
+    fn jup_discriminators_match_anchor_sighash() {
+        use sha2::{Digest, Sha256};
+        let sighash = |n: &str| {
+            let mut h = Sha256::new();
+            h.update(b"global:");
+            h.update(n.as_bytes());
+            let mut d = [0u8; 8];
+            d.copy_from_slice(&h.finalize()[..8]);
+            d
+        };
+        assert_eq!(JUP_ROUTE_DISC, sighash("route"));
+        assert_eq!(JUP_SHARED_ROUTE_DISC, sighash("shared_accounts_route"));
+    }
+
+    /// Cross-language pin: `action_hash(OP_SWAP_ACTION, borsh(SwapBody))` must
+    /// equal the TS mirror's value (`packages/core/test/transcript.test.ts`).
+    #[test]
+    fn swap_action_hash_matches_pinned_vector() {
+        let body = SwapBody {
+            in_mint: Pubkey::new_from_array([0x11; 32]),
+            out_mint: Pubkey::new_from_array([0x22; 32]),
+            max_in: 7,
+            min_out: 3,
+            discriminator: [0x09; 8],
+            accounts_hash: [0xBB; 32],
+        };
+        let mut buf = Vec::new();
+        body.serialize(&mut buf).unwrap();
+        assert_eq!(
+            hex::encode(action_hash(OP_SWAP_ACTION, &buf)),
+            "ee760c9275dedb4736e47e8a495eb6d66897440de6b7914f564267b660c2318c"
+        );
+    }
+
+    #[test]
+    fn swap_body_borsh_layout_is_pinned() {
+        let b = SwapBody {
+            in_mint: Pubkey::new_from_array([1u8; 32]),
+            out_mint: Pubkey::new_from_array([2u8; 32]),
+            max_in: 7,
+            min_out: 3,
+            discriminator: [9u8; 8],
+            accounts_hash: [0xAB; 32],
+        };
+        let mut buf = Vec::new();
+        b.serialize(&mut buf).unwrap();
+        assert_eq!(buf.len(), 32 + 32 + 8 + 8 + 8 + 32);
+        assert_eq!(&buf[..32], &[1u8; 32]);
+        assert_eq!(&buf[32..64], &[2u8; 32]);
+        assert_eq!(&buf[64..72], &7u64.to_le_bytes());
+        assert_eq!(&buf[72..80], &3u64.to_le_bytes());
+        assert_eq!(&buf[80..88], &[9u8; 8]);
+        assert_eq!(&buf[88..120], &[0xAB; 32]);
+    }
+}

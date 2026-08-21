@@ -11,8 +11,10 @@ import {
   OP_TRANSFER,
   OP_CREATE,
   OP_EXECUTE,
+  OP_SWAP,
   encodeCreateBody,
   encodeExecuteBody,
+  encodeSwapBody,
   OWNER_SEED_DOMAIN,
   deriveOwnerSeed,
 } from "../src/index.js";
@@ -398,6 +400,45 @@ describe("execute (OP_EXECUTE, 0x07)", () => {
     const body = encodeExecuteBody(fill(32, 0x11), fill(32, 0x22));
     expect(hex(actionHash(OP_EXECUTE, body))).toBe(
       "971cfa437b2d03ae9063c9117d4c7ef61539d7a485d9ed1b991aab6e52d50c77",
+    );
+  });
+});
+
+describe("swap (OP_SWAP, 0x08)", () => {
+  it("pins the op byte and is distinct from every other op", () => {
+    expect(OP_SWAP).toBe(0x08);
+    const ops = [OP_ROTATE_NONCE, OP_GRANT_SESSION, OP_REVOKE_SESSION, OP_FREEZE, OP_UNFREEZE, OP_TRANSFER, OP_CREATE, OP_EXECUTE, OP_SWAP];
+    expect(new Set(ops).size).toBe(ops.length);
+  });
+
+  it("encodeSwapBody layout: in_mint | out_mint | max_in | min_out | disc | accounts_hash", () => {
+    const body = encodeSwapBody({
+      inMint: fill(32, 0x11), outMint: fill(32, 0x22), maxIn: 7n, minOut: 3n,
+      discriminator: fill(8, 0x09), accountsHash: fill(32, 0xbb),
+    });
+    expect(body.length).toBe(120);
+    expect(hex(body.slice(0, 32))).toBe("11".repeat(32));
+    expect(hex(body.slice(32, 64))).toBe("22".repeat(32));
+    expect(hex(body.slice(64, 72))).toBe("0700000000000000");
+    expect(hex(body.slice(72, 80))).toBe("0300000000000000");
+    expect(hex(body.slice(80, 88))).toBe("09".repeat(8));
+    expect(hex(body.slice(88, 120))).toBe("bb".repeat(32));
+  });
+
+  it("rejects wrong-size fields", () => {
+    const ok = { inMint: fill(32, 1), outMint: fill(32, 1), maxIn: 0n, minOut: 0n, discriminator: fill(8, 1), accountsHash: fill(32, 1) };
+    expect(() => encodeSwapBody({ ...ok, inMint: fill(31, 1) })).toThrow();
+    expect(() => encodeSwapBody({ ...ok, discriminator: fill(7, 1) })).toThrow();
+  });
+
+  // Pinned against Rust `swap::tests::swap_action_hash_matches_pinned_vector`.
+  it("matches the Rust-pinned SwapBody action hash", () => {
+    const body = encodeSwapBody({
+      inMint: fill(32, 0x11), outMint: fill(32, 0x22), maxIn: 7n, minOut: 3n,
+      discriminator: fill(8, 0x09), accountsHash: fill(32, 0xbb),
+    });
+    expect(hex(actionHash(OP_SWAP, body))).toBe(
+      "ee760c9275dedb4736e47e8a495eb6d66897440de6b7914f564267b660c2318c",
     );
   });
 });

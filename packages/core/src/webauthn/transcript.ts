@@ -251,6 +251,46 @@ export function encodeExecuteBody(
 }
 
 /**
+ * `op_type` byte for the ROOT path of `swap` (Phase 1B Task 6); hashed over
+ * `borsh(SwapBody)` — `in_mint: [u8;32]`, `out_mint: [u8;32]`, `max_in: u64 LE`,
+ * `min_out: u64 LE`, `discriminator: [u8;8]` (the 8-byte Jupiter route
+ * selector), `accounts_hash: [u8;32]` (the SAME logical-list construction
+ * {@link OP_EXECUTE} binds). Rebuilt on-chain, so a bearer assertion cannot
+ * substitute the route, the mints, the bound, or any account after signing.
+ * Named `OP_SWAP_ACTION` in Rust to avoid colliding with the `ops_mask` BIT
+ * `state::session::OP_SWAP` (1 << 2).
+ */
+export const OP_SWAP = 0x08;
+
+/**
+ * Canonical borsh encoding of `SwapBody` — build the body with this, do not
+ * hand-roll the concatenation (see {@link OP_SWAP} for the layout).
+ */
+export function encodeSwapBody(f: {
+  inMint: Uint8Array;
+  outMint: Uint8Array;
+  maxIn: bigint;
+  minOut: bigint;
+  discriminator: Uint8Array;
+  accountsHash: Uint8Array;
+}): Uint8Array {
+  require32(f.inMint, "inMint");
+  require32(f.outMint, "outMint");
+  require32(f.accountsHash, "accountsHash");
+  if (f.discriminator.length !== 8) throw new Error("discriminator must be 8 bytes");
+  const body = new Uint8Array(32 + 32 + 8 + 8 + 8 + 32);
+  const dv = new DataView(body.buffer);
+  let o = 0;
+  body.set(f.inMint, o); o += 32;
+  body.set(f.outMint, o); o += 32;
+  dv.setBigUint64(o, f.maxIn, true); o += 8;
+  dv.setBigUint64(o, f.minOut, true); o += 8;
+  body.set(f.discriminator, o); o += 8;
+  body.set(f.accountsHash, o);
+  return body;
+}
+
+/**
  * Domain separator for the `create_account` PDA seed derivation. Mirrors
  * `instructions::create_account::OWNER_SEED_DOMAIN`.
  */

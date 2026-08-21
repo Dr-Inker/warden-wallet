@@ -91,6 +91,17 @@ pub mod warden {
         instructions::execute::handler(ctx, args)
     }
 
+    /// Swap one vault mint for another through the pinned Jupiter v6 program,
+    /// with the adapter preflight (decoded max_in + pinned source ATA + treasury
+    /// fee) generic `execute` cannot do. Session or bounded passkey root; inline
+    /// or staged route. See `instructions::swap`.
+    pub fn swap<'info>(
+        ctx: Context<'info, Swap<'info>>,
+        args: SwapArgs,
+    ) -> Result<()> {
+        instructions::swap::handler(ctx, args)
+    }
+
     /// Root-authorized lift of a root-issued freeze, gated by
     /// `policy.timelock_secs` since `frozen_at`. See `instructions::unfreeze`.
     pub fn unfreeze(ctx: Context<Unfreeze>, args: RootArgs) -> Result<()> {

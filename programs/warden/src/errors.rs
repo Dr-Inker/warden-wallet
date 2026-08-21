@@ -162,4 +162,31 @@ pub enum WardenError {
     JupiterViaSwapOnly,
     #[msg("a pubkey appears more than once in the logical account list")]
     DuplicateLogicalAccount,
+    // ---------------------------------------------------------------------
+    // Task 6 (swap). APPEND ONLY — see above. Codes 6060..=6070.
+    // ---------------------------------------------------------------------
+    #[msg("swap may only CPI the pinned Jupiter program")]
+    SwapProgramNotPinned,
+    #[msg("swap instruction discriminator is not route or shared_accounts_route")]
+    SwapBadDiscriminator,
+    #[msg("swap route data is too short to carry the fixed argument tail")]
+    SwapDataTooShort,
+    #[msg("swap requires platform_fee_bps == 85 so the treasury fee is always taken")]
+    SwapPlatformFeeBps,
+    #[msg("swap user_transfer_authority is not the vault PDA")]
+    SwapAuthorityNotVault,
+    #[msg("swap source token account is not the vault ATA of in_mint")]
+    SwapSourceNotVaultAta,
+    #[msg("swap destination token account is not the vault ATA of out_mint")]
+    SwapDestNotVaultAta,
+    #[msg("swap platform_fee_account is not a treasury ATA of in_mint or out_mint")]
+    SwapFeeAccountNotTreasury,
+    #[msg("the swap route's declared in_amount exceeds the authorized max_in")]
+    SwapMaxInExceeded,
+    #[msg("the swap credited less than min_out to the vault out ATA")]
+    SwapMinOutNotMet,
+    #[msg("swap out_mint is not in the session's caps or the default allowed set")]
+    SwapOutMintNotAllowed,
+    #[msg("swap moved value the adapter did not authorize (unexpected vault outflow)")]
+    SwapUnexpectedOutflow,
 }

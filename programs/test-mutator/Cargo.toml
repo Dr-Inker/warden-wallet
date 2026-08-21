@@ -16,6 +16,7 @@ name = "test_mutator"
 # of the way — the Task 6 prerequisite evidence.
 default = ["custom-heap"]
 custom-heap = []
+test-jup = []  # pass-through for `anchor build -- --features test-jup`; inert here
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []

@@ -61,21 +61,30 @@ if ls programs/*/Cargo.toml >/dev/null 2>&1; then
       fi
     done
   fi
+  # `--features test-jup` (Task 6): points warden's `swap` at `test-jup-mock`
+  # instead of real Jupiter v6 so the LiteSVM suite drives the adapter against a
+  # real CPI (constants.rs::SWAP_TARGET_PROGRAM). This is a TEST build — the
+  # `.so` is gitignored and never deployed; a production deploy builds WITHOUT
+  # the feature, and `swap::tests::swap_target_program_is_pinned` verifies the
+  # right id in each config. The flag is forwarded to every program (they all
+  # declare an inert `test-jup` feature so the forward does not error).
   if [ "$needs_build" -eq 1 ]; then
     if command -v anchor >/dev/null 2>&1; then
-      nice -n 10 anchor build
+      nice -n 10 anchor build -- --features test-jup
     else
-      nice -n 10 cargo-build-sbf --manifest-path programs/warden/Cargo.toml
-      nice -n 10 cargo-build-sbf --manifest-path programs/test-middleman/Cargo.toml
-      nice -n 10 cargo-build-sbf --manifest-path programs/test-mutator/Cargo.toml
-      nice -n 10 cargo-build-sbf --manifest-path programs/test-jup-mock/Cargo.toml
+      nice -n 10 cargo-build-sbf --manifest-path programs/warden/Cargo.toml --features test-jup
+      nice -n 10 cargo-build-sbf --manifest-path programs/test-middleman/Cargo.toml --features test-jup
+      nice -n 10 cargo-build-sbf --manifest-path programs/test-mutator/Cargo.toml --features test-jup
+      nice -n 10 cargo-build-sbf --manifest-path programs/test-jup-mock/Cargo.toml --features test-jup
     fi
   fi
   # anchor build regenerates target/idl/warden.json from the program source;
   # packages/core/idl/warden.json is the committed copy TS consumers read.
-  # Catch drift here rather than downstream in a stale-IDL bug.
+  # Catch drift here rather than downstream in a stale-IDL bug. (The IDL is
+  # identical with/without test-jup — SWAP_TARGET_PROGRAM is a constant, not an
+  # IDL field.)
   if [ -f target/idl/warden.json ]; then
     cmp -s target/idl/warden.json packages/core/idl/warden.json || { echo "IDL drift: copy target/idl/warden.json to packages/core/idl/"; exit 1; }
   fi
-  cargo test --workspace
+  cargo test --workspace --features test-jup
 fi

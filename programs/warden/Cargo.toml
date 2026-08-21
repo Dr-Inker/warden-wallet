@@ -16,6 +16,13 @@ name = "warden"
 # granted frame is the only bound; past it the tx faults fail-closed.
 default = ["custom-heap"]
 custom-heap = []
+# `test-jup` points `swap`'s pinned target at `test-jup-mock` instead of the real
+# Jupiter v6 program, so the LiteSVM suite can drive the adapter against a real
+# CPI (constants.rs::SWAP_TARGET_PROGRAM). **The test-gate .so is built WITH this
+# feature; a production deploy MUST build WITHOUT it** — the cfg-branched
+# `swap::tests::swap_target_program_is_pinned` verifies the right id in each
+# config. The built `.so` is gitignored, never committed.
+test-jup = []
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []

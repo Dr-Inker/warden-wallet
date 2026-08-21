@@ -132,6 +132,19 @@ mod err {
     pub const TOO_MANY_EXECUTE_WRITABLE: u32 = 6057;
     pub const JUPITER_VIA_SWAP_ONLY: u32 = 6058;
     pub const DUPLICATE_LOGICAL_ACCOUNT: u32 = 6059;
+    // Task 6 (swap), appended 6060..=6071.
+    pub const SWAP_PROGRAM_NOT_PINNED: u32 = 6060;
+    pub const SWAP_BAD_DISCRIMINATOR: u32 = 6061;
+    pub const SWAP_DATA_TOO_SHORT: u32 = 6062;
+    pub const SWAP_PLATFORM_FEE_BPS: u32 = 6063;
+    pub const SWAP_AUTHORITY_NOT_VAULT: u32 = 6064;
+    pub const SWAP_SOURCE_NOT_VAULT_ATA: u32 = 6065;
+    pub const SWAP_DEST_NOT_VAULT_ATA: u32 = 6066;
+    pub const SWAP_FEE_ACCOUNT_NOT_TREASURY: u32 = 6067;
+    pub const SWAP_MAX_IN_EXCEEDED: u32 = 6068;
+    pub const SWAP_MIN_OUT_NOT_MET: u32 = 6069;
+    pub const SWAP_OUT_MINT_NOT_ALLOWED: u32 = 6070;
+    pub const SWAP_UNEXPECTED_OUTFLOW: u32 = 6071;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -140,7 +153,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 60] = [
+    let pairs: [(u32, WardenError, &str); 72] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -248,6 +261,26 @@ fn pinned_error_codes_match_the_enum_today() {
             err::DUPLICATE_LOGICAL_ACCOUNT,
             WardenError::DuplicateLogicalAccount,
             "DuplicateLogicalAccount",
+        ),
+        (err::SWAP_PROGRAM_NOT_PINNED, WardenError::SwapProgramNotPinned, "SwapProgramNotPinned"),
+        (err::SWAP_BAD_DISCRIMINATOR, WardenError::SwapBadDiscriminator, "SwapBadDiscriminator"),
+        (err::SWAP_DATA_TOO_SHORT, WardenError::SwapDataTooShort, "SwapDataTooShort"),
+        (err::SWAP_PLATFORM_FEE_BPS, WardenError::SwapPlatformFeeBps, "SwapPlatformFeeBps"),
+        (err::SWAP_AUTHORITY_NOT_VAULT, WardenError::SwapAuthorityNotVault, "SwapAuthorityNotVault"),
+        (err::SWAP_SOURCE_NOT_VAULT_ATA, WardenError::SwapSourceNotVaultAta, "SwapSourceNotVaultAta"),
+        (err::SWAP_DEST_NOT_VAULT_ATA, WardenError::SwapDestNotVaultAta, "SwapDestNotVaultAta"),
+        (
+            err::SWAP_FEE_ACCOUNT_NOT_TREASURY,
+            WardenError::SwapFeeAccountNotTreasury,
+            "SwapFeeAccountNotTreasury",
+        ),
+        (err::SWAP_MAX_IN_EXCEEDED, WardenError::SwapMaxInExceeded, "SwapMaxInExceeded"),
+        (err::SWAP_MIN_OUT_NOT_MET, WardenError::SwapMinOutNotMet, "SwapMinOutNotMet"),
+        (err::SWAP_OUT_MINT_NOT_ALLOWED, WardenError::SwapOutMintNotAllowed, "SwapOutMintNotAllowed"),
+        (
+            err::SWAP_UNEXPECTED_OUTFLOW,
+            WardenError::SwapUnexpectedOutflow,
+            "SwapUnexpectedOutflow",
         ),
     ];
     for (pinned, variant, name) in pairs {

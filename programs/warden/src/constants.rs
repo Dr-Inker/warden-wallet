@@ -189,6 +189,36 @@ pub const COMPUTE_BUDGET_ID: Pubkey =
 pub const TEST_MUTATOR_ID: Pubkey = Pubkey::from_str_const("An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W");
 pub const TEST_JUP_MOCK_ID: Pubkey = Pubkey::from_str_const("3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU");
 
+/// The pinned program `swap` (Task 6) may CPI. **Production is Jupiter v6**; a
+/// `test-jup` build swaps in the mock so the LiteSVM suite exercises the real
+/// validator against a real CPI. A `cfg` switch, never a passed account — the
+/// pin is the whole point of a Jupiter-specialised `swap` (spec §5.2.7).
+#[cfg(not(feature = "test-jup"))]
+pub const SWAP_TARGET_PROGRAM: Pubkey = JUPITER_V6_ID;
+#[cfg(feature = "test-jup")]
+pub const SWAP_TARGET_PROGRAM: Pubkey = TEST_JUP_MOCK_ID;
+
+/// Jupiter v6 `route` / `shared_accounts_route` **Anchor 8-byte
+/// discriminators** = `sha256("global:<name>")[..8]`. Jupiter v6 is an Anchor
+/// program, so these are the real on-wire selectors; `swap::tests::
+/// jup_discriminators_match_anchor_sighash` re-derives them and
+/// `docs/program/PHASE1B-MEASUREMENTS.md` §"Task 6 Jupiter IDL provenance"
+/// records the IDL source URL + its SHA-256 the account-position map came from.
+pub const JUP_ROUTE_DISC: [u8; 8] = [0xe5, 0x17, 0xcb, 0x97, 0x7a, 0xe3, 0xad, 0x2a];
+pub const JUP_SHARED_ROUTE_DISC: [u8; 8] = [0xc1, 0x20, 0x9b, 0x33, 0x41, 0xd6, 0x9c, 0x81];
+
+/// Warden requires exactly this `platform_fee_bps` in a swap's args, so a route
+/// that skips the treasury fee is refused before the CPI (spec §5.2.7).
+pub const SWAP_PLATFORM_FEE_BPS: u8 = 85;
+
+/// USDC / USDT mainnet mints — the fiat-stable `out_mint`s a session may swap
+/// INTO in 1B without a per-mint cap (alongside `NATIVE_MINT`). 1C replaces this
+/// fixed set with a policy list. A session may also swap into any mint it holds
+/// an explicit cap for.
+pub const USDC_MINT: Pubkey = Pubkey::from_str_const("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+pub const USDT_MINT: Pubkey = Pubkey::from_str_const("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB");
+pub const ALLOWED_OUT_MINTS_DEFAULT: [Pubkey; 3] = [NATIVE_MINT, USDC_MINT, USDT_MINT];
+
 /// Wrapped-SOL mint (`So11111111111111111111111111111111111111112`) — the key
 /// a native-SOL transfer looks its caps up under.
 ///

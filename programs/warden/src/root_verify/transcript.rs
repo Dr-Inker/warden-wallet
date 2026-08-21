@@ -110,6 +110,15 @@ pub const OP_CREATE: u8 = 0x06;
 /// by side in `instructions::execute`.
 pub const OP_EXECUTE_ACTION: u8 = 0x07;
 
+/// `op_type` byte for the ROOT path of `swap` (Phase 1B Task 6); hashed over
+/// `borsh(SwapBody)` — see `instructions::swap::SwapBody`: `in_mint`,
+/// `out_mint`, `max_in`, `min_out`, `discriminator` (the 8-byte Jupiter route
+/// selector), and `accounts_hash` (the SAME logical-list construction root
+/// `execute` binds via `ExecuteBody`). Every field is rebuilt on-chain from the
+/// args and accounts actually passed, so a bearer assertion cannot substitute
+/// the route, the mints, the bound, or any account after signing.
+pub const OP_SWAP_ACTION: u8 = 0x08;
+
 /// Keccak256 over the canonical transcript encoding.
 ///
 /// `genesis` is `SmartAccount.cluster_tag`. **It is a client-attested domain

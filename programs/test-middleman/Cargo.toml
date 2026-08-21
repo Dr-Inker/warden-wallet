@@ -10,6 +10,10 @@ name = "test_middleman"
 
 [features]
 default = []
+# Empty pass-through so `anchor build -- --features test-jup` (which forwards the
+# flag to EVERY program) does not error here; only warden's `test-jup` does
+# anything (swaps its Jupiter target for the mock). See warden/src/constants.rs.
+test-jup = []
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []

@@ -740,3 +740,44 @@ never reached over-cap). **Client contract:** the wrapper MUST inject a
 same way it injects `SetComputeUnitLimit`; omitting it is fail-closed, not a
 loss. Going beyond ~30 writable (should a route need it) is a fresh re-sweep on
 a harness that can build larger transactions, not a bare constant bump.
+
+## Task 6 Jupiter IDL provenance + account-position map
+
+The `swap` adapter validates account positions and decodes the argument tail
+against the **pinned Jupiter v6 IDL**:
+
+- **Source:** `https://raw.githubusercontent.com/jup-ag/jupiter-cpi/main/idl.json`
+  (the `jup-ag/jupiter-cpi` repo's published aggregator IDL, `name: "jupiter"`).
+- **SHA-256 of the fetched file:** `764ea6d71b77458fd33aeb308d6e6bb19e660fc5320c5359f3b9cac96eba5c50` (76,690 bytes), fetched 2026-08-21.
+- The 8-byte discriminators are Anchor sighashes (`sha256("global:route")[..8]`,
+  `sha256("global:shared_accounts_route")[..8]`), re-derived and pinned by
+  `swap::tests::jup_discriminators_match_anchor_sighash` — so a repo/IDL move
+  cannot silently change them.
+
+**Account-position map (fixed — Anchor optional accounts are program-id
+sentinels, they do NOT shift):**
+
+| field warden validates | `route` idx | `shared_accounts_route` idx |
+|---|---|---|
+| `userTransferAuthority` (= vault PDA, signer) | 1 | 2 |
+| `userSource`/`sourceTokenAccount` (= vault ATA of in_mint) | 2 | 3 |
+| `userDestination`/`destinationTokenAccount` (= vault ATA of out_mint) | 3 | 6 |
+| `destinationMint` (= out_mint) | 5 | 8 |
+| `platformFeeAccount` (= treasury ATA, opt) | 6 | 9 |
+
+**Argument tail decode.** Both variants end in a fixed 19-byte tail
+(`in_amount u64 ‖ quoted_out u64 ‖ slippage_bps u16 ‖ platform_fee_bps u8`)
+AFTER the variable-length `route_plan`, so `swap` reads `in_amount` and
+`platform_fee_bps` at fixed **negative** offsets from the END of the data —
+never parsing `route_plan`'s `Vec<RoutePlanStep>` (a large, variable `Swap`
+enum). `test-jup-mock` is byte-identical to a real empty-`route_plan` call (its
+`misbehave` selector rides in `slippage_bps`, which warden does not read), so
+the mock exercises the exact decode path warden runs on mainnet.
+
+**test/prod program pin.** `SWAP_TARGET_PROGRAM` is `JUPITER_V6_ID` in
+production and `TEST_JUP_MOCK_ID` under `--features test-jup`
+(`swap::tests::swap_target_program_is_pinned` asserts the right id in each
+config). The test-gate `.so` is built WITH the feature (it is gitignored and
+never deployed); a production deploy builds WITHOUT it. Warden's entrypoint
+would reject the mock planted at Jupiter's id (`DeclaredProgramIdMismatch`), so
+a cfg switch — not a passed account — is the only way to redirect the pin.

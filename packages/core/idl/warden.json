@@ -853,6 +853,79 @@
       ]
     },
     {
+      "name": "swap",
+      "docs": [
+        "Swap one vault mint for another through the pinned Jupiter v6 program,",
+        "with the adapter preflight (decoded max_in + pinned source ATA + treasury",
+        "fee) generic `execute` cannot do. Session or bounded passkey root; inline",
+        "or staged route. See `instructions::swap`."
+      ],
+      "discriminator": [
+        248,
+        198,
+        158,
+        145,
+        225,
+        117,
+        135,
+        200
+      ],
+      "accounts": [
+        {
+          "name": "smart_account",
+          "writable": true
+        },
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "session",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "ix_sysvar",
+          "docs": [
+            "the checked loaders."
+          ],
+          "optional": true,
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "stage",
+          "docs": [
+            "The staged route data to consume (`args.route_data == None`)."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "THE account's adapter registry — REQUIRED: `Registry.treasury` is the",
+            "swap-fee destination owner, so a swap without a bound registry has no",
+            "treasury to validate the fee against."
+          ]
+        },
+        {
+          "name": "stage_creator",
+          "writable": true,
+          "optional": true
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "SwapArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "transfer",
       "docs": [
         "Move SOL or an SPL balance out of the vault — session key (within its",
@@ -1339,6 +1412,66 @@
       "code": 6059,
       "name": "DuplicateLogicalAccount",
       "msg": "a pubkey appears more than once in the logical account list"
+    },
+    {
+      "code": 6060,
+      "name": "SwapProgramNotPinned",
+      "msg": "swap may only CPI the pinned Jupiter program"
+    },
+    {
+      "code": 6061,
+      "name": "SwapBadDiscriminator",
+      "msg": "swap instruction discriminator is not route or shared_accounts_route"
+    },
+    {
+      "code": 6062,
+      "name": "SwapDataTooShort",
+      "msg": "swap route data is too short to carry the fixed argument tail"
+    },
+    {
+      "code": 6063,
+      "name": "SwapPlatformFeeBps",
+      "msg": "swap requires platform_fee_bps == 85 so the treasury fee is always taken"
+    },
+    {
+      "code": 6064,
+      "name": "SwapAuthorityNotVault",
+      "msg": "swap user_transfer_authority is not the vault PDA"
+    },
+    {
+      "code": 6065,
+      "name": "SwapSourceNotVaultAta",
+      "msg": "swap source token account is not the vault ATA of in_mint"
+    },
+    {
+      "code": 6066,
+      "name": "SwapDestNotVaultAta",
+      "msg": "swap destination token account is not the vault ATA of out_mint"
+    },
+    {
+      "code": 6067,
+      "name": "SwapFeeAccountNotTreasury",
+      "msg": "swap platform_fee_account is not a treasury ATA of in_mint or out_mint"
+    },
+    {
+      "code": 6068,
+      "name": "SwapMaxInExceeded",
+      "msg": "the swap route's declared in_amount exceeds the authorized max_in"
+    },
+    {
+      "code": 6069,
+      "name": "SwapMinOutNotMet",
+      "msg": "the swap credited less than min_out to the vault out ATA"
+    },
+    {
+      "code": 6070,
+      "name": "SwapOutMintNotAllowed",
+      "msg": "swap out_mint is not in the session's caps or the default allowed set"
+    },
+    {
+      "code": 6071,
+      "name": "SwapUnexpectedOutflow",
+      "msg": "swap moved value the adapter did not authorize (unexpected vault outflow)"
     }
   ],
   "types": [
@@ -2711,6 +2844,66 @@
               "Absolute unix seconds after which anyone may close the stage."
             ],
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwapArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "root",
+            "docs": [
+              "`Some` = root path (requires `ix_sysvar`), `None` = session path."
+            ],
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "RootArgs"
+                }
+              }
+            }
+          },
+          {
+            "name": "variant",
+            "docs": [
+              "`SWAP_VARIANT_ROUTE` or `SWAP_VARIANT_SHARED`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "in_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "out_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "max_in",
+            "docs": [
+              "The authorized maximum input, in `in_mint` base units. The route's",
+              "decoded `in_amount` must be `≤ max_in`, and `max_in ≤ caps`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_out",
+            "docs": [
+              "The minimum the vault out ATA must gain (inclusive)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "route_data",
+            "docs": [
+              "The compiled Jupiter instruction data (inline). `None` ⇒ consume `stage`."
+            ],
+            "type": {
+              "option": "bytes"
+            }
           }
         ]
       }

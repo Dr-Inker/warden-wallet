@@ -10,6 +10,7 @@ name = "test_jup_mock"
 
 [features]
 default = []
+test-jup = []  # pass-through for `anchor build -- --features test-jup`; inert here
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
