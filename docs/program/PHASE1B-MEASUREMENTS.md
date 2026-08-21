@@ -1406,3 +1406,8 @@ Fixed/adjudicated at `5e5ce7a`.
   gitignored target/ (on /opt) with prefix-guarded cleanup.
 
 208 core tests. Gate evidence on the ledger HEAD below.
+
+### Task 11R round-7 gate evidence
+**Gate on the immutable ledger HEAD `269b7545f191887fd6d018af8d02fa95ec50d800`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
+208/208, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
