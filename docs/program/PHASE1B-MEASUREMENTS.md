@@ -1317,3 +1317,8 @@ important, 1 minor). Fixed/adjudicated at `a937838`.
   release-commit requirement.
 
 194 core tests. Gate evidence on the ledger HEAD below.
+
+### Task 11R round-3 gate evidence
+**Gate on the immutable ledger HEAD `a7675b609a9385b8abe494bb06bc38cb58e82623`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
+194/194, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
