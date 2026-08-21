@@ -356,6 +356,25 @@ pub(crate) fn handler<'info>(
     let fee_before = fee_tok.amount;
     let fee_key = *account_at(fee_idx)?.key;
 
+    // WRDF-0065: pin the WRITABLE vault set to EXACTLY {source, destination}.
+    // Every route account is forwarded to Jupiter carrying the PDA signer, so a
+    // writable vault-owned token account other than the two swap roles could be
+    // round-tripped inside the CPI (drain a second vault account and return all
+    // but max_in before control comes back) — a manipulation net accounting and
+    // the source-local bound both miss. With no other writable vault token
+    // account reachable, the only vault value the route can move is the source
+    // (bounded by net ≤ max_in) and the destination; this is also what bounds
+    // the WRDF-0059 suffix residual on the session path. A vault account passed
+    // READ-ONLY is harmless (the CPI cannot debit it), so only writable ones are
+    // rejected.
+    for (i, snap) in before.iter().enumerate() {
+        let is_vault_token = snap.token.as_ref().is_some_and(|t| t.owner == account_key);
+        if is_vault_token && snap.is_writable {
+            require!(snap.key == src_key || snap.key == dst_key, WardenError::SwapExtraWritableVault);
+        }
+        let _ = i;
+    }
+
     // ---- CPI: pinned Jupiter, PDA-signed ---------------------------------
     // The authority position is the vault PDA: it SIGNS (via invoke_signed) but
     // is passed read-only to Jupiter (it is the `smart_account` named account,
@@ -546,6 +565,65 @@ mod tests {
             hex::encode(action_hash(OP_SWAP_ACTION, &buf)),
             "1dc529b694012bbcfe50b10dff494ab093fbc0295494ed8f5d9b2555e8d61891"
         );
+    }
+
+    // -- net_vault_mint_delta (pure) — proves the WRDF-0060 net rule directly,
+    //    independent of the WRDF-0065 writable-vault pinning that also guards it.
+    fn tok_snap(key: Pubkey, owner: Pubkey, mint: Pubkey, amount: u64) -> Snap {
+        Snap {
+            key,
+            exists: true,
+            owner_program: crate::constants::SPL_TOKEN_ID,
+            lamports: 2_039_280,
+            data_len: 165,
+            token: Some(TokenSnap {
+                mint,
+                owner,
+                amount,
+                delegate: None,
+                delegated_amount: 0,
+                close_authority: None,
+                state: 1,
+                is_native: None,
+                tlv_hash: [0; 32],
+                program: crate::constants::PROGRAM_SPL,
+            }),
+            mint: None,
+            token_parse_failed: false,
+            is_writable: true,
+        }
+    }
+
+    #[test]
+    fn net_vault_mint_delta_sums_across_vault_accounts_and_offsets() {
+        let vault = Pubkey::new_unique();
+        let out = Pubkey::new_unique();
+        let stranger = Pubkey::new_unique();
+        let a = Pubkey::new_unique();
+        let b = Pubkey::new_unique();
+        let s = Pubkey::new_unique();
+        // Account a: vault out, +100. Account b: vault out, -100 (offset).
+        // Account s: a STRANGER's out account, +1000 (ignored — not the vault's).
+        let before = vec![
+            tok_snap(a, vault, out, 0),
+            tok_snap(b, vault, out, 100),
+            tok_snap(s, stranger, out, 0),
+        ];
+        let after = vec![
+            tok_snap(a, vault, out, 100),
+            tok_snap(b, vault, out, 0),
+            tok_snap(s, stranger, out, 1000),
+        ];
+        // Net vault gain of `out` = (+100) + (-100) = 0 — the offset nets out.
+        assert_eq!(net_vault_mint_delta(&before, &after, &out, &vault).unwrap(), 0);
+        // A single honest gain sums positively.
+        let before2 = vec![tok_snap(a, vault, out, 0)];
+        let after2 = vec![tok_snap(a, vault, out, 250)];
+        assert_eq!(net_vault_mint_delta(&before2, &after2, &out, &vault).unwrap(), 250);
+        // A net loss is representable (i128, negative).
+        let after3 = vec![tok_snap(a, vault, out, 0)];
+        let before3 = vec![tok_snap(a, vault, out, 40)];
+        assert_eq!(net_vault_mint_delta(&before3, &after3, &out, &vault).unwrap(), -40);
     }
 
     #[test]

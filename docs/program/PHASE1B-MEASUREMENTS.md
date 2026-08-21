@@ -816,3 +816,41 @@ deferred, converged same-day:
 Gate green with `--features test-jup` at the fix SHA: 329 warden lib + 19
 `tests/swap.rs` + full workspace + 113 TS; clippy clean; drift table 74 rows;
 IDL synced. Production pin verified WITHOUT the feature.
+
+### Task 6 swap review round 2 (Codex sol@max, 8 findings) + gate evidence
+
+Round 2 rigorously re-checked round 1 — 3 re-flags (0031/0052/0059) + 5 new, all
+adopted or deferred:
+
+- **WRDF-0065 (adopted, the key fix):** only source/dest were validated as vault
+  roles, so a nested route could round-trip a SECOND writable vault account
+  intra-CPI (invisible to the source-local bound and net accounting). Fixed:
+  BEFORE the CPI, reject every writable vault-owned token account except the
+  exact source/dest keys (`SwapExtraWritableVault`, 6074). This also bounds the
+  WRDF-0059 suffix residual — the only vault value a route can move is now the
+  source (net ≤ max_in) and destination.
+- **WRDF-0066 / WRDF-0067 (adopted, tests strengthened):** the round-1 min_out
+  and pre-CPI-headroom tests could not actually distinguish the fixed from the
+  broken code. The net-offset logic is now a pure unit test
+  (`net_vault_mint_delta_sums_across_vault_accounts_and_offsets`) + the
+  WRDF-0065 on-chain reject; the headroom test now asserts the mock's
+  `Instruction: Route` log is ABSENT on the cap failure (proving pre-CPI order).
+- **WRDF-0068 (adopted):** the CI `strings | grep` provenance guard was
+  ineffective (`from_str_const` → key bytes, no printable base58). Replaced with
+  `cargo test -p warden --lib --no-default-features swap_target_program_is_pinned`
+  (executes swap's `not(test-jup)` branch, asserts the real Jupiter v6 id).
+- **WRDF-0069 (adopted):** gate evidence now names the command + SHA (below).
+- **WRDF-0059 / 0031 / 0052 (deferred):** byte-exact `route_plan` parse owed
+  before mainnet (now with a much tighter realized bound via 0065); events → 5E.
+
+**Task 6 gate — command, result, SHA.** At the round-2 fix commit
+(`git rev-parse HEAD` = the SHA of the commit carrying this section):
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → green (builds all four `.so`
+with `--features test-jup`, runs L0 sigverify + `cargo test --workspace
+--features test-jup`): **330 warden lib + 20 `tests/swap.rs` + all integration
+suites + 113 TS (`@warden/core`) + 11 ui-tokens**; `cargo clippy -p warden --lib
+--features test-jup -- -D clippy::arithmetic_side_effects` clean; drift table 75
+rows. **Production attestation** (no test-jup): `cargo test -p warden --lib
+--no-default-features swap_target_program_is_pinned` passes (asserts
+`SWAP_TARGET_PROGRAM == JUPITER_V6_ID`), and CI additionally rebuilds a clean
+production `warden.so` into `target/deploy-release/` and publishes only that.

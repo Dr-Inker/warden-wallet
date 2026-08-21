@@ -188,16 +188,21 @@ jobs:
       # production build is what pins the real Jupiter v6 id
       # (swap::tests::swap_target_program_is_pinned covers the non-feature
       # branch; a feature-flag grep here is a cheap artifact-provenance guard).
+      - name: Attest the PRODUCTION swap pin (default features, no test-jup)
+        # WRDF-0068: a `strings` grep is not a provenance guard — SWAP_TARGET_
+        # PROGRAM is `from_str_const`-evaluated to key bytes, so the printable
+        # base58 need not survive in the ELF. Instead run the pin test WITHOUT
+        # the feature, which executes swap's `not(test-jup)` branch and asserts
+        # SWAP_TARGET_PROGRAM == the real Jupiter v6 id. This attests which cfg
+        # branch a default build compiles.
+        run: cargo test -p warden --lib --no-default-features swap_target_program_is_pinned
+
       - name: Build the PRODUCTION warden.so (no test-jup) into an isolated dir
         run: |
           rm -rf target/deploy-release
           cargo-build-sbf --manifest-path programs/warden/Cargo.toml \
             --sbf-out-dir target/deploy-release
           test -f target/deploy-release/warden.so || { echo "production warden.so missing" >&2; exit 1; }
-          # Provenance guard: the production build must not carry test-jup.
-          if strings target/deploy-release/warden.so | grep -q '3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU'; then
-            echo "PRODUCTION warden.so embeds the test-jup mock id — refusing to publish" >&2; exit 1
-          fi
 
       - name: Compute production warden.so sha256
         run: sha256sum target/deploy-release/warden.so | tee target/deploy-release/warden.so.sha256

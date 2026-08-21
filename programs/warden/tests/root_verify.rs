@@ -147,6 +147,7 @@ mod err {
     pub const SWAP_UNEXPECTED_OUTFLOW: u32 = 6071;
     pub const SWAP_NATIVE_UNSUPPORTED: u32 = 6072;
     pub const SWAP_FEE_NOT_TAKEN: u32 = 6073;
+    pub const SWAP_EXTRA_WRITABLE_VAULT: u32 = 6074;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -155,7 +156,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 74] = [
+    let pairs: [(u32, WardenError, &str); 75] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -286,6 +287,11 @@ fn pinned_error_codes_match_the_enum_today() {
         ),
         (err::SWAP_NATIVE_UNSUPPORTED, WardenError::SwapNativeUnsupported, "SwapNativeUnsupported"),
         (err::SWAP_FEE_NOT_TAKEN, WardenError::SwapFeeNotTaken, "SwapFeeNotTaken"),
+        (
+            err::SWAP_EXTRA_WRITABLE_VAULT,
+            WardenError::SwapExtraWritableVault,
+            "SwapExtraWritableVault",
+        ),
     ];
     for (pinned, variant, name) in pairs {
         assert_eq!(

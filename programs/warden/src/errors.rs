@@ -193,4 +193,6 @@ pub enum WardenError {
     SwapNativeUnsupported,
     #[msg("the swap did not pay a fee into the treasury account")]
     SwapFeeNotTaken,
+    #[msg("a writable vault-owned token account other than the swap source or destination was passed to the route")]
+    SwapExtraWritableVault,
 }

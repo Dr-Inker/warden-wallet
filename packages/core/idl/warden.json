@@ -1482,6 +1482,11 @@
       "code": 6073,
       "name": "SwapFeeNotTaken",
       "msg": "the swap did not pay a fee into the treasury account"
+    },
+    {
+      "code": 6074,
+      "name": "SwapExtraWritableVault",
+      "msg": "a writable vault-owned token account other than the swap source or destination was passed to the route"
     }
   ],
   "types": [

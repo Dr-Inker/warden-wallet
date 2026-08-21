@@ -359,9 +359,11 @@ fn swap_min_out_not_met_rejected() {
 }
 
 #[test]
-fn swap_second_source_debit_rejected() {
-    // misbehave 2 debits a second vault in-mint ATA — an unexpected outflow the
-    // net check catches (conservation sees more in_mint leave than one account).
+fn swap_second_writable_vault_source_rejected() {
+    // WRDF-0065: a SECOND writable vault-owned in-mint account passed to the
+    // route is rejected BEFORE the CPI — no writable vault token account other
+    // than the pinned source/dest may enter the PDA-signed call, so the
+    // round-trip-through-a-second-account class is closed by construction.
     let mut l = live();
     let second = ata(&Pubkey::new_unique(), &in_mint());
     set_token_account(&mut l.svm, &second, &in_mint(), &l.account, 1_000);
@@ -370,8 +372,23 @@ fn swap_second_source_debit_rejected() {
     let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
     let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 2);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
-    // The second debit is the same mint, so net in_mint outflow exceeds max_in.
-    expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_MAX_IN_EXCEEDED);
+    expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_EXTRA_WRITABLE_VAULT);
+}
+
+#[test]
+fn swap_second_writable_vault_out_rejected() {
+    // WRDF-0065/0060: a second writable vault-owned OUT-mint account (the shape
+    // that would let a route offset the declared destination's gain) is likewise
+    // rejected before the CPI.
+    let mut l = live();
+    let second_out = ata(&Pubkey::new_unique(), &out_mint());
+    set_token_account(&mut l.svm, &second_out, &out_mint(), &l.account, 500_000);
+    let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
+    let ra = l.route_accounts(l.treasury_ata, Some(second_out));
+    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
+    expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_EXTRA_WRITABLE_VAULT);
 }
 
 #[test]
@@ -584,28 +601,18 @@ fn swap_native_in_mint_rejected() {
 }
 
 #[test]
-fn swap_min_out_funded_from_another_vault_account_rejected() {
-    // WRDF-0060: a SECOND vault out-mint account is debited while the declared
-    // destination is credited the same amount — the declared dest's LOCAL gain
-    // clears min_out, but the vault's NET out gain is 0. The net-gain check
-    // catches it. Realized here by a route where the pool credit lands in the
-    // declared dest (misbehave 0), and a second vault out ATA that the mock
-    // ALSO debits back into the pool via misbehave 2 — but misbehave 2 debits a
-    // SOURCE, so for the out-mint-offset we instead use a min_out ABOVE the
-    // honest pool credit but fundable by draining a second vault out account.
-    //
-    // The cleanest deterministic construction: the honest pool credit is
-    // `quoted_out`; set min_out = quoted_out + extra where `extra` is only
-    // reachable by also debiting the second vault out account. Since the mock
-    // does not offer that exact branch, this test asserts the NET-gain rule
-    // directly: a min_out greater than the actual net out gain is rejected.
+fn swap_min_out_boundary_rejected() {
+    // min_out one unit above the actual net out gain is rejected (WRDF-0060 net
+    // rule, boundary). The net-OFFSET logic — a second vault out account debited
+    // to fake the declared dest's local gain — is proven two ways: the pure
+    // `swap::tests::net_vault_mint_delta_sums_across_vault_accounts_and_offsets`
+    // unit test, and `swap_second_writable_vault_out_rejected` (WRDF-0065 rejects
+    // the second writable vault out account before the CPI can even run).
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
     let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    // Pool credits 900_000 to the dest; ask for min_out 900_001 (net gain is
-    // one short). The old local-delta check would also fail here, but with the
-    // net-gain rule the failure is on the NET, which is the invariant.
+    // Pool credits 900_000 to the dest; ask for min_out 900_001 (net gain is one short).
     let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_001, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_MIN_OUT_NOT_MET);
@@ -640,7 +647,26 @@ fn swap_lifetime_headroom_checked_before_cpi() {
     let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
     let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
     let (ix, _lg) = swap_ix(kp.pubkey(), l.account, Some(pda), false, None, l.registry, None, &remaining, &args);
-    expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::CAP_EXCEEDED);
+    // WRDF-0067: prove the check is PRE-CPI — the failure must carry CapExceeded
+    // AND the mock must NOT have been invoked (its "Instruction: Route" log is
+    // absent). A post-CPI check would return the same error but only after the
+    // mock ran, so the log presence is what distinguishes the two orderings.
+    match send(&mut l.svm, &[&l.payer, &kp], &[ix]) {
+        Ok(_) => panic!("expected CapExceeded"),
+        Err(e) => {
+            match e.err {
+                TransactionError::InstructionError(0, InstructionError::Custom(c)) => {
+                    assert_eq!(c, err::CAP_EXCEEDED, "logs:\n{:#?}", e.meta.logs);
+                }
+                other => panic!("expected Custom(CapExceeded), got {other:?}"),
+            }
+            assert!(
+                !e.meta.logs.iter().any(|l| l.contains("Instruction: Route")),
+                "the mock ran — the cap check was NOT pre-CPI:\n{:#?}",
+                e.meta.logs
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -657,4 +683,5 @@ mod err {
     pub const SWAP_MIN_OUT_NOT_MET: u32 = 6069;
     pub const SWAP_OUT_MINT_NOT_ALLOWED: u32 = 6070;
     pub const SWAP_NATIVE_UNSUPPORTED: u32 = 6072;
+    pub const SWAP_EXTRA_WRITABLE_VAULT: u32 = 6074;
 }
