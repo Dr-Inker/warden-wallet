@@ -75,16 +75,31 @@ Remaining, in campaign-plan order:
      action-hash vector now validates the exported API, not a hand-roll.
    - **WRDF-0043** — full `./.claude/test-gate.sh` re-run on the fix SHA.
    Round 7 confirmation returned **0 findings at `300face`** — Task 3 is DONE.
-   **Task 4 CODE COMPLETE, review pending** (`d47d8ce`…`b2aa52b`): stage_open/chunk/
-   finalize/close, content-addressed Stage PDA, 21 integration tests incl. the
-   ND-SQD3-LO-01 squat class (closed by construction via creator-bound seeds),
-   MEASURED stage_chunk cap **977 B v0/client** (979 legacy); whole-task sol@max review CONVERGED (5 rounds, WRDF-0045..0049);
-   Task 4 code-complete. WRDF-0050 = owner/counsel release-blocker carried.
-   **NEXT: close Task 4 review, then Task 5** (`execute`),
-   then **5 → 6 → 8 → 9**. Task 5 must wire the
-   native-lamport SOL equation (not the `amount` cache — WRDF-0011) with a
-   real-CPI `SyncNative`+`Transfer` regression, and cover the standalone-mint
-   case through a real CPI. **C1a needs a program change** (`create_account` must
+   **Task 4 DONE — code-complete** (`d47d8ce`…`08a8b56`): stage_open/chunk/
+   finalize/close, content-addressed + creator-bound Stage PDA, 23 integration
+   tests incl. the ND-SQD3-LO-01 squat class (closed by construction), MEASURED
+   stage_chunk cap **977 B v0/client** (979 legacy); whole-task sol@max review
+   CONVERGED (5 rounds, WRDF-0045..0049). WRDF-0050 = owner/counsel
+   release-blocker carried (blocks SHIP, not code).
+   **Task 5 (`execute`) CODE-COMPLETE** (`a7efe93`…`3632deb`, parts 1–5):
+   session/root (XOR) × inline/staged (XOR); fixed deny-list on BOTH paths
+   before the registry; adapter registry on the session path;
+   `conservation::snapshot`+`compare_and_account` around a real `invoke_signed`
+   CPI loop; per-mint caps → `buckets::debit`; stage consume-once (WRD-STAGE-02).
+   `OP_EXECUTE_ACTION=0x07` + TS `encodeExecuteBody`, cross-language-pinned. 320
+   lib + 25 `tests/execute.rs` (real SPL+mutator CPIs) + 109 TS; clippy clean.
+   Two design findings resolved: per-ix duplicate-index reject relaxed
+   (vault-sweep close names the PDA twice); PDA-not-writable moved from the pure
+   parser into `enforce_pda_writable` (handler, post-`deny_scan`) so the rule-4a
+   vault-sweep close can credit the PDA while a writable PDA stays refused
+   elsewhere. Errors 6056/6057.
+   **NEXT for Task 5 → DONE:** (a) whole-task Codex sol@max review to 0 findings
+   (round 1 launched at `3632deb`); (b) the CU/byte **measurement sweep** that
+   replaces the PROVISIONAL caps `MAX_EXECUTE_ACCOUNTS_TOTAL=48`/
+   `MAX_EXECUTE_WRITABLE=40` (see PHASE1B-MEASUREMENTS §"Task 5"). Task-1-owed
+   regressions still to fold in through a real CPI: native-lamport SOL
+   (`SyncNative`+`Transfer`, WRDF-0011) and the standalone-mint case.
+   **Then 6 → 8 → 9.** **C1a needs a program change** (`create_account` must
    compare against a pinned production `rp_id_hash`, not just self-consistency —
    WRDF-0016/0027) plus the owner's freeze-vs-migration decision.
 3. Corrected gating (was C1-only): **V4 waits for C1a + C2a + C3 + C4**; **U7
