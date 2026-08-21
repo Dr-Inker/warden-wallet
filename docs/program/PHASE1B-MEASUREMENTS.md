@@ -1030,3 +1030,27 @@ evidence on the immutable ledger HEAD below.
 `@warden/core` **145 passed (145)** (incl. the round-3 wrap regressions + the
 cross-language coalesced-hash oracle), `ui-tokens` 11/11, and the full Rust
 workspace under `--features test-jup` (0 failed).
+
+## Task 8 review round 4 — Codex sol@max (thread 73e3c5525bca-20260821T175815Z)
+
+Round 4 (`d0d9ede..73e3c55`, seeded=44) raised 2 findings (1 minor, 1 info) — no
+functional findings; both about test/evidence rigor. Fixed at
+`c874dceaa6c4d3ed277e23307c719a780a86cc5f`.
+
+- **WRDF-0081** (minor) — the cross-language fixture tests WROTE both the input
+  logical list and the expected hash from the wrapper's own output, so a wrapper
+  regression could rewrite the golden and still pass (self-certifying). Fixed:
+  `scripts/gen-fixtures.ts` is now the SOLE writer (deterministic, never on
+  import); the tests READ the committed golden and assert wrapForExecute/encode
+  reproduce it byte-for-byte with the logical list + flags INDEPENDENTLY pinned;
+  `.claude/test-gate.sh` runs `git diff --exit-code` over the fixtures dir so a
+  golden can never silently self-update. Deferred (harness change): a full
+  on-chain relayer/alias execute integration — the client subset guard + the
+  independent Rust hash oracle cover privilege parity short of that.
+- **WRDF-0082** (info) — the reviewed HEAD 73e3c55 changed fixtures/tests after
+  the round-3 gate, so it lacked its own gate evidence. Resolved: the round-4 fix
+  is gated on its own immutable HEAD (recorded below) and the git-diff guard
+  proves the fixture-reading tests do not mutate the tree.
+
+WRD-EXEC-11/12 evidence bumped to `c874dce`; WRD-EXEC-11 gains the golden-vector
+read-only test. Gate evidence on the immutable ledger HEAD below.
