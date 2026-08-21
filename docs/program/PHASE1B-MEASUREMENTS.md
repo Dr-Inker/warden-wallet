@@ -487,3 +487,85 @@ ruling in durable release evidence before Task 4 ships. Until then WRDF-0050 is
 outstanding), NOT adopted-as-fixed. Task 4 whole-task review cannot converge to
 "DONE-shippable" on this item by engineering action alone; it converges to
 "code-complete, one owner/counsel gate open."
+
+## Task 5 (execute) — handler, integration suite, and open measurement sweep
+
+**Built (`a7efe93`…`3632deb`, parts 1–5).** The pure payload layer
+(`src/payload.rs`: `parse_payload`, `classify_spl_token_op`, `resolve_payload`,
+`compute_accounts_hash`, `enforce_pda_writable`) plus the handler
+(`src/instructions/execute.rs`): two authorization shapes (session / root, XOR),
+two payload sources (inline / staged, XOR), the fixed deny-list on BOTH paths,
+the adapter registry on the session path, `conservation::snapshot` +
+`compare_and_account` before/after a real `invoke_signed` CPI loop, per-mint caps
+(session `per_tx` + lifetime, root `large_threshold`) all converging on
+`buckets::debit`, and stage consume-once (WRD-STAGE-02) on success.
+
+**Cross-language ceremony binding.** Root `execute` signs
+`action_hash(OP_EXECUTE_ACTION = 0x07, borsh(ExecuteBody{ payload_hash,
+accounts_hash }))`; both hashes are rebuilt on-chain from the bytes and the
+logical account list actually passed. `execute::tests::
+execute_action_hash_matches_pinned_vector` (Rust) and the OP_EXECUTE block in
+`packages/core/test/transcript.test.ts` pin the SAME hex
+(`971cfa43…52d50c77`) across the language boundary; `encodeExecuteBody` is the
+canonical TS encoder.
+
+**Two design findings surfaced and resolved during Task 5:**
+
+1. **The per-inner-instruction duplicate-index reject was too strict.** A real
+   CPI routinely gives one logical account two roles — an SPL `CloseAccount`
+   sweeping a vault ATA names the SmartAccount PDA as BOTH the rent destination
+   and the close authority (idx 0 twice). `parse_payload` no longer rejects a
+   repeated index within one inner instruction; the uniqueness that actually
+   matters is the LOGICAL-LIST pubkey uniqueness, still enforced once in
+   `conservation::compare_and_account`. `payload::tests::
+   duplicate_index_within_one_ix_allowed` pins the new behaviour.
+
+2. **"PDA never writable to a CPI" (spec §5.2 rule 3) genuinely conflicts with
+   the rule-4a vault-sweep close,** which MUST credit the PDA and therefore MUST
+   pass it writable in the close CPI (else the runtime raises
+   `ReadonlyLamportChange`). Resolved by moving the rule out of the pure byte
+   decoder into `payload::enforce_pda_writable`, run by the handler AFTER
+   `deny_scan`: the PDA may appear writable in an inner instruction ONLY when
+   that instruction is a deny-validated SPL/Token-2022 `CloseAccount` (a
+   provably-safe op that credits lamports and removes a zero-balance vault
+   account); everywhere else a writable PDA is refused as the blank cheque it
+   would be. Four unit tests pin the gate; `parse_payload` stays a pure decode.
+
+**PROVISIONAL account caps — measurement sweep OWED.**
+`MAX_EXECUTE_ACCOUNTS_TOTAL = 48` / `MAX_EXECUTE_WRITABLE = 40` are enforced in
+the handler (`TooManyExecuteAccounts` / `TooManyExecuteWritable`, codes
+6056/6057) but remain PROVISIONAL. The spec's CU/byte sweep — writable vault
+token accounts N ∈ {10,20,30,40} with a real inner CPI, a read-only-heavy shape,
+a T22-TLV-tail shape, staged vs inline, with/without an ALT, setting the caps so
+the worst shape stays ≤ 60 % of the requested 600k-CU budget — is **not yet
+run**; it is the remaining Task 5 work before Task 6. The boundary tests are
+deliberately NOT written as LiteSVM integration tests: a transaction carrying
+49+ accounts trips a panic inside this build's compute-budget message sanitizer
+("program id index is sanitized") before the program runs — a harness limit, not
+a program one — so the real boundary values and their on-chain boundary tests
+belong to the sweep. `execute::execute_account_caps_are_provisional_and_ordered`
+holds a sanity floor (`WRITABLE ≤ TOTAL`, both positive) in the meantime.
+
+**Integration coverage (`tests/execute.rs`, 25 tests, real SPL + mutator CPIs).**
+Happy: session SPL transfer within caps, root SPL transfer bounded by
+`large_threshold`, staged execute consumes the stage, inline tx ≤ 1,232 B.
+Session gating: not-in-registry / list-0 / no-`OP_EXECUTE` / over-`per_tx`.
+Structure: both-auth-shapes, both-payload-sources, PDA-writable-in-a-non-close,
+self-CPI, compute-budget-inside. Deny-list on BOTH paths: session + root direct
+`Approve`; the three `CloseAccount` layers kept distinct — direct vault-sweep to
+the PDA ALLOWED (rent returns as a single PDA-lamport inflow), direct close to a
+stranger / with non-zero balance DENIED (`DenyListed`), nested-close-via-mutator
+rejected by CONSERVATION (`ConservationViolated`, not the deny-list). Conservation
+through a real mutator CPI: `set_delegate`, `reenter_warden` (→ `SelfCpiRejected`).
+Prior-art: LazorKit account-reorder-under-captured-assertion → `ChallengeMismatch`.
+Frozen; staged-expired.
+
+**Gate at `3632deb` (2026-08-21):** `./.claude/test-gate.sh` green (all workspace
+suites + all `.so` + IDL parity); `cargo test -p warden --lib` → 320 passed;
+`tests/execute.rs` → 25; full `cargo test --workspace` green; `cargo clippy -p
+warden --lib -- -D clippy::arithmetic_side_effects` clean; `pnpm --filter
+@warden/core test` → 109 passed. Errors extended 6056–6057 (drift table in
+`tests/root_verify.rs` updated to 58 rows).
+
+**Owed before Task 5 is DONE:** the CU/byte measurement sweep (above) and the
+whole-task Codex sol@max review convergence to 0 findings.
