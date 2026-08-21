@@ -1263,3 +1263,9 @@ Round 1 (`183dc32..5300d4f`, seeded=43) raised 5 findings (1 critical, 3 importa
   release-blocker (parallels WRDF-0050). NOT self-cleared.
 
 28-case fixture suite. Gate evidence on the ledger HEAD below.
+
+### Task 11R round-1 gate evidence
+**Gate on the immutable ledger HEAD `283a889677763290976e62c715b55675a572d6c0`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
+**188 passed (188)** (incl. the 28-case deploy-gate suite with the round-1
+hardening), `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
