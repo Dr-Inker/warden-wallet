@@ -82,6 +82,7 @@ struct Live {
     pk: TestPasskey,
     account: Pubkey,
     registry: Pubkey,
+    #[allow(dead_code)]
     treasury_owner: Pubkey,
     vault_in: Pubkey,
     vault_out: Pubkey,
@@ -311,7 +312,7 @@ fn expect_reject(svm: &mut LiteSVM, signers: &[&Keypair], ixs: &[Instruction], i
 // Session path
 // ===========================================================================
 
-fn session_swap_args(l: &Live, variant: u8, in_amount: u64, quoted_out: u64, max_in: u64, min_out: u64, misbehave: u8) -> SwapArgs {
+fn session_swap_args(_l: &Live, variant: u8, in_amount: u64, quoted_out: u64, max_in: u64, min_out: u64, misbehave: u8) -> SwapArgs {
     let data = match variant {
         SWAP_VARIANT_ROUTE => jup::route_data(in_amount, quoted_out, misbehave),
         _ => jup::shared_route_data(in_amount, quoted_out, misbehave),
@@ -457,6 +458,23 @@ fn swap_source_not_vault_rejected() {
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let mut ra = l.route_accounts(l.treasury_ata, None);
     ra.user_source_ata = bad_source;
+    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
+    expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_SOURCE_NOT_VAULT_ATA);
+}
+
+#[test]
+fn swap_noncanonical_vault_source_rejected() {
+    // WRDF-0070: a source that IS vault-owned and of in_mint but is NOT the
+    // canonical ATA (e.g. an escrow/auxiliary account) is rejected. Its owner
+    // and mint fields pass; only the derived-address check catches it.
+    let mut l = live();
+    let noncanonical = Pubkey::new_unique(); // not ata(vault, in_mint)
+    set_token_account(&mut l.svm, &noncanonical, &in_mint(), &l.account, 5_000_000);
+    let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
+    let mut ra = l.route_accounts(l.treasury_ata, None);
+    ra.user_source_ata = noncanonical;
     let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
     let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);

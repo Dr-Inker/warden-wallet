@@ -843,8 +843,9 @@ adopted or deferred:
 - **WRDF-0059 / 0031 / 0052 (deferred):** byte-exact `route_plan` parse owed
   before mainnet (now with a much tighter realized bound via 0065); events → 5E.
 
-**Task 6 gate — command, result, SHA.** At the round-2 fix commit
-(`git rev-parse HEAD` = the SHA of the commit carrying this section):
+**Task 6 gate — command, result, SHA.** At the round-2 fix commit **`b28450d962d5ff9e4332001a0ad74b47b2d4dd0a`** (an
+immutable, already-committed revision — the gate ran on it before this ledger
+entry was written, per WRDF-0069):
 `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → green (builds all four `.so`
 with `--features test-jup`, runs L0 sigverify + `cargo test --workspace
 --features test-jup`): **330 warden lib + 20 `tests/swap.rs` + all integration
@@ -854,3 +855,24 @@ rows. **Production attestation** (no test-jup): `cargo test -p warden --lib
 --no-default-features swap_target_program_is_pinned` passes (asserts
 `SWAP_TARGET_PROGRAM == JUPITER_V6_ID`), and CI additionally rebuilds a clean
 production `warden.so` into `target/deploy-release/` and publishes only that.
+
+### Task 6 swap review round 3 (Codex sol@max, 5 findings)
+
+3 standing deferrals (0031/0052/0059) + 2 adopted:
+
+- **WRDF-0070 (adopted):** source/dest/fee were validated by owner+mint only, so
+  a session could substitute any vault-owned (or treasury-owned) non-ATA account
+  into the signer-bearing call. Now each must equal the CANONICAL associated-
+  token address derived from `(owner, its actual token program, mint)`
+  (`canonical_ata`), matching spec §5.2.7. Negative:
+  `swap_noncanonical_vault_source_rejected`.
+- **WRDF-0069 (adopted):** the gate SHA is now the literal immutable
+  `b28450d962d5…`, not a circular self-reference.
+
+**Convergence read after 3 rounds:** the only recurring findings are the three
+adjudicated-`deferred` items (byte-exact `route_plan` parse pre-mainnet →
+WRDF-0031/0059; events → Task 5E/WRDF-0052). New-finding severity fell each
+round (round 1: 1 critical + 6; round 2: 5 real; round 3: 1 account-role
+tightening + 1 doc). The realized fund-loss bound is now stacked four deep:
+route_hash (root) + treasury-fee-taken + writable-vault pinning + canonical-ATA
+pinning, all on top of net conservation and the per-mint caps.

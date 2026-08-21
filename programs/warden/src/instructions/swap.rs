@@ -48,7 +48,7 @@ use anchor_lang::AccountsClose;
 
 use crate::buckets::{self, find_cap};
 use crate::constants::{
-    ACCOUNT_SEED, ALLOWED_OUT_MINTS_DEFAULT, JUP_ROUTE_DISC, JUP_SHARED_ROUTE_DISC,
+    ACCOUNT_SEED, ALLOWED_OUT_MINTS_DEFAULT, ATA_PROGRAM_ID, JUP_ROUTE_DISC, JUP_SHARED_ROUTE_DISC,
     MAX_EXECUTE_ACCOUNTS_TOTAL, MAX_EXECUTE_WRITABLE, NATIVE_MINT, NATIVE_MINT_2022,
     SWAP_PLATFORM_FEE_BPS, SWAP_TARGET_PROGRAM, STAGE_SEED,
 };
@@ -331,22 +331,44 @@ pub(crate) fn handler<'info>(
     let before = conservation::snapshot(remaining, &account_key)?;
     let pda_lamports_before = sa_info.lamports();
 
-    // Source: a vault-owned token account of in_mint.
+    // Source: the CANONICAL vault ATA of in_mint (WRDF-0070). Owner==PDA +
+    // mint alone would accept any vault-owned in_mint account (an escrow /
+    // auxiliary account); the caller declared "the vault ATA of in_mint", so
+    // require exactly the associated-token address derived from the vault, the
+    // mint, and this account's actual token program.
     let src = vault_token(&before, source_idx, &account_key)?;
     require_keys_eq!(src.mint, args.in_mint, WardenError::SwapSourceNotVaultAta);
     let src_before_amount = src.amount;
     let src_key = *account_at(source_idx)?.key;
-    // Destination: a vault-owned token account of out_mint.
+    let src_snap = before.get(source_idx).ok_or(WardenError::SwapSourceNotVaultAta)?;
+    require_keys_eq!(
+        src_key,
+        canonical_ata(&account_key, &src_snap.owner_program, &args.in_mint),
+        WardenError::SwapSourceNotVaultAta
+    );
+    // Destination: the CANONICAL vault ATA of out_mint.
     let dst = vault_token(&before, dest_idx, &account_key)?;
     require_keys_eq!(dst.mint, args.out_mint, WardenError::SwapDestNotVaultAta);
     let dst_before_amount = dst.amount;
     let dst_key = *account_at(dest_idx)?.key;
-    // Platform fee: a token account owned by the treasury, of in_mint or out_mint.
+    let dst_snap = before.get(dest_idx).ok_or(WardenError::SwapDestNotVaultAta)?;
+    require_keys_eq!(
+        dst_key,
+        canonical_ata(&account_key, &dst_snap.owner_program, &args.out_mint),
+        WardenError::SwapDestNotVaultAta
+    );
+    // Platform fee: the CANONICAL treasury ATA of in_mint or out_mint.
     let fee = before.get(fee_idx).ok_or(WardenError::SwapFeeAccountNotTreasury)?;
     let fee_tok = fee.token.as_ref().ok_or(WardenError::SwapFeeAccountNotTreasury)?;
     require_keys_eq!(fee_tok.owner, treasury, WardenError::SwapFeeAccountNotTreasury);
     require!(
         fee_tok.mint == args.in_mint || fee_tok.mint == args.out_mint,
+        WardenError::SwapFeeAccountNotTreasury
+    );
+    let fee_mint = fee_tok.mint;
+    require_keys_eq!(
+        *account_at(fee_idx)?.key,
+        canonical_ata(&treasury, &fee.owner_program, &fee_mint),
         WardenError::SwapFeeAccountNotTreasury
     );
     // WRDF-0059: the decoded `platform_fee_bps` is suffix-attackable, so the
@@ -490,6 +512,19 @@ fn vault_token<'a>(before: &'a [Snap], idx: usize, vault: &Pubkey) -> Result<&'a
 /// Find a token account by key in a snapshot slice.
 fn find_token<'a>(snaps: &'a [Snap], key: &Pubkey) -> Option<&'a TokenSnap> {
     snaps.iter().find(|s| s.key == *key).and_then(|s| s.token.as_ref())
+}
+
+/// The canonical Associated Token Account address for `(owner, token_program,
+/// mint)` (WRDF-0070). `find_program_address` over the ATA program's fixed
+/// seeds `[owner, token_program, mint]`. `token_program` is the account's actual
+/// runtime owner (SPL Token or Token-2022), so a T22 ATA derives under the T22
+/// program id, matching what the account really is.
+fn canonical_ata(owner: &Pubkey, token_program: &Pubkey, mint: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[owner.as_ref(), token_program.as_ref(), mint.as_ref()],
+        &ATA_PROGRAM_ID,
+    )
+    .0
 }
 
 /// Signed NET amount delta of `mint` across EVERY vault-owned token account of
