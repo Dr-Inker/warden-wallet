@@ -429,3 +429,29 @@ WRDF-0048 (info): the full gate is re-run on the final merged SHA below.
 
 **Whole-task review not yet converged** — round 1 raised findings, so Task 4 is
 not DONE until a subsequent review returns 0.
+
+### Task 4 final gate — command, result, SHA (WRDF-0048)
+
+Recorded from an executable run, not prose. At merged SHA
+**`fce5c12`** (round-2 fixes WRDF-0047/0049/0050 applied):
+
+```
+$ ./.claude/test-gate.sh
+# exit 0 — all pnpm workspaces + every .so:
+#   warden --lib            283 passed
+#   tests/stage.rs           23 passed   (incl. legacy-979 / v0-977 cap pins)
+#   tests/sessions.rs        45 passed
+#   tests/transfer.rs        35 passed
+#   registry/freeze/create/create_pop/root_verify/sigverify/smoke  all ok
+#   @warden/core (TS)       104 passed   (security-ledger 40/40)
+$ cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects
+# clean (exit 0)
+```
+
+Round-2 review adopted WRDF-0047 (v0 cap 977), WRDF-0049 (governing plan seed +
+squat prescription updated), WRDF-0050 (generic per-owner-PDA framing + counsel
+provenance note), WRDF-0048 (this artifact). **Whole-task review still not
+converged** — round 2 raised findings, so Task 4 stays under review until a
+subsequent round returns 0. Owner/counsel item: confirm the non-MIT prior-art
+provenance stance recorded in `state::stage` (the per-owner PDA seed is generic
+Solana practice; no Squads code is reused).
