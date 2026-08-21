@@ -1175,3 +1175,11 @@ been clean since round 3). Fixed at `b8885ca942e90aaaa1c10cfd985432f17c1cd803`.
   added for a missing fix and a missing gate commit under a full-clone probe.
 
 Gate evidence on the ledger HEAD below.
+
+### Round-8 gate evidence
+
+**Gate on the immutable ledger HEAD `d73118f12568ba1b449a16e28d529cf62b9e300b`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, **all green** — `@warden/core`
+**160 passed (160)** (incl. the fail-closed absent-commit provenance cases),
+`ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed), fixture
+guard. Round-8 rows' `remediation_gate_sha` is this HEAD.
