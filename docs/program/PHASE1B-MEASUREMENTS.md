@@ -1237,3 +1237,29 @@ re-derivation vs the on-chain Registry) is a SEPARATE deliverable (scope boundar
 WRDF-0018) — the Registry now exists (Task 3) but the diff tool is not wired here.
 Byte-exact `solana-verify` parity on a live cluster is the honest residual until a
 release candidate. **Task 11 → DONE only when WRD-DEP-02 also lands.**
+
+## Task 11R review round 1 — Codex sol@max (thread 5300d4f230f5-20260821T203842Z)
+
+Round 1 (`183dc32..5300d4f`, seeded=43) raised 5 findings (1 critical, 3 important,
+1 minor). Fixed/adjudicated at `d141d6f`.
+
+- **WRDF-0085** (CRITICAL) — live mode authenticated neither its pin nor its
+  cluster. Fixed: `assertPinSpecFloors` refuses a weakened pin before any RPC; the
+  gate binds the cluster genesis hash to mainnet-beta; the CLI cross-checks the
+  shell's positional program-id/multisig against the pin.
+- **WRDF-0086** (important) — fixtures used the production `deriveVaultPda` +
+  discriminator as their own oracle. Fixed: independent hard-coded golden vectors,
+  executable-Program-account requirement, wrong-vault-index negative, and a
+  `deriveVaultPda == golden` lock.
+- **WRDF-0087** (important) — `transaction_index == 0` made the gate unusable on
+  any real multisig. Fixed: permit terminal history, flag only an inconsistent
+  stale boundary; per-proposal actionable-stale enforcement trust-rooted at the
+  pinned Squads code hash, live-chain proposal sweep as the documented residual.
+- **WRDF-0088** (minor) — gate provenance. WRD-DEP-01 evidence refreshed to
+  `d141d6f`; gate command + immutable SHA recorded (below).
+- **WRDF-0089** (important, licensing) — the Squads v4 wire-format reader is
+  **carried UNRESOLVED for owner/counsel** (AGPL-3.0 / reference-only), documented
+  as a clean-room interoperability reader in `accounts.ts` + a THIRD_PARTY_NOTICES
+  release-blocker (parallels WRDF-0050). NOT self-cleared.
+
+28-case fixture suite. Gate evidence on the ledger HEAD below.
