@@ -1054,3 +1054,11 @@ functional findings; both about test/evidence rigor. Fixed at
 
 WRD-EXEC-11/12 evidence bumped to `c874dce`; WRD-EXEC-11 gains the golden-vector
 read-only test. Gate evidence on the immutable ledger HEAD below.
+
+### Round-4 gate evidence
+
+**Gate re-run on the immutable ledger HEAD `1dd625f99bcb44b41d7ccc9c3ccb544871df585d`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, **all suites green** —
+`@warden/core` **146 passed (146)**, `ui-tokens` 11/11, the full Rust workspace
+under `--features test-jup` (0 failed), AND the new fixture-drift `git diff`
+guard passed (the read-only golden-vector tests did not mutate the tree).
