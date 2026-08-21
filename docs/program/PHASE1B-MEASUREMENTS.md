@@ -1128,3 +1128,25 @@ WRD-EXEC-11 evidence refreshed to `5b59dcd`. Gate evidence on the ledger HEAD be
 tests, the injectable-sink regression, and the remediation-provenance guard),
 `ui-tokens` 11/11, the full Rust workspace under `--features test-jup` (0 failed),
 and the fixture-drift guard. The round-6 rows' `remediation_gate_sha` is this HEAD.
+
+## Task 8 review round 7 — Codex sol@max (thread fc137bc9661d-20260821T191358Z)
+
+Round 7 (`e781fea..fc137bc`, seeded=43) raised 2 findings — again ALL
+review-harness machinery (the wrap.ts SDK code has had no functional finding since
+round 4). Fixed at `679b4ec7a2633e63c8df5ef56aa77ced7e673f39`.
+
+- **WRDF-0084** (important, CI-liveness) — the round-5/6 provenance guard called
+  `git cat-file` on historical SHAs unconditionally, so a depth-one CI checkout
+  (`actions/checkout@v4` without `fetch-depth`) has HEAD but not the historical
+  fix/gate commits and the core Vitest lane fails before product code. Fixed:
+  `fetch-depth: 0` on both CI checkouts (making the history-dependent ledger checks
+  load-bearing in CI) + a shallow-aware injected `GitProbe` mirroring
+  `security-ledger.test.ts` (skip absent objects in a shallow clone, fail-closed
+  in a full clone).
+- **WRDF-0083** (minor, re-open) — the guard never proved the gate CONTAINS the
+  fix, so a pre-fix gate would pass. Extracted `validateScorecardProvenance(row,
+  git)` now requires fix ancestor-or-equal of gate, gate reachable from the
+  reviewed HEAD, and a trimmed non-blank command; added negative tests
+  (gate-before-fix, unreachable gate, blank command, null SHA, dual-claim).
+
+Gate evidence on the ledger HEAD below.
