@@ -85,8 +85,8 @@ use crate::conservation::{self, compare_and_account, CloseIntent, Snap};
 use crate::errors::WardenError;
 use crate::instructions::transfer::authorize_session;
 use crate::payload::{
-    compute_accounts_hash, parse_payload, resolve_payload, LogicalAccount, LogicalMeta,
-    ResolvedInner, SplTokenOp,
+    compute_accounts_hash, enforce_pda_writable, parse_payload, resolve_payload, LogicalAccount,
+    LogicalMeta, ResolvedInner, SplTokenOp,
 };
 use crate::registry::{registry_allows, AccountMetaLike};
 use crate::root_verify::transcript::{action_hash, OP_EXECUTE_ACTION};
@@ -347,6 +347,11 @@ pub(crate) fn handler<'info>(
     // ---- the fixed deny-list (spec §5.2 rule 1a) — BOTH paths, before any
     // registry lookup and before any CPI runs -------------------------------
     let close_intents = deny_scan(&resolved, &before, &account_key)?;
+
+    // The SmartAccount PDA may be writable to a CPI only as an account of a
+    // deny-validated vault-sweep CloseAccount (spec §5.2 rule 3 + rule 4a). Run
+    // AFTER deny_scan, so "the ix is such a close" is a proven licence.
+    enforce_pda_writable(&resolved, &account_key)?;
 
     // ---- the adapter registry (session path only) -------------------------
     if args.root.is_none() && !resolved.is_empty() {

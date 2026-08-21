@@ -32,10 +32,15 @@
 //! rules therefore live here, because they are pure functions of `(idx,
 //! flags)`:
 //!
-//! - **The SmartAccount PDA (`idx 0`) may never be passed writable to a CPI.**
-//!   A writable PDA handed to an arbitrary program is a blank cheque; the vault
-//!   is moved only by the instructions warden itself constructs, never by a
-//!   dApp CPI. `flags` bit 1 on `idx 0` ⇒ reject.
+//! - **The SmartAccount PDA (`idx 0`) may be passed writable to a CPI in
+//!   exactly one case: as an account of a deny-list-validated vault-sweep
+//!   `CloseAccount`** (the rent destination). Everywhere else a writable PDA
+//!   handed to an arbitrary program is a blank cheque — the vault is moved only
+//!   by the instructions warden itself constructs. This is NOT a pure structural
+//!   rule (whether an ix is a validated close needs the accounts and the
+//!   deny-list), so it is enforced by [`enforce_pda_writable`] in the handler
+//!   AFTER `deny_scan`, not by `parse_payload`. The spec's "PDA never writable"
+//!   (§5.2 rule 3) is this, with its one §5.2-rule-4a sweep exception spelled out.
 //! - **A signer flag is honoured only on `idx 0` and `idx 1`.** `idx 0` is the
 //!   PDA, signed by `invoke_signed`; `idx 1` is the session/root signer. Any
 //!   other `idx` carrying the signer bit ⇒ reject — a payload cannot conjure a
@@ -130,22 +135,26 @@ pub fn parse_payload(bytes: &[u8]) -> Result<ExecutePayload> {
             let flags = c.u8()?;
             // Unknown flag bits are never silently honoured or dropped.
             require!(flags & !FLAG_KNOWN == 0, WardenError::PayloadInvalid);
-            // The SmartAccount PDA may never be writable to a CPI.
-            require!(
-                !(idx == LOGICAL_SMART_ACCOUNT && flags & FLAG_WRITABLE != 0),
-                WardenError::PayloadInvalid
-            );
+            // The SmartAccount PDA (idx 0) writable to a CPI is refused
+            // EVERYWHERE except a deny-validated vault-sweep CloseAccount — but
+            // that exception needs the accounts and the deny-list, so it lives in
+            // `enforce_pda_writable` (handler), not here. `parse_payload` stays a
+            // pure byte decode. See the module docs.
             // A signer flag is honoured only on the PDA (0) and the signer (1).
             require!(
                 !(flags & FLAG_SIGNER != 0 && idx != LOGICAL_SMART_ACCOUNT && idx != LOGICAL_SIGNER),
                 WardenError::PayloadInvalid
             );
-            // A duplicate account index within one inner instruction shifts
-            // every later reference and is refused up front.
-            require!(
-                !accounts.iter().any(|(prev, _)| *prev == idx),
-                WardenError::PayloadInvalid
-            );
+            // A logical account MAY be referenced more than once within one
+            // inner instruction: real CPIs routinely give one account two roles
+            // — an SPL `CloseAccount` sweeping a vault ATA names the SmartAccount
+            // PDA as BOTH the rent destination and the close authority, and many
+            // DeFi instructions repeat a token/authority account across slots.
+            // Duplicate references are benign here: each names an index into the
+            // logical list, whose UNIQUENESS is what actually matters, and that
+            // is enforced once, globally, in `conservation::compare_and_account`
+            // (a duplicate *pubkey* in the snapshot list is rejected). The
+            // signer/writable/PDA rules above still apply to every occurrence.
             accounts.push((idx, flags));
         }
         let data_len = c.u16_le()?;
@@ -274,6 +283,33 @@ pub fn resolve_payload(
     Ok(resolved)
 }
 
+/// The SmartAccount PDA (`vault`) may be writable to a CPI in exactly one
+/// case: as an account of a vault-sweep `CloseAccount` that [`deny_scan`
+/// upstream] has already validated (spec §5.2 rule 3 + its rule-4a exception).
+/// Everywhere else a writable PDA is a blank cheque and is refused.
+///
+/// **Call ONLY after `deny_scan` has run and returned `Ok`** — that guarantees
+/// every SPL / Token-2022 `CloseAccount` still present is a proven vault-sweep
+/// (`amount_before == 0`, destination = the PDA, direct, non-Mint non-PDA
+/// target), so "the ix is such a close" is a sufficient licence for the PDA to
+/// appear writable in it. A `CloseAccount` credits only lamports to the PDA and
+/// removes a zero-balance vault account — it is not the blank cheque an
+/// arbitrary writable-PDA CPI would be.
+pub fn enforce_pda_writable(resolved: &[ResolvedInner], vault: &Pubkey) -> Result<()> {
+    use crate::constants::{SPL_TOKEN_2022_ID, SPL_TOKEN_ID};
+    for r in resolved {
+        let is_validated_close = (r.program == SPL_TOKEN_ID || r.program == SPL_TOKEN_2022_ID)
+            && classify_spl_token_op(&r.data) == SplTokenOp::CloseAccount;
+        if is_validated_close {
+            continue;
+        }
+        for a in &r.accounts {
+            require!(!(a.key == *vault && a.is_writable), WardenError::PayloadInvalid);
+        }
+    }
+    Ok(())
+}
+
 /// `Keccak256` over the logical account list in logical order — for each entry,
 /// `pubkey ‖ (is_signer as u8) ‖ (is_writable as u8)` (spec §5.2 / §4.3). The
 /// root ceremony binds this via `ExecuteBody`/`SwapBody`, so a bearer assertion
@@ -357,15 +393,82 @@ mod tests {
     }
 
     #[test]
-    fn writable_smart_account_rejected() {
+    fn writable_smart_account_parses_but_is_gated_by_enforce_pda_writable() {
+        // `parse_payload` is a pure byte decode and no longer rejects a writable
+        // idx 0 — the PDA-writable rule needs the accounts + deny-list, so it
+        // lives in `enforce_pda_writable`. See its own tests below.
         let bytes = encode(&[(2, &[(LOGICAL_SMART_ACCOUNT, FLAG_WRITABLE)], &[])]);
-        assert_eq!(parse_payload(&bytes).unwrap_err(), err(WardenError::PayloadInvalid));
+        assert!(parse_payload(&bytes).is_ok());
+        let bytes = encode(&[(2, &[(LOGICAL_SMART_ACCOUNT, FLAG_SIGNER | FLAG_WRITABLE)], &[])]);
+        assert!(parse_payload(&bytes).is_ok());
+    }
+
+    // -- enforce_pda_writable ------------------------------------------------
+
+    fn resolved_ix(program: Pubkey, accounts: Vec<LogicalAccount>, data: Vec<u8>) -> ResolvedInner {
+        ResolvedInner { program, accounts, data }
     }
 
     #[test]
-    fn writable_smart_account_with_signer_also_rejected() {
-        let bytes = encode(&[(2, &[(LOGICAL_SMART_ACCOUNT, FLAG_SIGNER | FLAG_WRITABLE)], &[])]);
-        assert_eq!(parse_payload(&bytes).unwrap_err(), err(WardenError::PayloadInvalid));
+    fn enforce_rejects_writable_pda_in_a_non_close_ix() {
+        let vault = Pubkey::new_unique();
+        let ix = resolved_ix(
+            Pubkey::new_unique(),
+            vec![LogicalAccount { key: vault, is_signer: false, is_writable: true }],
+            vec![],
+        );
+        assert_eq!(
+            enforce_pda_writable(&[ix], &vault).unwrap_err(),
+            err(WardenError::PayloadInvalid)
+        );
+    }
+
+    #[test]
+    fn enforce_rejects_writable_pda_in_an_spl_transfer() {
+        // An SPL op that is NOT a close (Transfer, tag 3) may not carry a
+        // writable PDA either — only a CloseAccount earns the exception.
+        let vault = Pubkey::new_unique();
+        let ix = resolved_ix(
+            crate::constants::SPL_TOKEN_ID,
+            vec![LogicalAccount { key: vault, is_signer: false, is_writable: true }],
+            vec![3, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        assert_eq!(
+            enforce_pda_writable(&[ix], &vault).unwrap_err(),
+            err(WardenError::PayloadInvalid)
+        );
+    }
+
+    #[test]
+    fn enforce_allows_writable_pda_as_a_close_destination() {
+        // A CloseAccount (tag 9) may name the PDA writable (the rent
+        // destination). `deny_scan` — which runs first — has already proven the
+        // vault-sweep conditions by the time this is called.
+        let vault = Pubkey::new_unique();
+        let target = Pubkey::new_unique();
+        let ix = resolved_ix(
+            crate::constants::SPL_TOKEN_ID,
+            vec![
+                LogicalAccount { key: target, is_signer: false, is_writable: true },
+                LogicalAccount { key: vault, is_signer: false, is_writable: true }, // dest
+                LogicalAccount { key: vault, is_signer: true, is_writable: false },  // authority
+            ],
+            vec![9],
+        );
+        assert!(enforce_pda_writable(&[ix], &vault).is_ok());
+    }
+
+    #[test]
+    fn enforce_ignores_a_readonly_pda_reference() {
+        // The PDA as a read-only account (e.g. the authority slot) is always
+        // fine, in any ix.
+        let vault = Pubkey::new_unique();
+        let ix = resolved_ix(
+            Pubkey::new_unique(),
+            vec![LogicalAccount { key: vault, is_signer: true, is_writable: false }],
+            vec![],
+        );
+        assert!(enforce_pda_writable(&[ix], &vault).is_ok());
     }
 
     #[test]
@@ -383,14 +486,18 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_index_within_one_ix_rejected() {
-        let bytes = encode(&[(9, &[(3, 0), (3, FLAG_WRITABLE)], &[])]);
-        assert_eq!(parse_payload(&bytes).unwrap_err(), err(WardenError::PayloadInvalid));
+    fn duplicate_index_within_one_ix_allowed() {
+        // A logical account may play two roles in one CPI — e.g. an SPL
+        // `CloseAccount` naming the PDA as both rent destination and authority.
+        // Duplicate references are benign; logical-list uniqueness is enforced
+        // in `conservation`, not here.
+        let bytes = encode(&[(9, &[(0, 0), (0, FLAG_SIGNER)], &[])]);
+        let p = parse_payload(&bytes).unwrap();
+        assert_eq!(p.ixs[0].accounts, vec![(0, 0), (0, FLAG_SIGNER)]);
     }
 
     #[test]
     fn same_index_across_different_ixs_allowed() {
-        // The duplicate rule is per-inner-instruction, not global.
         let bytes = encode(&[(9, &[(3, 0)], &[]), (9, &[(3, FLAG_WRITABLE)], &[])]);
         assert!(parse_payload(&bytes).is_ok());
     }
