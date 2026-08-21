@@ -270,9 +270,35 @@ pub(crate) fn handler<'info>(
         .map(|ai| LogicalMeta { key: *ai.key, executable: ai.executable })
         .collect();
 
+    // WRD-EXEC-06 (WRDF-0053): the WHOLE logical list must be duplicate-free —
+    // named accounts included, not only remaining-vs-remaining. An alias of the
+    // PDA or the signer inside `remaining_accounts` would create two logical
+    // indices, and two privilege roles, for one runtime account; positional
+    // registry / adapter role checks would then read the wrong slot. The
+    // accounts_hash binds whatever list is passed (so this is not a
+    // captured-signature reorder), but the invariant requires the duplicate be
+    // refused outright — before hashing, authorization, snapshot, or any CPI.
+    for (i, a) in logical_meta.iter().enumerate() {
+        for b in logical_meta.iter().skip(i.saturating_add(1)) {
+            require!(a.key != b.key, WardenError::DuplicateLogicalAccount);
+        }
+    }
+
     // ---- structure: parse + resolve (payload rules 1–3 of the module docs) -
     let parsed = parse_payload(&payload_bytes)?;
     let resolved = resolve_payload(&parsed, &logical_meta, program_id)?;
+
+    // WRD-EXEC-10 (WRDF-0051): Jupiter is fail-closed in generic `execute` on
+    // BOTH paths. Its safety in 1B comes from `swap`'s adapter preflight — the
+    // `max_in` decoded from the instruction's OWN data (never inferred from
+    // balances) plus a pinned source/destination ATA and quote-sanity (spec
+    // §5.2.7) — none of which generic `execute` performs. Conservation bounds
+    // only the NET per-mint delta, which cannot observe a same-CPI gross
+    // out-and-back (SWIG-GROSS-OUTFLOW; conservation module docs). The default
+    // registry lists Jupiter, so without this a registry-authorized session
+    // could route it through the weaker path; route it exclusively through
+    // `swap` (Task 6) instead.
+    reject_jupiter(&resolved)?;
 
     // ---- authorize --------------------------------------------------------
     let mut session_list_id: u16 = 0;
@@ -516,6 +542,20 @@ pub(crate) fn handler<'info>(
     Ok(())
 }
 
+/// Fail closed for Jupiter v6 in generic `execute` (WRDF-0051, spec §5.2.7).
+/// Jupiter's 1B safety is `swap`'s adapter preflight (`max_in` from the
+/// instruction's own data + pinned source/dest ATA + quote sanity); generic
+/// `execute` performs none of it and conservation bounds only the net per-mint
+/// delta. Both authorization paths are covered — a root ceremony may target any
+/// OTHER program, but Jupiter's proper home is `swap` for root and session alike.
+fn reject_jupiter(resolved: &[ResolvedInner]) -> Result<()> {
+    use crate::constants::JUPITER_V6_ID;
+    for r in resolved {
+        require!(r.program != JUPITER_V6_ID, WardenError::JupiterViaSwapOnly);
+    }
+    Ok(())
+}
+
 /// The fixed deny-list (spec §5.2 rule 1a), applied to every inner instruction
 /// whose resolved program is SPL Token or Token-2022, on BOTH paths, before
 /// dispatch and before any registry lookup.
@@ -623,6 +663,18 @@ mod tests {
             hex::encode(action_hash(OP_EXECUTE_ACTION, &buf)),
             "971cfa437b2d03ae9063c9117d4c7ef61539d7a485d9ed1b991aab6e52d50c77"
         );
+    }
+
+    #[test]
+    fn reject_jupiter_fires_on_the_v6_program_and_passes_others() {
+        use crate::constants::JUPITER_V6_ID;
+        let jup = ResolvedInner { program: JUPITER_V6_ID, accounts: vec![], data: vec![] };
+        assert_eq!(
+            reject_jupiter(&[jup]).unwrap_err(),
+            err(WardenError::JupiterViaSwapOnly)
+        );
+        let other = ResolvedInner { program: Pubkey::new_unique(), accounts: vec![], data: vec![] };
+        assert!(reject_jupiter(&[other]).is_ok());
     }
 
     // -- deny_scan (pure) ---------------------------------------------------

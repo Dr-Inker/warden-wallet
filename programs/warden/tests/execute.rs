@@ -718,14 +718,16 @@ fn direct_close_to_stranger_rejected() {
 #[test]
 fn direct_close_nonzero_amount_rejected() {
     let (mut svm, payer, _pk, account, registry, _mut, vault_ata) = live();
-    // vault_ata holds VAULT_TOKENS > 0.
+    // vault_ata holds VAULT_TOKENS > 0. Destination is the PDA via idx 0 (the
+    // vault-sweep shape) so the ONLY thing wrong is the non-zero balance —
+    // `DenyListed`, not a duplicate-account or destination error.
     let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
     let remaining = vec![
-        AccountMeta::new(vault_ata, false),
-        AccountMeta::new(account, false),
-        AccountMeta::new_readonly(SPL_TOKEN_ID, false),
+        AccountMeta::new(vault_ata, false),             // logical 2 = target
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false), // logical 3 = program
     ];
-    let payload = encode_payload(&[(4, &[(2, FLAG_WRITABLE), (3, FLAG_WRITABLE), (0, FLAG_SIGNER)], &[9u8])]);
+    // SPL close [account=2, destination=0 (PDA), authority=0].
+    let payload = encode_payload(&[(3, &[(2, FLAG_WRITABLE), (0, FLAG_WRITABLE), (0, FLAG_SIGNER)], &[9u8])]);
     let args = ExecuteArgs { root: None, payload: Some(payload) };
     let (ix, _l) =
         execute_ix(session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args);
@@ -922,6 +924,62 @@ fn staged_execute_expired_rejected() {
     expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::STAGE_EXPIRED);
 }
 
+// ===========================================================================
+// Round-1 review fixes: logical-list uniqueness (WRDF-0053) + Jupiter fail-close
+// (WRDF-0051)
+// ===========================================================================
+
+#[test]
+fn execute_signer_aliased_in_remaining_rejected() {
+    // The session signer key appears AGAIN as a remaining account → two logical
+    // indices for one runtime account. Rejected before hashing/auth/CPI.
+    let (mut svm, payer, _pk, account, registry, _mut, _vault_ata) = live();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let remaining = vec![AccountMeta::new_readonly(session_kp.pubkey(), false)];
+    let args = ExecuteArgs { root: None, payload: Some(encode_payload(&[])) };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::DUPLICATE_LOGICAL_ACCOUNT);
+}
+
+#[test]
+fn execute_pda_aliased_in_remaining_rejected() {
+    // The SmartAccount PDA (logical 0) appears AGAIN, read-only, in remaining —
+    // an alias resolve/enforce_pda_writable would NOT catch (it is not writable
+    // and not the warden program). The whole-list uniqueness check does.
+    let (mut svm, payer, _pk, account, registry, _mut, _vault_ata) = live();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let remaining = vec![AccountMeta::new_readonly(account, false)];
+    let args = ExecuteArgs { root: None, payload: Some(encode_payload(&[])) };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::DUPLICATE_LOGICAL_ACCOUNT);
+}
+
+#[test]
+fn session_jupiter_via_generic_execute_rejected() {
+    // Jupiter is fail-closed in generic execute (WRDF-0051): even though the
+    // production registry (list 1) lists its route selector, the handler rejects
+    // the Jupiter v6 program id up front so it can only be reached via `swap`.
+    let (mut svm, payer, _pk, account, registry, _mut, _vault_ata) = live();
+    // Plant an executable at the REAL Jupiter v6 id so resolve passes and the
+    // fail-close (not a "not executable" reject) is what fires.
+    let jup_so = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../target/deploy/test_jup_mock.so"
+    ))
+    .expect("run anchor build first");
+    svm.add_program(warden::constants::JUPITER_V6_ID, &jup_so).expect("plant jupiter");
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let remaining = vec![AccountMeta::new_readonly(warden::constants::JUPITER_V6_ID, false)];
+    // program_idx 2 = Jupiter; data = its route sighash (enough to resolve).
+    let payload = encode_payload(&[(2, &[], &warden::registry_default::sighash("route"))]);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::JUPITER_VIA_SWAP_ONLY);
+}
+
 // ---------------------------------------------------------------------------
 // Freeze + stage helpers
 // ---------------------------------------------------------------------------
@@ -1032,4 +1090,6 @@ mod err {
     pub const COMPUTE_BUDGET_IN_EXECUTE: u32 = 6049;
     pub const DENY_LISTED: u32 = 6050;
     pub const TOO_MANY_EXECUTE_ACCOUNTS: u32 = 6056;
+    pub const JUPITER_VIA_SWAP_ONLY: u32 = 6058;
+    pub const DUPLICATE_LOGICAL_ACCOUNT: u32 = 6059;
 }

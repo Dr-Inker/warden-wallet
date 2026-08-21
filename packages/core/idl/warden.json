@@ -1322,6 +1322,16 @@
       "code": 6057,
       "name": "TooManyExecuteWritable",
       "msg": "execute was passed more writable remaining accounts than MAX_EXECUTE_WRITABLE"
+    },
+    {
+      "code": 6058,
+      "name": "JupiterViaSwapOnly",
+      "msg": "Jupiter must be routed through swap (adapter-decoded max_in + quote sanity), not generic execute"
+    },
+    {
+      "code": 6059,
+      "name": "DuplicateLogicalAccount",
+      "msg": "a pubkey appears more than once in the logical account list"
     }
   ],
   "types": [

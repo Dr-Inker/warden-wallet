@@ -127,9 +127,11 @@ mod err {
     pub const REGISTRY_UNAUTHORIZED: u32 = 6053;
     pub const REGISTRY_ALREADY_INITIALIZED: u32 = 6054;
     pub const INVALID_ALLOWLIST_ID: u32 = 6055;
-    // Task 5 (execute), appended 6056..=6057.
+    // Task 5 (execute), appended 6056..=6059.
     pub const TOO_MANY_EXECUTE_ACCOUNTS: u32 = 6056;
     pub const TOO_MANY_EXECUTE_WRITABLE: u32 = 6057;
+    pub const JUPITER_VIA_SWAP_ONLY: u32 = 6058;
+    pub const DUPLICATE_LOGICAL_ACCOUNT: u32 = 6059;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -138,7 +140,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 58] = [
+    let pairs: [(u32, WardenError, &str); 60] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -240,6 +242,12 @@ fn pinned_error_codes_match_the_enum_today() {
             err::TOO_MANY_EXECUTE_WRITABLE,
             WardenError::TooManyExecuteWritable,
             "TooManyExecuteWritable",
+        ),
+        (err::JUPITER_VIA_SWAP_ONLY, WardenError::JupiterViaSwapOnly, "JupiterViaSwapOnly"),
+        (
+            err::DUPLICATE_LOGICAL_ACCOUNT,
+            WardenError::DuplicateLogicalAccount,
+            "DuplicateLogicalAccount",
         ),
     ];
     for (pinned, variant, name) in pairs {

@@ -158,4 +158,8 @@ pub enum WardenError {
     TooManyExecuteAccounts,
     #[msg("execute was passed more writable remaining accounts than MAX_EXECUTE_WRITABLE")]
     TooManyExecuteWritable,
+    #[msg("Jupiter must be routed through swap (adapter-decoded max_in + quote sanity), not generic execute")]
+    JupiterViaSwapOnly,
+    #[msg("a pubkey appears more than once in the logical account list")]
+    DuplicateLogicalAccount,
 }
