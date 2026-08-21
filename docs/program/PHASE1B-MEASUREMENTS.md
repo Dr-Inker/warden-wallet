@@ -1348,3 +1348,21 @@ Round 4 (`d42b212..eaf59e4`, seeded=41) raised 3 findings (1 critical, 1 importa
 `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
 198/198 (incl. the shell integration + digest binding), `ui-tokens` 11/11, Rust
 workspace under `--features test-jup` (0 failed).
+
+## Task 11R review round 5 — Codex sol@max (thread aca5ddff1133-20260821T221731Z)
+
+Round 5 (`eaf59e4..aca5ddf`, seeded=41) raised 2 findings — both IMPORTANT (no
+critical; severity dropping). Fixed/adjudicated at `ff66e59`.
+
+- **WRDF-0085** (important, 5th) — the round-4 `HEAD == release-sha` requirement
+  contradicted the row-added-later reality (a commit can't contain its own SHA).
+  Fixed: live preflight requires a clean tree with the release-sha an
+  ancestor-of-HEAD; `parseReleaseRow` (exact full-SHA, exactly one row, token +
+  artifact-hash extraction) + `bindReleaseManifest` (name+digest) moved to testable
+  TS; the verifier derives the expected hash from the parsed row.
+- **WRDF-0088** (important) — the round-4 manifest-mismatch shell test was vacuous
+  (passed on the checkout refusal). Removed; the binding is covered deterministically
+  in TS against synthetic rows AND the committed RELEASE-INTEGRITY.md; the shell test
+  asserts the specific SHA-resolution refusal.
+
+201 core tests. Gate evidence on the ledger HEAD below.
