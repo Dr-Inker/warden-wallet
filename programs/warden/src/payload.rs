@@ -633,6 +633,41 @@ mod tests {
         assert_eq!(resolve_payload(&p, &logical, &warden).unwrap_err(), err(WardenError::ComputeBudgetInExecute));
     }
 
+    /// Cross-language fixture (Task 8): the TS `encodeExecutePayload` /
+    /// `computeAccountsHash` (`packages/core/test/execute-payload.test.ts`) WRITE
+    /// `tests/fixtures/payload_vector.bin` + `payload_accounts_hash.hex`; this
+    /// test reads them back and asserts the Rust `parse_payload` decodes the
+    /// exact structure and `compute_accounts_hash` over the same logical list
+    /// yields the same 32 bytes. A drift on either side breaks this loudly.
+    #[test]
+    fn ts_payload_vector_round_trips() {
+        let bytes = include_bytes!("../tests/fixtures/payload_vector.bin");
+        let p = parse_payload(bytes).expect("TS vector must parse");
+        // Structure the TS test encoded: SPL Transfer over [2,3,0,4] then a
+        // one-account ix over [1].
+        assert_eq!(p.ixs.len(), 2);
+        assert_eq!(p.ixs[0].program_idx, 4);
+        assert_eq!(
+            p.ixs[0].accounts,
+            vec![(2, FLAG_WRITABLE), (3, FLAG_WRITABLE), (0, FLAG_SIGNER), (4, 0)]
+        );
+        assert_eq!(p.ixs[0].data, vec![3, 0xd0, 0x07, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(p.ixs[1].program_idx, 5);
+        assert_eq!(p.ixs[1].accounts, vec![(1, FLAG_SIGNER)]);
+        assert!(p.ixs[1].data.is_empty());
+
+        // The same deterministic 6-account logical list the TS test hashed.
+        let logical: Vec<LogicalAccount> = (0..6u8)
+            .map(|i| LogicalAccount {
+                key: Pubkey::new_from_array([0x10 + i; 32]),
+                is_signer: i == 0 || i == 1,
+                is_writable: !(i == 0) && (2..=3).contains(&i),
+            })
+            .collect();
+        let expected = include_str!("../tests/fixtures/payload_accounts_hash.hex").trim();
+        assert_eq!(hex::encode(compute_accounts_hash(&logical)), expected);
+    }
+
     #[test]
     fn accounts_hash_is_order_and_flag_sensitive() {
         let a = Pubkey::new_unique();
