@@ -8,7 +8,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { sha256 } from "@noble/hashes/sha2";
 import { MULTISIG_DISCRIMINATOR, deriveVaultPda, type RpcAccount } from "./accounts.js";
-import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, PERMISSION_ALL, type DeployPinConfig, type PinnedMember } from "./config.js";
+import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, PERMISSION_ALL, SYNTHETIC_PIN, type DeployPinConfig, type PinnedMember } from "./config.js";
 import type { RpcSource } from "./gate.js";
 
 const hex = (b: Uint8Array): string => Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
@@ -131,4 +131,58 @@ export function buildHappyScenario(base: DeployPinConfig): Scenario {
 /** A fresh 5-member all-permission set on deterministic keys. */
 export function fiveMembers(): PinnedMember[] {
   return [0x11, 0x12, 0x13, 0x14, 0x15].map((b) => ({ key: synthetic(b), mask: PERMISSION_ALL }));
+}
+
+/** Named deterministic scenarios for the `--fixtures` CLI mode: `happy` passes,
+ *  every other name tampers with exactly one field so the gate refuses. The set
+ *  covers the representative failure classes; the exhaustive per-class matrix is
+ *  in `test/deploy-gate.test.ts`. Returns null for an unknown name. */
+export const FIXTURE_CASES = [
+  "happy",
+  "wrong-multisig-owner",
+  "member-count",
+  "attacker-members",
+  "stale-governance",
+  "authority-not-vault",
+  "squads-code",
+  "release-hash",
+] as const;
+export type FixtureCase = (typeof FIXTURE_CASES)[number];
+
+export function namedScenario(name: string): Scenario | null {
+  if (!(FIXTURE_CASES as readonly string[]).includes(name)) return null;
+  const s = buildHappyScenario(SYNTHETIC_PIN_REF());
+  const ms = (over: Partial<MultisigSpec>) =>
+    acct(s.pin.squadsProgramId, encodeMultisig({ threshold: s.pin.threshold, timeLock: s.pin.minTimeLockSeconds, members: s.pin.members, ...over }));
+  switch (name as FixtureCase) {
+    case "happy":
+      break;
+    case "wrong-multisig-owner":
+      s.rpc.set(s.pin.multisig, acct(synthetic(0x66), encodeMultisig({ threshold: 3, timeLock: s.pin.minTimeLockSeconds, members: s.pin.members })));
+      break;
+    case "member-count":
+      s.rpc.set(s.pin.multisig, ms({ members: s.pin.members.slice(0, 4) }));
+      break;
+    case "attacker-members":
+      s.rpc.set(s.pin.multisig, ms({ members: fiveMembers() }));
+      break;
+    case "stale-governance":
+      s.rpc.set(s.pin.multisig, ms({ transactionIndex: 3n, staleTransactionIndex: 1n }));
+      break;
+    case "authority-not-vault":
+      s.rpc.set(s.addrs.wardenProgramData, acct(BPF_UPGRADEABLE_LOADER, encodeProgramData({ authority: synthetic(0x44), code: new TextEncoder().encode("warden-elf-bytes-vX") })));
+      break;
+    case "squads-code":
+      s.rpc.set(s.addrs.squadsProgramData, acct(BPF_UPGRADEABLE_LOADER, encodeProgramData({ authority: DEFAULT_PUBKEY, code: new TextEncoder().encode("MALICIOUS") })));
+      break;
+    case "release-hash":
+      return { ...s, expectedReleaseHashHex: "00".repeat(32) };
+  }
+  return s;
+}
+
+// Indirection so `namedScenario` uses the exported synthetic pin without a
+// circular static import ordering hazard.
+function SYNTHETIC_PIN_REF(): DeployPinConfig {
+  return SYNTHETIC_PIN;
 }

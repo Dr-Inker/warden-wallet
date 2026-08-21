@@ -9,13 +9,22 @@ it *would* run, without making them.
 
 ## Status
 
-**SPEC + partial dry-run implementation.** Task 11 is tooling/docs only — no
-RPC client library is wired in yet, and no on-chain deployment exists to
-check against. The script is safe to run today only in `--dry-run` mode or
-against local files; every RPC-dependent check **fails closed** (refuses)
-rather than silently passing when the supporting client code isn't wired in.
-Wiring the RPC calls for real is follow-up work for whichever task first cuts
-a release candidate — see "What's stubbed" below.
+**Checks 1, 2, 4a IMPLEMENTED and fixture-verified (Task 11R); check 3 still a
+separate deliverable (`WRD-DEP-02`); live-cluster run UNVERIFIED until a release
+candidate exists.** The governance + hash logic is `packages/core/src/deploy`
+(`verifyDeployGate`, hand-rolled with no `@sqds` dependency — the gate exists to
+shrink supply-chain surface, so it does not add npm surface); the script invokes
+it via `packages/core/scripts/deploy-gate-verify.ts`. Two ways to run the RPC
+checks: `--fixtures <case>` drives a deterministic in-process scenario (no
+network — `happy` passes, every other case tampers with one field so the gate
+refuses), and `--pin <config.json> --rpc-url <url>` runs the REAL checks against a
+live cluster with a **reviewed pinned config** (the load-bearing WRDF-0017
+requirement — CLI pubkeys alone cannot pin the member set / masks / audited code
+hash). Check 3 (adapter-selector re-derivation vs the on-chain Registry) is a
+separate deliverable from Task 11R (scope boundary WRDF-0018) and still refuses.
+Every RPC-dependent path **fails closed**. The 20-case fixture suite is
+`packages/core/test/deploy-gate.test.ts`; the byte-exact match against
+`solana-verify` on a real cluster is the honest residual, verified at release.
 
 ## Invocation
 
@@ -70,16 +79,21 @@ non-dry-run invocation (fail-closed).
    fails permanently and gets disabled, which is worse than not having it)
    for `TODO`, `unimplemented!`, `#[ignore]`; fail on any hit.
 
-## What's stubbed in this Task-11 pass
+## Implementation status by check (post Task 11R)
 
-| Check | `--dry-run` | Real run |
-| --- | --- | --- |
-| 1. Upgrade authority | Prints the RPC call it would make (`solana program show --url <rpc> <program-id>` or equivalent `getAccountInfo` on the ProgramData PDA) | **Refuses** (`NOT IMPLEMENTED`) — no RPC client wired into this bash script yet |
-| 2. Multisig governance (3-of-5 exact + time-lock floor) | Prints the account it would fetch and the exact fields it would assert | **Refuses** (`NOT IMPLEMENTED`) — decoding a Squads v4 multisig config account needs the Squads SDK (Anchor account deserialization), not shell tooling; no such dependency exists in this repo yet |
-| 3. Adapter selector diff vs on-chain `Registry` | Prints the plan | **Refuses** (`NOT IMPLEMENTED`) — the `Registry` account type does not exist in `programs/warden` as of this task (adapter registry is DECISION.md item C9, still open); there is nothing on-chain to diff against yet |
-| 4a. On-chain `.so` hash (authoritative) vs `RELEASE-INTEGRITY.md` | Prints the RPC/`solana-verify` call it would make | **Refuses** (`NOT IMPLEMENTED`) — no RPC client wired in yet |
-| 4b. Local `target/deploy/warden.so` hash (best-effort sanity check) vs `RELEASE-INTEGRITY.md` | **Runs for real** — looks up the row locally, compares to a local `.so`; **fails if the `.so` is missing** (no silent pass) | Same — this check needs no RPC |
-| 5. Scoped TODO/unimplemented!/#[ignore] grep | **Runs for real** | Same — this check needs no RPC |
+| Check | `--dry-run` | `--fixtures <case>` | Live (`--pin` + `--rpc-url`) |
+| --- | --- | --- | --- |
+| 1. Upgrade authority (+ Program→ProgramData chain, vault-PDA binding) | Prints the plan | **Runs** — `verifyDeployGate` over a deterministic scenario | **Runs** the real check; UNVERIFIED until a release candidate |
+| 2. Squads governance (pinned identity + owner/discriminator + 3-of-5 exact + member set + masks + 7-day floor + autonomous configAuthority + no stale state) | Prints the plan | **Runs** | **Runs**; UNVERIFIED until release |
+| 3. Adapter selector diff vs on-chain `Registry` (`WRD-DEP-02`) | Prints the plan | — (out of scope) | **Refuses** — separate deliverable from Task 11R (scope boundary WRDF-0018); the Registry now exists (Task 3) but the selector re-derivation + diff tool is not wired here yet |
+| 4a. On-chain program-code hash vs `RELEASE-INTEGRITY.md` | Prints the plan | **Runs** (sha256 over the trimmed ELF) | **Runs**; byte-exact `solana-verify` parity UNVERIFIED until release |
+| 4b. Local `target/deploy/warden.so` hash (best-effort sanity) | **Runs for real** — fails if the `.so` is missing (no silent pass) | Same | Same — no RPC |
+| 5. Scoped TODO/unimplemented!/#[ignore] grep | **Runs for real** | Same | Same — no RPC |
+
+The governance + hash logic (checks 1/2/4a) lives in `packages/core/src/deploy`
+and is exercised by the 20-case fixture suite `packages/core/test/deploy-gate.test.ts`;
+the script wires it through `run_gov_hash_verifier` →
+`packages/core/scripts/deploy-gate-verify.ts`.
 
 A check that "refuses" prints `REFUSE: <reason>` and the script exits
 non-zero — this is deliberate fail-closed behavior, not a bug: an

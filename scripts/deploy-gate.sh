@@ -33,14 +33,24 @@ RELEASE_SHA="$1"; shift
 
 DRY_RUN=0
 RPC_URL="${SOLANA_RPC_URL:-}"
+FIXTURE_CASE=""   # Task 11R: run the governance+hash checks against a deterministic scenario
+PIN_FILE=""       # Task 11R: a reviewed pinned-config JSON for a real run (WRDF-0017)
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --rpc-url) RPC_URL="${2:-}"; shift 2 ;;
+    --fixtures) FIXTURE_CASE="${2:-}"; shift 2 ;;
+    --pin) PIN_FILE="${2:-}"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; usage ;;
   esac
 done
+
+# The Task 11R governance+hash verifier (DEPLOY-GATE.md checks 1, 2, 4a). Hand-rolled
+# in packages/core/src/deploy (no @sqds dependency); run via the workspace's tsx.
+run_gov_hash_verifier() {
+  pnpm --filter @warden/core exec tsx scripts/deploy-gate-verify.ts "$@"
+}
 
 # Base58 pubkeys are 32-44 chars from the base58 alphabet (no 0, O, I, l).
 is_pubkey() {
@@ -65,88 +75,76 @@ is_pubkey "$SQUADS_MULTISIG" || fail "squads-multisig '$SQUADS_MULTISIG' does no
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{7,40}$ ]] || fail "release-sha '$RELEASE_SHA' does not look like a git SHA"
 
 echo
-echo "-- check 1/5: ProgramData upgrade_authority_address == expected authority --"
-if [ "$DRY_RUN" -eq 1 ]; then
-  echo "[dry-run] would run: solana program show --url <rpc> $PROGRAM_ID (or getAccountInfo on the ProgramData PDA)"
-  echo "[dry-run] would assert: upgrade_authority_address == $EXPECTED_AUTHORITY"
-else
-  fail "check 1 (upgrade authority) NOT IMPLEMENTED — no RPC client wired into this script yet; see docs/security/DEPLOY-GATE.md 'What's stubbed'"
-fi
+echo "-- checks 1, 2, 4a: governance + release-hash (deploy-gate-verify, Task 11R) --"
+echo "   (upgrade authority chain, pinned Squads 3-of-5 governance, on-chain program hash)"
 
-echo
-echo "-- check 2/5: Squads multisig governance == spec §5.5 exactly (3-of-5, time_lock >= 7d) --"
-if [ "$DRY_RUN" -eq 1 ]; then
-  echo "[dry-run] would fetch: Squads multisig config account at $SQUADS_MULTISIG"
-  # Spec §5.5 pins an EXACT governance shape, not a floor: "the BPF-loader
-  # upgrade authority IS a Squads multisig (3-of-5)". threshold and member
-  # count are asserted == (not >=) — a 4-of-7 multisig is not what spec §5.5
-  # authorized, even though it is nominally "stronger"; time_lock is the one
-  # field with an explicit floor (>= 7 days) since a longer lock is strictly
-  # safer, unlike a different threshold/membership shape.
-  echo "[dry-run] would assert: threshold == 3 AND member_count == 5 AND time_lock_secs >= $((7*24*3600))"
-else
-  fail "check 2 (multisig governance) NOT IMPLEMENTED — needs the Squads SDK to decode the account; see docs/security/DEPLOY-GATE.md 'What's stubbed'"
-fi
-
-echo
-echo "-- check 3/5: adapter selectors re-derived from source, diffed against on-chain Registry --"
-if [ "$DRY_RUN" -eq 1 ]; then
-  echo "[dry-run] would re-derive: Anchor IDL sighash per target, or per-program instruction tag for non-Anchor targets (spec §5.2 rule 1 / DECISION.md C9)"
-  echo "[dry-run] would diff against: on-chain Registry account contents"
-else
-  fail "check 3 (adapter selector diff) NOT IMPLEMENTED — programs/warden has no Registry account yet (DECISION.md C9 is open); see docs/security/DEPLOY-GATE.md 'What's stubbed'"
-fi
-
-echo
-echo "-- check 4/5: deployed .so hash matches docs/security/RELEASE-INTEGRITY.md row --"
+# Extract the recorded release hash up front — the verifier's live mode needs it,
+# and check 4b (local .so) reuses it. A missing row is fatal (fail-closed).
 RELEASE_INTEGRITY_DOC="docs/security/RELEASE-INTEGRITY.md"
+recorded_hash=""
 if [ ! -f "$RELEASE_INTEGRITY_DOC" ]; then
   fail "$RELEASE_INTEGRITY_DOC is missing"
 else
-  # The per-release table's rows are markdown-table lines starting with
-  # `| ` and containing the release SHA in the second cell. Match loosely
-  # (short or full SHA) since the table records full SHAs.
   row="$(grep -F "$RELEASE_SHA" "$RELEASE_INTEGRITY_DOC" | grep '^| ' || true)"
   if [ -z "$row" ]; then
     fail "no row for release-sha '$RELEASE_SHA' found in $RELEASE_INTEGRITY_DOC"
   else
-    echo "found row:"
-    echo "$row"
-    # Extract the sha256 cell (3rd `|`-delimited field after the tag/label
-    # and git-SHA columns) — best-effort; a 64-hex-char token in the row.
     recorded_hash="$(echo "$row" | grep -oE '[0-9a-f]{64}' | head -1 || true)"
-    if [ -z "$recorded_hash" ]; then
-      fail "could not extract a sha256 hash from the matched row in $RELEASE_INTEGRITY_DOC"
+    [ -z "$recorded_hash" ] && fail "could not extract a sha256 hash from the matched row in $RELEASE_INTEGRITY_DOC"
+  fi
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "[dry-run] would run: deploy-gate-verify against the pinned config, asserting:"
+  echo "  1  Warden Program->ProgramData chain (BPF-loader owned), upgrade_authority == derived Squads vault PDA"
+  echo "  2  the multisig IS the pinned pubkey, owned by the pinned Squads program, discriminator-checked,"
+  echo "     threshold == 3 AND member_count == 5 AND time_lock >= $((7*24*3600))s AND configAuthority == default"
+  echo "     AND no actionable stale governance state AND the complete member set + permission masks,"
+  echo "     AND the Squads program code hash == the pinned audited hash (trust-root terminus)"
+  echo "  4a on-chain Warden program code hash == RELEASE-INTEGRITY.md row (${recorded_hash:-<none>})"
+elif [ -n "$FIXTURE_CASE" ]; then
+  echo "[fixtures] deterministic scenario: $FIXTURE_CASE"
+  if run_gov_hash_verifier --fixtures "$FIXTURE_CASE"; then
+    echo "   OK: governance+hash checks passed for fixture '$FIXTURE_CASE'"
+  else
+    fail "governance+hash checks failed for fixture '$FIXTURE_CASE'"
+  fi
+elif [ -n "$PIN_FILE" ] && [ -n "$RPC_URL" ]; then
+  if [ -z "$recorded_hash" ]; then
+    fail "cannot run the live governance+hash checks without a release-integrity hash"
+  elif run_gov_hash_verifier --rpc-url "$RPC_URL" --pin "$PIN_FILE" --expected-hash "$recorded_hash"; then
+    echo "   OK: live governance+hash checks passed against $RPC_URL"
+  else
+    fail "live governance+hash checks failed (see output above)"
+  fi
+else
+  fail "checks 1/2/4a NOT RUN — supply --fixtures <case> for the fixture-verified path, or --pin <config.json> + --rpc-url <url> for a live run (a reviewed pinned config is required; CLI pubkeys alone cannot pin the member set/masks/code hash — WRDF-0017)"
+fi
+
+echo
+echo "-- check 3/5: adapter selectors re-derived from source, diffed against on-chain Registry (WRD-DEP-02) --"
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "[dry-run] would re-derive: Anchor IDL sighash per target, or per-program instruction tag for non-Anchor targets (spec §5.2 rule 1 / DECISION.md C9)"
+  echo "[dry-run] would diff against: on-chain Registry account contents"
+else
+  fail "check 3 (adapter selector diff, WRD-DEP-02) NOT IMPLEMENTED — a separate deliverable from Task 11R (scope boundary WRDF-0018); the Registry exists (Task 3) but the selector re-derivation + diff tool is not wired here yet"
+fi
+
+echo
+echo "-- check 4b/5: local target/deploy/warden.so hash == RELEASE-INTEGRITY.md row (best-effort sanity) --"
+if [ -n "$recorded_hash" ]; then
+  echo "recorded hash: $recorded_hash"
+  if [ -f target/deploy/warden.so ]; then
+    local_hash="$(sha256sum target/deploy/warden.so | awk '{print $1}')"
+    if [ "$local_hash" != "$recorded_hash" ]; then
+      fail "4b. target/deploy/warden.so sha256 ($local_hash) != RELEASE-INTEGRITY.md row ($recorded_hash)"
     else
-      echo
-      echo "   4a. on-chain hash (the authoritative comparison — what is actually"
-      echo "       deployed, not what happens to be sitting in a local build dir):"
-      if [ "$DRY_RUN" -eq 1 ]; then
-        echo "   [dry-run] would dump the ON-CHAIN program (e.g. \`solana-verify"
-        echo "   get-program-hash --url <rpc> $PROGRAM_ID\`, or a raw getAccountInfo"
-        echo "   of the ProgramData account's code buffer, hashed the same way"
-        echo "   target/deploy/warden.so is) and assert it equals $recorded_hash"
-      else
-        fail "4a. on-chain hash dump NOT IMPLEMENTED — no RPC client wired into this script yet; see docs/security/DEPLOY-GATE.md 'What's stubbed'"
-      fi
-      echo
-      echo "   4b. local .so sanity check (best-effort, NOT a substitute for 4a —"
-      echo "       a local build dir can be stale or tampered independently of"
-      echo "       what is actually on-chain):"
-      if [ -f target/deploy/warden.so ]; then
-        local_hash="$(sha256sum target/deploy/warden.so | awk '{print $1}')"
-        if [ "$local_hash" != "$recorded_hash" ]; then
-          fail "4b. target/deploy/warden.so sha256 ($local_hash) != RELEASE-INTEGRITY.md row ($recorded_hash)"
-        else
-          echo "   OK: local target/deploy/warden.so matches recorded hash $recorded_hash"
-        fi
-      else
-        # A missing local artifact is a FAILURE, not a note: a deploy gate
-        # that shrugs at "nothing to check" and lets the overall check pass
-        # is exactly the silent-pass failure mode this gate exists to close.
-        fail "4b. target/deploy/warden.so not found locally — cannot verify; refusing rather than passing with nothing checked"
-      fi
+      echo "   OK: local target/deploy/warden.so matches recorded hash $recorded_hash"
     fi
+  else
+    # A missing local artifact is a FAILURE, not a note (silent-pass is the failure
+    # mode this gate exists to close).
+    fail "4b. target/deploy/warden.so not found locally — cannot verify; refusing rather than passing with nothing checked"
   fi
 fi
 

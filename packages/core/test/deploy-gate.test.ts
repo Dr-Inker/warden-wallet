@@ -14,6 +14,8 @@ import {
   encodeProgramData,
   MapRpc,
   fiveMembers,
+  namedScenario,
+  FIXTURE_CASES,
   type Scenario,
 } from "../src/deploy/fixtures.js";
 
@@ -173,6 +175,19 @@ describe("deploy-gate verifyDeployGate", () => {
     const v = await verifyDeployGate(s.pin, { rpc: s.rpc, expectedReleaseHashHex: "00".repeat(32) });
     expect(failed(v)).toContain("warden-release-hash");
     expect(detailOf(v, "warden-release-hash")).toMatch(/!= release-integrity hash/);
+  });
+
+  // The named CLI scenarios (`--fixtures <case>`) resolve and yield the expected
+  // verdict: `happy` passes, every other case refuses. Locks the deploy-gate.sh
+  // fixtures mode to the verifier.
+  it("every named fixture case yields the expected verdict", async () => {
+    for (const name of FIXTURE_CASES) {
+      const s = namedScenario(name)!;
+      expect(s, name).toBeTruthy();
+      const v = await verifyDeployGate(s.pin, { rpc: s.rpc, expectedReleaseHashHex: s.expectedReleaseHashHex });
+      expect(v.ok, `${name}: ${v.results.filter((r) => !r.ok).map((r) => r.detail).join("; ")}`).toBe(name === "happy");
+    }
+    expect(namedScenario("does-not-exist")).toBeNull();
   });
 
   it("keeps checks isolated — a single mutation fails exactly one check", async () => {
