@@ -1093,3 +1093,29 @@ evidence bumped to `84bb61e`. Gate evidence on the ledger HEAD below.
 `@warden/core` **149 passed (149)** (incl. the new scorecard-provenance guard and
 the re-import-no-write regression), `ui-tokens` 11/11, the full Rust workspace
 under `--features test-jup` (0 failed), and the fixture-drift `git diff` guard.
+
+## Task 8 review round 6 — Codex sol@max (thread e781fea997be-20260821T185150Z)
+
+Round 6 (`50c3e11..e781fea`, seeded=43) raised 3 findings — ALL review-harness
+machinery (the wrap.ts SDK code has had no functional finding since round 4).
+Fixed at `5b59dcd8d404de06891a00e4e176fa2c8e29b13b`.
+
+- **WRDF-0015** (important) — the scorecard appender derived
+  `claimed_reproducer_verified` but never SERIALIZED the reproducer, so a
+  legitimate verified row would violate the round-5 guard and lose its
+  coordinates. Fixed: `buildScorecardLines` persists the untrusted object as
+  `claimed_reproducer`; the guard validates against it; added producer tests.
+- **WRDF-0081** (minor, re-open) — the re-import regression compared fixture
+  CONTENTS (a deterministic re-write leaves them unchanged). Made
+  `fixtures-data.ts` data-only (no `node:fs` → structurally cannot write) with
+  `goldenContents()`; moved the writer into `gen-fixtures.ts` behind an injectable
+  sink + a real main-module check (`ranAsMain`); the regression now asserts
+  `generate()` emits the five goldens through a collecting sink with zero disk
+  writes, and the runner does not generate on import.
+- **WRDF-0083** (minor) — `remediation_verified` could be asserted with no
+  provenance (the WRDF-0075 row had `remediation_sha=null`). Enriched all 17
+  remediation rows with `remediation_sha` + `remediation_gate_sha` +
+  `remediation_gate_cmd`; the guard requires all three, validates SHA format, and
+  (git available) that both SHAs are real commits.
+
+WRD-EXEC-11 evidence refreshed to `5b59dcd`. Gate evidence on the ledger HEAD below.
