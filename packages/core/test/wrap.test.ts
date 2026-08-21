@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import {
   PublicKey,
   Keypair,
@@ -262,6 +265,57 @@ describe("wrapForExecute", () => {
     expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer })).toThrow(/MAX_EXECUTE_ACCOUNTS_TOTAL/);
   });
 
+  // WRDF-0079 — a wrapped instruction that needs the root/session signer WRITABLE
+  // is rejected fail-closed (the payload would request a privilege the outer meta
+  // does not hold). Covers the separate-relayer path the reviewer named.
+  it("rejects an inner instruction that names the root/session signer writable", () => {
+    const msg = ixMsg([{ pubkey: signer, isSigner: true, isWritable: true }]);
+    const relayer = Keypair.generate().publicKey;
+    expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer, payer: relayer })).toThrow(/signer writable/);
+  });
+
+  // Every payload privilege is a subset of the effective outer logical meta.
+  it("holds the payload⊆outer privilege-subset invariant on a normal shape", () => {
+    const { msg } = dappMsg(false);
+    const r = wrapForExecute(msg, { wardenProgram, smartAccount, signer });
+    for (const ix of r.decoded.ixs) {
+      for (const a of ix.accounts) {
+        const m = r.logical[a.index]!;
+        if (a.flags & FLAG_WRITABLE) expect(m.isWritable).toBe(true);
+        // index 0 (the PDA) signs via invoke_signed, not an outer signature.
+        if (a.flags & 1 && a.index !== 0) expect(m.isSigner).toBe(true); // FLAG_SIGNER
+      }
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // WRDF-0080 — a caller-supplied RequestHeapFrame is preserved ONLY if it clears
+  // the runtime's alignment + range rules and covers the shape; else rejected.
+  // -------------------------------------------------------------------------
+  it("validates a caller-supplied heap frame against the runtime range and alignment", () => {
+    const frameIx = (bytes: number) => {
+      const d = Buffer.alloc(5);
+      d[0] = 1; // RequestHeapFrame tag
+      d.writeUInt32LE(bytes >>> 0, 1);
+      return new TransactionInstruction({ programId: CB, keys: [], data: d });
+    };
+    const withFrame = (bytes: number) => {
+      const ix = new TransactionInstruction({ programId: Keypair.generate().publicKey, keys: [{ pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true }], data: Buffer.from([1]) });
+      const msg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [frameIx(bytes), ix] }).compileToV0Message();
+      return () => wrapForExecute(msg, { wardenProgram, smartAccount, signer });
+    };
+    // The measured floor (128 KiB) is a valid, adequate, aligned frame — kept.
+    const kept = withFrame(HEAP_FRAME_FLOOR_BYTES)();
+    expect(heapFrame(kept.computeBudgetIxs)).toBeDefined();
+    expect(readU32(heapFrame(kept.computeBudgetIxs)!.data)).toBe(HEAP_FRAME_FLOOR_BYTES);
+    // The maximum valid frame is kept.
+    expect(readU32(heapFrame(withFrame(256 * 1024)().computeBudgetIxs)!.data)).toBe(256 * 1024);
+    // Over the ceiling, misaligned, and below the shape's need all reject.
+    expect(withFrame(256 * 1024 + 1024)).toThrow(/outside the runtime range/);
+    expect(withFrame(256 * 1024 - 1)).toThrow(/multiple of 1024/);
+    expect(withFrame(64 * 1024)).toThrow(/smaller than this shape needs/); // < 128 KiB floor need
+  });
+
   // The returned executeAccountMetas ARE the logical source of truth: rebuilding
   // the hash from them (positions 0,1,7..) reproduces accountsHash exactly.
   it("accountsHash is reproducible from the returned executeAccountMetas", () => {
@@ -271,5 +325,32 @@ describe("wrapForExecute", () => {
     const m = r.executeAccountMetas;
     const logical: LogicalAccount[] = [m[0]!, m[1]!, ...m.slice(7)].map((x) => ({ key: x.pubkey.toBytes(), isSigner: x.isSigner, isWritable: x.isWritable }));
     expect(hex(computeAccountsHash(logical))).toBe(hex(r.accountsHash));
+  });
+
+  // ---------------------------------------------------------------------------
+  // WRDF-0081 — an INDEPENDENT cross-boundary oracle for the coalesced hash. The
+  // wrapper emits its effective (post-compile) logical list + accountsHash for a
+  // payer==signer shape (logical[1] coalesced WRITABLE); a Rust test
+  // (`payload::tests::ts_coalesced_logical_hash_matches`) reads the list bytes and
+  // recomputes the hash with the handler's OWN `compute_accounts_hash`, so the
+  // assertion is against the handler function, not the SDK's own computeAccountsHash.
+  // ---------------------------------------------------------------------------
+  it("writes payload_coalesced_logical.bin + hash for the Rust hash oracle", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const fixturesDir = resolve(here, "../../../programs/warden/tests/fixtures");
+    const r = wrapForExecute(dappMsg(false).msg, { wardenProgram, smartAccount, signer }); // payer defaults to signer
+    expect(r.logical[1]!.isWritable).toBe(true); // the coalesced case we are pinning
+    // Serialize each logical entry as pubkey(32) ‖ is_signer(1) ‖ is_writable(1).
+    const buf = new Uint8Array(r.logical.length * 34);
+    let o = 0;
+    for (const a of r.logical) {
+      buf.set(a.key, o); o += 32;
+      buf[o++] = a.isSigner ? 1 : 0;
+      buf[o++] = a.isWritable ? 1 : 0;
+    }
+    mkdirSync(fixturesDir, { recursive: true });
+    writeFileSync(resolve(fixturesDir, "payload_coalesced_logical.bin"), buf);
+    writeFileSync(resolve(fixturesDir, "payload_coalesced_hash.hex"), hex(r.accountsHash));
+    expect(buf.length).toBe(r.logical.length * 34);
   });
 });

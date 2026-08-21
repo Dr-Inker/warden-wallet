@@ -690,6 +690,29 @@ mod tests {
     }
 
     #[test]
+    fn ts_coalesced_logical_hash_matches() {
+        // WRDF-0081 cross-boundary oracle: the TS wrapper wrote its EFFECTIVE
+        // (post-compile, fee-payer-coalesced) logical list and the accounts_hash
+        // it computed. Recompute the hash here with the handler's own
+        // `compute_accounts_hash` and assert parity — the SDK's hash equals what
+        // the handler will hash over the SAME runtime list, independently checked.
+        let bytes = include_bytes!("../tests/fixtures/payload_coalesced_logical.bin");
+        assert_eq!(bytes.len() % 34, 0, "logical fixture must be 34 bytes per entry");
+        let logical: Vec<LogicalAccount> = bytes
+            .chunks_exact(34)
+            .map(|c| {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&c[..32]);
+                LogicalAccount { key: Pubkey::new_from_array(key), is_signer: c[32] != 0, is_writable: c[33] != 0 }
+            })
+            .collect();
+        // The pinned case coalesces logical[1] (the signer == payer) to writable.
+        assert!(logical[1].is_writable, "fixture must pin the coalesced writable signer");
+        let expected = include_str!("../tests/fixtures/payload_coalesced_hash.hex").trim();
+        assert_eq!(hex::encode(compute_accounts_hash(&logical)), expected);
+    }
+
+    #[test]
     fn accounts_hash_is_order_and_flag_sensitive() {
         let a = Pubkey::new_unique();
         let b = Pubkey::new_unique();

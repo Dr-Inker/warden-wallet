@@ -76,6 +76,14 @@ const CB_SET_COMPUTE_UNIT_LIMIT = 2;
 export const HEAP_FRAME_FLOOR_BYTES = 128 * 1024;
 /** Solana's hard ceiling for `RequestHeapFrame`. */
 export const HEAP_FRAME_MAX_BYTES = 256 * 1024;
+/** Agave's minimum for `RequestHeapFrame` (the default frame). A requested heap
+ *  size is accepted by the runtime only when `MIN ≤ bytes ≤ MAX` AND it is a
+ *  multiple of 1024 (solana-compute-budget-instruction). A caller-supplied frame
+ *  the wrapper preserves must clear the same rules or the runtime rejects the
+ *  whole transaction before execute runs (WRDF-0080). */
+export const MIN_HEAP_FRAME_BYTES = 32 * 1024;
+/** `RequestHeapFrame` byte counts must be a multiple of this. */
+const HEAP_FRAME_ALIGN = 1024;
 
 /** A placeholder blockhash for the INTERNAL privilege-resolution compile only —
  *  32 zero bytes. Privilege coalescing is independent of the blockhash, so the
@@ -188,6 +196,19 @@ export function wrapForExecute(dappMsg: VersionedMessage, opts: WrapOptions): Wr
             "the only permitted writable-PDA shape is a deny-validated CloseAccount, not a wrapped foreign instruction",
         );
       }
+      // The root/session signer is logical[1] and is granted READ-ONLY in the
+      // outer instruction (`buildExecuteAccountMetas` slot 1). It is the
+      // authorizer, not a vault funding source — a wrapped instruction that
+      // needs it writable is not a supported execute shape, and its payload
+      // would request a privilege the outer AccountInfo does not hold, so the
+      // CPI would fail. Reject it fail-closed rather than emit that mismatch
+      // (WRDF-0079), symmetric with the third-party-signer and writable-PDA rules.
+      if (k.pubkey.equals(opts.signer) && k.isWritable) {
+        throw new Error(
+          "wrapForExecute: a wrapped instruction names the root/session signer writable; " +
+            "the signer is logical[1] and read-only in execute — a writable-signer shape is unsupported",
+        );
+      }
     }
   }
 
@@ -278,6 +299,25 @@ export function wrapForExecute(dappMsg: VersionedMessage, opts: WrapOptions): Wr
     isWritable: m.isWritable,
   }));
   const accountsHash = computeAccountsHash(logical);
+
+  // Privilege-subset guard (WRDF-0079): every privilege a payload reference
+  // requests MUST be granted by the effective outer logical meta, or the CPI
+  // fails at runtime. The rejects above and the writability OR-ed into remaining
+  // make this hold by construction; assert it so any future regression is caught
+  // here, at the client, rather than as an opaque on-chain revert.
+  for (const ix of decoded.ixs) {
+    for (const a of ix.accounts) {
+      const m = logical[a.index]!;
+      if ((a.flags & FLAG_WRITABLE) !== 0 && !m.isWritable) {
+        throw new Error(`wrapForExecute: payload writes logical[${a.index}] but the outer meta is read-only`);
+      }
+      // logical[0] (the PDA) signs via invoke_signed, not via an outer-tx
+      // signature, so its outer meta is correctly non-signer — exempt it.
+      if ((a.flags & FLAG_SIGNER) !== 0 && a.index !== 0 && !m.isSigner) {
+        throw new Error(`wrapForExecute: payload signs logical[${a.index}] but the outer meta is not a signer`);
+      }
+    }
+  }
 
   // Account caps, counted from the EFFECTIVE (post-coalescing) remaining metas —
   // a read-only remaining account chosen as the payer, or aliased to a writable
@@ -419,15 +459,24 @@ export function normalizeComputeBudget(
     out.push(ComputeBudgetProgram.setComputeUnitLimit({ units: opts.defaultComputeUnitLimit }));
   }
 
-  const needBytes = heapFrameFor(opts);
+  const needBytes = heapFrameFor(opts); // always a multiple of 1024 in [floor, max]
   if (frames.length === 0) {
     out.push(ComputeBudgetProgram.requestHeapFrame({ bytes: needBytes }));
   } else {
+    // A caller-supplied frame is preserved ONLY if it clears every runtime rule
+    // the on-chain ComputeBudget program enforces AND covers this shape — else
+    // the runtime rejects the whole tx before execute (WRDF-0080).
     const have = decodeHeapFrameBytes(frames[0]!);
+    if (have % HEAP_FRAME_ALIGN !== 0) {
+      throw new Error(`wrapForExecute: dApp RequestHeapFrame (${have} B) is not a multiple of ${HEAP_FRAME_ALIGN}`);
+    }
+    if (have < MIN_HEAP_FRAME_BYTES || have > HEAP_FRAME_MAX_BYTES) {
+      throw new Error(`wrapForExecute: dApp RequestHeapFrame (${have} B) is outside the runtime range [${MIN_HEAP_FRAME_BYTES}, ${HEAP_FRAME_MAX_BYTES}]`);
+    }
     if (have < needBytes) {
       throw new Error(`wrapForExecute: dApp RequestHeapFrame (${have} B) is smaller than this shape needs (${needBytes} B)`);
     }
-    out.push(frames[0]!); // adequate — keep the dApp's own
+    out.push(frames[0]!); // valid, in-range, aligned, adequate — keep the dApp's own
   }
   return out;
 }
