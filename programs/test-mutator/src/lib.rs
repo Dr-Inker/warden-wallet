@@ -179,6 +179,67 @@ pub mod test_mutator {
         invoke(&ix, ctx.remaining_accounts)?;
         Ok(())
     }
+
+    /// Allocate and touch `bytes` of heap in one instruction — the Task 6
+    /// heap-frame proof vehicle. With this crate's uncapped bump allocator
+    /// (same pattern as warden's `heap.rs`): ≤ ~31 KiB succeeds on the default
+    /// frame; more succeeds ONLY when the transaction carried a top-level
+    /// `RequestHeapFrame` big enough — otherwise the first write past the
+    /// mapped region faults the tx (fail-closed). The vec is written end to
+    /// end so the pages are genuinely touched, not merely reserved, and its
+    /// length is logged so the harness can assert the allocation really
+    /// happened at the claimed size.
+    pub fn heap_hog(_ctx: Context<Noop>, bytes: u32) -> Result<()> {
+        let n = bytes as usize;
+        // `vec![v; n]` memsets all n bytes (cheap — every page is genuinely
+        // written, so an unmapped region still faults), unlike a per-byte
+        // push loop which blows the CU meter before the heap.
+        let v: Vec<u8> = vec![0xAB; n];
+        // Read back from both ends so the allocation cannot be optimized away.
+        let checksum = v.first().copied().unwrap_or(0) ^ v.last().copied().unwrap_or(0);
+        msg!("heap_hog touched {} bytes, checksum {}", v.len(), checksum);
+        Ok(())
+    }
+}
+
+// The uncapped upward bump allocator, byte-for-byte the pattern warden ships
+// in `warden/src/heap.rs` (see its module docs for the full argument). The
+// runtime's granted heap frame is the only bound; `dealloc` is a no-op.
+#[cfg(target_os = "solana")]
+mod heap {
+    use anchor_lang::solana_program::entrypoint::HEAP_START_ADDRESS;
+    use core::alloc::{GlobalAlloc, Layout};
+
+    pub struct HogAllocator;
+
+    unsafe impl GlobalAlloc for HogAllocator {
+        #[inline]
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let cursor_ptr = HEAP_START_ADDRESS as usize as *mut usize;
+            let mut cursor = *cursor_ptr;
+            if cursor == 0 {
+                cursor = (HEAP_START_ADDRESS as usize) + core::mem::size_of::<usize>();
+            }
+            let mask = layout.align().wrapping_sub(1);
+            let aligned = match cursor.checked_add(mask) {
+                Some(v) => v & !mask,
+                None => return core::ptr::null_mut(),
+            };
+            match aligned.checked_add(layout.size()) {
+                Some(next) => {
+                    *cursor_ptr = next;
+                    aligned as *mut u8
+                }
+                None => core::ptr::null_mut(),
+            }
+        }
+
+        #[inline]
+        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: HogAllocator = HogAllocator;
 }
 
 fn set_authority(ctx: &Context<SetAuthorityIx>, authority_type: u8) -> Result<()> {

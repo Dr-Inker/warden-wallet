@@ -687,3 +687,56 @@ red): `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → green end-to-end —
 sweep + boundary tests; all other suites), `.so` builds for all four programs,
 IDL parity, `pnpm` TS suites (`@warden/core` 109, ui-tokens 11), plus
 `cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects` clean.
+
+## Task 6 heap lift — custom allocator closes the Task 5 account-cap prerequisite
+
+Task 5's sweep found `execute`'s account caps were bound by the **32 KiB SBF
+heap** and that a `RequestHeapFrame` was inert under the entrypoint's default
+`BumpAllocator` (`with_fixed_address_range(HEAP_START_ADDRESS, HEAP_LENGTH)` —
+a hard 32 KiB regardless of the frame the runtime grants). That blocked
+Task 6's ~30-account Jupiter routes. Closed here.
+
+**The fix (`src/heap.rs`, `custom-heap` feature, ON by default).** An uncapped
+upward bump allocator: it bumps from `HEAP_START_ADDRESS` with **no length cap
+of its own**, so the bound is the runtime's mapped frame (32 KiB default, up to
+256 KiB via a top-level `RequestHeapFrame`). The first write past the mapped
+region faults the transaction — **fail-closed**, nothing persists. The bump
+arithmetic is a pure `bump()` fn (overflow-checked, 4 off-chain unit tests);
+`dealloc` is a no-op (a bump allocator never frees; the heap dies with the tx).
+The `test-mutator` carries the identical allocator so the relief can be proven
+end to end in LiteSVM.
+
+**Proof that the frame is now effective** (`mutator_harness.rs`, on-chain):
+`heap_hog(100 KiB)` **fails** on the default heap and **succeeds** with a
+`RequestHeapFrame(128 KiB)` — the exact relief that was inert before.
+`heap_hog(31 KiB)` succeeds on the default frame (the allocator is a working
+allocator, not merely an unbounded one).
+
+**`execute` re-sweep with the custom allocator + a heap frame**
+(`resweep_writable_n_with_heap_frame`, `#[ignore]`d so the committed suite keeps
+the pinned caps):
+
+| writable N (remaining = N+3) | no frame | 128 KiB frame | 200 KiB frame |
+|---|---|---|---|
+| 24 (27) | fail (OOM, fail-closed) | **OK 91,324 CU** | OK 91,372 CU |
+| 30 (33) | fail | **OK 113,083 CU** | OK 113,131 CU |
+| 36+ | harness-ceiling (litesvm sanitizer) | harness-ceiling | harness-ceiling |
+
+24-writable — which OOM'd under the default allocator in the Task 5 sweep — now
+runs at 91k CU, and 30-writable at 113k CU, both far under the 360k ceiling. The
+LiteSVM message sanitizer panics past ~34 remaining, so 36+ is unmeasurable in
+this harness (a harness limit, not a program one).
+
+**Caps lifted 24/20 → `MAX_EXECUTE_ACCOUNTS_TOTAL = 32` / `MAX_EXECUTE_WRITABLE
+= 28`** — covering the ~30-account Jupiter target with headroom, inside the
+verified 30-writable-at-113k-CU shape, and one under the ~34-remaining harness
+ceiling so every boundary case stays on-chain-provable: `execute_writable_cap_
+boundary` (28 writable OK with a frame / 29 → 6057, and 28-writable WITHOUT a
+frame fails closed), `execute_total_cap_boundary` (32 remaining OK with a frame
+/ 33 → 6056), `over_cap_shapes_reject_cleanly_before_the_heap_ceiling` (28–30
+writable reject at the count check with AND without a frame — the allocator is
+never reached over-cap). **Client contract:** the wrapper MUST inject a
+`RequestHeapFrame` sized for the shape on any `execute` past ~24 accounts, the
+same way it injects `SetComputeUnitLimit`; omitting it is fail-closed, not a
+loss. Going beyond ~30 writable (should a route need it) is a fresh re-sweep on
+a harness that can build larger transactions, not a bare constant bump.

@@ -9,7 +9,13 @@ crate-type = ["cdylib", "lib"]
 name = "warden"
 
 [features]
-default = []
+# `custom-heap` (ON by default) disables the entrypoint's 32 KiB-capped default
+# allocator so `src/heap.rs`'s uncapped bump allocator takes over — the Task 6
+# prerequisite from Task 5's sweep (heap, not CU/bytes, bound the account
+# caps; RequestHeapFrame was inert under the default allocator). The runtime's
+# granted frame is the only bound; past it the tx faults fail-closed.
+default = ["custom-heap"]
+custom-heap = []
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []

@@ -28,24 +28,30 @@ pub const STAGE_MAX_TTL_SECS: i64 = 3600;
 /// `stage::stage_chunk_payload_cap_is_measured` (the v0 tx at this cap is exactly
 /// 1,232 B; one more byte overflows) — a wire contract, not a soft estimate.
 pub const STAGE_CHUNK_PAYLOAD_CAP: usize = 977;
-/// MEASURED (Task 5 sweep, 2026-08-21 — PHASE1B-MEASUREMENTS.md §"Task 5"):
-/// the most `remaining_accounts` one `execute` accepts — every logical account
-/// past the two privileged slots, writable or not, because ALL of them are
-/// snapshotted twice (spec §5.2 rule 2). The binding constraint is **SBF
-/// HEAP**, not CU or bytes: two full `Vec<Snap>` snapshots exhaust the default
-/// 32 KiB at ~27 remaining accounts (22-writable shape OK at 83.8k CU, 24
-/// OOM), and a `RequestHeapFrame` does NOT relieve it — Anchor's default bump
-/// allocator is hard-capped at 32 KiB regardless of the frame the runtime
-/// grants (measured: frame ix processed, +198 CU, still OOM). 24 sits one
-/// inside the verified-working 25-remaining shape. Raising this for Task 6's
-/// ~40-account Jupiter routes requires a custom allocator or a streaming
-/// after-snapshot, then a re-sweep — never a bare constant bump.
-pub const MAX_EXECUTE_ACCOUNTS_TOTAL: usize = 24;
-/// MEASURED (same sweep): the most **writable** remaining accounts one
-/// `execute` accepts. Writable accounts are the ones a CPI can actually
-/// mutate; 20 keeps the worst writable-heavy shape inside the same verified
-/// heap ceiling with the same one-account margin.
-pub const MAX_EXECUTE_WRITABLE: usize = 20;
+/// MEASURED (Task 5 sweep + Task 6 heap lift, 2026-08-21 —
+/// PHASE1B-MEASUREMENTS.md §"Task 5"/§"Task 6 heap lift"): the most
+/// `remaining_accounts` one `execute` accepts — every logical account past the
+/// two privileged slots, writable or not, because ALL of them are snapshotted
+/// twice (spec §5.2 rule 2). The binding constraint is **SBF HEAP**: two full
+/// `Vec<Snap>` snapshots exhaust the default 32 KiB at ~27 remaining accounts.
+///
+/// The default entrypoint allocator ignores a `RequestHeapFrame` (hard-capped
+/// at 32 KiB), so Task 5 first pinned this at 24. **Task 6's prerequisite
+/// replaced that allocator** (`src/heap.rs`, `custom-heap` feature — uncapped
+/// upward bump, bounded only by the runtime's granted frame): the wrapper now
+/// injects a `RequestHeapFrame` for large shapes (client contract, like the CU
+/// limit) and a 30-writable / 33-remaining `execute` runs at **113k CU** (≪ the
+/// 360k = 60 %-of-600k ceiling; heap-frame effectiveness proven end to end by
+/// `mutator_harness::heap_hog_past_default_frame_needs_a_request_heap_frame`).
+/// **A shape past ~24 accounts WITHOUT the wrapper's heap frame OOMs
+/// fail-closed** (the tx reverts, nothing persists). 32 is one inside the
+/// largest total the LiteSVM message sanitizer can build (~34 remaining), which
+/// is what bounds on-chain verification here, not the program.
+pub const MAX_EXECUTE_ACCOUNTS_TOTAL: usize = 32;
+/// MEASURED (same lift): the most **writable** remaining accounts one `execute`
+/// accepts. 28 covers the ~30-account Jupiter target (Task 6) with headroom and
+/// stays inside the verified 30-writable-at-113k-CU shape.
+pub const MAX_EXECUTE_WRITABLE: usize = 28;
 pub const MAX_CLIENT_DATA_LEN: usize = 512;
 pub const MAX_ROOT_EXPIRY_SECS: i64 = 600;
 /// Maximum age, **in slots**, of a root passkey ceremony (spec §4, rev 8).

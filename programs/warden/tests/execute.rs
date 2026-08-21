@@ -588,10 +588,14 @@ fn execute_compute_budget_inside_rejected() {
 // `execute_total_cap_boundary`, `over_cap_shapes_reject_cleanly_...`).
 #[test]
 fn execute_account_caps_are_measured_and_ordered() {
-    // The sweep-pinned values (PHASE1B-MEASUREMENTS §Task 5): 24 total / 20
-    // writable, one inside the verified 25-remaining default-heap shape.
-    assert_eq!(MAX_EXECUTE_ACCOUNTS_TOTAL, 24);
-    assert_eq!(warden::constants::MAX_EXECUTE_WRITABLE, 20);
+    // The re-sweep-pinned values (PHASE1B-MEASUREMENTS §Task 6 heap lift): 32
+    // total / 28 writable, verified with the wrapper's heap frame under
+    // warden's custom allocator (30 writable = 113k CU proven, well under the
+    // 360k ceiling), covering the ~30-account Jupiter target with headroom.
+    // The harness's message sanitizer caps buildable txs at ~34 remaining, so
+    // every boundary case here stays <= 33 remaining.
+    assert_eq!(MAX_EXECUTE_ACCOUNTS_TOTAL, 32);
+    assert_eq!(warden::constants::MAX_EXECUTE_WRITABLE, 28);
     assert!(warden::constants::MAX_EXECUTE_WRITABLE <= MAX_EXECUTE_ACCOUNTS_TOTAL);
 }
 
@@ -1251,6 +1255,11 @@ fn t22_tail_account(svm: &mut LiteSVM) -> AccountMeta {
 }
 
 const CU_BUDGET_CEILING: u64 = 360_000; // 60 % of the 600k the extension requests
+/// The heap frame the production wrapper injects for large `execute` shapes
+/// (client contract, same shape as the CU-limit injection). Warden's custom
+/// allocator (src/heap.rs) makes it effective; without it a >~24-account shape
+/// OOMs fail-closed.
+const EXEC_HEAP_FRAME: u32 = 128 * 1024;
 
 /// Top-level `RequestHeapFrame` (tag 1 ‖ u32 LE bytes, multiple of 1024,
 /// ≤ 256 KiB) — the wrapper adds this for large shapes, exactly as it adds
@@ -1311,6 +1320,22 @@ fn probe_shape(n_writable: usize, heap_bytes: Option<u32>) -> String {
     out.unwrap_or_else(|_| "HARNESS-CEILING (litesvm sanitizer panic)".into())
 }
 
+/// TEMP re-sweep with warden's custom allocator: probe the NEW ceiling when a
+/// top-level heap frame is present. Ignored by default so the committed suite
+/// keeps the pinned caps; run explicitly with `--ignored` while sizing them.
+#[test]
+#[ignore]
+fn resweep_writable_n_with_heap_frame() {
+    println!("\n| writable N | no frame | 128 KiB frame | 200 KiB frame |");
+    println!("|---|---|---|---|");
+    for n in [24usize, 30, 36, 40, 44, 50] {
+        let none = probe_shape(n, None);
+        let f128 = probe_shape(n, Some(128 * 1024));
+        let f200 = probe_shape(n, Some(200 * 1024));
+        println!("| {n} | {none} | {f128} | {f200} |");
+    }
+}
+
 #[test]
 fn measure_sweep_writable_n() {
     // Strict in-cap shapes (CU + bytes). The heap-ceiling probe that SET the
@@ -1333,42 +1358,50 @@ fn measure_sweep_writable_n() {
 
 #[test]
 fn over_cap_shapes_reject_cleanly_before_the_heap_ceiling() {
-    // The measured heap ceiling (OOM at 24 writable / ~27 remaining on the
-    // default 32 KiB heap) must be UNREACHABLE by construction: every over-cap
-    // shape fails the cheap count check (6056/6057), never the allocator.
-    for n in [22usize, 26, 30] {
-        let out = probe_shape(n, None);
-        assert!(
-            out.contains("Custom(6057)") || out.contains("Custom(6056)"),
-            "n={n}: expected a clean cap rejection, got {out}"
-        );
-        assert!(!out.contains("OOM"), "n={n} reached the allocator: {out}");
+    // Over-cap shapes must fail the cheap count check (6056/6057) BEFORE any
+    // snapshot allocation, whether or not a heap frame is present — so a client
+    // can never reach the allocator with more accounts than the cap allows.
+    for n in [28usize, 29, 30] {
+        for frame in [None, Some(EXEC_HEAP_FRAME)] {
+            let out = probe_shape(n, frame);
+            assert!(
+                out.contains("Custom(6057)") || out.contains("Custom(6056)"),
+                "n={n} frame={frame:?}: expected a clean cap rejection, got {out}"
+            );
+            assert!(!out.contains("OOM"), "n={n} reached the allocator: {out}");
+        }
     }
 }
 
 #[test]
 fn execute_writable_cap_boundary() {
-    // 19 vault ATAs + writable dest = 20 writable (== MAX_EXECUTE_WRITABLE) →
-    // OK; 20 ATAs + dest = 21 → TooManyExecuteWritable.
-    assert!(probe_shape(19, None).starts_with("OK"), "at-cap shape must pass");
-    let over = probe_shape(20, None);
+    // 27 vault ATAs + writable dest = 28 writable (== MAX_EXECUTE_WRITABLE)
+    // passes WITH the wrapper's heap frame (custom allocator, src/heap.rs);
+    // 28 ATAs + dest = 29 → TooManyExecuteWritable at the count check.
+    let at = probe_shape(27, Some(EXEC_HEAP_FRAME));
+    assert!(at.starts_with("OK"), "at writable cap (28) must pass with a frame: {at}");
+    let over = probe_shape(28, Some(EXEC_HEAP_FRAME));
     assert!(over.contains("Custom(6057)"), "one over the writable cap: {over}");
+    // And WITHOUT the frame the at-cap shape fails CLOSED, never silently:
+    let no_frame = probe_shape(27, None);
+    assert!(!no_frame.starts_with("OK"), "28-writable must need the frame: {no_frame}");
 }
 
 #[test]
 fn execute_total_cap_boundary() {
     // 1 writable source + writable dest + SPL + mint + N read-only strangers:
-    // 24 remaining (== MAX_EXECUTE_ACCOUNTS_TOTAL) passes, 25 rejects 6056.
-    let ok = probe_total(20); // 1W src + dest + spl + mint + 20 RO = 24
-    assert!(ok.starts_with("OK"), "at-total-cap shape must pass: {ok}");
-    let over = probe_total(21); // 25 remaining
+    // 32 remaining (== MAX_EXECUTE_ACCOUNTS_TOTAL) passes with a frame, 33
+    // rejects 6056 at the count check.
+    let ok = probe_total(28, Some(EXEC_HEAP_FRAME)); // 1W src + dest + spl + mint + 28 RO = 32
+    assert!(ok.starts_with("OK"), "at-total-cap shape (32) must pass with a frame: {ok}");
+    let over = probe_total(29, Some(EXEC_HEAP_FRAME)); // 33 remaining
     assert!(over.contains("Custom(6056)"), "one over the total cap: {over}");
 }
 
 /// Panic-safe probe of a total-cap shape: 1 writable vault source + writable
 /// dest + SPL + mint + `n_readonly` stranger token accounts.
-fn probe_total(n_readonly: usize) -> String {
-    let out = std::panic::catch_unwind(|| {
+fn probe_total(n_readonly: usize, heap_bytes: Option<u32>) -> String {
+    let out = std::panic::catch_unwind(move || {
         let (mut svm, payer, _pk, account, registry, _mut, vault_ata) = live();
         let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
         let dest = dest_ata(&mut svm);
@@ -1393,7 +1426,10 @@ fn probe_total(n_readonly: usize) -> String {
             session_kp.pubkey(), account, Some(session), false, None, Some(registry), None,
             &remaining, &args,
         );
-        match send(&mut svm, &[&payer, &session_kp], &[cu_limit_ix(600_000), ix]) {
+        let mut ixs = vec![cu_limit_ix(600_000)];
+        if let Some(h) = heap_bytes { ixs.push(heap_frame_ix(h)); }
+        ixs.push(ix);
+        match send(&mut svm, &[&payer, &session_kp], &ixs) {
             Ok(m) => format!("OK cu={}", m.compute_units_consumed),
             Err(e) => format!("ERR {:?}", e.err),
         }

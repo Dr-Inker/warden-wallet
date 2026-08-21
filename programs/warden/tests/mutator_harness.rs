@@ -215,6 +215,68 @@ fn reenter_warden_with_forged_input_fails() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Task 6 prerequisite proof: RequestHeapFrame is honoured once the default
+// 32 KiB-capped allocator is replaced (this crate's custom-heap allocator).
+// ---------------------------------------------------------------------------
+
+fn cb_ix(tag: u8, arg: u32) -> Instruction {
+    let mut data = vec![tag];
+    data.extend_from_slice(&arg.to_le_bytes());
+    Instruction {
+        program_id: solana_sdk::pubkey!("ComputeBudget111111111111111111111111111111"),
+        accounts: vec![],
+        data,
+    }
+}
+fn heap_frame_ix(bytes: u32) -> Instruction {
+    cb_ix(1, bytes) // RequestHeapFrame
+}
+fn cu_limit_ix(units: u32) -> Instruction {
+    cb_ix(2, units) // SetComputeUnitLimit
+}
+
+fn send_ixs(svm: &mut LiteSVM, payer: &Keypair, ixs: &[Instruction]) -> Result<(), String> {
+    let tx = Transaction::new(
+        &[payer],
+        Message::new(ixs, Some(&payer.pubkey())),
+        svm.latest_blockhash(),
+    );
+    svm.send_transaction(tx).map(|_| ()).map_err(|e| format!("{:?} {:#?}", e.err, e.meta.logs))
+}
+
+#[test]
+fn heap_hog_fits_the_default_frame_under_the_custom_allocator() {
+    // ~31 KiB is under the default 32 KiB heap and must succeed with no frame —
+    // proving the custom bump allocator is a working allocator, not just an
+    // unbounded one.
+    let (mut svm, payer, _mutator) = setup();
+    send_ixs(&mut svm, &payer, &[cu_limit_ix(400_000), mutator::heap_hog(31 * 1024)])
+        .expect("31 KiB on default frame");
+}
+
+#[test]
+fn heap_hog_past_default_frame_needs_a_request_heap_frame() {
+    // 100 KiB exceeds the default 32 KiB: it must FAIL without a frame and
+    // SUCCEED with a 128 KiB RequestHeapFrame — the exact relief that was inert
+    // under the entrypoint's capped default allocator (Task 5 sweep). This is
+    // the on-chain evidence that the Task 6 account-cap lift is real.
+    let (mut svm, payer, _mutator) = setup();
+    let without = send_ixs(
+        &mut svm,
+        &payer,
+        &[cu_limit_ix(400_000), mutator::heap_hog(100 * 1024)],
+    );
+    assert!(without.is_err(), "100 KiB must fail on the default 32 KiB heap");
+
+    let with = send_ixs(
+        &mut svm,
+        &payer,
+        &[cu_limit_ix(400_000), heap_frame_ix(128 * 1024), mutator::heap_hog(100 * 1024)],
+    );
+    assert!(with.is_ok(), "100 KiB must succeed with a 128 KiB heap frame: {with:?}");
+}
+
 #[test]
 fn every_instruction_discriminator_is_the_anchor_hash() {
     // Guard against a silently-wrong discriminator: each must equal

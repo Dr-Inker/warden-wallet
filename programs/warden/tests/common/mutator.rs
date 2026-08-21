@@ -143,6 +143,12 @@ pub fn reenter_warden(warden_program: Pubkey, data: Vec<u8>, remaining: Vec<Acco
     ix("reenter_warden", &args, accounts)
 }
 
+/// `heap_hog(bytes)` — allocate and touch `bytes` of heap (Task 6 heap-frame
+/// proof vehicle; see the mutator program's doc comment).
+pub fn heap_hog(bytes: u32) -> Instruction {
+    ix("heap_hog", &bytes.to_le_bytes(), vec![])
+}
+
 /// Anchor discriminator (`sha256("global:<name>")[..8]`), exposed so Task 5 can
 /// also reach it if needed.
 pub fn instruction_discriminator(name: &str) -> [u8; 8] {

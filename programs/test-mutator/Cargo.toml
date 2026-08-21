@@ -9,7 +9,13 @@ crate-type = ["cdylib", "lib"]
 name = "test_mutator"
 
 [features]
-default = []
+# Same custom-heap arrangement as programs/warden (see warden/src/heap.rs):
+# the mutator carries the identical uncapped bump allocator so `heap_hog` can
+# PROVE, end to end in LiteSVM, that a RequestHeapFrame-granted region is
+# actually usable once the entrypoint's 32 KiB-capped default allocator is out
+# of the way — the Task 6 prerequisite evidence.
+default = ["custom-heap"]
+custom-heap = []
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []

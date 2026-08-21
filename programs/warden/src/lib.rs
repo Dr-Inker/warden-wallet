@@ -4,6 +4,7 @@ pub mod buckets;
 pub mod conservation;
 pub mod constants;
 pub mod errors;
+pub mod heap;
 pub mod instructions;
 pub mod payload;
 pub mod registry;
