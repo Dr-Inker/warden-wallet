@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   encodeExecutePayload,
   decodeExecutePayload,
@@ -12,10 +11,12 @@ import {
   type ExecutePayload,
   type LogicalAccount,
 } from "../src/index.js";
-
-const here = dirname(fileURLToPath(import.meta.url));
-// programs/warden/tests/fixtures relative to packages/core/test
-const fixturesDir = resolve(here, "../../../programs/warden/tests/fixtures");
+import {
+  FIXTURES_DIR,
+  PAYLOAD_VECTOR,
+  PAYLOAD_VECTOR_LOGICAL,
+  CLOSE_PAYLOAD,
+} from "../scripts/gen-fixtures.js";
 
 const hex = (b: Uint8Array): string =>
   Array.from(b)
@@ -130,68 +131,41 @@ describe("splitForStage", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cross-language fixture: this test WRITES the byte vector + the accounts_hash
-// that a Rust test (`payload::tests::ts_payload_vector_round_trips`) reads back
-// and asserts `parse_payload` / `compute_accounts_hash` match byte-for-byte.
+// Cross-language GOLDEN fixtures. These files are READ-ONLY golden vectors,
+// written only by `scripts/gen-fixtures.ts`; the Rust tests
+// (`payload::tests::ts_payload_vector_round_trips`,
+// `ts_writable_pda_close_vector_parses`) read the SAME committed bytes. Here we
+// assert the TS encoder reproduces the committed golden byte-for-byte — a
+// wrapper/encoder regression fails this AND the gate's `git diff` guard, rather
+// than silently rewriting the fixture (WRDF-0081).
 // ---------------------------------------------------------------------------
-describe("cross-language fixture", () => {
-  it("writes payload_vector.bin + accounts_hash.hex for the Rust decoder", () => {
-    const payload: ExecutePayload = {
-      ixs: [
-        {
-          programIndex: 4,
-          accounts: [
-            { index: 2, flags: FLAG_WRITABLE },
-            { index: 3, flags: FLAG_WRITABLE },
-            { index: 0, flags: FLAG_SIGNER },
-            { index: 4, flags: 0 },
-          ],
-          data: Uint8Array.from([3, 0xd0, 0x07, 0, 0, 0, 0, 0, 0]), // SPL Transfer, amount 2000
-        },
-        {
-          programIndex: 5,
-          accounts: [{ index: 1, flags: FLAG_SIGNER }],
-          data: Uint8Array.from([]),
-        },
-      ],
-    };
-    const bytes = encodeExecutePayload(payload);
-    // A deterministic 6-account logical list for the hash vector.
-    const logical: LogicalAccount[] = Array.from({ length: 6 }, (_, i) => ({
-      key: fill(32, 0x10 + i),
-      isSigner: i === 0 || i === 1,
-      isWritable: i === 0 ? false : i >= 2 && i <= 3,
-    }));
-    const ah = computeAccountsHash(logical);
+const golden = (name: string): Uint8Array => new Uint8Array(readFileSync(resolve(FIXTURES_DIR, name)));
 
-    mkdirSync(fixturesDir, { recursive: true });
-    writeFileSync(resolve(fixturesDir, "payload_vector.bin"), bytes);
-    writeFileSync(resolve(fixturesDir, "payload_accounts_hash.hex"), hex(ah));
-    // Sanity: the vector round-trips in TS too.
-    expect(decodeExecutePayload(bytes)).toEqual(payload);
-    expect(bytes.length).toBeGreaterThan(0);
+describe("cross-language golden fixtures", () => {
+  it("payload_vector.bin matches the committed golden (independently pinned)", () => {
+    // Independently pin the structure the Rust decoder asserts, so this is not a
+    // tautology against the encoder's own output.
+    expect(PAYLOAD_VECTOR.ixs.length).toBe(2);
+    expect(PAYLOAD_VECTOR.ixs[0]!.programIndex).toBe(4);
+    expect(PAYLOAD_VECTOR.ixs[0]!.accounts.map((a) => [a.index, a.flags])).toEqual([[2, FLAG_WRITABLE], [3, FLAG_WRITABLE], [0, FLAG_SIGNER], [4, 0]]);
+    expect(PAYLOAD_VECTOR.ixs[1]!.programIndex).toBe(5);
+
+    expect(hex(encodeExecutePayload(PAYLOAD_VECTOR))).toBe(hex(golden("payload_vector.bin")));
+    expect(decodeExecutePayload(golden("payload_vector.bin"))).toEqual(PAYLOAD_VECTOR);
   });
 
-  it("writes payload_writable_pda_close.bin — the sanctioned writable-PDA close (WRDF-0073)", () => {
-    // A vault-sweep SPL CloseAccount (tag 9): account_to_close (writable), the
-    // rent destination = the PDA (index 0, WRITABLE), owner = the PDA (index 0,
-    // SIGNER). The PDA appears twice (relaxed per-ix duplicate rule) and is
-    // WRITABLE — which the pure codec must now encode, and parse_payload accept.
-    const closePayload: ExecutePayload = {
-      ixs: [
-        {
-          programIndex: 3, // token program (logical slot)
-          accounts: [
-            { index: 2, flags: FLAG_WRITABLE }, // account being closed
-            { index: 0, flags: FLAG_WRITABLE }, // rent destination = PDA
-            { index: 0, flags: FLAG_SIGNER }, // owner = PDA
-          ],
-          data: Uint8Array.from([9]), // SPL CloseAccount
-        },
-      ],
-    };
-    const bytes = encodeExecutePayload(closePayload);
-    writeFileSync(resolve(fixturesDir, "payload_writable_pda_close.bin"), bytes);
-    expect(decodeExecutePayload(bytes)).toEqual(closePayload);
+  it("payload_accounts_hash.hex matches the committed golden", () => {
+    const committed = readFileSync(resolve(FIXTURES_DIR, "payload_accounts_hash.hex"), "utf8").trim();
+    expect(hex(computeAccountsHash(PAYLOAD_VECTOR_LOGICAL))).toBe(committed);
+    // Independent structural pin of the hashed list.
+    expect(PAYLOAD_VECTOR_LOGICAL.map((a) => [a.isSigner, a.isWritable])).toEqual([[true, false], [true, false], [false, true], [false, true], [false, false], [false, false]]);
+  });
+
+  it("payload_writable_pda_close.bin matches the committed golden (WRDF-0073)", () => {
+    // The sanctioned vault-sweep CloseAccount: the PDA appears twice, once
+    // WRITABLE (rent destination) once SIGNER (owner).
+    expect(CLOSE_PAYLOAD.ixs[0]!.accounts.map((a) => [a.index, a.flags])).toEqual([[2, FLAG_WRITABLE], [0, FLAG_WRITABLE], [0, FLAG_SIGNER]]);
+    expect(hex(encodeExecutePayload(CLOSE_PAYLOAD))).toBe(hex(golden("payload_writable_pda_close.bin")));
+    expect(decodeExecutePayload(golden("payload_writable_pda_close.bin"))).toEqual(CLOSE_PAYLOAD);
   });
 });

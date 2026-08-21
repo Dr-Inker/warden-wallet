@@ -18,6 +18,21 @@ if [ "${WARDEN_SKIP_SPIKES:-0}" = "1" ]; then
 else
   pnpm test
 fi
+# WRDF-0081: the cross-language fixtures under programs/warden/tests/fixtures are
+# READ-ONLY golden vectors, written only by `pnpm --filter @warden/core
+# gen:fixtures`. The suite asserts wrapForExecute/encode reproduce them; this
+# guard fails the gate if a test (or a wrapper regression that a test failed to
+# catch) mutated a golden, so a fixture can never silently self-update.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if ! git diff --exit-code -- programs/warden/tests/fixtures >/dev/null 2>&1; then
+    echo "FIXTURE DRIFT: a test mutated a committed golden under programs/warden/tests/fixtures."
+    echo "  Golden fixtures are written only by 'pnpm --filter @warden/core gen:fixtures'."
+    echo "  If the change is intentional, regenerate and commit it; otherwise a wrapper regression"
+    echo "  changed the encoded/hashed output. Diff:"
+    git --no-pager diff --stat -- programs/warden/tests/fixtures
+    exit 1
+  fi
+fi
 # Spikes are excluded from the root workspace (see Cargo.toml), so --workspace
 # covers only programs/* once Phase 1 lands the first program crate.
 if ls programs/*/Cargo.toml >/dev/null 2>&1; then

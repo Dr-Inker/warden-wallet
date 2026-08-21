@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { FIXTURES_DIR, coalescedWrap, serializeLogical, COALESCED_SMART, COALESCED_SIGNER } from "../scripts/gen-fixtures.js";
 import {
   PublicKey,
   Keypair,
@@ -329,44 +329,29 @@ describe("wrapForExecute", () => {
 
   // ---------------------------------------------------------------------------
   // WRDF-0081 — an INDEPENDENT cross-boundary oracle for the coalesced hash. The
-  // wrapper emits its effective (post-compile) logical list + accountsHash for a
-  // payer==signer shape (logical[1] coalesced WRITABLE); a Rust test
-  // (`payload::tests::ts_coalesced_logical_hash_matches`) reads the list bytes and
-  // recomputes the hash with the handler's OWN `compute_accounts_hash`, so the
-  // assertion is against the handler function, not the SDK's own computeAccountsHash.
+  // committed golden `payload_coalesced_logical.bin` (+ hash) is a READ-ONLY
+  // vector written only by scripts/gen-fixtures.ts; the Rust test
+  // (`payload::tests::ts_coalesced_logical_hash_matches`) reads the SAME bytes and
+  // recomputes with the handler's OWN `compute_accounts_hash`. Here we assert
+  // `wrapForExecute` reproduces the golden byte-for-byte AND independently pin the
+  // expected logical list, so a coalescing regression fails both lanes (and the
+  // gate's `git diff` guard) instead of self-updating the golden.
   // ---------------------------------------------------------------------------
-  it("writes payload_coalesced_logical.bin + hash for the Rust hash oracle", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const fixturesDir = resolve(here, "../../../programs/warden/tests/fixtures");
-    // DETERMINISTIC inputs (fixed byte patterns) so the fixture is reproducible —
-    // a Keypair.generate() shape would rewrite the committed bytes every run.
-    const fixed = (byte: number) => new PublicKey(new Uint8Array(32).fill(byte));
-    const fSmart = fixed(0x11);
-    const fSigner = fixed(0x22); // also the default payer → logical[1] coalesces writable
-    const fProg = fixed(0x33);
-    const fAcct = fixed(0x44);
-    const dIx = new TransactionInstruction({
-      programId: fProg,
-      keys: [
-        { pubkey: fAcct, isSigner: false, isWritable: true },
-        { pubkey: fSmart, isSigner: true, isWritable: false }, // PDA authority-signer
-      ],
-      data: Buffer.from([7, 7]),
-    });
-    const dMsg = new TransactionMessage({ payerKey: fSigner, recentBlockhash: BLOCKHASH, instructions: [dIx] }).compileToV0Message();
-    const r = wrapForExecute(dMsg, { wardenProgram, smartAccount: fSmart, signer: fSigner }); // payer defaults to signer
-    expect(r.logical[1]!.isWritable).toBe(true); // the coalesced case we are pinning
-    // Serialize each logical entry as pubkey(32) ‖ is_signer(1) ‖ is_writable(1).
-    const buf = new Uint8Array(r.logical.length * 34);
-    let o = 0;
-    for (const a of r.logical) {
-      buf.set(a.key, o); o += 32;
-      buf[o++] = a.isSigner ? 1 : 0;
-      buf[o++] = a.isWritable ? 1 : 0;
-    }
-    mkdirSync(fixturesDir, { recursive: true });
-    writeFileSync(resolve(fixturesDir, "payload_coalesced_logical.bin"), buf);
-    writeFileSync(resolve(fixturesDir, "payload_coalesced_hash.hex"), hex(r.accountsHash));
-    expect(buf.length).toBe(r.logical.length * 34);
+  it("reproduces the committed coalesced-logical golden and its pinned structure", () => {
+    const r = coalescedWrap();
+    // Independently pin the effective logical list (fixed inputs 0x11/0x22/0x33/0x44):
+    // [smart(non-signer,writable), signer(signer,WRITABLE-coalesced), prog(ro), acct(writable)].
+    expect(r.logical.length).toBe(4);
+    expect(hex(r.logical[0]!.key)).toBe(hex(COALESCED_SMART.toBytes()));
+    expect([r.logical[0]!.isSigner, r.logical[0]!.isWritable]).toEqual([false, true]);
+    expect(hex(r.logical[1]!.key)).toBe(hex(COALESCED_SIGNER.toBytes()));
+    expect([r.logical[1]!.isSigner, r.logical[1]!.isWritable]).toEqual([true, true]); // payer==signer coalesced
+    expect([r.logical[2]!.isSigner, r.logical[2]!.isWritable]).toEqual([false, false]); // program id
+    expect([r.logical[3]!.isSigner, r.logical[3]!.isWritable]).toEqual([false, true]);
+
+    const committedLogical = new Uint8Array(readFileSync(resolve(FIXTURES_DIR, "payload_coalesced_logical.bin")));
+    const committedHash = readFileSync(resolve(FIXTURES_DIR, "payload_coalesced_hash.hex"), "utf8").trim();
+    expect(hex(serializeLogical(r.logical))).toBe(hex(committedLogical));
+    expect(hex(r.accountsHash)).toBe(committedHash);
   });
 });

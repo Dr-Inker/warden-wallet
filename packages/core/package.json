@@ -7,13 +7,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "gen:fixtures": "tsx scripts/gen-fixtures.ts"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
     "@solana/web3.js": "^1.98.0"
   },
   "devDependencies": {
-    "ajv": "^8.20.0"
+    "ajv": "^8.20.0",
+    "tsx": "^4.23.12"
   }
 }
