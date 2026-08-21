@@ -12,15 +12,20 @@ import {
   decodeExecutePayload,
   computeAccountsHash,
   DEFAULT_COMPUTE_UNIT_LIMIT,
-  HEAP_FRAME_BYTES,
-  HEAP_FRAME_TRIGGER_REMAINING,
+  MIN_COMPUTE_UNIT_LIMIT,
+  HEAP_FRAME_FLOOR_BYTES,
   MAX_EXECUTE_ACCOUNTS_TOTAL,
+  MAX_EXECUTE_WRITABLE,
   FLAG_WRITABLE,
   type LogicalAccount,
 } from "../src/index.js";
 
 const BLOCKHASH = "11111111111111111111111111111111";
 const hex = (b: Uint8Array): string => Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
+const CB = ComputeBudgetProgram.programId;
+const heapFrame = (ixs: TransactionInstruction[]) => ixs.find((i) => i.programId.equals(CB) && i.data[0] === 1);
+const cuLimit = (ixs: TransactionInstruction[]) => ixs.find((i) => i.programId.equals(CB) && i.data[0] === 2);
+const readU32 = (d: Uint8Array) => (d[1]! | (d[2]! << 8) | (d[3]! << 16) | (d[4]! << 24)) >>> 0;
 
 const wardenProgram = new PublicKey("6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2");
 const smartAccount = Keypair.generate().publicKey;
@@ -58,24 +63,25 @@ function dappMsg(withComputeBudget: boolean) {
   return { msg: new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: ixs }).compileToV0Message(), progA, progB, shared, dest };
 }
 
+/** An inner instruction naming `keys` under a fresh program. */
+function ixMsg(keys: Array<{ pubkey: PublicKey; isSigner: boolean; isWritable: boolean }>, payerKey = signer) {
+  const ix = new TransactionInstruction({ programId: Keypair.generate().publicKey, keys, data: Buffer.from([0]) });
+  return new TransactionMessage({ payerKey, recentBlockhash: BLOCKHASH, instructions: [ix] }).compileToV0Message();
+}
+
 describe("wrapForExecute", () => {
   it("builds a payload whose logical indices round-trip and whose PDA is index 0", () => {
     const { msg } = dappMsg(false);
     const r = wrapForExecute(msg, { wardenProgram, smartAccount, signer });
-    // logical[0] = PDA, logical[1] = signer.
     expect(hex(r.logical[0]!.key)).toBe(hex(smartAccount.toBytes()));
     expect(hex(r.logical[1]!.key)).toBe(hex(signer.toBytes()));
     expect(r.logical[0]!.isSigner).toBe(false); // PDA never a tx signer
-    // The decoded payload references the same indices we can re-derive.
     const decoded = decodeExecutePayload(r.payload);
     expect(decoded).toEqual(r.decoded);
-    // Every inner-ix account index is in range of the logical list.
     for (const ix of decoded.ixs) {
       expect(ix.programIndex).toBeLessThan(r.logical.length);
       for (const a of ix.accounts) expect(a.index).toBeLessThan(r.logical.length);
     }
-    // The PDA, wherever a dApp ix referenced it, is index 0 and never writable
-    // in the payload flags.
     for (const ix of decoded.ixs) {
       for (const a of ix.accounts) {
         if (a.index === 0) expect(a.flags & FLAG_WRITABLE).toBe(0);
@@ -85,39 +91,34 @@ describe("wrapForExecute", () => {
 
   it("hoists a dApp ComputeBudget ix, or injects a default limit when absent", () => {
     const withCb = wrapForExecute(dappMsg(true).msg, { wardenProgram, smartAccount, signer });
-    expect(withCb.computeBudgetIxs.length).toBe(1);
-    expect(withCb.computeBudgetIxs[0]!.programId.equals(ComputeBudgetProgram.programId)).toBe(true);
-    // No ComputeBudget ended up inside the payload's inner instructions.
+    expect(cuLimit(withCb.computeBudgetIxs)).toBeDefined(); // dApp's 250k kept
+    expect(readU32(cuLimit(withCb.computeBudgetIxs)!.data)).toBe(250_000);
     for (const ix of withCb.decoded.ixs) {
-      expect(withCb.logical[ix.programIndex]!.key).not.toEqual(ComputeBudgetProgram.programId.toBytes());
+      expect(withCb.logical[ix.programIndex]!.key).not.toEqual(CB.toBytes()); // never inside the payload
     }
     const withoutCb = wrapForExecute(dappMsg(false).msg, { wardenProgram, smartAccount, signer });
-    expect(withoutCb.computeBudgetIxs.length).toBe(1); // default injected
+    expect(readU32(cuLimit(withoutCb.computeBudgetIxs)!.data)).toBe(DEFAULT_COMPUTE_UNIT_LIMIT);
   });
 
   it("dedups the shared account into ONE logical slot", () => {
     const { msg } = dappMsg(false);
     const r = wrapForExecute(msg, { wardenProgram, smartAccount, signer });
     const keys = r.logical.map((l) => hex(l.key));
-    expect(new Set(keys).size).toBe(keys.length); // no duplicate logical keys
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
-  // -------------------------------------------------------------------------
-  // The decompile-parity property: the logical list and accountsHash are
-  // IDENTICAL regardless of which named optionals are present in the outer
-  // instruction — because the optionals are NOT in the logical list.
-  // -------------------------------------------------------------------------
-  it("accountsHash is identical across every present/absent optional combination", () => {
+  // The decompile-parity property: accountsHash is IDENTICAL regardless of which
+  // named optionals are present, as long as they do not ALIAS a logical account.
+  it("accountsHash is identical across every present/absent non-aliasing optional combination", () => {
     const { msg } = dappMsg(false);
-    const r = wrapForExecute(msg, { wardenProgram, smartAccount, signer });
-    const baseHash = hex(r.accountsHash);
+    const base = wrapForExecute(msg, { wardenProgram, smartAccount, signer });
+    const baseHash = hex(base.accountsHash);
 
     const session = Keypair.generate().publicKey;
     const ixSysvar = Keypair.generate().publicKey;
     const stage = Keypair.generate().publicKey;
     const registry = Keypair.generate().publicKey;
     const stageCreator = Keypair.generate().publicKey;
-
     const combos = [
       {},
       { session },
@@ -127,18 +128,8 @@ describe("wrapForExecute", () => {
       { session, ixSysvar, stage, registry, stageCreator },
     ];
     for (const opt of combos) {
-      const metas = buildExecuteAccountMetas({ wardenProgram, smartAccount, signer, remaining: r.remaining, ...opt });
-      // The remaining accounts are always the LAST r.remaining.length entries,
-      // in the same order, so the logical list rebuilt from them is unchanged.
-      const remaining = metas.slice(metas.length - r.remaining.length);
-      const logical: LogicalAccount[] = [
-        { key: smartAccount.toBytes(), isSigner: false, isWritable: true },
-        // Default payer === signer, so the runtime (and the SDK) hash logical[1]
-        // as writable — the fee-payer coalescing (WRDF-0071).
-        { key: signer.toBytes(), isSigner: true, isWritable: true },
-        ...remaining.map((m) => ({ key: m.pubkey.toBytes(), isSigner: m.isSigner, isWritable: m.isWritable })),
-      ];
-      expect(hex(computeAccountsHash(logical))).toBe(baseHash);
+      const r = wrapForExecute(msg, { wardenProgram, smartAccount, signer, ...opt });
+      expect(hex(r.accountsHash)).toBe(baseHash);
     }
   });
 
@@ -147,7 +138,6 @@ describe("wrapForExecute", () => {
     const registry = Keypair.generate().publicKey;
     const r = wrapForExecute(dappMsg(false).msg, { wardenProgram, smartAccount, signer });
     const metas = buildExecuteAccountMetas({ wardenProgram, smartAccount, signer, session, registry, remaining: r.remaining });
-    // [smart_account, signer, session, ix_sysvar(sentinel), stage(sentinel), registry, stage_creator(sentinel), ...remaining]
     expect(metas[0]!.pubkey.equals(smartAccount)).toBe(true);
     expect(metas[1]!.pubkey.equals(signer)).toBe(true);
     expect(metas[2]!.pubkey.equals(session)).toBe(true);
@@ -160,19 +150,12 @@ describe("wrapForExecute", () => {
 
   it("injects the documented default compute-unit limit", () => {
     const r = wrapForExecute(dappMsg(false).msg, { wardenProgram, smartAccount, signer });
-    const limit = r.computeBudgetIxs.find((ix) => ix.data[0] === 2)!;
-    // SetComputeUnitLimit is tag 2 ‖ u32 LE.
-    expect(limit).toBeDefined();
-    const data = limit.data;
-    const units = data[1]! | (data[2]! << 8) | (data[3]! << 16) | (data[4]! << 24);
-    expect(units >>> 0).toBe(DEFAULT_COMPUTE_UNIT_LIMIT);
+    expect(readU32(cuLimit(r.computeBudgetIxs)!.data)).toBe(DEFAULT_COMPUTE_UNIT_LIMIT);
   });
 
   // -------------------------------------------------------------------------
-  // WRDF-0071 — fee-payer privilege coalescing. The runtime promotes the fee
-  // payer to signer+writable and the handler hashes the logical list from those
-  // RUNTIME flags. The SDK must hash whichever logical account is the payer as
-  // writable, or a signed root ceremony fails ChallengeMismatch.
+  // WRDF-0071 — fee-payer / named-optional privilege coalescing. The handler
+  // hashes runtime flags; the SDK must derive them from the compiled instruction.
   // -------------------------------------------------------------------------
   it("hashes logical[1] writable when signer is the payer, read-only for a separate relayer", () => {
     const { msg } = dappMsg(false);
@@ -181,79 +164,112 @@ describe("wrapForExecute", () => {
 
     const relayer = Keypair.generate().publicKey;
     const relayed = wrapForExecute(msg, { wardenProgram, smartAccount, signer, payer: relayer });
-    expect(relayed.logical[1]!.isWritable).toBe(false); // relayer is not in the logical list
-
-    // Different payer → different signed hash. This is the bug's fingerprint.
+    expect(relayed.logical[1]!.isWritable).toBe(false);
     expect(hex(selfPay.accountsHash)).not.toBe(hex(relayed.accountsHash));
   });
 
-  // WRDF-0074 — a third-party signer must be REJECTED, never silently stripped.
+  // WRDF-0071 round 2 — a named optional that ALIASES the signer (stageCreator ==
+  // signer, writable) coalesces logical[1] to writable even under a relayer payer.
+  it("hashes logical[1] writable when a writable named optional aliases the signer", () => {
+    const { msg } = dappMsg(false);
+    const relayer = Keypair.generate().publicKey;
+    const noAlias = wrapForExecute(msg, { wardenProgram, smartAccount, signer, payer: relayer });
+    const aliased = wrapForExecute(msg, { wardenProgram, smartAccount, signer, payer: relayer, stageCreator: signer });
+    expect(noAlias.logical[1]!.isWritable).toBe(false);
+    expect(aliased.logical[1]!.isWritable).toBe(true); // stage_creator is a writable optional
+    expect(hex(noAlias.accountsHash)).not.toBe(hex(aliased.accountsHash));
+  });
+
+  // WRDF-0074 — reject a third-party signer fail-closed.
   it("rejects an inner instruction that requires a third-party signer", () => {
     const cosigner = Keypair.generate().publicKey;
-    const prog = Keypair.generate().publicKey;
-    const ix = new TransactionInstruction({
-      programId: prog,
-      keys: [{ pubkey: cosigner, isSigner: true, isWritable: false }],
-      data: Buffer.from([1]),
-    });
-    const msg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [ix] }).compileToV0Message();
+    const msg = ixMsg([{ pubkey: cosigner, isSigner: true, isWritable: false }]);
     expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer })).toThrow(/third-party signer/);
   });
 
-  // WRDF-0073 — the general wrapper refuses a writable PDA (the sanctioned
-  // writable-PDA close is a warden-native op, not a wrapped foreign message).
+  // WRDF-0073 — the general wrapper refuses a writable PDA.
   it("rejects an inner instruction that names the SmartAccount PDA writable", () => {
-    const prog = Keypair.generate().publicKey;
-    const ix = new TransactionInstruction({
-      programId: prog,
-      keys: [{ pubkey: smartAccount, isSigner: false, isWritable: true }],
-      data: Buffer.from([9]),
-    });
-    const msg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [ix] }).compileToV0Message();
+    const msg = ixMsg([{ pubkey: smartAccount, isSigner: false, isWritable: true }]);
     expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer })).toThrow(/SmartAccount PDA writable/);
   });
 
-  // WRDF-0072 — large shapes get a RequestHeapFrame; small ones do not; and a
-  // dApp that supplied only a compute-unit PRICE still gets a limit injected.
-  it("injects a RequestHeapFrame only for large shapes and enforces account caps", () => {
+  // -------------------------------------------------------------------------
+  // WRDF-0072 — a heap frame is ALWAYS present (heap is driven by instruction
+  // count, not account count), sized to the shape.
+  // -------------------------------------------------------------------------
+  it("always attaches a RequestHeapFrame at or above the measured floor", () => {
     const small = wrapForExecute(dappMsg(false).msg, { wardenProgram, smartAccount, signer });
-    expect(small.computeBudgetIxs.some((ix) => ix.data[0] === 1)).toBe(false); // no heap frame
+    const f = heapFrame(small.computeBudgetIxs);
+    expect(f).toBeDefined();
+    expect(readU32(f!.data)).toBeGreaterThanOrEqual(HEAP_FRAME_FLOOR_BYTES);
 
-    // A shape with many distinct writable accounts crosses the trigger.
+    // A many-instruction shape (remainingLen == 1, but 40 inner ixs) still gets a
+    // frame — the pre-fix account-count trigger would have skipped it.
+    const shared = Keypair.generate().publicKey;
     const prog = Keypair.generate().publicKey;
-    const keys = Array.from({ length: HEAP_FRAME_TRIGGER_REMAINING }, () => ({
-      pubkey: Keypair.generate().publicKey,
-      isSigner: false,
-      isWritable: true,
-    }));
-    const bigIx = new TransactionInstruction({ programId: prog, keys, data: Buffer.from([0]) });
-    const bigMsg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [bigIx] }).compileToV0Message();
+    const ixs = Array.from({ length: 40 }, () =>
+      new TransactionInstruction({ programId: prog, keys: [{ pubkey: shared, isSigner: false, isWritable: true }], data: Buffer.from([0]) }),
+    );
+    const bigMsg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: ixs }).compileToV0Message();
     const big = wrapForExecute(bigMsg, { wardenProgram, smartAccount, signer });
-    const frame = big.computeBudgetIxs.find((ix) => ix.data[0] === 1)!;
-    expect(frame).toBeDefined();
-    const bytes = (frame.data[1]! | (frame.data[2]! << 8) | (frame.data[3]! << 16) | (frame.data[4]! << 24)) >>> 0;
-    expect(bytes).toBe(HEAP_FRAME_BYTES);
+    expect(big.remaining.length).toBe(2); // shared + program only
+    expect(heapFrame(big.computeBudgetIxs)).toBeDefined();
   });
 
-  it("keeps a dApp price setting AND still injects a compute-unit limit", () => {
+  it("keeps a dApp price setting AND still injects a validated compute-unit limit", () => {
     const price = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5 });
-    const prog = Keypair.generate().publicKey;
-    const ix = new TransactionInstruction({ programId: prog, keys: [{ pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true }], data: Buffer.from([1]) });
+    const ix = new TransactionInstruction({ programId: Keypair.generate().publicKey, keys: [{ pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true }], data: Buffer.from([1]) });
     const msg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [price, ix] }).compileToV0Message();
     const r = wrapForExecute(msg, { wardenProgram, smartAccount, signer });
     expect(r.computeBudgetIxs.some((i) => i.data[0] === 3)).toBe(true); // price preserved
-    expect(r.computeBudgetIxs.some((i) => i.data[0] === 2)).toBe(true); // limit injected
+    expect(cuLimit(r.computeBudgetIxs)).toBeDefined(); // limit injected
+    expect(heapFrame(r.computeBudgetIxs)).toBeDefined();
+  });
+
+  // WRDF-0076 — an undersized (or malformed) compute-unit limit is rejected, not
+  // rubber-stamped by tag presence.
+  it("rejects a dApp compute-unit limit below the measured floor", () => {
+    const tiny = ComputeBudgetProgram.setComputeUnitLimit({ units: 1 });
+    const ix = new TransactionInstruction({ programId: Keypair.generate().publicKey, keys: [{ pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true }], data: Buffer.from([1]) });
+    const msg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [tiny, ix] }).compileToV0Message();
+    expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer })).toThrow(/below the floor/);
+  });
+
+  it("rejects a configured default limit below the floor", () => {
+    expect(() =>
+      wrapForExecute(dappMsg(false).msg, { wardenProgram, smartAccount, signer, defaultComputeUnitLimit: MIN_COMPUTE_UNIT_LIMIT - 1 }),
+    ).toThrow(/below the floor/);
+  });
+
+  // -------------------------------------------------------------------------
+  // WRDF-0077 — caps are counted from EFFECTIVE (post-coalescing) privileges. A
+  // read-only remaining account chosen as the payer is promoted to writable.
+  // -------------------------------------------------------------------------
+  it("counts a payer-promoted remaining account against the writable cap", () => {
+    const writables = Array.from({ length: MAX_EXECUTE_WRITABLE }, () => ({ pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true }));
+    const readonlyPayer = Keypair.generate().publicKey;
+    const keys = [...writables, { pubkey: readonlyPayer, isSigner: false, isWritable: false }];
+    // The dApp message's own payer stays `signer`; readonlyPayer is a read-only
+    // dApp account that becomes the OUTER execute fee payer and is promoted there.
+    const msg = ixMsg(keys);
+    // Raw writable count is exactly the cap (28); promoting the payer makes 29.
+    expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer, payer: readonlyPayer })).toThrow(/MAX_EXECUTE_WRITABLE/);
   });
 
   it("rejects a shape past the on-chain account cap", () => {
-    const prog = Keypair.generate().publicKey;
-    const keys = Array.from({ length: MAX_EXECUTE_ACCOUNTS_TOTAL + 1 }, () => ({
-      pubkey: Keypair.generate().publicKey,
-      isSigner: false,
-      isWritable: false,
-    }));
-    const ix = new TransactionInstruction({ programId: prog, keys, data: Buffer.from([0]) });
-    const msg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [ix] }).compileToV0Message();
+    const keys = Array.from({ length: MAX_EXECUTE_ACCOUNTS_TOTAL + 2 }, () => ({ pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: false }));
+    const msg = ixMsg(keys);
     expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer })).toThrow(/MAX_EXECUTE_ACCOUNTS_TOTAL/);
+  });
+
+  // The returned executeAccountMetas ARE the logical source of truth: rebuilding
+  // the hash from them (positions 0,1,7..) reproduces accountsHash exactly.
+  it("accountsHash is reproducible from the returned executeAccountMetas", () => {
+    const stage = Keypair.generate().publicKey;
+    const registry = Keypair.generate().publicKey;
+    const r = wrapForExecute(dappMsg(false).msg, { wardenProgram, smartAccount, signer, stage, registry });
+    const m = r.executeAccountMetas;
+    const logical: LogicalAccount[] = [m[0]!, m[1]!, ...m.slice(7)].map((x) => ({ key: x.pubkey.toBytes(), isSigner: x.isSigner, isWritable: x.isWritable }));
+    expect(hex(computeAccountsHash(logical))).toBe(hex(r.accountsHash));
   });
 });
