@@ -219,7 +219,10 @@ describe("invariant ledger (docs/security/invariants.jsonl)", () => {
         }
       }
     }
-  });
+    // This test shells out to `git show` once per evidence entry; under the
+    // gate's post-build load those spawns can exceed the 5s default and false-red
+    // (documented flake). Give it explicit headroom so the gate is deterministic.
+  }, 30_000);
 
   it("leaves unimplemented rows honest: no evidence, no code_ref", () => {
     for (const r of rows.filter((x) => x.status === "unimplemented")) {

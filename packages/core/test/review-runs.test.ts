@@ -16,6 +16,7 @@ import { buildRunRecord } from "../../../scripts/append-review-run.mjs";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const RUNS = join(REPO, "docs/security/REVIEW-RUNS.jsonl");
+const SCORECARD = join(REPO, "docs/security/REVIEW-SCORECARD.jsonl");
 const EXAMPLE = join(REPO, ".codex/schemas/warden-findings.example.json");
 const EXPECT_FILE = join(REPO, ".codex/schemas/warden-findings.example.expect.json");
 const APPENDER = join(REPO, "scripts/append-review-run.mjs");
@@ -298,5 +299,37 @@ describe("append-review-run.mjs CLI", () => {
   it("the committed baseline exists and is loadable by the same contract this suite enforces", () => {
     expect(existsSync(RUNS)).toBe(true);
     expect(runs.some((r) => r.kind === "baseline-not-recorded")).toBe(true);
+  });
+});
+
+// WRDF-0083: `claimed_reproducer_verified` is a provenance claim that a
+// vulnerable-red / fixed-green REPRODUCER was run. It may be true ONLY when the
+// row carries a reproducer object naming DISTINCT base/fixed SHAs with
+// verified=true. A static-trace finding whose fix was confirmed by the gate must
+// record that under `remediation_verified`, never by falsely asserting a
+// reproducer that does not exist.
+describe("scorecard reproducer-provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
+  const cardRows = readFileSync(SCORECARD, "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+
+  it("claimed_reproducer_verified is true only with a valid distinct-SHA reproducer", () => {
+    for (const r of cardRows) {
+      if (r.claimed_reproducer_verified !== true) continue;
+      const rep = r.reproducer as { base_sha?: string; fixed_sha?: string; verified?: boolean } | null | undefined;
+      expect(rep, `${r.finding_id}: claimed_reproducer_verified=true but no reproducer object`).toBeTruthy();
+      expect(rep!.verified, `${r.finding_id}: reproducer not verified`).toBe(true);
+      expect(typeof rep!.base_sha === "string" && typeof rep!.fixed_sha === "string", `${r.finding_id}: reproducer missing SHAs`).toBe(true);
+      expect(rep!.base_sha, `${r.finding_id}: reproducer base_sha equals fixed_sha`).not.toBe(rep!.fixed_sha);
+    }
+  });
+
+  it("a gate-verified remediation is recorded under remediation_verified, not as a reproducer", () => {
+    for (const r of cardRows) {
+      if (r.remediation_verified === true) {
+        expect(r.claimed_reproducer_verified, `${r.finding_id}: remediation rows must not also claim a reproducer`).not.toBe(true);
+      }
+    }
   });
 });

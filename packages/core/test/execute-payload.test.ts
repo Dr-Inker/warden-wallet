@@ -16,7 +16,7 @@ import {
   PAYLOAD_VECTOR,
   PAYLOAD_VECTOR_LOGICAL,
   CLOSE_PAYLOAD,
-} from "../scripts/gen-fixtures.js";
+} from "../scripts/fixtures-data.js";
 
 const hex = (b: Uint8Array): string =>
   Array.from(b)

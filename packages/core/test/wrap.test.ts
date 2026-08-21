@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { FIXTURES_DIR, coalescedWrap, serializeLogical, COALESCED_SMART, COALESCED_SIGNER } from "../scripts/gen-fixtures.js";
+import { FIXTURES_DIR, coalescedWrap, serializeLogical } from "../scripts/fixtures-data.js";
 import {
   PublicKey,
   Keypair,
@@ -339,19 +339,48 @@ describe("wrapForExecute", () => {
   // ---------------------------------------------------------------------------
   it("reproduces the committed coalesced-logical golden and its pinned structure", () => {
     const r = coalescedWrap();
-    // Independently pin the effective logical list (fixed inputs 0x11/0x22/0x33/0x44):
-    // [smart(non-signer,writable), signer(signer,WRITABLE-coalesced), prog(ro), acct(writable)].
-    expect(r.logical.length).toBe(4);
-    expect(hex(r.logical[0]!.key)).toBe(hex(COALESCED_SMART.toBytes()));
-    expect([r.logical[0]!.isSigner, r.logical[0]!.isWritable]).toEqual([false, true]);
-    expect(hex(r.logical[1]!.key)).toBe(hex(COALESCED_SIGNER.toBytes()));
-    expect([r.logical[1]!.isSigner, r.logical[1]!.isWritable]).toEqual([true, true]); // payer==signer coalesced
-    expect([r.logical[2]!.isSigner, r.logical[2]!.isWritable]).toEqual([false, false]); // program id
-    expect([r.logical[3]!.isSigner, r.logical[3]!.isWritable]).toEqual([false, true]);
+    // Pin the COMPLETE effective logical list against LITERAL byte patterns —
+    // NOT identities imported from the generator (WRDF-0081). Inputs are
+    // smart=0x11, signer=0x22 (== payer), program=0x33, account=0x44; the dApp ix
+    // is [acct(0x44,writable), smart(0x11,signer)] so wrapForExecute's remaining
+    // insertion order is [program 0x33, account 0x44].
+    const lit = (byte: number) => hex(new Uint8Array(32).fill(byte));
+    const expected = [
+      { key: lit(0x11), isSigner: false, isWritable: true }, // smart_account (PDA)
+      { key: lit(0x22), isSigner: true, isWritable: true }, // signer == payer → coalesced writable
+      { key: lit(0x33), isSigner: false, isWritable: false }, // program id
+      { key: lit(0x44), isSigner: false, isWritable: true }, // the writable dApp account
+    ];
+    expect(r.logical.map((a) => ({ key: hex(a.key), isSigner: a.isSigner, isWritable: a.isWritable }))).toEqual(expected);
 
+    // The committed golden bytes encode exactly that pinned list, and Rust
+    // recomputes the hash over the same bytes with the handler's function.
     const committedLogical = new Uint8Array(readFileSync(resolve(FIXTURES_DIR, "payload_coalesced_logical.bin")));
     const committedHash = readFileSync(resolve(FIXTURES_DIR, "payload_coalesced_hash.hex"), "utf8").trim();
     expect(hex(serializeLogical(r.logical))).toBe(hex(committedLogical));
     expect(hex(r.accountsHash)).toBe(committedHash);
+  });
+
+  // WRDF-0081 — importing the fixtures-data module must have NO filesystem effect.
+  // The old `if (!process.env.VITEST) generate()` wrote the goldens on any
+  // non-Vitest import; now generation lives only in the gen-fixtures runner behind
+  // a main-module check, and this module's top level is side-effect-free. Re-run
+  // its top level (resetModules + fresh import) and assert the committed goldens
+  // are byte-unchanged — if the top level wrote anything, these would differ.
+  it("re-importing fixtures-data does not write the golden fixtures", async () => {
+    const { vi } = await import("vitest");
+    const names = [
+      "payload_vector.bin",
+      "payload_accounts_hash.hex",
+      "payload_writable_pda_close.bin",
+      "payload_coalesced_logical.bin",
+      "payload_coalesced_hash.hex",
+    ];
+    const snapshot = () => names.map((n) => hex(new Uint8Array(readFileSync(resolve(FIXTURES_DIR, n)))));
+    const before = snapshot();
+    vi.resetModules();
+    const mod = await import("../scripts/fixtures-data.js");
+    expect(typeof mod.generate).toBe("function"); // present, but never auto-invoked
+    expect(snapshot()).toEqual(before);
   });
 });
