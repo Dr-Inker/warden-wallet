@@ -123,7 +123,21 @@ Remaining, in campaign-plan order:
    (jup-ag/jupiter-cpi sha256 764ea6d7…). CI publishes a clean default-profile
    production .so + pin attestation. **Deferred, NOT 1B defects:** byte-exact
    Vec<RoutePlanStep> parse before mainnet (WRDF-0031/0059); structured events →
-   Task 5E (WRDF-0052). **NOW: Task 8 (TS client/route builder), then 9.** **C1a needs a program change** (`create_account` must
+   Task 5E (WRDF-0052). **Task 8 (TS execute client) DONE @ef69e23** — `packages/core`
+   `payload.ts` codec + `wrapForExecute` (build→compile→decompile the outer ix, derive
+   accounts_hash+caps from runtime-COALESCED effective metas = one source of truth;
+   fail-closed rejects for third-party signer / writable PDA / writable root signer;
+   payload⊆outer subset guard; ComputeBudget hoist+normalize with CU-floor + always-on
+   sized RequestHeapFrame + caller-frame align/range validation; client caps) +
+   cross-language golden fixtures (read-only vectors + gate `git diff` drift guard).
+   **9 sol@max rounds → round 9 = 0 findings.** SDK product code converged @round 3;
+   rounds 4–8 hardened the review LEDGER itself (golden fixtures, scorecard reproducer +
+   remediation provenance, CI shallow-clone fail-close, gate-contains-fix ancestry).
+   WRD-EXEC-11/12 test-covered; gate green @d73118f. **Deferred, non-blocking:** a typed
+   vault-sweep CloseAccount payload builder; an on-chain relayer/optional-alias execute
+   integration (client subset guard + Rust cross-language hash oracle cover it short of
+   that). **NOW: Task 11R (deploy-gate RPC), then Task 9 (close-out + spec rev 9).**
+   **C1a needs a program change** (`create_account` must
    compare against a pinned production `rp_id_hash`, not just self-consistency —
    WRDF-0016/0027) plus the owner's freeze-vs-migration decision.
 3. Corrected gating (was C1-only): **V4 waits for C1a + C2a + C3 + C4**; **U7

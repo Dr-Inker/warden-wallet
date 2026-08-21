@@ -1183,3 +1183,27 @@ Gate evidence on the ledger HEAD below.
 **160 passed (160)** (incl. the fail-closed absent-commit provenance cases),
 `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed), fixture
 guard. Round-8 rows' `remediation_gate_sha` is this HEAD.
+
+## Task 8 review round 9 — Codex sol@max — CONVERGED (0 findings)
+
+Round 9 (`8ec9fbe..ef69e23`, seeded=41) recorded a **zero-finding run** (thread
+`ef69e2345534-20260821T194548Z`, REVIEW-RUNS.jsonl). **Task 8 is DONE.**
+
+**Convergence summary (9 rounds):** the SDK product code (`wrap.ts`/`payload.ts`)
+converged at round 3 — WRDF-0071 (fee-payer coalescing), 0072 (mandatory heap
+frame), 0073 (writable-PDA codec parity), 0074 (reject third-party signer), 0076
+(CU-limit floor), 0077 (post-coalescing caps), 0078 (writable-PDA claim narrowed),
+0079 (reject writable signer + subset guard), 0080 (caller-frame validation), 0081
+(independent cross-language hash oracle) — all adopted and fixed, with the
+compile→decompile "one source of truth" rewrite (round 2→3) as the load-bearing
+correctness fix. Rounds 4–8 raised **no product-code finding**; they progressively
+hardened the review LEDGER itself: read-only golden fixtures + gate drift guard
+(0081), scorecard reproducer persistence (0015) and remediation provenance
+(0083), CI shallow-clone fail-close (0084), gate-contains-fix ancestry (0083),
+and absent-commit fail-close (0083). **Round 9 clean confirms both the deliverable
+and its assurance ledger are converged.**
+
+**Deferred (noted, non-blocking, not Task-8 defects):** a typed vault-sweep
+CloseAccount payload builder, and an on-chain relayer/optional-alias execute
+integration proving privilege parity end-to-end (the client subset guard + the
+independent Rust cross-language hash oracle cover it short of that).
