@@ -7,9 +7,19 @@
 
 import { PublicKey } from "@solana/web3.js";
 import { sha256 } from "@noble/hashes/sha2";
-import { MULTISIG_DISCRIMINATOR, deriveVaultPda, type RpcAccount } from "./accounts.js";
-import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, PERMISSION_ALL, SYNTHETIC_PIN, type DeployPinConfig, type PinnedMember } from "./config.js";
+import { type RpcAccount } from "./accounts.js";
+import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, MAINNET_GENESIS_HASH, PERMISSION_ALL, SYNTHETIC_PIN, type DeployPinConfig, type PinnedMember } from "./config.js";
 import type { RpcSource } from "./gate.js";
+
+// INDEPENDENT golden vectors — hard-coded, NOT derived from the production
+// functions under test, so a bug in `anchorAccountDiscriminator`/`deriveVaultPda`
+// (wrong seed literal, order, or index encoding) is caught rather than passed
+// (WRDF-0086). Regenerated deliberately from the pinned Squads wire format:
+//   sha256("account:Multisig")[..8]  and
+//   findProgramAddress(["multisig", <0xb2..>, "vault", [0]], SQDS4ep6…).
+const GOLDEN_MULTISIG_DISC = Uint8Array.from([0xe0, 0x74, 0x79, 0xba, 0x44, 0xa1, 0x4f, 0xec]);
+/** The canonical vault PDA for `SYNTHETIC_PIN` (multisig 0xb2…, vault index 0). */
+export const GOLDEN_VAULT_PDA = new PublicKey("DqhBzLtsh5xp4rcEf1BwkHboCjSD1NS3LjkYr8csBn4q");
 
 const hex = (b: Uint8Array): string => Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
 const u16 = (n: number): number[] => [n & 0xff, (n >> 8) & 0xff];
@@ -44,9 +54,12 @@ export interface MultisigSpec {
   members: PinnedMember[];
 }
 
-/** Encode a Squads v4 `Multisig` account (discriminator ‖ fields ‖ members vec). */
+/** Encode a Squads v4 `Multisig` account (discriminator ‖ fields ‖ members vec).
+ *  Uses the INDEPENDENT golden discriminator (not the production constant), so a
+ *  regression in `anchorAccountDiscriminator` makes `decodeMultisig` reject the
+ *  fixture rather than round-trip a shared wrong value (WRDF-0086). */
 export function encodeMultisig(spec: MultisigSpec): Uint8Array {
-  const bytes: number[] = [...MULTISIG_DISCRIMINATOR];
+  const bytes: number[] = [...GOLDEN_MULTISIG_DISC];
   bytes.push(...(spec.createKey ?? DEFAULT_PUBKEY).toBytes());
   bytes.push(...(spec.configAuthority ?? DEFAULT_PUBKEY).toBytes());
   bytes.push(...u16(spec.threshold));
@@ -63,10 +76,15 @@ export function encodeMultisig(spec: MultisigSpec): Uint8Array {
 
 /** A map-backed RpcSource over a mutable account table. */
 export class MapRpc implements RpcSource {
+  public genesis: string = MAINNET_GENESIS_HASH;
   constructor(private readonly table: Map<string, RpcAccount>) {}
   // eslint-disable-next-line @typescript-eslint/require-await
   async getAccountInfo(pubkey: PublicKey): Promise<RpcAccount | null> {
     return this.table.get(pubkey.toBase58()) ?? null;
+  }
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async getGenesisHash(): Promise<string> {
+    return this.genesis;
   }
   set(pubkey: PublicKey, acct: RpcAccount): void {
     this.table.set(pubkey.toBase58(), acct);
@@ -76,7 +94,10 @@ export class MapRpc implements RpcSource {
   }
 }
 
+/** A data account (owned, not executable). */
 const acct = (owner: PublicKey, data: Uint8Array): RpcAccount => ({ owner, data, executable: false });
+/** A real program account: executable, loader-owned. */
+const programAcct = (owner: PublicKey, data: Uint8Array): RpcAccount => ({ owner, data, executable: true });
 const synthetic = (byte: number): PublicKey => new PublicKey(new Uint8Array(32).fill(byte));
 
 export interface Scenario {
@@ -101,7 +122,10 @@ export interface Scenario {
 export function buildHappyScenario(base: DeployPinConfig): Scenario {
   const wardenProgramData = synthetic(0xd1);
   const squadsProgramData = synthetic(0xd2);
-  const vaultPda = deriveVaultPda(base.squadsProgramId, base.multisig, base.vaultIndex);
+  // The expected upgrade authority is the INDEPENDENT golden vault PDA, not a
+  // value produced by deriveVaultPda — so the gate's own derivation is checked
+  // against it (a deriveVaultPda bug fails the happy path, WRDF-0086).
+  const vaultPda = GOLDEN_VAULT_PDA;
 
   const wardenCode = new TextEncoder().encode("warden-elf-bytes-vX");
   const squadsCode = new TextEncoder().encode("squads-v4-elf-bytes");
@@ -112,11 +136,11 @@ export function buildHappyScenario(base: DeployPinConfig): Scenario {
 
   const table = new Map<string, RpcAccount>();
   const rpc = new MapRpc(table);
-  // Warden: Program → ProgramData(authority = vault PDA, code → release hash).
-  rpc.set(pin.wardenProgramId, acct(BPF_UPGRADEABLE_LOADER, encodeProgramAccount(wardenProgramData)));
+  // Warden: Program (EXECUTABLE) → ProgramData(authority = vault PDA, code → release hash).
+  rpc.set(pin.wardenProgramId, programAcct(BPF_UPGRADEABLE_LOADER, encodeProgramAccount(wardenProgramData)));
   rpc.set(wardenProgramData, acct(BPF_UPGRADEABLE_LOADER, encodeProgramData({ authority: vaultPda, code: wardenCode, trailingZeros: 16 })));
-  // Squads: Program → ProgramData(code → pinned audited hash).
-  rpc.set(pin.squadsProgramId, acct(BPF_UPGRADEABLE_LOADER, encodeProgramAccount(squadsProgramData)));
+  // Squads: Program (EXECUTABLE) → ProgramData(code → pinned audited hash).
+  rpc.set(pin.squadsProgramId, programAcct(BPF_UPGRADEABLE_LOADER, encodeProgramAccount(squadsProgramData)));
   rpc.set(squadsProgramData, acct(BPF_UPGRADEABLE_LOADER, encodeProgramData({ authority: DEFAULT_PUBKEY, code: squadsCode })));
   // The multisig: pinned identity, 3-of-5, fresh, autonomous, exact member masks.
   rpc.set(pin.multisig, acct(pin.squadsProgramId, encodeMultisig({
@@ -143,6 +167,7 @@ export const FIXTURE_CASES = [
   "member-count",
   "attacker-members",
   "stale-governance",
+  "forked-cluster",
   "authority-not-vault",
   "squads-code",
   "release-hash",
@@ -166,8 +191,11 @@ export function namedScenario(name: string): Scenario | null {
     case "attacker-members":
       s.rpc.set(s.pin.multisig, ms({ members: fiveMembers() }));
       break;
-    case "stale-governance":
-      s.rpc.set(s.pin.multisig, ms({ transactionIndex: 3n, staleTransactionIndex: 1n }));
+    case "stale-governance": // inconsistent boundary (WRDF-0087): stale > tx
+      s.rpc.set(s.pin.multisig, ms({ transactionIndex: 2n, staleTransactionIndex: 5n }));
+      break;
+    case "forked-cluster": // WRDF-0085: wrong genesis hash
+      s.rpc.genesis = "So11111111111111111111111111111111111111112";
       break;
     case "authority-not-vault":
       s.rpc.set(s.addrs.wardenProgramData, acct(BPF_UPGRADEABLE_LOADER, encodeProgramData({ authority: synthetic(0x44), code: new TextEncoder().encode("warden-elf-bytes-vX") })));

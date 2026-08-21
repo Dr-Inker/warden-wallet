@@ -18,6 +18,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { verifyDeployGate, type GateVerdict, type RpcSource } from "../src/deploy/gate.js";
 import { namedScenario, FIXTURE_CASES } from "../src/deploy/fixtures.js";
 import {
+  MAINNET_GENESIS_HASH,
   MIN_TIME_LOCK_SECONDS,
   REQUIRED_MEMBER_COUNT,
   REQUIRED_THRESHOLD,
@@ -66,7 +67,26 @@ function loadPin(path: string): DeployPinConfig {
     minTimeLockSeconds: typeof raw.minTimeLockSeconds === "number" ? raw.minTimeLockSeconds : MIN_TIME_LOCK_SECONDS,
     configAuthority: raw.configAuthority == null ? null : pk(raw.configAuthority, "configAuthority"),
     squadsCodeHashHex: typeof raw.squadsCodeHashHex === "string" ? raw.squadsCodeHashHex : die("pin.squadsCodeHashHex must be a hex string"),
+    expectedGenesisHash: typeof raw.expectedGenesisHash === "string" ? raw.expectedGenesisHash : MAINNET_GENESIS_HASH,
   };
+}
+
+/**
+ * Cross-check the shell's positional identities against the pin (WRDF-0085): the
+ * pin is the authority, but deploy-gate.sh also prints/forwards a program id and
+ * multisig; if they disagree the operator is being misled, so refuse. The
+ * expected-authority is validated on-chain (== the derived vault PDA), so it is
+ * intentionally not pinned here.
+ */
+function crossCheckArgs(pin: DeployPinConfig, args: Map<string, string>): void {
+  const wp = args.get("expect-warden-program");
+  const ms = args.get("expect-multisig");
+  if (wp && wp !== pin.wardenProgramId.toBase58()) {
+    die(`--expect-warden-program ${wp} != pin.wardenProgramId ${pin.wardenProgramId.toBase58()} — the shell args and the pin disagree`);
+  }
+  if (ms && ms !== pin.multisig.toBase58()) {
+    die(`--expect-multisig ${ms} != pin.multisig ${pin.multisig.toBase58()} — the shell args and the pin disagree`);
+  }
 }
 
 /** A live RpcSource over a web3.js Connection. */
@@ -76,6 +96,9 @@ function connectionRpc(connection: Connection): RpcSource {
       const info = await connection.getAccountInfo(pubkey, "finalized");
       if (!info) return null;
       return { owner: info.owner, data: new Uint8Array(info.data), executable: info.executable };
+    },
+    getGenesisHash() {
+      return connection.getGenesisHash();
     },
   };
 }
@@ -102,6 +125,7 @@ async function main(argv: string[]): Promise<void> {
     die("live mode needs --rpc-url <url> --pin <config.json> --expected-hash <hex> (or use --fixtures <case>)");
   }
   const pin = loadPin(pinPath);
+  crossCheckArgs(pin, args); // WRDF-0085: shell identities must agree with the pin
   const rpc = connectionRpc(new Connection(rpcUrl, "finalized"));
   printVerdict(await verifyDeployGate(pin, { rpc, expectedReleaseHashHex: expectedHash }));
 }

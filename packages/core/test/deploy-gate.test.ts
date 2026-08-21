@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { PublicKey } from "@solana/web3.js";
 import { verifyDeployGate, type GateVerdict } from "../src/deploy/gate.js";
+import { deriveVaultPda } from "../src/deploy/accounts.js";
+import { assertPinSpecFloors, REQUIRED_THRESHOLD } from "../src/deploy/config.js";
 import {
   SYNTHETIC_PIN,
   BPF_UPGRADEABLE_LOADER,
@@ -16,6 +18,7 @@ import {
   fiveMembers,
   namedScenario,
   FIXTURE_CASES,
+  GOLDEN_VAULT_PDA,
   type Scenario,
 } from "../src/deploy/fixtures.js";
 
@@ -34,6 +37,8 @@ describe("deploy-gate verifyDeployGate", () => {
     expect(failed(v)).toEqual([]);
     expect(v.ok).toBe(true);
     expect(v.results.map((r) => r.name).sort()).toEqual([
+      "cluster-genesis",
+      "pin-spec-floors",
       "squads-code-hash",
       "squads-multisig-governance",
       "upgrade-authority-is-vault-pda",
@@ -132,10 +137,21 @@ describe("deploy-gate verifyDeployGate", () => {
     expect(detailOf(await run(s), "squads-multisig-governance")).toMatch(/config_authority .* != expected/);
   });
 
-  it("rejects an actionable stale governance state (WRDF-0028)", async () => {
+  // WRDF-0087: terminal history is PERMITTED — a real, previously-used multisig
+  // has transaction_index > 0 (a Squads-mediated upgrade creates proposal state),
+  // so the gate must not require a pristine index. Only an INCONSISTENT boundary
+  // (stale > tx, impossible in honest state) is rejected.
+  it("permits terminal governance history (transaction_index > 0)", async () => {
     const s = buildHappyScenario(SYNTHETIC_PIN);
-    s.rpc.set(s.pin.multisig, multisigAcct(s, { transactionIndex: 3n, staleTransactionIndex: 1n }));
-    expect(detailOf(await run(s), "squads-multisig-governance")).toMatch(/actionable governance state present/);
+    s.rpc.set(s.pin.multisig, multisigAcct(s, { transactionIndex: 42n, staleTransactionIndex: 42n }));
+    const v = await run(s);
+    expect(v.results.find((r) => r.name === "squads-multisig-governance")!.ok, detailOf(v, "squads-multisig-governance")).toBe(true);
+  });
+
+  it("rejects an inconsistent stale boundary (stale_transaction_index > transaction_index)", async () => {
+    const s = buildHappyScenario(SYNTHETIC_PIN);
+    s.rpc.set(s.pin.multisig, multisigAcct(s, { transactionIndex: 2n, staleTransactionIndex: 5n }));
+    expect(detailOf(await run(s), "squads-multisig-governance")).toMatch(/inconsistent governance state/);
   });
 
   it("rejects a structurally-perfect 3-of-5 with an ATTACKER member set (round-3 case)", async () => {
@@ -188,6 +204,48 @@ describe("deploy-gate verifyDeployGate", () => {
       expect(v.ok, `${name}: ${v.results.filter((r) => !r.ok).map((r) => r.detail).join("; ")}`).toBe(name === "happy");
     }
     expect(namedScenario("does-not-exist")).toBeNull();
+  });
+
+  // ---- WRDF-0085: the pin may not weaken the spec floors --------------------
+  it("refuses a pin that weakens the spec-fixed governance shape", async () => {
+    const weak = { ...SYNTHETIC_PIN, threshold: 1 };
+    const s = buildHappyScenario(SYNTHETIC_PIN);
+    const v = await verifyDeployGate(weak, { rpc: s.rpc, expectedReleaseHashHex: s.expectedReleaseHashHex });
+    expect(v.results.find((r) => r.name === "pin-spec-floors")!.ok).toBe(false);
+    expect(detailOf(v, "pin-spec-floors")).toMatch(/threshold 1 != spec-fixed 3/);
+  });
+
+  it("assertPinSpecFloors rejects a non-default config authority", () => {
+    expect(() => assertPinSpecFloors({ ...SYNTHETIC_PIN, configAuthority: synthetic(0x33) })).toThrow(/configAuthority must be null/);
+    expect(REQUIRED_THRESHOLD).toBe(3);
+  });
+
+  // ---- WRDF-0085: cluster authentication (genesis hash) ---------------------
+  it("refuses an unauthenticated / forked cluster (wrong genesis hash)", async () => {
+    const s = buildHappyScenario(SYNTHETIC_PIN);
+    s.rpc.genesis = "So11111111111111111111111111111111111111112";
+    const v = await run(s);
+    expect(v.results.find((r) => r.name === "cluster-genesis")!.ok).toBe(false);
+    expect(detailOf(v, "cluster-genesis")).toMatch(/genesis .* != expected/);
+  });
+
+  // ---- WRDF-0086: independent vault-PDA oracle + executable + wrong index ----
+  it("deriveVaultPda reproduces the independent golden vector (locks seeds/order/index)", () => {
+    expect(deriveVaultPda(SYNTHETIC_PIN.squadsProgramId, SYNTHETIC_PIN.multisig, SYNTHETIC_PIN.vaultIndex).toBase58())
+      .toBe(GOLDEN_VAULT_PDA.toBase58());
+  });
+
+  it("rejects a non-executable Warden Program account (a data account is not the program)", async () => {
+    const s = buildHappyScenario(SYNTHETIC_PIN);
+    s.rpc.set(s.pin.wardenProgramId, { owner: BPF_UPGRADEABLE_LOADER, data: encodeProgramAccount(s.addrs.wardenProgramData), executable: false });
+    expect(detailOf(await run(s), "warden-programdata-chain")).toMatch(/is not executable/);
+  });
+
+  it("rejects a wrong vault index (authority no longer matches the derived PDA)", async () => {
+    // The pin names vault index 7 while the on-chain authority is the index-0 PDA.
+    const s = buildHappyScenario({ ...SYNTHETIC_PIN, vaultIndex: 7 });
+    const v = await run(s);
+    expect(v.results.find((r) => r.name === "upgrade-authority-is-vault-pda")!.ok).toBe(false);
   });
 
   it("keeps checks isolated — a single mutation fails exactly one check", async () => {

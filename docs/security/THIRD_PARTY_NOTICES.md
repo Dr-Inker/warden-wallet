@@ -79,6 +79,19 @@ license posture.
 
 ## Open items
 
+- **Squads v4 wire-format reader (WRDF-0089) — owner/counsel release-blocker.**
+  `packages/core/src/deploy/accounts.ts` hand-rolls a reader of the Squads v4
+  `Multisig` account's on-chain binary layout (field offsets, the Anchor
+  `account:Multisig` discriminator, the `"multisig"`/`"vault"` vault-PDA seeds)
+  for the deploy gate's governance check. **No Squads source (Rust/TS) was
+  copied** — it is a clean-room interoperability reader of published on-chain
+  state (the same category as reading a file format), and the discriminator/seeds
+  are derivable protocol facts. HOWEVER, Squads v4 is **AGPL-3.0 / reference-only**
+  in the prior-art corpus, which requires recognizable structural reuse to be
+  flagged for counsel regardless of the clean-room argument. **Carried UNRESOLVED
+  for owner/counsel sign-off** (parallels WRDF-0050); record the counsel ruling
+  and any attribution/notice requirement here before SHIP. Do not treat the deploy
+  gate's Squads reader as release-cleared until then.
 - `rpc-websockets` (LGPL-3.0-only) and `text-encoding-utf-8` (unknown
   license) — re-evaluate at Phase 2 when the extension bundle's actual
   build/link shape (webpack/esbuild single-file bundle vs. npm tree) is

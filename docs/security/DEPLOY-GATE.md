@@ -91,9 +91,33 @@ non-dry-run invocation (fail-closed).
 | 5. Scoped TODO/unimplemented!/#[ignore] grep | **Runs for real** | Same | Same — no RPC |
 
 The governance + hash logic (checks 1/2/4a) lives in `packages/core/src/deploy`
-and is exercised by the 20-case fixture suite `packages/core/test/deploy-gate.test.ts`;
+and is exercised by the 28-case fixture suite `packages/core/test/deploy-gate.test.ts`;
 the script wires it through `run_gov_hash_verifier` →
 `packages/core/scripts/deploy-gate-verify.ts`.
+
+**Hardened after the Task 11R round-1 review (WRDF-0085/0086/0087):**
+- **The pin cannot weaken the spec floors.** `assertPinSpecFloors` refuses any pin
+  whose threshold ≠ 3, member count ≠ 5, time-lock < 7 days, or config authority ≠
+  default — so a tampered or mis-selected manifest can never pass with a 1-of-1 /
+  0-lock / controlled-config shape.
+- **The cluster is authenticated.** The gate binds the RPC's genesis hash to
+  mainnet-beta, so an attacker-controlled fork that serves fabricated accounts
+  satisfying every pin is refused. Live mode also cross-checks the shell's
+  positional program-id/multisig against the pin (`--expect-warden-program`,
+  `--expect-multisig`).
+- **Terminal governance history is permitted.** The stale check no longer requires
+  a pristine `transaction_index == 0` (which made the gate unusable on any real,
+  previously-used multisig and at the moment of a Squads-mediated upgrade). It
+  permits terminal history and flags only an inconsistent stale boundary; the
+  per-proposal actionable-stale enforcement is trust-rooted at the pinned Squads
+  code hash, with a live-chain Proposal/VaultTransaction/ConfigTransaction sweep as
+  the documented residual.
+- **Fixtures use independent golden vectors** (the vault PDA and the Multisig
+  discriminator), not the production derivations under test, and require executable
+  Program accounts — so a seed/discriminator/index-encoding regression is caught.
+
+**Licensing:** the Squads wire-format reader is carried UNRESOLVED for owner/counsel
+(WRDF-0089, AGPL-3.0 / reference-only prior art) — see `THIRD_PARTY_NOTICES.md`.
 
 A check that "refuses" prints `REFUSE: <reason>` and the script exits
 non-zero — this is deliberate fail-closed behavior, not a bug: an

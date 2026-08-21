@@ -18,12 +18,14 @@ import {
   deriveVaultPda,
   type RpcAccount,
 } from "./accounts.js";
-import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, type DeployPinConfig } from "./config.js";
+import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, assertPinSpecFloors, type DeployPinConfig } from "./config.js";
 
 /** An injectable account reader. A live run wires this to an RPC endpoint; the
  *  fixture suite wires it to recorded responses. `null` = account does not exist. */
 export interface RpcSource {
   getAccountInfo(pubkey: PublicKey): Promise<RpcAccount | null>;
+  /** The cluster's genesis hash — bound to authenticate the cluster (WRDF-0085). */
+  getGenesisHash(): Promise<string>;
 }
 
 export interface CheckResult {
@@ -62,6 +64,9 @@ async function authenticateProgram(
   if (!prog.owner.equals(BPF_UPGRADEABLE_LOADER)) {
     throw new Error(`${role} Program ${b58(programId)} is not owned by the BPF Upgradeable Loader (owner ${b58(prog.owner)})`);
   }
+  // A real on-chain program account is executable; a data account merely owned by
+  // the loader is not the program (WRDF-0086).
+  if (!prog.executable) throw new Error(`${role} Program ${b58(programId)} is not executable`);
   const { programDataAddress } = decodeProgramAccount(prog.data); // throws unless the Program variant
   const pd = await fetchOrThrow(rpc, programDataAddress, `${role} ProgramData`);
   if (!pd.owner.equals(BPF_UPGRADEABLE_LOADER)) {
@@ -94,6 +99,26 @@ export async function verifyDeployGate(
   let wardenCodeHashHex: string | undefined;
   let vaultPda: PublicKey | undefined;
 
+  // --- Check 0a: the pin may not weaken the spec-fixed governance shape --------
+  await check("pin-spec-floors", async () => {
+    assertPinSpecFloors(pin); // throws on a weakened threshold/count/time-lock/config authority
+    return `pin meets the spec-fixed floors (3-of-5, >=7-day lock, autonomous config authority)`;
+  });
+
+  // --- Check 0b: authenticate the cluster (genesis hash) ----------------------
+  await check("cluster-genesis", async () => {
+    let genesis: string;
+    try {
+      genesis = await rpc(opts).getGenesisHash();
+    } catch (e) {
+      throw new Error(`RPC error fetching genesis hash: ${(e as Error).message}`);
+    }
+    if (genesis !== pin.expectedGenesisHash) {
+      throw new Error(`cluster genesis ${genesis} != expected ${pin.expectedGenesisHash} — refusing an unauthenticated/forked cluster`);
+    }
+    return `cluster authenticated: genesis ${genesis}`;
+  });
+
   // --- Check 1a: authenticate Warden's Program → ProgramData chain ------------
   await check("warden-programdata-chain", async () => {
     const { upgradeAuthority, codeHashHex } = await authenticateProgram(rpc(opts), pin.wardenProgramId, "Warden");
@@ -119,9 +144,19 @@ export async function verifyDeployGate(
     if (!ms.configAuthority.equals(expectedConfigAuth)) {
       throw new Error(`config_authority ${b58(ms.configAuthority)} != expected ${b58(expectedConfigAuth)} (a non-default authority can rewrite members/threshold — WRDF-0017 round 4)`);
     }
-    // No actionable stale governance state (WRDF-0028): a fresh, final-config vault.
-    if (ms.transactionIndex !== 0n || ms.staleTransactionIndex !== 0n) {
-      throw new Error(`actionable governance state present (transaction_index=${ms.transactionIndex}, stale_transaction_index=${ms.staleTransactionIndex}); require a fresh final-config multisig`);
+    // Stale-governance safety (WRDF-0028) — PERMIT terminal history (WRDF-0087):
+    // `transaction_index` is a monotonic "last index", nonzero after ANY proposal,
+    // so requiring it to be 0 makes the gate unusable on any real, previously-used
+    // multisig (and a Squads-mediated upgrade itself creates proposal state).
+    // `stale_transaction_index` is the boundary Squads sets when the config
+    // changes: every proposal with index <= it is invalidated and cannot execute.
+    // A proposal approved under an OLD (weaker) config therefore cannot execute
+    // once the config tightens — that enforcement lives in the Squads program,
+    // whose CODE hash this gate pins (the `squads-code-hash` check is the trust
+    // root for it). The one config-level anomaly the gate can flag cheaply:
+    // `stale_transaction_index > transaction_index` is impossible in honest state.
+    if (ms.staleTransactionIndex > ms.transactionIndex) {
+      throw new Error(`stale_transaction_index ${ms.staleTransactionIndex} > transaction_index ${ms.transactionIndex} — inconsistent governance state`);
     }
     // Complete member set with EXACT permission masks (order-insensitive on key).
     const onchain = new Map(ms.members.map((m) => [b58(m.key), m.mask]));
@@ -135,7 +170,7 @@ export async function verifyDeployGate(
     if (onchain.size !== 0) throw new Error(`on-chain multisig has ${onchain.size} member(s) not in the pinned set: ${[...onchain.keys()].join(", ")}`);
 
     vaultPda = deriveVaultPda(pin.squadsProgramId, pin.multisig, pin.vaultIndex);
-    return `multisig authenticated: pinned identity, ${pin.threshold}-of-${pin.memberCount}, time_lock ${ms.timeLock}s, autonomous config, no stale state`;
+    return `multisig authenticated: pinned identity, ${pin.threshold}-of-${pin.memberCount}, time_lock ${ms.timeLock}s, autonomous config, consistent stale boundary (tx=${ms.transactionIndex}/stale=${ms.staleTransactionIndex}). Per-proposal actionable-stale enumeration is trust-rooted at the pinned Squads code hash; a live-chain Proposal/VaultTransaction/ConfigTransaction sweep is the documented residual`;
   });
 
   // --- Check 1b: bind the Warden upgrade authority to the derived vault PDA ----

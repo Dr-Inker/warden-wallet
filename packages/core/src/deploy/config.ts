@@ -24,10 +24,19 @@ export const PERMISSION_ALL = PERMISSION_INITIATE | PERMISSION_VOTE | PERMISSION
 /** The BPF Upgradeable Loader — every Program/ProgramData account MUST be owned by it. */
 export const BPF_UPGRADEABLE_LOADER = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
-/** The spec's fixed governance shape (spec §5.5): 3-of-5, 7-day time-lock floor. */
+/** The spec's fixed governance shape (spec §5.5): 3-of-5, 7-day time-lock floor.
+ *  These are HARD floors: `assertPinSpecFloors` refuses a pin that tries to
+ *  weaken them, so a tampered or mis-selected manifest can never relax the
+ *  reviewed shape (WRDF-0085). */
 export const REQUIRED_THRESHOLD = 3;
 export const REQUIRED_MEMBER_COUNT = 5;
 export const MIN_TIME_LOCK_SECONDS = 7 * 24 * 60 * 60; // 604800
+
+/** The Solana mainnet-beta genesis hash — the cluster-identity anchor. A deploy
+ *  gate that trusts an arbitrary RPC endpoint can be fed fabricated accounts from
+ *  an attacker-controlled fork that satisfies every pin (WRDF-0085); binding the
+ *  genesis hash proves the readback came from mainnet. */
+export const MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
 
 /** One pinned Squads member: its pubkey AND its exact permission mask (a member
  *  with only a subset, or an unexpected proposer/executor, changes real control —
@@ -64,6 +73,29 @@ export interface DeployPinConfig {
    *  A pinned program *id* is not a code identity while its ProgramData is
    *  upgradeable (WRDF-0017 round 6); this is the concrete trust-root anchor. */
   squadsCodeHashHex: string;
+  /** The expected cluster genesis hash — normally mainnet-beta. Bound so the
+   *  gate cannot be satisfied by an attacker-controlled fork (WRDF-0085). */
+  expectedGenesisHash: string;
+}
+
+/**
+ * Refuse a pin that weakens the spec-fixed governance shape (WRDF-0085): the
+ * threshold, member count, time-lock floor and autonomous config authority are
+ * NOT policy a manifest may relax — spec §5.5 fixes them. Enforced before any
+ * RPC so a tampered or mis-selected manifest cannot pass with a 1-of-1 / 0-lock /
+ * controlled-config shape. Throws on any violation.
+ */
+export function assertPinSpecFloors(pin: DeployPinConfig): void {
+  if (pin.threshold !== REQUIRED_THRESHOLD) throw new Error(`pin.threshold ${pin.threshold} != spec-fixed ${REQUIRED_THRESHOLD}`);
+  if (pin.memberCount !== REQUIRED_MEMBER_COUNT) throw new Error(`pin.memberCount ${pin.memberCount} != spec-fixed ${REQUIRED_MEMBER_COUNT}`);
+  if (pin.members.length !== REQUIRED_MEMBER_COUNT) throw new Error(`pin.members has ${pin.members.length} entries, spec-fixed ${REQUIRED_MEMBER_COUNT}`);
+  if (pin.minTimeLockSeconds < MIN_TIME_LOCK_SECONDS) throw new Error(`pin.minTimeLockSeconds ${pin.minTimeLockSeconds} < spec floor ${MIN_TIME_LOCK_SECONDS}`);
+  if (pin.configAuthority !== null && !pin.configAuthority.equals(DEFAULT_PUBKEY)) {
+    // A non-null configAuthority is permitted ONLY if it is the default (i.e.
+    // autonomous) — a real non-default config authority must be an explicit,
+    // separately-attested exception, which this floor does not grant.
+    throw new Error("pin.configAuthority must be null (autonomous default); a non-default config authority needs explicit attestation");
+  }
 }
 
 /** All-zero pubkey = `Pubkey::default()` = the autonomous-multisig config authority. */
@@ -96,4 +128,5 @@ export const SYNTHETIC_PIN: DeployPinConfig = {
   minTimeLockSeconds: MIN_TIME_LOCK_SECONDS,
   configAuthority: null, // require the autonomous default
   squadsCodeHashHex: "5c".repeat(32), // synthetic audited-Squads-code hash
+  expectedGenesisHash: MAINNET_GENESIS_HASH,
 };

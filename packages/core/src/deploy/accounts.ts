@@ -80,6 +80,19 @@ export function programCodeHash(programDataAccount: Uint8Array): string {
 }
 
 // ---------------------------------------------------------------------------
+// PROVENANCE / LICENSING (WRDF-0089 — carried for owner/counsel, NOT self-cleared).
+// The decoder below reads the on-chain BINARY WIRE FORMAT of a Squads v4 Multisig
+// account — byte offsets, the Anchor account discriminator (a derivable
+// sha256("account:Multisig")[..8] fact), and the canonical vault-PDA seed literals
+// ("multisig"/"vault"), which are the deployed on-chain protocol constants. No
+// Squads source (Rust or TS) was copied; this is a clean-room interoperability
+// reader of published on-chain state, the same category as reading a file format.
+// Squads v4 is nonetheless AGPL-3.0 / reference-only in the prior-art corpus, and
+// the corpus requires recognizable reuse to be flagged for counsel regardless of
+// the clean-room argument. Carried as an owner/counsel release-blocker in
+// docs/security/THIRD_PARTY_NOTICES.md (parallels WRDF-0050); do not treat as
+// resolved without counsel sign-off.
+//
 // Squads v4 Multisig account (Anchor). Layout after the 8-byte discriminator:
 //   create_key: Pubkey(32)
 //   config_authority: Pubkey(32)
