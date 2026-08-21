@@ -10,7 +10,9 @@ import {
   OP_UNFREEZE,
   OP_TRANSFER,
   OP_CREATE,
+  OP_EXECUTE,
   encodeCreateBody,
+  encodeExecuteBody,
   OWNER_SEED_DOMAIN,
   deriveOwnerSeed,
 } from "../src/index.js";
@@ -363,6 +365,39 @@ describe("create_account (OP_CREATE, 0x06)", () => {
 
     expect(hex(actionHash(OP_CREATE, body))).toBe(
       "748fb53596c08c44303df545bec9432220ec1cdadae3413ef4ca267614d4d59a",
+    );
+  });
+});
+
+describe("execute (OP_EXECUTE, 0x07)", () => {
+  it("pins the op byte (it is part of the signed transcript, so it is permanent)", () => {
+    expect(OP_EXECUTE).toBe(0x07);
+    // ...and it is distinct from every other op.
+    const ops = [OP_ROTATE_NONCE, OP_GRANT_SESSION, OP_REVOKE_SESSION, OP_FREEZE, OP_UNFREEZE, OP_TRANSFER, OP_CREATE, OP_EXECUTE];
+    expect(new Set(ops).size).toBe(ops.length);
+  });
+
+  it("encodeExecuteBody is payload_hash then accounts_hash, 64 bytes, no prefixes", () => {
+    const body = encodeExecuteBody(fill(32, 0xaa), fill(32, 0xbb));
+    expect(body.length).toBe(64);
+    expect(hex(body.slice(0, 32))).toBe("aa".repeat(32));
+    expect(hex(body.slice(32))).toBe("bb".repeat(32));
+  });
+
+  it("rejects hashes that are not exactly 32 bytes", () => {
+    expect(() => encodeExecuteBody(fill(31, 1), fill(32, 1))).toThrow();
+    expect(() => encodeExecuteBody(fill(32, 1), fill(33, 1))).toThrow();
+  });
+
+  // Pinned against the Rust
+  // `execute::tests::execute_action_hash_matches_pinned_vector` — the one
+  // place both languages prove they hash the same ExecuteBody bytes under the
+  // same op byte. If this moves, every outstanding root `execute` ceremony
+  // breaks: that is a deliberate migration, never a refactor.
+  it("matches the Rust-pinned ExecuteBody action hash (execute_action_hash_matches_pinned_vector)", () => {
+    const body = encodeExecuteBody(fill(32, 0x11), fill(32, 0x22));
+    expect(hex(actionHash(OP_EXECUTE, body))).toBe(
+      "971cfa437b2d03ae9063c9117d4c7ef61539d7a485d9ed1b991aab6e52d50c77",
     );
   });
 });

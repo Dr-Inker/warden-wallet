@@ -92,6 +92,98 @@
       ]
     },
     {
+      "name": "execute",
+      "docs": [
+        "Run a payload of inner CPIs under the conservation regime — session",
+        "key (registry-gated, within caps) or bounded passkey root, inline or",
+        "staged payload. See `instructions::execute`."
+      ],
+      "discriminator": [
+        130,
+        221,
+        242,
+        154,
+        13,
+        193,
+        189,
+        29
+      ],
+      "accounts": [
+        {
+          "name": "smart_account",
+          "docs": [
+            "Canonicality is re-proven in the handler from the `owner_seed`/`bump`",
+            "the account itself stores (same as every other handler)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "signer",
+          "docs": [
+            "Session path: MUST be the session's delegate key. Root path: only a",
+            "fee payer, bound to nothing — the ceremony already fixes the payload",
+            "and the account list, so an unbound submitter can substitute neither."
+          ],
+          "signer": true
+        },
+        {
+          "name": "session",
+          "docs": [
+            "Required on the session path; must be absent on the root path."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "ix_sysvar",
+          "docs": [
+            "`load_instruction_at_checked` / `load_current_index_checked`, which",
+            "re-check the address themselves. Required on the root path."
+          ],
+          "optional": true,
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "stage",
+          "docs": [
+            "The staged payload to consume (`args.payload == None`). Canonicality is",
+            "re-proven in the handler from the seeds the stage itself stores."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "THE account's adapter registry (`SmartAccount.registry`), required on",
+            "the session path whenever the payload contains at least one inner",
+            "instruction. The root path never reads it."
+          ],
+          "optional": true
+        },
+        {
+          "name": "stage_creator",
+          "docs": [
+            "the consume-close, required (and validated against `stage.creator` in",
+            "the handler) whenever `stage` is present. \"Creator owns the rent\" is",
+            "the Task 4 invariant; consume is just another close."
+          ],
+          "writable": true,
+          "optional": true
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "ExecuteArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "freeze",
       "docs": [
         "Root-authorized emergency stop: sets `frozen = Root`, blocking every",
@@ -1220,6 +1312,16 @@
       "code": 6055,
       "name": "InvalidAllowlistId",
       "msg": "program_allowlist_id is not 0 and not an existing list in the account's registry"
+    },
+    {
+      "code": 6056,
+      "name": "TooManyExecuteAccounts",
+      "msg": "execute was passed more remaining accounts than MAX_EXECUTE_ACCOUNTS_TOTAL"
+    },
+    {
+      "code": 6057,
+      "name": "TooManyExecuteWritable",
+      "msg": "execute was passed more writable remaining accounts than MAX_EXECUTE_WRITABLE"
     }
   ],
   "types": [
@@ -1307,6 +1409,41 @@
               "defined": {
                 "name": "PolicyArgs"
               }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ExecuteArgs",
+      "docs": [
+        "`payload == None` means staged (the `stage` account supplies the bytes);",
+        "`Some` means inline. Exactly one source, checked before anything loads."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "root",
+            "docs": [
+              "`Some` = root path (requires `ix_sysvar`), `None` = session path",
+              "(requires the `session` account)."
+            ],
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "RootArgs"
+                }
+              }
+            }
+          },
+          {
+            "name": "payload",
+            "docs": [
+              "The `ExecutePayload` wire bytes, or `None` to consume the `stage`."
+            ],
+            "type": {
+              "option": "bytes"
             }
           }
         ]

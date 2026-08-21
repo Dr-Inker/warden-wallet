@@ -256,6 +256,7 @@ pub(crate) fn handler(ctx: Context<Transfer>, args: TransferArgs) -> Result<()> 
             generation,
             program_id,
             now,
+            OP_TRANSFER,
         )?;
 
         // The session's own per-transaction ceiling. A mint with no cap in
@@ -388,7 +389,12 @@ pub(crate) fn handler(ctx: Context<Transfer>, args: TransferArgs) -> Result<()> 
 /// deliberate: *who* (binding + signer) before *when* (expiry) before *what*
 /// (ops mask), so an attacker probing with someone else's session never learns
 /// anything about that session's expiry or permissions.
-fn authorize_session(
+///
+/// `required_op` is the `ops_mask` bit the caller's operation needs
+/// (`OP_TRANSFER` here, `OP_EXECUTE` in `execute`, `OP_SWAP` in `swap`) —
+/// shared so every session-authorized outflow path runs the identical
+/// who/when/what sequence rather than three drifting copies.
+pub(crate) fn authorize_session(
     session: &SessionKey,
     session_account_key: &Pubkey,
     signer_key: &Pubkey,
@@ -396,6 +402,7 @@ fn authorize_session(
     generation: u64,
     program_id: &Pubkey,
     now: i64,
+    required_op: u16,
 ) -> Result<()> {
     // Binds the session to THIS account and proves it is the canonical
     // `["session", account, pubkey]` PDA (shared with `revoke_session`).
@@ -408,7 +415,7 @@ fn authorize_session(
         WardenError::Unauthorized
     );
     require!(now < session.expiry_ts, WardenError::SessionExpired);
-    require!((session.ops_mask & OP_TRANSFER) != 0, WardenError::OpNotAllowed);
+    require!((session.ops_mask & required_op) != 0, WardenError::OpNotAllowed);
     Ok(())
 }
 

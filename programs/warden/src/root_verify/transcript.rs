@@ -94,6 +94,22 @@ pub const OP_TRANSFER_ACTION: u8 = 0x05;
 /// so the creating ceremony is consumed exactly like every other one.
 pub const OP_CREATE: u8 = 0x06;
 
+/// `op_type` byte for the ROOT path of `execute` (Phase 1B Task 5); hashed
+/// over `borsh(ExecuteBody)` — see `instructions::execute::ExecuteBody`:
+/// `payload_hash = Keccak256(payload bytes)` and `accounts_hash =
+/// Keccak256(logical list: pubkey ‖ is_signer ‖ is_writable per account)`.
+/// Both hashes are rebuilt on-chain from the bytes and accounts actually
+/// passed, never read from instruction data, so a bearer assertion cannot
+/// substitute the payload or reorder/replace any account after signing
+/// (`LZR-ACC-C1`/`LZR-ACC-H1`). The SAME `accounts_hash` construction is
+/// what root `swap` (Task 6) binds via `SwapBody`.
+///
+/// Named `OP_EXECUTE_ACTION` for the same reason as [`OP_TRANSFER_ACTION`]:
+/// `state::session::OP_EXECUTE` is the session `ops_mask` BIT (1 << 1), an
+/// unrelated number in an unrelated namespace, and the two are imported side
+/// by side in `instructions::execute`.
+pub const OP_EXECUTE_ACTION: u8 = 0x07;
+
 /// Keccak256 over the canonical transcript encoding.
 ///
 /// `genesis` is `SmartAccount.cluster_tag`. **It is a client-attested domain

@@ -80,6 +80,16 @@ pub mod warden {
         instructions::transfer::handler(ctx, args)
     }
 
+    /// Run a payload of inner CPIs under the conservation regime — session
+    /// key (registry-gated, within caps) or bounded passkey root, inline or
+    /// staged payload. See `instructions::execute`.
+    pub fn execute<'info>(
+        ctx: Context<'info, Execute<'info>>,
+        args: ExecuteArgs,
+    ) -> Result<()> {
+        instructions::execute::handler(ctx, args)
+    }
+
     /// Root-authorized lift of a root-issued freeze, gated by
     /// `policy.timelock_secs` since `frozen_at`. See `instructions::unfreeze`.
     pub fn unfreeze(ctx: Context<Unfreeze>, args: RootArgs) -> Result<()> {

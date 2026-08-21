@@ -1,4 +1,5 @@
 pub mod create_account;
+pub mod execute;
 pub mod freeze;
 pub mod grant_session;
 pub mod registry_admin;
@@ -9,6 +10,7 @@ pub mod transfer;
 pub mod unfreeze;
 
 pub use create_account::*;
+pub use execute::*;
 pub use freeze::*;
 pub use grant_session::*;
 pub use registry_admin::*;

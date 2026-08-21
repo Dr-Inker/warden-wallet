@@ -151,4 +151,11 @@ pub enum WardenError {
     RegistryAlreadyInitialized,
     #[msg("program_allowlist_id is not 0 and not an existing list in the account's registry")]
     InvalidAllowlistId,
+    // ---------------------------------------------------------------------
+    // Task 5 (execute). APPEND ONLY — see above. Codes 6056..=6057.
+    // ---------------------------------------------------------------------
+    #[msg("execute was passed more remaining accounts than MAX_EXECUTE_ACCOUNTS_TOTAL")]
+    TooManyExecuteAccounts,
+    #[msg("execute was passed more writable remaining accounts than MAX_EXECUTE_WRITABLE")]
+    TooManyExecuteWritable,
 }

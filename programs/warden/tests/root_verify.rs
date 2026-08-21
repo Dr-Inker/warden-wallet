@@ -127,6 +127,9 @@ mod err {
     pub const REGISTRY_UNAUTHORIZED: u32 = 6053;
     pub const REGISTRY_ALREADY_INITIALIZED: u32 = 6054;
     pub const INVALID_ALLOWLIST_ID: u32 = 6055;
+    // Task 5 (execute), appended 6056..=6057.
+    pub const TOO_MANY_EXECUTE_ACCOUNTS: u32 = 6056;
+    pub const TOO_MANY_EXECUTE_WRITABLE: u32 = 6057;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -135,7 +138,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 56] = [
+    let pairs: [(u32, WardenError, &str); 58] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -228,6 +231,16 @@ fn pinned_error_codes_match_the_enum_today() {
         (err::REGISTRY_UNAUTHORIZED, WardenError::RegistryUnauthorized, "RegistryUnauthorized"),
         (err::REGISTRY_ALREADY_INITIALIZED, WardenError::RegistryAlreadyInitialized, "RegistryAlreadyInitialized"),
         (err::INVALID_ALLOWLIST_ID, WardenError::InvalidAllowlistId, "InvalidAllowlistId"),
+        (
+            err::TOO_MANY_EXECUTE_ACCOUNTS,
+            WardenError::TooManyExecuteAccounts,
+            "TooManyExecuteAccounts",
+        ),
+        (
+            err::TOO_MANY_EXECUTE_WRITABLE,
+            WardenError::TooManyExecuteWritable,
+            "TooManyExecuteWritable",
+        ),
     ];
     for (pinned, variant, name) in pairs {
         assert_eq!(

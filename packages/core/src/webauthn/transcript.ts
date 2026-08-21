@@ -214,6 +214,43 @@ export function encodeCreateBody(f: CreateBodyFields): Uint8Array {
 }
 
 /**
+ * `op_type` byte for the ROOT path of `execute` (Phase 1B Task 5); hashed
+ * over `borsh(ExecuteBody)`.
+ *
+ * `ExecuteBody` field order (borsh,
+ * `programs/warden/src/instructions/execute.rs`):
+ * `payload_hash: [u8; 32]` — `Keccak256(ExecutePayload wire bytes)` — then
+ * `accounts_hash: [u8; 32]` — `Keccak256(logical list: pubkey ‖ is_signer ‖
+ * is_writable, in logical order)`. 64 bytes, no prefixes. Both hashes are
+ * rebuilt ON-CHAIN from the bytes and accounts actually passed, so the SDK
+ * must reconstruct the logical list `[smart_account, signer] ++
+ * remaining_accounts` exactly as the handler will (spec §5.2) and hash it
+ * with the same 34-byte-per-entry encoding before signing. Root `swap`
+ * (Task 6) binds the same `accounts_hash` construction via `SwapBody`.
+ *
+ * Named `OP_EXECUTE_ACTION` in Rust to avoid colliding with the session
+ * `ops_mask` BIT `state::session::OP_EXECUTE` (1 << 1) — same convention as
+ * {@link OP_TRANSFER}.
+ */
+export const OP_EXECUTE = 0x07;
+
+/**
+ * Canonical borsh encoding of `ExecuteBody` — build the body with this, do
+ * not hand-roll the concatenation (see {@link OP_EXECUTE} for the layout).
+ */
+export function encodeExecuteBody(
+  payloadHash: Uint8Array,
+  accountsHash: Uint8Array,
+): Uint8Array {
+  require32(payloadHash, "payloadHash");
+  require32(accountsHash, "accountsHash");
+  const body = new Uint8Array(64);
+  body.set(payloadHash, 0);
+  body.set(accountsHash, 32);
+  return body;
+}
+
+/**
  * Domain separator for the `create_account` PDA seed derivation. Mirrors
  * `instructions::create_account::OWNER_SEED_DOMAIN`.
  */

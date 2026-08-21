@@ -28,6 +28,18 @@ pub const STAGE_MAX_TTL_SECS: i64 = 3600;
 /// `stage::stage_chunk_payload_cap_is_measured` (the v0 tx at this cap is exactly
 /// 1,232 B; one more byte overflows) — a wire contract, not a soft estimate.
 pub const STAGE_CHUNK_PAYLOAD_CAP: usize = 977;
+/// PROVISIONAL (spec §5.2 account cap): the most `remaining_accounts` one
+/// `execute` accepts — every logical account past the two privileged slots,
+/// writable or not, because ALL of them are snapshotted (spec §5.2 rule 2).
+/// Task 5's measurement sweep fixes both `MAX_EXECUTE_*` caps with margin
+/// against the CU budget the extension requests AND the 1,232-B packet;
+/// PHASE1B-MEASUREMENTS.md records the sweep that replaces PROVISIONAL.
+pub const MAX_EXECUTE_ACCOUNTS_TOTAL: usize = 48;
+/// PROVISIONAL (spec §5.2 account cap): the most **writable** remaining
+/// accounts one `execute` accepts. Writable accounts are the ones a CPI can
+/// actually mutate, so they bound the comparison work as well as the packet;
+/// the spec's observed byte breakpoint (35–43 totalKeys) motivates 40.
+pub const MAX_EXECUTE_WRITABLE: usize = 40;
 pub const MAX_CLIENT_DATA_LEN: usize = 512;
 pub const MAX_ROOT_EXPIRY_SECS: i64 = 600;
 /// Maximum age, **in slots**, of a root passkey ceremony (spec §4, rev 8).
