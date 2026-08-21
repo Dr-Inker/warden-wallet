@@ -340,6 +340,7 @@ interface GitProbe {
   commitExists(sha: string): boolean;
   isAncestorOrEqual(a: string, b: string): boolean; // a is ancestor of, or equal to, b
   head: string;
+  shallow: boolean; // a well-formed SHA absent from a FULL clone is a fabricated/mistyped SHA (fail-closed); absent from a shallow clone is unverifiable (skip). (WRDF-0083)
 }
 
 // Validate ONE scorecard row's provenance. Returns violation strings (empty = ok).
@@ -365,7 +366,13 @@ export function validateScorecardProvenance(r: Record<string, unknown>, git: Git
     if (!SHA_RE.test(gate ?? "")) errs.push(`${id}: remediation_gate_sha malformed or null`);
     if (typeof cmd !== "string" || cmd.trim().length === 0) errs.push(`${id}: remediation_gate_cmd blank`);
     if (git && SHA_RE.test(fix ?? "") && SHA_RE.test(gate ?? "")) {
-      if (git.commitExists(fix!) && git.commitExists(gate!)) {
+      const fixHere = git.commitExists(fix!);
+      const gateHere = git.commitExists(gate!);
+      // A well-formed SHA the FULL clone does not have is fabricated or mistyped
+      // — fail-closed. Only a genuinely shallow clone may skip an absent object.
+      if (!fixHere && !git.shallow) errs.push(`${id}: remediation_sha ${fix} is not a commit in this full clone`);
+      if (!gateHere && !git.shallow) errs.push(`${id}: remediation_gate_sha ${gate} is not a commit in this full clone`);
+      if (fixHere && gateHere) {
         if (!git.isAncestorOrEqual(fix!, gate!)) errs.push(`${id}: gate ${gate} does not contain fix ${fix}`);
         if (!git.isAncestorOrEqual(gate!, git.head)) errs.push(`${id}: gate ${gate} is not reachable from reviewed HEAD`);
       }
@@ -391,8 +398,11 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
     if (git(["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
     const head = git(["rev-parse", "HEAD"]);
     if (!head) return null;
+    // Older git lacking the flag → treat as full (fail-closed on missing objects).
+    const shallow = git(["rev-parse", "--is-shallow-repository"]) === "true";
     return {
       head,
+      shallow,
       commitExists: (sha: string) => {
         try { execFileSync("git", ["-C", REPO, "cat-file", "-e", `${sha}^{commit}`], { stdio: "pipe" }); return true; }
         catch { return false; }
@@ -409,10 +419,11 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
     expect(all, all.join("\n")).toEqual([]);
   }, 30_000);
 
-  const stub = (opts: { exists?: (s: string) => boolean; anc?: (a: string, b: string) => boolean; head?: string }): GitProbe => ({
+  const stub = (opts: { exists?: (s: string) => boolean; anc?: (a: string, b: string) => boolean; head?: string; shallow?: boolean }): GitProbe => ({
     head: opts.head ?? "h".repeat(40),
     commitExists: opts.exists ?? (() => true),
     isAncestorOrEqual: opts.anc ?? (() => true),
+    shallow: opts.shallow ?? false,
   });
   const fixS = "a".repeat(40), gateS = "b".repeat(40);
   const row = (over: Record<string, unknown>) => ({ finding_id: "WRDF-TEST", remediation_verified: true, remediation_sha: fixS, remediation_gate_sha: gateS, remediation_gate_cmd: "cmd", ...over });
@@ -431,6 +442,18 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
   });
   it("rejects a row claiming both a reproducer and a remediation", () => {
     expect(validateScorecardProvenance(row({ claimed_reproducer_verified: true, claimed_reproducer: { base_sha: fixS, fixed_sha: gateS, verified: true } }), null).join()).toMatch(/must not also claim a reproducer/);
+  });
+  it("rejects a fabricated fix commit absent from a FULL clone", () => {
+    const errs = validateScorecardProvenance(row({}), stub({ exists: (s) => s !== fixS, shallow: false }));
+    expect(errs.join()).toMatch(/remediation_sha .* is not a commit in this full clone/);
+  });
+  it("rejects a fabricated gate commit absent from a FULL clone", () => {
+    const errs = validateScorecardProvenance(row({}), stub({ exists: (s) => s !== gateS, shallow: false }));
+    expect(errs.join()).toMatch(/remediation_gate_sha .* is not a commit in this full clone/);
+  });
+  it("SKIPS an absent object only in a genuinely shallow clone", () => {
+    const errs = validateScorecardProvenance(row({}), stub({ exists: () => false, shallow: true }));
+    expect(errs).toEqual([]); // unverifiable in shallow → no false failure, no false pass on ancestry
   });
   it("accepts a well-formed remediation row", () => {
     expect(validateScorecardProvenance(row({}), stub({}))).toEqual([]);
