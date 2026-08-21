@@ -1150,3 +1150,12 @@ round 4). Fixed at `679b4ec7a2633e63c8df5ef56aa77ced7e673f39`.
   (gate-before-fix, unreachable gate, blank command, null SHA, dual-claim).
 
 Gate evidence on the ledger HEAD below.
+
+### Round-7 gate evidence
+
+**Gate re-run on the immutable ledger HEAD `3c9021499c02c6917eb3658cb06c7c2ff7a0919c`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, **all suites green** —
+`@warden/core` **157 passed (157)** (incl. the shallow-aware provenance guard with
+its fix→gate→HEAD ancestry checks and negative cases), `ui-tokens` 11/11, the full
+Rust workspace under `--features test-jup` (0 failed), and the fixture-drift guard.
+The round-7 rows' `remediation_gate_sha` is this HEAD.
