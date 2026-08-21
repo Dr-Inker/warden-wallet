@@ -104,12 +104,22 @@ Remaining, in campaign-plan order:
    `MAX_EXECUTE_ACCOUNTS_TOTAL=24` / `MAX_EXECUTE_WRITABLE=20`** (22-writable
    OK / 24 OOM on the default 32 KiB heap; `RequestHeapFrame` inert under
    Anchor's capped allocator; worst CU 83.8k ≪ 360k; v0+ALT ≤ 486 B),
-   boundary-tested on-chain. **Task 6 PREREQUISITE: a custom allocator or a
-   streaming after-snapshot (then re-sweep) before Jupiter-scale account
-   counts — a bare cap bump ships an OOM cliff.** Task-1-owed real-CPI
-   regressions (native-lamport `SyncNative`+`Transfer` WRDF-0011;
-   standalone-mint) fold into Task 6's suite alongside its Jupiter fixtures.
-   **Then 6 → 8 → 9.** **C1a needs a program change** (`create_account` must
+   boundary-tested on-chain. **Task 6 PREREQUISITE DONE (@7936419):** a custom SBF heap
+   allocator (`src/heap.rs`, `custom-heap` feature, default ON — uncapped
+   upward bump, runtime-frame-bounded, fail-closed past it) replaced the
+   entrypoint's 32 KiB-capped default. PROVEN: heap frames now work (mutator
+   `heap_hog` 100 KiB fails without / OK with a 128 KiB frame); execute
+   re-sweep hit 30-writable at 113k CU with a frame. **Caps lifted 24/20 →
+   `MAX_EXECUTE_ACCOUNTS_TOTAL=32` / `MAX_EXECUTE_WRITABLE=28`**, boundary-
+   tested; **client contract: the wrapper injects a `RequestHeapFrame` sized
+   for the shape on any execute past ~24 accounts** (like the CU limit). Tables
+   in PHASE1B-MEASUREMENTS §"Task 6 heap lift". **NOW: Task 6 (swap) proper** —
+   Jupiter-pinned adapter (route/shared_accounts_route from a pinned v6 IDL),
+   adapter-decoded `max_in` + pinned source ATA before the CPI (the §5.2-rule-4b
+   design bet), treasury = `Registry.treasury`, out_mint allowlist, jup-mock
+   misbehave suite. Task-1-owed real-CPI regressions (native-lamport
+   `SyncNative`+`Transfer` WRDF-0011; standalone-mint) fold into Task 6's suite.
+   **Then 8 → 9.** **C1a needs a program change** (`create_account` must
    compare against a pinned production `rp_id_hash`, not just self-consistency —
    WRDF-0016/0027) plus the owner's freeze-vs-migration decision.
 3. Corrected gating (was C1-only): **V4 waits for C1a + C2a + C3 + C4**; **U7
