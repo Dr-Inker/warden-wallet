@@ -153,6 +153,13 @@ pub const ATA_PROGRAM_ID: Pubkey = Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZ
 /// Jupiter aggregator v6 — the pinned swap program (Task 6 verifies its route
 /// discriminators against the IDL).
 pub const JUPITER_V6_ID: Pubkey = Pubkey::from_str_const("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
+/// The ComputeBudget program. Its instructions are honoured by the runtime only
+/// at the transaction's top level and are silently inert inside a CPI, so
+/// `execute` refuses one in the payload (`ComputeBudgetInExecute`) and refuses
+/// the program appearing anywhere in the account list (spec §5.2). The client
+/// hoists any compute-budget instruction into the OUTER transaction instead.
+pub const COMPUTE_BUDGET_ID: Pubkey =
+    Pubkey::from_str_const("ComputeBudget111111111111111111111111111111");
 /// Test-only program ids (mirrored from `programs/test-mutator` and
 /// `programs/test-jup-mock`), used only by the registry's test list.
 pub const TEST_MUTATOR_ID: Pubkey = Pubkey::from_str_const("An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W");

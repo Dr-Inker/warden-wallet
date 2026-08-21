@@ -202,6 +202,78 @@ pub struct LogicalAccount {
     pub is_writable: bool,
 }
 
+/// The metadata the handler resolves each logical account to (drawn from the
+/// `AccountInfo`s). `executable` and the key are what the account-context
+/// payload rules need.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LogicalMeta {
+    pub key: Pubkey,
+    pub executable: bool,
+}
+
+/// One inner instruction resolved against the concrete account list, ready for
+/// `invoke_signed`: the program key, the ordered `(key, is_signer, is_writable)`
+/// account metas, and the instruction data. `is_signer`/`is_writable` come from
+/// the payload `flags` (already validated pure), keyed to the logical account.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedInner {
+    pub program: Pubkey,
+    pub accounts: Vec<LogicalAccount>,
+    pub data: Vec<u8>,
+}
+
+/// Validate a parsed payload against the concrete logical account list and
+/// resolve each inner instruction to concrete keys (spec §5.2). Enforces the
+/// rules that need the accounts:
+///
+/// - every `program_idx` and every account `idx` is in range of `logical`;
+/// - each `program_idx` names an **executable** account whose key is neither the
+///   warden program (`SelfCpiRejected` — blocks direct and, with the account-list
+///   rule below, indirect re-entry) nor ComputeBudget (`ComputeBudgetInExecute`);
+/// - neither the warden program id nor ComputeBudget appears **anywhere** in the
+///   account list past the two privileged slots (`SelfCpiRejected` /
+///   `ComputeBudgetInExecute`) — a middleman program cannot smuggle warden back
+///   in as a bare account to re-enter it.
+///
+/// The deny-list and conservation are applied by the handler on the returned
+/// `ResolvedInner`s; this function is the account-resolution layer.
+pub fn resolve_payload(
+    payload: &ExecutePayload,
+    logical: &[LogicalMeta],
+    warden_id: &Pubkey,
+) -> Result<Vec<ResolvedInner>> {
+    use crate::constants::COMPUTE_BUDGET_ID;
+
+    // The warden program id and ComputeBudget may not appear as accounts past
+    // the two privileged slots (0 = PDA, 1 = signer). Checked once over the list.
+    for m in logical.iter().skip(2) {
+        require!(m.key != *warden_id, WardenError::SelfCpiRejected);
+        require!(m.key != COMPUTE_BUDGET_ID, WardenError::ComputeBudgetInExecute);
+    }
+
+    let mut resolved = Vec::with_capacity(payload.ixs.len());
+    for ix in &payload.ixs {
+        let prog = logical
+            .get(ix.program_idx as usize)
+            .ok_or(WardenError::PayloadInvalid)?;
+        require!(prog.executable, WardenError::PayloadInvalid);
+        require!(prog.key != *warden_id, WardenError::SelfCpiRejected);
+        require!(prog.key != COMPUTE_BUDGET_ID, WardenError::ComputeBudgetInExecute);
+
+        let mut accounts = Vec::with_capacity(ix.accounts.len());
+        for (idx, flags) in &ix.accounts {
+            let meta = logical.get(*idx as usize).ok_or(WardenError::PayloadInvalid)?;
+            accounts.push(LogicalAccount {
+                key: meta.key,
+                is_signer: flags & FLAG_SIGNER != 0,
+                is_writable: flags & FLAG_WRITABLE != 0,
+            });
+        }
+        resolved.push(ResolvedInner { program: prog.key, accounts, data: ix.data.clone() });
+    }
+    Ok(resolved)
+}
+
 /// `Keccak256` over the logical account list in logical order — for each entry,
 /// `pubkey ‖ (is_signer as u8) ‖ (is_writable as u8)` (spec §5.2 / §4.3). The
 /// root ceremony binds this via `ExecuteBody`/`SwapBody`, so a bearer assertion
@@ -359,6 +431,99 @@ mod tests {
             TokenInstruction::ApproveChecked { amount: 0, decimals: 0 }.pack()[0],
             TOKEN_IX_APPROVE_CHECKED
         );
+    }
+
+    // -- resolve_payload -------------------------------------------------
+
+    fn meta(key: Pubkey, executable: bool) -> LogicalMeta {
+        LogicalMeta { key, executable }
+    }
+
+    /// logical[0]=pda, [1]=signer, [2]=program(exec), [3]=some account.
+    fn base_logical(warden: Pubkey, program: Pubkey) -> Vec<LogicalMeta> {
+        let _ = warden;
+        vec![
+            meta(Pubkey::new_unique(), false), // 0 pda
+            meta(Pubkey::new_unique(), false), // 1 signer
+            meta(program, true),               // 2 program
+            meta(Pubkey::new_unique(), false), // 3 account
+        ]
+    }
+
+    #[test]
+    fn resolve_maps_program_and_accounts() {
+        let warden = Pubkey::new_unique();
+        let program = Pubkey::new_unique();
+        let logical = base_logical(warden, program);
+        let p = parse_payload(&encode(&[(2, &[(0, FLAG_SIGNER), (3, FLAG_WRITABLE)], &[7])])).unwrap();
+        let r = resolve_payload(&p, &logical, &warden).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].program, program);
+        assert_eq!(r[0].data, vec![7]);
+        assert_eq!(r[0].accounts[0], LogicalAccount { key: logical[0].key, is_signer: true, is_writable: false });
+        assert_eq!(r[0].accounts[1], LogicalAccount { key: logical[3].key, is_signer: false, is_writable: true });
+    }
+
+    #[test]
+    fn resolve_rejects_out_of_range_program_idx() {
+        let warden = Pubkey::new_unique();
+        let logical = base_logical(warden, Pubkey::new_unique());
+        let p = parse_payload(&encode(&[(9, &[(3, 0)], &[])])).unwrap(); // program_idx 9 > len
+        assert_eq!(resolve_payload(&p, &logical, &warden).unwrap_err(), err(WardenError::PayloadInvalid));
+    }
+
+    #[test]
+    fn resolve_rejects_out_of_range_account_idx() {
+        let warden = Pubkey::new_unique();
+        let logical = base_logical(warden, Pubkey::new_unique());
+        let p = parse_payload(&encode(&[(2, &[(9, 0)], &[])])).unwrap(); // account idx 9
+        assert_eq!(resolve_payload(&p, &logical, &warden).unwrap_err(), err(WardenError::PayloadInvalid));
+    }
+
+    #[test]
+    fn resolve_rejects_non_executable_program() {
+        let warden = Pubkey::new_unique();
+        let mut logical = base_logical(warden, Pubkey::new_unique());
+        logical[2].executable = false;
+        let p = parse_payload(&encode(&[(2, &[(3, 0)], &[])])).unwrap();
+        assert_eq!(resolve_payload(&p, &logical, &warden).unwrap_err(), err(WardenError::PayloadInvalid));
+    }
+
+    #[test]
+    fn resolve_rejects_warden_as_program() {
+        let warden = Pubkey::new_unique();
+        let mut logical = base_logical(warden, warden);
+        logical[2] = meta(warden, true);
+        let p = parse_payload(&encode(&[(2, &[(3, 0)], &[])])).unwrap();
+        assert_eq!(resolve_payload(&p, &logical, &warden).unwrap_err(), err(WardenError::SelfCpiRejected));
+    }
+
+    #[test]
+    fn resolve_rejects_compute_budget_as_program() {
+        let warden = Pubkey::new_unique();
+        let mut logical = base_logical(warden, crate::constants::COMPUTE_BUDGET_ID);
+        logical[2] = meta(crate::constants::COMPUTE_BUDGET_ID, true);
+        let p = parse_payload(&encode(&[(2, &[(3, 0)], &[])])).unwrap();
+        assert_eq!(resolve_payload(&p, &logical, &warden).unwrap_err(), err(WardenError::ComputeBudgetInExecute));
+    }
+
+    #[test]
+    fn resolve_rejects_warden_in_account_list() {
+        // A middleman program cannot smuggle warden back in as a bare account.
+        let warden = Pubkey::new_unique();
+        let mut logical = base_logical(warden, Pubkey::new_unique());
+        logical[3] = meta(warden, false); // warden as a plain account past slot 1
+        let p = parse_payload(&encode(&[(2, &[(3, 0)], &[])])).unwrap();
+        assert_eq!(resolve_payload(&p, &logical, &warden).unwrap_err(), err(WardenError::SelfCpiRejected));
+    }
+
+    #[test]
+    fn resolve_rejects_compute_budget_in_account_list() {
+        let warden = Pubkey::new_unique();
+        let mut logical = base_logical(warden, Pubkey::new_unique());
+        logical[3] = meta(crate::constants::COMPUTE_BUDGET_ID, false);
+        let p = parse_payload(&encode(&[(2, &[(3, 0)], &[])])).unwrap();
+        assert_eq!(resolve_payload(&p, &logical, &warden).unwrap_err(), err(WardenError::ComputeBudgetInExecute));
     }
 
     #[test]
