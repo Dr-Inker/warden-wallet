@@ -1159,3 +1159,19 @@ Gate evidence on the ledger HEAD below.
 its fix→gate→HEAD ancestry checks and negative cases), `ui-tokens` 11/11, the full
 Rust workspace under `--features test-jup` (0 failed), and the fixture-drift guard.
 The round-7 rows' `remediation_gate_sha` is this HEAD.
+
+## Task 8 review round 8 — Codex sol@max (thread 8ec9fbe5c668-20260821T193313Z)
+
+Round 8 (`fc137bc..8ec9fbe`, seeded=41) raised 1 minor finding — a **fifth
+consecutive round with no product-code finding** (the wrap.ts/payload.ts SDK has
+been clean since round 3). Fixed at `b8885ca942e90aaaa1c10cfd985432f17c1cd803`.
+
+- **WRDF-0083** (minor, re-open) — the round-7 shallow-safety over-corrected:
+  ancestry checks ran only when both commits existed, so a well-formed but
+  fabricated/mistyped remediation SHA (absent even in a full clone) passed
+  silently. Added explicit `shallow` state to the GitProbe (mirroring
+  `security-ledger.test.ts`): a well-formed SHA absent from a FULL clone is now an
+  error; only a positively-shallow clone skips an absent object. Negative tests
+  added for a missing fix and a missing gate commit under a full-clone probe.
+
+Gate evidence on the ledger HEAD below.
