@@ -124,9 +124,16 @@ pub struct Execute<'info> {
     /// the account itself stores (same as every other handler).
     #[account(mut)]
     pub smart_account: AccountLoader<'info, SmartAccount>,
-    /// Session path: MUST be the session's delegate key. Root path: only a
-    /// fee payer, bound to nothing — the ceremony already fixes the payload
-    /// and the account list, so an unbound submitter can substitute neither.
+    /// Session path: MUST be the session's delegate key. Root path: the
+    /// submitter — and unlike `transfer`'s root path, it is **ceremony-bound**
+    /// (WRDF-0055): this account is `logical[1]`, so its pubkey AND its
+    /// effective `is_signer`/`is_writable` flags are hashed into
+    /// `accounts_hash`, which `ExecuteBody` signs. Substituting the submitter
+    /// after signing fails `ChallengeMismatch`. Corollary for clients: the
+    /// hashed flags are the COMPILED message's (Solana coalesces privileges —
+    /// a signer that is also the fee payer becomes writable), so the SDK must
+    /// reconstruct the logical list from the compiled transaction, exactly as
+    /// spec §5.2 already mandates, never from IDL metas.
     pub signer: Signer<'info>,
     /// Required on the session path; must be absent on the root path.
     #[account(mut)]

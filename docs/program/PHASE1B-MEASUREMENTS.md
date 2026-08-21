@@ -597,7 +597,30 @@ refusing the writable PDA it would need fails an already-impossible operation
 one step earlier, fail-closed — no vault value exposed. Removing the dead adapter
 belongs to Task 3's converged default set, tracked as a follow-up.
 
-**Owed before Task 5 is DONE:** the CU/byte measurement sweep (above) and one
-more Codex sol@max round returning **0 program findings** (rounds 1–2 raised
-engineering findings; the remaining seeded re-flags — `WRD-EVT-01`/Task 5E and
-the dead-adapter hygiene — are adjudicated `deferred`, not open program defects).
+**Round 3 (`64f467d`, Codex sol@max, 5 findings = 3 stable re-flags + 2 new
+minors, both adopted).** WRDF-0051/0052/0054 re-flagged with standing rulings
+unchanged (`deferred`: §5.3 boundary → Task 6; events → Task 5E; dead System
+adapter → Task-3 hygiene). WRDF-0055 (adopted, doc accuracy) — the `signer`
+comment claimed the root submitter is "bound to nothing" (copied from
+`transfer`), but execute's submitter is `logical[1]` and hashed into
+`accounts_hash`: it is **ceremony-bound**, substitution fails
+`ChallengeMismatch`; comment corrected with the client corollary (hash the
+COMPILED message's coalesced flags, never IDL metas — spec §5.2's reconstruct
+rule) and the new negative `root_signer_substitution_rejected`. WRDF-0056
+(adopted as narrowing) — a forwarding CPI can transiently Approve→use→Revoke
+within its own execution and restore field identity, which NO before/after
+comparison at any granularity can observe; `WRD-EXEC-07` narrowed to the two
+controls actually enforced (direct-payload denial + durable before/after
+identity, both None) with the transient case named as the accepted §5.3
+boundary, bounded by net caps.
+
+**Convergence read after 3 rounds:** every finding requiring a Task-5 code or
+claim fix has been adopted and verified (rounds 1–3: WRDF-0053 code fix,
+WRDF-0051 guard + claim correction, WRDF-0055 doc+test, WRDF-0056 invariant
+narrowing); the only recurring items are the three adjudicated-`deferred`
+re-flags owned by Tasks 5E/6/3-hygiene. New-finding severity is strictly
+decreasing (important+minor → minor doc/claim accuracy).
+
+**Owed before Task 5 is DONE:** the CU/byte measurement sweep (above), and a
+confirmation round returning no NEW adoptable findings (the three standing
+re-flags are `deferred` by ruling, not open program defects).

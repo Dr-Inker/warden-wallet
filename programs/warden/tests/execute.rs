@@ -957,6 +957,30 @@ fn execute_pda_aliased_in_remaining_rejected() {
 }
 
 #[test]
+fn root_signer_substitution_rejected() {
+    // WRDF-0055: the root submitter is CEREMONY-BOUND — it is logical[1], so
+    // its pubkey (and effective flags) are inside accounts_hash. A ceremony
+    // signed for submitter A, submitted by substitute B, must fail the
+    // challenge rebuild, not execute with a different logical[1].
+    let (mut svm, payer, pk, account, _registry, _mut, vault_ata) = live();
+    let signed_for = Keypair::new();
+    let substitute = Keypair::new();
+    let dest = dest_ata(&mut svm);
+    let payload = spl_transfer_payload(700_000);
+    let remaining = spl_transfer_remaining(vault_ata, dest);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    // Sign over the logical list containing SIGNED_FOR at logical[1]…
+    let (_p, logical) =
+        execute_ix(signed_for.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    // …then submit with SUBSTITUTE as the signer account.
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) =
+        execute_ix(substitute.pubkey(), account, None, true, None, None, None, &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &substitute], &[precompile, ix], 1, err::CHALLENGE_MISMATCH);
+}
+
+#[test]
 fn session_jupiter_via_generic_execute_rejected() {
     // Jupiter is fail-closed in generic execute (WRDF-0051): even though the
     // production registry (list 1) lists its route selector, the handler rejects
