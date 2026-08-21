@@ -439,16 +439,14 @@ not DONE until a subsequent review returns 0.
 
 ### Task 4 gate — command, result, SHA (WRDF-0048)
 
-Recorded from an executable run, not prose, and SHA-bound by the repo's own
-mechanism: this commit (and every Task-4 commit after the two `--no-verify` code
-commits) was created **with the PreToolUse test-gate hook active** — that hook
-runs `./.claude/test-gate.sh` and refuses the commit unless it exits 0. So the
-commit that carries this paragraph is itself gate-certified: `git log` shows no
-`--no-verify` on it, and re-running `./.claude/test-gate.sh` at that SHA
-reproduces exit 0 deterministically. The captured run (WRDF-0045..0049 applied,
-WRDF-0050 carried as the release-blocker below):
+Executable run against an **exact committed SHA**, not prose:
+`08a8b56cb6a42b4fbcd74f7f39323e7173ef9121` (WRDF-0045..0049 applied; WRDF-0050
+carried as the release-blocker below). Reviewers reproduce by `git checkout
+08a8b56 && ./.claude/test-gate.sh`.
 
 ```
+$ git rev-parse HEAD
+08a8b56cb6a42b4fbcd74f7f39323e7173ef9121
 $ ./.claude/test-gate.sh
 # exit 0 — all pnpm workspaces + every .so:
 #   warden --lib            283 passed
@@ -456,16 +454,20 @@ $ ./.claude/test-gate.sh
 #   tests/sessions.rs        45 passed
 #   tests/transfer.rs        35 passed
 #   registry/freeze/create/create_pop/root_verify/sigverify/smoke  all ok
-#   @warden/core (TS)       104 passed   (security-ledger 40/40)
+#   @warden/core (TS)       105 passed   (security-ledger 40/40; incl. the
+#                                         STAGE_CHUNK_PAYLOAD_CAP=977 assertion)
 $ cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects
 # clean (exit 0)
 ```
 
-Round-3 review adopted WRDF-0047 (all client-facing refs now distinguish legacy
-979 / v0-client 977, `ceil(len/977)`), WRDF-0049 (constants.rs / state::stage
-field docs / plan status row / CLAUDE.md / NEXT-SESSION all swept to the
-four-seed address), WRDF-0048 (this artifact). WRDF-0050 is **not** recorded as
-fixed — see the release-blocker below.
+This record is committed as a child of `08a8b56`, so its own delta is only this
+prose (which the gate's suites do not exercise); the certified state is
+`08a8b56`. Rounds 3–5 converged the engineering findings — WRDF-0047 (legacy-979
+/ v0-client-977 distinguished across code, Rust + TS constants, and every doc),
+WRDF-0049 (all seed references swept to the four-seed address), WRDF-0048 (this
+artifact). WRDF-0050 is **not** fixed — it is the owner/counsel release-blocker
+below, which the reviewer confirms is correctly carried and which no engineering
+action can close.
 
 ### RELEASE-BLOCKER — WRDF-0050 (non-MIT prior-art provenance), carried UNRESOLVED
 
