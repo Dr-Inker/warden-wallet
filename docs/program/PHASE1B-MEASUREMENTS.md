@@ -1085,3 +1085,11 @@ functional findings. Fixed at `84bb61ec2977b828176b2e2033c7670bb1fbe7cd`.
 Also hardened the recurring AT-SHA ledger test with a 30s timeout (it shells out
 per evidence entry and false-red'd under the gate's post-build load). WRD-EXEC-11/12
 evidence bumped to `84bb61e`. Gate evidence on the ledger HEAD below.
+
+### Round-5 gate evidence
+
+**Gate re-run on the immutable ledger HEAD `24e58352b6de5a28401f27c5fc31a84df5d82ff1`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, **all suites green** —
+`@warden/core` **149 passed (149)** (incl. the new scorecard-provenance guard and
+the re-import-no-write regression), `ui-tokens` 11/11, the full Rust workspace
+under `--features test-jup` (0 failed), and the fixture-drift `git diff` guard.
