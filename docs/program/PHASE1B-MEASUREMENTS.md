@@ -1062,3 +1062,26 @@ read-only test. Gate evidence on the immutable ledger HEAD below.
 `@warden/core` **146 passed (146)**, `ui-tokens` 11/11, the full Rust workspace
 under `--features test-jup` (0 failed), AND the new fixture-drift `git diff`
 guard passed (the read-only golden-vector tests did not mutate the tree).
+
+## Task 8 review round 5 — Codex sol@max (thread 50c3e1128dbc-20260821T182343Z)
+
+Round 5 (`73e3c55..50c3e11`, seeded=43) raised 2 findings, both minor — no
+functional findings. Fixed at `84bb61ec2977b828176b2e2033c7670bb1fbe7cd`.
+
+- **WRDF-0081** (minor, re-open) — (1) the golden pin imported identities from the
+  generator and skipped logical[2]/[3]; now the COMPLETE four-entry logical vector
+  is pinned against LITERAL byte patterns. (2) `gen-fixtures.ts` ran `generate()`
+  on any non-Vitest import (`!process.env.VITEST`); split into a side-effect-free
+  `fixtures-data.ts` (definitions + `generate()` function, never auto-run) and a
+  thin `gen-fixtures.ts` runner behind a real ESM main-module check, with a
+  re-import-writes-nothing regression.
+- **WRDF-0083** (minor) — 15 of my adjudicated scorecard rows set
+  `claimed_reproducer_verified=true` while carrying no reproducer object (only
+  `reproducer_infeasible_reason`). Corrected all 15 to `false` and recorded the
+  gate-confirmed fix under a new `remediation_verified` (+ `remediation_sha`)
+  field; added a guard test requiring a distinct-SHA verified reproducer object
+  for any true claim.
+
+Also hardened the recurring AT-SHA ledger test with a 30s timeout (it shells out
+per evidence entry and false-red'd under the gate's post-build load). WRD-EXEC-11/12
+evidence bumped to `84bb61e`. Gate evidence on the ledger HEAD below.
