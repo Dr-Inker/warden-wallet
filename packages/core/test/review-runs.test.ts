@@ -322,63 +322,117 @@ describe("append-review-run.mjs CLI", () => {
   });
 });
 
-// WRDF-0015 / 0083: two SEPARATE provenance axes on a scorecard row, each
+// WRDF-0015 / 0083 / 0084: two SEPARATE provenance axes on a scorecard row, each
 // validated so neither can be asserted without its evidence.
-//   * claimed_reproducer_verified — a red/green REPRODUCER was run. True ONLY
-//     when the row also carries the reproducer object (`claimed_reproducer`) with
-//     distinct base/fixed SHAs and verified=true. The appender persists that
-//     object (WRDF-0015), so a positive row is auditable and re-runnable.
-//   * remediation_verified — a static-trace finding whose fix the GATE confirmed.
-//     True ONLY with a real fixing SHA, a real gate SHA, and the gate command —
-//     never a bare boolean (WRDF-0083). Mutually exclusive with a reproducer claim.
+//   * claimed_reproducer_verified: a red/green REPRODUCER was run. True ONLY when
+//     the row carries the reproducer object (claimed_reproducer) with distinct
+//     base/fixed SHAs and verified=true. The appender persists it (WRDF-0015).
+//   * remediation_verified: a static-trace finding whose fix the GATE confirmed.
+//     True ONLY with a real fixing SHA, a real gate SHA that CONTAINS the fix (fix
+//     is ancestor-or-equal of gate) and is reachable from the reviewed HEAD, and a
+//     non-blank gate command (WRDF-0083). Mutually exclusive with a reproducer claim.
 const SHA_RE = /^[0-9a-f]{7,40}$/;
-const gitCommitExists = (sha: string): boolean => {
-  try {
-    execFileSync("git", ["-C", REPO, "cat-file", "-e", `${sha}^{commit}`], { stdio: "pipe" });
-    return true;
-  } catch {
-    return false;
+
+// Injected git predicates so the pure validator is unit-testable, and so the live
+// check can skip objects genuinely absent in a shallow clone (WRDF-0084) while
+// staying fail-closed in a full clone. null = skip git-dependent checks.
+interface GitProbe {
+  commitExists(sha: string): boolean;
+  isAncestorOrEqual(a: string, b: string): boolean; // a is ancestor of, or equal to, b
+  head: string;
+}
+
+// Validate ONE scorecard row's provenance. Returns violation strings (empty = ok).
+export function validateScorecardProvenance(r: Record<string, unknown>, git: GitProbe | null): string[] {
+  const id = String(r.finding_id ?? "?");
+  const errs: string[] = [];
+  if (r.claimed_reproducer_verified === true) {
+    const rep = r.claimed_reproducer as { base_sha?: string; fixed_sha?: string; verified?: boolean } | null | undefined;
+    if (!rep) errs.push(`${id}: claimed_reproducer_verified=true but no claimed_reproducer object`);
+    else {
+      if (rep.verified !== true) errs.push(`${id}: reproducer not verified`);
+      if (!SHA_RE.test(rep.base_sha ?? "")) errs.push(`${id}: reproducer base_sha malformed`);
+      if (!SHA_RE.test(rep.fixed_sha ?? "")) errs.push(`${id}: reproducer fixed_sha malformed`);
+      if (rep.base_sha === rep.fixed_sha) errs.push(`${id}: reproducer base_sha equals fixed_sha`);
+    }
   }
-};
+  if (r.remediation_verified === true) {
+    if (r.claimed_reproducer_verified === true) errs.push(`${id}: a remediation row must not also claim a reproducer`);
+    const fix = r.remediation_sha as string | null;
+    const gate = r.remediation_gate_sha as string | null;
+    const cmd = r.remediation_gate_cmd;
+    if (!SHA_RE.test(fix ?? "")) errs.push(`${id}: remediation_sha malformed or null`);
+    if (!SHA_RE.test(gate ?? "")) errs.push(`${id}: remediation_gate_sha malformed or null`);
+    if (typeof cmd !== "string" || cmd.trim().length === 0) errs.push(`${id}: remediation_gate_cmd blank`);
+    if (git && SHA_RE.test(fix ?? "") && SHA_RE.test(gate ?? "")) {
+      if (git.commitExists(fix!) && git.commitExists(gate!)) {
+        if (!git.isAncestorOrEqual(fix!, gate!)) errs.push(`${id}: gate ${gate} does not contain fix ${fix}`);
+        if (!git.isAncestorOrEqual(gate!, git.head)) errs.push(`${id}: gate ${gate} is not reachable from reviewed HEAD`);
+      }
+    }
+  }
+  return errs;
+}
+
 describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
   const cardRows = readFileSync(SCORECARD, "utf8")
     .split("\n")
     .filter((l) => l.trim())
-    .map((l) => JSON.parse(l) as Record<string, unknown>);
-  const inGit = (() => {
-    try {
-      execFileSync("git", ["-C", REPO, "rev-parse", "--is-inside-work-tree"], { stdio: "pipe" });
-      return true;
-    } catch {
-      return false;
-    }
+    .map((l: string) => JSON.parse(l) as Record<string, unknown>);
+
+  // Shallow-aware git probe, mirroring security-ledger.test.ts: in a shallow clone
+  // absent objects are skipped; in a full clone (CI sets fetch-depth: 0) the checks
+  // are load-bearing and fail-closed.
+  const probe: GitProbe | null = (() => {
+    const git = (args: string[]): string | null => {
+      try { return execFileSync("git", ["-C", REPO, ...args], { stdio: "pipe" }).toString().trim(); }
+      catch { return null; }
+    };
+    if (git(["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
+    const head = git(["rev-parse", "HEAD"]);
+    if (!head) return null;
+    return {
+      head,
+      commitExists: (sha: string) => {
+        try { execFileSync("git", ["-C", REPO, "cat-file", "-e", `${sha}^{commit}`], { stdio: "pipe" }); return true; }
+        catch { return false; }
+      },
+      isAncestorOrEqual: (a: string, b: string) => {
+        try { execFileSync("git", ["-C", REPO, "merge-base", "--is-ancestor", a, b], { stdio: "pipe" }); return true; }
+        catch { return false; }
+      },
+    };
   })();
 
-  it("claimed_reproducer_verified is true only with a persisted, distinct-SHA reproducer", () => {
-    for (const r of cardRows) {
-      if (r.claimed_reproducer_verified !== true) continue;
-      const rep = r.claimed_reproducer as { base_sha?: string; fixed_sha?: string; verified?: boolean } | null | undefined;
-      expect(rep, `${r.finding_id}: claimed_reproducer_verified=true but no claimed_reproducer object`).toBeTruthy();
-      expect(rep!.verified, `${r.finding_id}: reproducer not verified`).toBe(true);
-      expect(SHA_RE.test(rep!.base_sha ?? ""), `${r.finding_id}: reproducer base_sha malformed`).toBe(true);
-      expect(SHA_RE.test(rep!.fixed_sha ?? ""), `${r.finding_id}: reproducer fixed_sha malformed`).toBe(true);
-      expect(rep!.base_sha, `${r.finding_id}: reproducer base_sha equals fixed_sha`).not.toBe(rep!.fixed_sha);
-    }
-  });
-
-  it("remediation_verified is true only with a real fixing SHA, gate SHA, and gate command", () => {
-    for (const r of cardRows) {
-      if (r.remediation_verified !== true) continue;
-      const fix = r.remediation_sha as string | null;
-      const gate = r.remediation_gate_sha as string | null;
-      expect(r.claimed_reproducer_verified, `${r.finding_id}: a remediation row must not also claim a reproducer`).not.toBe(true);
-      expect(SHA_RE.test(fix ?? ""), `${r.finding_id}: remediation_sha malformed or null`).toBe(true);
-      expect(SHA_RE.test(gate ?? ""), `${r.finding_id}: remediation_gate_sha malformed or null`).toBe(true);
-      expect(typeof r.remediation_gate_cmd === "string" && (r.remediation_gate_cmd as string).length > 0, `${r.finding_id}: remediation_gate_cmd missing`).toBe(true);
-      if (inGit) {
-        expect(gitCommitExists(fix as string), `${r.finding_id}: remediation_sha ${fix} is not a real commit`).toBe(true);
-        expect(gitCommitExists(gate as string), `${r.finding_id}: remediation_gate_sha ${gate} is not a real commit`).toBe(true);
-      }
-    }
+  it("every committed row satisfies both provenance axes", () => {
+    const all = cardRows.flatMap((r) => validateScorecardProvenance(r, probe));
+    expect(all, all.join("\n")).toEqual([]);
   }, 30_000);
+
+  const stub = (opts: { exists?: (s: string) => boolean; anc?: (a: string, b: string) => boolean; head?: string }): GitProbe => ({
+    head: opts.head ?? "h".repeat(40),
+    commitExists: opts.exists ?? (() => true),
+    isAncestorOrEqual: opts.anc ?? (() => true),
+  });
+  const fixS = "a".repeat(40), gateS = "b".repeat(40);
+  const row = (over: Record<string, unknown>) => ({ finding_id: "WRDF-TEST", remediation_verified: true, remediation_sha: fixS, remediation_gate_sha: gateS, remediation_gate_cmd: "cmd", ...over });
+
+  it("rejects a gate that does not contain the fix", () => {
+    expect(validateScorecardProvenance(row({}), stub({ anc: (a, b) => !(a === fixS && b === gateS) })).join()).toMatch(/does not contain fix/);
+  });
+  it("rejects a gate unreachable from HEAD", () => {
+    expect(validateScorecardProvenance(row({}), stub({ anc: (a) => a === fixS })).join()).toMatch(/not reachable from reviewed HEAD/);
+  });
+  it("rejects a whitespace-only gate command", () => {
+    expect(validateScorecardProvenance(row({ remediation_gate_cmd: "   " }), null).join()).toMatch(/gate_cmd blank/);
+  });
+  it("rejects a null remediation SHA", () => {
+    expect(validateScorecardProvenance(row({ remediation_sha: null }), null).join()).toMatch(/remediation_sha malformed/);
+  });
+  it("rejects a row claiming both a reproducer and a remediation", () => {
+    expect(validateScorecardProvenance(row({ claimed_reproducer_verified: true, claimed_reproducer: { base_sha: fixS, fixed_sha: gateS, verified: true } }), null).join()).toMatch(/must not also claim a reproducer/);
+  });
+  it("accepts a well-formed remediation row", () => {
+    expect(validateScorecardProvenance(row({}), stub({}))).toEqual([]);
+  });
 });

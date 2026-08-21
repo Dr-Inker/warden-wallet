@@ -57,6 +57,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history: the review-ledger provenance tests (AT-SHA evidence,
+          # remediation fix->gate ancestry) resolve historical commits; a depth-one
+          # checkout would make them skip (WRDF-0084). Load-bearing in CI now.
 
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -234,6 +238,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history: the review-ledger provenance tests (AT-SHA evidence,
+          # remediation fix->gate ancestry) resolve historical commits; a depth-one
+          # checkout would make them skip (WRDF-0084). Load-bearing in CI now.
 
       - name: Set up Node ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
