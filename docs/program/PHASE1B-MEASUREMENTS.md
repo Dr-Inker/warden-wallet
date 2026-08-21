@@ -1296,3 +1296,24 @@ Gate evidence on the ledger HEAD below.
 **Gate on the immutable ledger HEAD `8ccd4445c2a40c317e9a7e002d453fa3f4c84b8a`:**
 `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
 188/188, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
+
+## Task 11R review round 3 — Codex sol@max (thread d42b21257613-20260821T213426Z)
+
+Round 3 (`a247952..d42b212`, seeded=40) raised 4 findings (2 critical re-opened, 1
+important, 1 minor). Fixed/adjudicated at `a937838`.
+
+- **WRDF-0028** (critical, 3rd) — the `--proposal-audit-attested` string was a
+  rubber-stamp (verified nothing). REMOVED the bypass: the per-proposal audit now
+  ALWAYS fails closed in-tool (`proposalAuditResult`), no attestation shortcut.
+- **WRDF-0085** (critical, 3rd) — the committed manifest was still caller-selected
+  and checkout-unbound. deploy-gate.sh now binds a live run to the reviewed
+  release: clean tree + HEAD == the resolved release-sha commit.
+- **WRDF-0088** (important) — the round-2 CLI remediations had no executable
+  evidence. Extracted the CLI logic into `src/deploy/cli.ts` with 6 red/green tests
+  (`deploy-cli.test.ts`) covering every bypass; WRD-DEP-01 evidence bumped to
+  `a937838`.
+- **WRDF-0090** (minor) — DEPLOY-GATE.md + shell usage still documented the removed
+  `--pin` interface. Updated to `--manifest` / `--fixtures` + the clean-tree /
+  release-commit requirement.
+
+194 core tests. Gate evidence on the ledger HEAD below.
