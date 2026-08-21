@@ -1472,6 +1472,16 @@
       "code": 6071,
       "name": "SwapUnexpectedOutflow",
       "msg": "swap moved value the adapter did not authorize (unexpected vault outflow)"
+    },
+    {
+      "code": 6072,
+      "name": "SwapNativeUnsupported",
+      "msg": "native-mint (wrapped SOL) swaps are not supported in Phase 1B"
+    },
+    {
+      "code": 6073,
+      "name": "SwapFeeNotTaken",
+      "msg": "the swap did not pay a fee into the treasury account"
     }
   ],
   "types": [

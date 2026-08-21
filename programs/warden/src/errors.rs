@@ -189,4 +189,8 @@ pub enum WardenError {
     SwapOutMintNotAllowed,
     #[msg("swap moved value the adapter did not authorize (unexpected vault outflow)")]
     SwapUnexpectedOutflow,
+    #[msg("native-mint (wrapped SOL) swaps are not supported in Phase 1B")]
+    SwapNativeUnsupported,
+    #[msg("the swap did not pay a fee into the treasury account")]
+    SwapFeeNotTaken,
 }

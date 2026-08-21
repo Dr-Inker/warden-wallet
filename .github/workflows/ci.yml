@@ -181,22 +181,34 @@ jobs:
       - name: L9 supply-chain gate (cargo-deny --locked check + pnpm audit)
         run: ./scripts/supply-chain-gate.sh
 
-      # No `if: always()` — an artifact must only ever come from a run where
-      # every gate above actually passed. Uploading on failure (or from a
-      # cache-restored target/ that skipped a fresh build) is exactly the
-      # stale/misleading-artifact failure mode this step used to have.
-      - name: Compute warden.so sha256
+      # WRDF-0063: the test-gate builds warden.so WITH `--features test-jup`
+      # (swap → the mock), so that binary must NEVER be published as the
+      # release artifact. Rebuild a clean PRODUCTION warden.so — default
+      # features only — into an ISOLATED path, and upload only that. The
+      # production build is what pins the real Jupiter v6 id
+      # (swap::tests::swap_target_program_is_pinned covers the non-feature
+      # branch; a feature-flag grep here is a cheap artifact-provenance guard).
+      - name: Build the PRODUCTION warden.so (no test-jup) into an isolated dir
         run: |
-          test -f target/deploy/warden.so || { echo "target/deploy/warden.so missing after a passing test-gate.sh run — this should be impossible" >&2; exit 1; }
-          sha256sum target/deploy/warden.so | tee target/deploy/warden.so.sha256
+          rm -rf target/deploy-release
+          cargo-build-sbf --manifest-path programs/warden/Cargo.toml \
+            --sbf-out-dir target/deploy-release
+          test -f target/deploy-release/warden.so || { echo "production warden.so missing" >&2; exit 1; }
+          # Provenance guard: the production build must not carry test-jup.
+          if strings target/deploy-release/warden.so | grep -q '3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU'; then
+            echo "PRODUCTION warden.so embeds the test-jup mock id — refusing to publish" >&2; exit 1
+          fi
 
-      - name: Upload warden.so + sha256 artifact
+      - name: Compute production warden.so sha256
+        run: sha256sum target/deploy-release/warden.so | tee target/deploy-release/warden.so.sha256
+
+      - name: Upload PRODUCTION warden.so + sha256 artifact
         uses: actions/upload-artifact@v4
         with:
           name: warden-so-${{ github.sha }}
           path: |
-            target/deploy/warden.so
-            target/deploy/warden.so.sha256
+            target/deploy-release/warden.so
+            target/deploy-release/warden.so.sha256
           if-no-files-found: error
           retention-days: 90
 

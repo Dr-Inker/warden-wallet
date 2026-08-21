@@ -781,3 +781,38 @@ config). The test-gate `.so` is built WITH the feature (it is gitignored and
 never deployed); a production deploy builds WITHOUT it. Warden's entrypoint
 would reject the mock planted at Jupiter's id (`DeclaredProgramIdMismatch`), so
 a cfg switch — not a passed account — is the only way to redirect the pin.
+
+### Task 6 swap review round 1 (Codex sol@max, 9 findings)
+
+The Codex review-lane content filter false-positived twice on this
+security-heavy diff before clearing on the third run (a known ~1-in-3
+probabilistic block on deny-list/drain/route vocabulary — retried, not
+downgraded). It then returned 9 findings incl. one CRITICAL; all adopted or
+deferred, converged same-day:
+
+- **WRDF-0061 (critical, adopted):** native (WSOL) swaps used the `amount` cache
+  not lamports and never bounded the merged `in_charge` by `max_in`. **Rejected
+  native-mint swaps in 1B** (`SwapNativeUnsupported`) — the buggy branch is gone;
+  correct native handling is 1C.
+- **WRDF-0058 (adopted):** root `SwapBody` didn't bind the route bytes — a
+  captured assertion could swap the route. Added `route_hash =
+  Keccak256(route_data)` to `SwapBody` (+ TS mirror + pinned vector).
+- **WRDF-0060 (adopted):** `min_out` checked only the declared destination's
+  local gain; now the signed NET out-mint gain across every vault account.
+- **WRDF-0062 (adopted):** lifetime/bucket headroom moved to a pre-CPI probe on
+  the full `max_in` (non-committing `buckets::debit` on a copy).
+- **WRDF-0059 (adopted-in-part):** the fixed-tail decode is suffix-decouplable;
+  reframed as ADVISORY, with the root byte-binding (0058) + a post-CPI
+  treasury-fee-taken proof (`SwapFeeNotTaken`) + net conservation as the real
+  bounds. A byte-exact `route_plan` parse (WRDF-0031) is owed before mainnet for
+  a hard session-path pre-CPI guarantee.
+- **WRDF-0063 (adopted):** CI published the `test-jup` binary as `warden.so`; CI
+  now rebuilds a clean production `warden.so` into an isolated dir and greps it
+  for the mock id before uploading.
+- **WRDF-0064 (adopted):** `encodeSwapBody` now `assertU64`s the amounts.
+- **WRDF-0031 (deferred):** full `Vec<RoutePlanStep>` fidelity owed pre-mainnet
+  (linked to 0059). **WRDF-0052 (deferred):** events → Task 5E.
+
+Gate green with `--features test-jup` at the fix SHA: 329 warden lib + 19
+`tests/swap.rs` + full workspace + 113 TS; clippy clean; drift table 74 rows;
+IDL synced. Production pin verified WITHOUT the feature.

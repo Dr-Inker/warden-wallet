@@ -49,8 +49,8 @@ use anchor_lang::AccountsClose;
 use crate::buckets::{self, find_cap};
 use crate::constants::{
     ACCOUNT_SEED, ALLOWED_OUT_MINTS_DEFAULT, JUP_ROUTE_DISC, JUP_SHARED_ROUTE_DISC,
-    MAX_EXECUTE_ACCOUNTS_TOTAL, MAX_EXECUTE_WRITABLE, NATIVE_MINT, SWAP_PLATFORM_FEE_BPS,
-    SWAP_TARGET_PROGRAM, STAGE_SEED,
+    MAX_EXECUTE_ACCOUNTS_TOTAL, MAX_EXECUTE_WRITABLE, NATIVE_MINT, NATIVE_MINT_2022,
+    SWAP_PLATFORM_FEE_BPS, SWAP_TARGET_PROGRAM, STAGE_SEED,
 };
 use crate::conservation::{self, compare_and_account, Snap, TokenSnap};
 use crate::errors::WardenError;
@@ -97,6 +97,12 @@ pub struct SwapBody {
     pub min_out: u64,
     /// The 8-byte Jupiter route selector (`route` or `shared_accounts_route`).
     pub discriminator: [u8; 8],
+    /// `Keccak256` of the EXACT route bytes executed (WRDF-0058). Without this a
+    /// captured root assertion could authorize a different route_plan /
+    /// quoted_out / slippage — or different staged content — sharing the same
+    /// mints, bound, discriminator and accounts. Rebuilt on-chain from the bytes
+    /// actually run, so the route cannot be substituted after signing.
+    pub route_hash: [u8; 32],
     pub accounts_hash: [u8; 32],
 }
 
@@ -149,6 +155,17 @@ pub(crate) fn handler<'info>(
         args.variant == SWAP_VARIANT_ROUTE || args.variant == SWAP_VARIANT_SHARED,
         WardenError::SwapBadDiscriminator
     );
+    // WRDF-0061: native (wrapped-SOL) swaps are NOT supported in 1B. A native
+    // token account's value is its lamports, not its `amount` cache (WRDF-0011),
+    // and the merged native/SOL accounting a swap would need — bounded by
+    // `max_in` and both native-mint program variants canonicalized — is a 1C
+    // item. Fail closed here rather than ship the amount-cache-based checks the
+    // rest of this handler uses for non-native mints.
+    require!(
+        args.in_mint != NATIVE_MINT && args.in_mint != NATIVE_MINT_2022
+            && args.out_mint != NATIVE_MINT && args.out_mint != NATIVE_MINT_2022,
+        WardenError::SwapNativeUnsupported
+    );
 
     let mut account = ctx.accounts.smart_account.load_mut()?;
     let expected = Pubkey::create_program_address(
@@ -199,8 +216,19 @@ pub(crate) fn handler<'info>(
     let tail = &route_data[tail_start..];
     let declared_in = u64::from_le_bytes(tail[0..8].try_into().unwrap());
     let platform_fee_bps = tail[SWAP_TAIL_LEN - 1];
+    // ADVISORY pre-check (WRDF-0059): the fixed tail is read from the END of the
+    // data, which a trailing suffix could decouple from Jupiter's front-parsed
+    // args. So these are NOT the security boundary — the REALIZED bound is
+    // post-CPI net conservation (in_mint outflow ≤ max_in) plus the post-CPI
+    // proof that the treasury actually received a fee. On the root path the
+    // exact bytes are additionally frozen by `route_hash` in `SwapBody`, so no
+    // suffix can be injected at all. A byte-exact `route_plan` parse (WRDF-0031)
+    // is owed before mainnet to make this pre-check a hard guarantee too.
     require!(platform_fee_bps == SWAP_PLATFORM_FEE_BPS, WardenError::SwapPlatformFeeBps);
     require!(declared_in <= args.max_in, WardenError::SwapMaxInExceeded);
+
+    // WRDF-0058: the EXACT bytes about to execute, bound into the root ceremony.
+    let route_hash = solana_keccak_hasher::hashv(&[&route_data]).to_bytes();
 
     // ---- account-position map (real Jupiter v6 IDL, fixed positions) ------
     // route:  auth 1, source 2, dest 3, destMint 5, fee 6
@@ -245,6 +273,7 @@ pub(crate) fn handler<'info>(
             max_in: args.max_in,
             min_out: args.min_out,
             discriminator: disc,
+            route_hash,
             accounts_hash: compute_accounts_hash(&logical_hash),
         };
         let mut body_bytes = Vec::new();
@@ -256,18 +285,32 @@ pub(crate) fn handler<'info>(
         authorize_session(session, &session_account_key, &signer_key, &account_key, account.generation, program_id, now, OP_SWAP)?;
     }
 
-    // ---- max_in against the caps, BEFORE the CPI (spec §5.2.7 step 1) -----
-    // Session: `max_in ≤ per_tx[in_mint]` and out_mint must be swappable.
-    // Root: `max_in ≤ large_threshold[in_mint]`. The actual net outflow (≤ max_in)
-    // is what the buckets are debited AFTER the CPI, so a partial fill is not
-    // overcharged.
+    // ---- the AUTHORIZED input (max_in) against EVERY cap, BEFORE the CPI ---
+    // (spec §5.2.7 step 1, WRDF-0062). The realized net outflow (≤ max_in) is
+    // what is actually committed AFTER the CPI, so a partial fill is not
+    // overcharged — but the FULL `max_in` must clear per_tx, lifetime AND the
+    // account-wide day/30-day buckets before Jupiter ever receives the PDA
+    // signer, or an intra-CPI round trip could pass on net while the buckets
+    // had no room for the authorized amount. The bucket check is a
+    // non-committing probe on a local copy.
+    {
+        let (bucket_idx, account_cap) =
+            find_cap(&account.policy.caps, &args.in_mint).ok_or(WardenError::CapExceeded)?;
+        let account_cap: MintCap = *account_cap;
+        let mut probe = *account.buckets.get(bucket_idx).ok_or(WardenError::InvalidAccountData)?;
+        buckets::debit(&mut probe, &account_cap, args.max_in, now)?; // probe (discarded)
+    }
     if args.root.is_some() {
         let (_, threshold) = find_cap(&account.policy.large_threshold, &args.in_mint).ok_or(WardenError::CapExceeded)?;
         require!(args.max_in <= threshold.per_tx, WardenError::CapExceeded);
     } else {
         let session = ctx.accounts.session.as_ref().ok_or(WardenError::BadInstructionLayout)?;
-        let (_, cap) = find_cap(&session.caps, &args.in_mint).ok_or(WardenError::CapExceeded)?;
+        let (slot_idx, cap) = find_cap(&session.caps, &args.in_mint).ok_or(WardenError::CapExceeded)?;
         require!(args.max_in <= cap.per_tx, WardenError::CapExceeded);
+        // Session lifetime headroom for the FULL authorized amount.
+        let spent = *session.lifetime_spent.get(slot_idx).ok_or(WardenError::InvalidAccountData)?;
+        let lifetime = *session.lifetime_cap.get(slot_idx).ok_or(WardenError::InvalidAccountData)?;
+        require!(spent.checked_add(args.max_in).ok_or(WardenError::Overflow)? <= lifetime, WardenError::CapExceeded);
         // out_mint must have a session cap OR be a default-allowed out mint.
         let out_allowed = find_cap(&session.caps, &args.out_mint).is_some()
             || ALLOWED_OUT_MINTS_DEFAULT.contains(&args.out_mint);
@@ -306,6 +349,12 @@ pub(crate) fn handler<'info>(
         fee_tok.mint == args.in_mint || fee_tok.mint == args.out_mint,
         WardenError::SwapFeeAccountNotTreasury
     );
+    // WRDF-0059: the decoded `platform_fee_bps` is suffix-attackable, so the
+    // treasury fee is proven AFTER the CPI by requiring this account's balance
+    // to have INCREASED — a route that skipped the fee (front-parsed 0 bps
+    // under a fake tail) is caught regardless of what the tail claimed.
+    let fee_before = fee_tok.amount;
+    let fee_key = *account_at(fee_idx)?.key;
 
     // ---- CPI: pinned Jupiter, PDA-signed ---------------------------------
     // The authority position is the vault PDA: it SIGNS (via invoke_signed) but
@@ -355,27 +404,32 @@ pub(crate) fn handler<'info>(
     let src_after = find_token(&after, &src_key).ok_or(WardenError::ConservationViolated)?;
     let actual_in = src_before_amount.checked_sub(src_after.amount).ok_or(WardenError::SwapUnexpectedOutflow)?;
     require!(actual_in <= args.max_in, WardenError::SwapMaxInExceeded);
-    // Destination gained at least min_out.
-    let dst_after = find_token(&after, &dst_key).ok_or(WardenError::ConservationViolated)?;
-    let gained = dst_after.amount.checked_sub(dst_before_amount).ok_or(WardenError::SwapMinOutNotMet)?;
-    require!(gained >= args.min_out, WardenError::SwapMinOutNotMet);
 
-    // The ONLY net vault outflow may be `in_mint` (≤ max_in) plus, if in_mint is
-    // native, the merged SOL figure. Any other mint leaving is a route that
-    // moved value the adapter did not authorize (misbehave 2's second source).
+    // WRDF-0060: `min_out` is the NET gain of out_mint across EVERY vault-owned
+    // out_mint token account, not just the declared destination's local
+    // increase. Otherwise a route could debit a second vault out_mint account
+    // and credit the declared one by the same amount — the local delta clears
+    // min_out while the vault gained nothing net. Summed with signed math.
+    let net_out_gain = net_vault_mint_delta(&before, &after, &args.out_mint, &account_key)?;
+    require!(net_out_gain >= i128::from(args.min_out), WardenError::SwapMinOutNotMet);
+    let _ = dst_before_amount; // superseded by the net-gain check
+    let _ = dst_key;
+
+    // WRDF-0059: the treasury fee must actually have been paid (balance up).
+    let fee_after = find_token(&after, &fee_key).ok_or(WardenError::SwapFeeNotTaken)?;
+    require!(fee_after.amount > fee_before, WardenError::SwapFeeNotTaken);
+
+    // The ONLY net vault outflow may be `in_mint` (≤ max_in). Any other mint
+    // leaving — or any raw SOL (native is rejected up front) — is value the
+    // adapter did not authorize.
     for (mint, amt) in &outflow.by_mint {
         require!(*mint == args.in_mint, WardenError::SwapUnexpectedOutflow);
         require!(*amt <= args.max_in, WardenError::SwapMaxInExceeded);
     }
-    // A non-native swap must not move raw SOL out of the vault.
-    if args.in_mint != NATIVE_MINT {
-        require!(outflow.sol == 0, WardenError::SwapUnexpectedOutflow);
-    }
+    require!(outflow.sol == 0, WardenError::SwapUnexpectedOutflow);
 
-    // ---- charge the caps on the NET in_mint outflow ----------------------
-    let charged = outflow.by_mint.iter().find(|(m, _)| *m == args.in_mint).map(|(_, a)| *a).unwrap_or(0);
-    let sol_charge = if args.in_mint == NATIVE_MINT { outflow.sol } else { 0 };
-    let in_charge = charged.checked_add(sol_charge).ok_or(WardenError::Overflow)?;
+    // ---- commit the caps on the NET in_mint outflow ----------------------
+    let in_charge = outflow.by_mint.iter().find(|(m, _)| *m == args.in_mint).map(|(_, a)| *a).unwrap_or(0);
 
     let mut account = ctx.accounts.smart_account.load_mut()?;
     if args.root.is_none() {
@@ -419,6 +473,33 @@ fn find_token<'a>(snaps: &'a [Snap], key: &Pubkey) -> Option<&'a TokenSnap> {
     snaps.iter().find(|s| s.key == *key).and_then(|s| s.token.as_ref())
 }
 
+/// Signed NET amount delta of `mint` across EVERY vault-owned token account of
+/// it (positive = the vault gained). `before`/`after` are the same accounts in
+/// the same order (two passes over `remaining`), so each account is matched
+/// positionally. Uses `i128` so a net loss is representable (WRDF-0060).
+fn net_vault_mint_delta(before: &[Snap], after: &[Snap], mint: &Pubkey, vault: &Pubkey) -> Result<i128> {
+    let mut delta: i128 = 0;
+    for (i, b) in before.iter().enumerate() {
+        let is_vault_mint = |t: Option<&TokenSnap>| t.is_some_and(|t| t.owner == *vault && t.mint == *mint);
+        let b_amt = if is_vault_mint(b.token.as_ref()) {
+            b.token.as_ref().map(|t| t.amount).unwrap_or(0)
+        } else {
+            0
+        };
+        let a = after.get(i).ok_or(WardenError::ConservationViolated)?;
+        let a_amt = if is_vault_mint(a.token.as_ref()) {
+            a.token.as_ref().map(|t| t.amount).unwrap_or(0)
+        } else {
+            0
+        };
+        delta = delta
+            .checked_add(i128::from(a_amt))
+            .and_then(|d| d.checked_sub(i128::from(b_amt)))
+            .ok_or(WardenError::Overflow)?;
+    }
+    Ok(delta)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,13 +537,14 @@ mod tests {
             max_in: 7,
             min_out: 3,
             discriminator: [0x09; 8],
+            route_hash: [0xCC; 32],
             accounts_hash: [0xBB; 32],
         };
         let mut buf = Vec::new();
         body.serialize(&mut buf).unwrap();
         assert_eq!(
             hex::encode(action_hash(OP_SWAP_ACTION, &buf)),
-            "ee760c9275dedb4736e47e8a495eb6d66897440de6b7914f564267b660c2318c"
+            "1dc529b694012bbcfe50b10dff494ab093fbc0295494ed8f5d9b2555e8d61891"
         );
     }
 
@@ -474,16 +556,18 @@ mod tests {
             max_in: 7,
             min_out: 3,
             discriminator: [9u8; 8],
+            route_hash: [0xCD; 32],
             accounts_hash: [0xAB; 32],
         };
         let mut buf = Vec::new();
         b.serialize(&mut buf).unwrap();
-        assert_eq!(buf.len(), 32 + 32 + 8 + 8 + 8 + 32);
+        assert_eq!(buf.len(), 32 + 32 + 8 + 8 + 8 + 32 + 32);
         assert_eq!(&buf[..32], &[1u8; 32]);
         assert_eq!(&buf[32..64], &[2u8; 32]);
         assert_eq!(&buf[64..72], &7u64.to_le_bytes());
         assert_eq!(&buf[72..80], &3u64.to_le_bytes());
         assert_eq!(&buf[80..88], &[9u8; 8]);
-        assert_eq!(&buf[88..120], &[0xAB; 32]);
+        assert_eq!(&buf[88..120], &[0xCD; 32]);
+        assert_eq!(&buf[120..152], &[0xAB; 32]);
     }
 }

@@ -272,13 +272,20 @@ export function encodeSwapBody(f: {
   maxIn: bigint;
   minOut: bigint;
   discriminator: Uint8Array;
+  routeHash: Uint8Array;
   accountsHash: Uint8Array;
 }): Uint8Array {
   require32(f.inMint, "inMint");
   require32(f.outMint, "outMint");
+  require32(f.routeHash, "routeHash");
   require32(f.accountsHash, "accountsHash");
   if (f.discriminator.length !== 8) throw new Error("discriminator must be 8 bytes");
-  const body = new Uint8Array(32 + 32 + 8 + 8 + 8 + 32);
+  // WRDF-0064: `setBigUint64` is modulo 2^64 — reject out-of-range amounts so
+  // the signed body can never represent a different base-unit value than the
+  // caller's, exactly as the transcript counters do.
+  assertU64(f.maxIn, "maxIn");
+  assertU64(f.minOut, "minOut");
+  const body = new Uint8Array(32 + 32 + 8 + 8 + 8 + 32 + 32);
   const dv = new DataView(body.buffer);
   let o = 0;
   body.set(f.inMint, o); o += 32;
@@ -286,6 +293,7 @@ export function encodeSwapBody(f: {
   dv.setBigUint64(o, f.maxIn, true); o += 8;
   dv.setBigUint64(o, f.minOut, true); o += 8;
   body.set(f.discriminator, o); o += 8;
+  body.set(f.routeHash, o); o += 32;
   body.set(f.accountsHash, o);
   return body;
 }

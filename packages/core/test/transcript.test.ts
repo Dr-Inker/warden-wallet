@@ -414,31 +414,36 @@ describe("swap (OP_SWAP, 0x08)", () => {
   it("encodeSwapBody layout: in_mint | out_mint | max_in | min_out | disc | accounts_hash", () => {
     const body = encodeSwapBody({
       inMint: fill(32, 0x11), outMint: fill(32, 0x22), maxIn: 7n, minOut: 3n,
-      discriminator: fill(8, 0x09), accountsHash: fill(32, 0xbb),
+      discriminator: fill(8, 0x09), routeHash: fill(32, 0xcc), accountsHash: fill(32, 0xbb),
     });
-    expect(body.length).toBe(120);
+    expect(body.length).toBe(152);
     expect(hex(body.slice(0, 32))).toBe("11".repeat(32));
     expect(hex(body.slice(32, 64))).toBe("22".repeat(32));
     expect(hex(body.slice(64, 72))).toBe("0700000000000000");
     expect(hex(body.slice(72, 80))).toBe("0300000000000000");
     expect(hex(body.slice(80, 88))).toBe("09".repeat(8));
-    expect(hex(body.slice(88, 120))).toBe("bb".repeat(32));
+    expect(hex(body.slice(88, 120))).toBe("cc".repeat(32));
+    expect(hex(body.slice(120, 152))).toBe("bb".repeat(32));
   });
 
   it("rejects wrong-size fields", () => {
-    const ok = { inMint: fill(32, 1), outMint: fill(32, 1), maxIn: 0n, minOut: 0n, discriminator: fill(8, 1), accountsHash: fill(32, 1) };
+    const ok = { inMint: fill(32, 1), outMint: fill(32, 1), maxIn: 0n, minOut: 0n, discriminator: fill(8, 1), routeHash: fill(32, 1), accountsHash: fill(32, 1) };
     expect(() => encodeSwapBody({ ...ok, inMint: fill(31, 1) })).toThrow();
     expect(() => encodeSwapBody({ ...ok, discriminator: fill(7, 1) })).toThrow();
+    expect(() => encodeSwapBody({ ...ok, routeHash: fill(31, 1) })).toThrow();
+    // WRDF-0064: out-of-range u64 amounts are rejected, not wrapped.
+    expect(() => encodeSwapBody({ ...ok, maxIn: -1n })).toThrow();
+    expect(() => encodeSwapBody({ ...ok, minOut: 2n ** 64n })).toThrow();
   });
 
   // Pinned against Rust `swap::tests::swap_action_hash_matches_pinned_vector`.
   it("matches the Rust-pinned SwapBody action hash", () => {
     const body = encodeSwapBody({
       inMint: fill(32, 0x11), outMint: fill(32, 0x22), maxIn: 7n, minOut: 3n,
-      discriminator: fill(8, 0x09), accountsHash: fill(32, 0xbb),
+      discriminator: fill(8, 0x09), routeHash: fill(32, 0xcc), accountsHash: fill(32, 0xbb),
     });
     expect(hex(actionHash(OP_SWAP, body))).toBe(
-      "ee760c9275dedb4736e47e8a495eb6d66897440de6b7914f564267b660c2318c",
+      "1dc529b694012bbcfe50b10dff494ab093fbc0295494ed8f5d9b2555e8d61891",
     );
   });
 });
