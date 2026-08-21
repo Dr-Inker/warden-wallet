@@ -412,5 +412,20 @@ window is TTL-bounded). Invariants `WRD-BUF-01`/`WRD-BUF-02` move to
 hash check) is `test-covered`; the consume half is split out as `WRD-STAGE-02`,
 `unimplemented`, owned by Task 5 (`execute`).
 
-**Review: pending** — whole-task Codex review (sol@max) to follow; Task 4 is not
-DONE until it converges to 0 findings.
+**Review round 1 (Codex sol@max, WRDF-0045..0048 adopted).** The important
+finding WRDF-0045 (raised in both runs): the content-addressed seed `["stage",
+account, hash]` let a squatter renew the block each cycle (permissionless
+re-open after any close). Fixed as the prior art (ND-SQD3-LO-01) prescribes —
+**the seed now binds the creator**, `["stage", account, creator, hash]`, so a
+stranger and the victim occupy different addresses and the victim's `stage_open`
+always succeeds; the squat is closed by construction, not merely time-boxed. The
+two prior-art mechanisms are now separate regressions (ND-SQD3 vs Certora H-01
+lifecycle GC). WRDF-0046: `finalize_rejects_noncanonical_smart_account` plants a
+Warden-owned copy at a non-canonical address and proves finalize's stored-seed
+re-derivation actually rejects it (previously unreached by any test). WRDF-0047:
+the cap test now pins `cap == 979` exactly (`== STAGE_CHUNK_PAYLOAD_CAP`, a new
+exported client constant) with `measure(979) == 1232` / `measure(980) > 1232`.
+WRDF-0048 (info): the full gate is re-run on the final merged SHA below.
+
+**Whole-task review not yet converged** — round 1 raised findings, so Task 4 is
+not DONE until a subsequent review returns 0.
