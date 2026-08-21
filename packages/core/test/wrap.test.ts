@@ -361,26 +361,39 @@ describe("wrapForExecute", () => {
     expect(hex(r.accountsHash)).toBe(committedHash);
   });
 
-  // WRDF-0081 — importing the fixtures-data module must have NO filesystem effect.
-  // The old `if (!process.env.VITEST) generate()` wrote the goldens on any
-  // non-Vitest import; now generation lives only in the gen-fixtures runner behind
-  // a main-module check, and this module's top level is side-effect-free. Re-run
-  // its top level (resetModules + fresh import) and assert the committed goldens
-  // are byte-unchanged — if the top level wrote anything, these would differ.
-  it("re-importing fixtures-data does not write the golden fixtures", async () => {
-    const { vi } = await import("vitest");
-    const names = [
+  // WRDF-0081 — the golden WRITER is isolated and testable without touching disk.
+  // (1) generate() routes every write through an injectable sink: a collecting
+  // sink proves it emits exactly the five goldens with the committed bytes and
+  // makes ZERO real filesystem writes. (2) The runner's main-module check
+  // evaluates false when imported (not executed), so importing it never generates.
+  it("generate() emits exactly the five goldens through the injected sink, no disk write", async () => {
+    const { generate } = await import("../scripts/gen-fixtures.js");
+    const written = new Map<string, string>();
+    const names = generate((name, data) =>
+      written.set(name, typeof data === "string" ? data : hex(new Uint8Array(data))),
+    );
+    const expectedNames = [
       "payload_vector.bin",
       "payload_accounts_hash.hex",
       "payload_writable_pda_close.bin",
       "payload_coalesced_logical.bin",
       "payload_coalesced_hash.hex",
     ];
-    const snapshot = () => names.map((n) => hex(new Uint8Array(readFileSync(resolve(FIXTURES_DIR, n)))));
-    const before = snapshot();
-    vi.resetModules();
-    const mod = await import("../scripts/fixtures-data.js");
-    expect(typeof mod.generate).toBe("function"); // present, but never auto-invoked
-    expect(snapshot()).toEqual(before);
+    expect(names.slice().sort()).toEqual(expectedNames.slice().sort());
+    // Each emitted content equals the committed golden — no real write occurred.
+    for (const n of expectedNames) {
+      const committed = readFileSync(resolve(FIXTURES_DIR, n));
+      const asStr = n.endsWith(".hex") ? committed.toString("utf8").trim() : hex(new Uint8Array(committed));
+      expect(written.get(n)).toBe(asStr);
+    }
+  });
+
+  it("the gen-fixtures runner does not generate when imported (main-module check false)", async () => {
+    const mod = await import("../scripts/gen-fixtures.js");
+    expect(mod.ranAsMain).toBe(false); // under Vitest the entry point is vitest, not this module
+    // fixtures-data is data-only: it exports no writer at all.
+    const data = await import("../scripts/fixtures-data.js");
+    expect("generate" in data).toBe(false);
+    expect(typeof data.goldenContents).toBe("function");
   });
 });

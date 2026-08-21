@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildRunRecord } from "../../../scripts/append-review-run.mjs";
+import { buildRunRecord, buildScorecardLines } from "../../../scripts/append-review-run.mjs";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const RUNS = join(REPO, "docs/security/REVIEW-RUNS.jsonl");
@@ -161,6 +161,26 @@ describe("buildRunRecord (scripts/append-review-run.mjs)", () => {
   });
 });
 
+describe("buildScorecardLines reproducer persistence (WRDF-0015)", () => {
+  const record = { thread: "t", date: "2026-08-21", reviewer_model: "m" };
+
+  it("persists a verified reproducer's full coordinates under claimed_reproducer", () => {
+    const reproducer = { base_sha: "a".repeat(40), fixed_sha: "b".repeat(40), test_path: "programs/warden/tests/x.rs", test_name: "repro", verified: true };
+    const doc = { base_sha: "a".repeat(40), head_sha: "b".repeat(40), findings: [{ id: "WRDF-9001", severity: "important", truth_status: "CONFIRMED", evidence_type: "red_test", invariant_ids: [], reproducer, rationale: "x" }] };
+    const [line] = buildScorecardLines(doc, record).map((l: string) => JSON.parse(l));
+    expect(line.claimed_reproducer_verified).toBe(true);
+    expect(line.claimed_reproducer).toEqual(reproducer); // every coordinate preserved
+    expect(line.claimed_reproducer.base_sha).not.toBe(line.claimed_reproducer.fixed_sha);
+  });
+
+  it("carries a null claimed_reproducer (and false verified) for an infeasible-reproducer finding", () => {
+    const doc = { base_sha: "a".repeat(40), head_sha: "b".repeat(40), findings: [{ id: "WRDF-9002", severity: "minor", truth_status: "POTENTIAL", evidence_type: "static_trace", invariant_ids: [], reproducer: null, reproducer_infeasible_reason: "static-trace client finding", rationale: "x" }] };
+    const [line] = buildScorecardLines(doc, record).map((l: string) => JSON.parse(l));
+    expect(line.claimed_reproducer).toBeNull();
+    expect(line.claimed_reproducer_verified).toBe(false);
+  });
+});
+
 describe("append-review-run.mjs CLI", () => {
   const tmp = mkdtempSync(join(tmpdir(), "warden-review-runs-"));
   const runsFile = join(tmp, "runs.jsonl");
@@ -207,7 +227,7 @@ describe("append-review-run.mjs CLI", () => {
     const doc = fresh();
     expect(doc.findings.some((f: { adjudication?: unknown }) => f.adjudication)).toBe(true);
     expect(doc.findings.some((f: { truth_status: string }) => f.truth_status === "CONFIRMED")).toBe(true);
-    const card = readFileSync(cardFile, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+    const card = readFileSync(cardFile, "utf8").split("\n").filter((l) => l.trim()).map((l: string) => JSON.parse(l));
     for (const row of card) {
       expect(row.ruling).toBe("pending");
       expect(row.ruled_by).toBeNull();
@@ -302,34 +322,63 @@ describe("append-review-run.mjs CLI", () => {
   });
 });
 
-// WRDF-0083: `claimed_reproducer_verified` is a provenance claim that a
-// vulnerable-red / fixed-green REPRODUCER was run. It may be true ONLY when the
-// row carries a reproducer object naming DISTINCT base/fixed SHAs with
-// verified=true. A static-trace finding whose fix was confirmed by the gate must
-// record that under `remediation_verified`, never by falsely asserting a
-// reproducer that does not exist.
-describe("scorecard reproducer-provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
+// WRDF-0015 / 0083: two SEPARATE provenance axes on a scorecard row, each
+// validated so neither can be asserted without its evidence.
+//   * claimed_reproducer_verified — a red/green REPRODUCER was run. True ONLY
+//     when the row also carries the reproducer object (`claimed_reproducer`) with
+//     distinct base/fixed SHAs and verified=true. The appender persists that
+//     object (WRDF-0015), so a positive row is auditable and re-runnable.
+//   * remediation_verified — a static-trace finding whose fix the GATE confirmed.
+//     True ONLY with a real fixing SHA, a real gate SHA, and the gate command —
+//     never a bare boolean (WRDF-0083). Mutually exclusive with a reproducer claim.
+const SHA_RE = /^[0-9a-f]{7,40}$/;
+const gitCommitExists = (sha: string): boolean => {
+  try {
+    execFileSync("git", ["-C", REPO, "cat-file", "-e", `${sha}^{commit}`], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+};
+describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
   const cardRows = readFileSync(SCORECARD, "utf8")
     .split("\n")
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const inGit = (() => {
+    try {
+      execFileSync("git", ["-C", REPO, "rev-parse", "--is-inside-work-tree"], { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
 
-  it("claimed_reproducer_verified is true only with a valid distinct-SHA reproducer", () => {
+  it("claimed_reproducer_verified is true only with a persisted, distinct-SHA reproducer", () => {
     for (const r of cardRows) {
       if (r.claimed_reproducer_verified !== true) continue;
-      const rep = r.reproducer as { base_sha?: string; fixed_sha?: string; verified?: boolean } | null | undefined;
-      expect(rep, `${r.finding_id}: claimed_reproducer_verified=true but no reproducer object`).toBeTruthy();
+      const rep = r.claimed_reproducer as { base_sha?: string; fixed_sha?: string; verified?: boolean } | null | undefined;
+      expect(rep, `${r.finding_id}: claimed_reproducer_verified=true but no claimed_reproducer object`).toBeTruthy();
       expect(rep!.verified, `${r.finding_id}: reproducer not verified`).toBe(true);
-      expect(typeof rep!.base_sha === "string" && typeof rep!.fixed_sha === "string", `${r.finding_id}: reproducer missing SHAs`).toBe(true);
+      expect(SHA_RE.test(rep!.base_sha ?? ""), `${r.finding_id}: reproducer base_sha malformed`).toBe(true);
+      expect(SHA_RE.test(rep!.fixed_sha ?? ""), `${r.finding_id}: reproducer fixed_sha malformed`).toBe(true);
       expect(rep!.base_sha, `${r.finding_id}: reproducer base_sha equals fixed_sha`).not.toBe(rep!.fixed_sha);
     }
   });
 
-  it("a gate-verified remediation is recorded under remediation_verified, not as a reproducer", () => {
+  it("remediation_verified is true only with a real fixing SHA, gate SHA, and gate command", () => {
     for (const r of cardRows) {
-      if (r.remediation_verified === true) {
-        expect(r.claimed_reproducer_verified, `${r.finding_id}: remediation rows must not also claim a reproducer`).not.toBe(true);
+      if (r.remediation_verified !== true) continue;
+      const fix = r.remediation_sha as string | null;
+      const gate = r.remediation_gate_sha as string | null;
+      expect(r.claimed_reproducer_verified, `${r.finding_id}: a remediation row must not also claim a reproducer`).not.toBe(true);
+      expect(SHA_RE.test(fix ?? ""), `${r.finding_id}: remediation_sha malformed or null`).toBe(true);
+      expect(SHA_RE.test(gate ?? ""), `${r.finding_id}: remediation_gate_sha malformed or null`).toBe(true);
+      expect(typeof r.remediation_gate_cmd === "string" && (r.remediation_gate_cmd as string).length > 0, `${r.finding_id}: remediation_gate_cmd missing`).toBe(true);
+      if (inGit) {
+        expect(gitCommitExists(fix as string), `${r.finding_id}: remediation_sha ${fix} is not a real commit`).toBe(true);
+        expect(gitCommitExists(gate as string), `${r.finding_id}: remediation_gate_sha ${gate} is not a real commit`).toBe(true);
       }
     }
-  });
+  }, 30_000);
 });

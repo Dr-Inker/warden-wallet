@@ -1,10 +1,10 @@
-//! SIDE-EFFECT-FREE definitions + `generate()` for the cross-language golden
-//! fixtures under `programs/warden/tests/fixtures/`. Importing this module NEVER
-//! touches the filesystem — `generate()` is a function that is only invoked by
-//! the thin runner `gen-fixtures.ts` (under a real main-module check) or a test
-//! that explicitly calls it. That closes WRDF-0081's "writer runs on import"
-//! footgun (an earlier `!process.env.VITEST` guard wrote the goldens on ANY
-//! non-Vitest import).
+//! DATA-ONLY definitions for the cross-language golden fixtures under
+//! `programs/warden/tests/fixtures/`. This module imports NO `node:fs` and has NO
+//! top-level side effect, so importing it CANNOT write to disk — the structural
+//! close of WRDF-0081's "writer runs on import" footgun. It exposes the
+//! deterministic inputs and `goldenContents()` (the exact bytes/hex each golden
+//! must hold); the ONLY writer is the `gen-fixtures.ts` runner, which takes those
+//! contents and an injectable write sink.
 //!
 //! The test suite READS the committed goldens and asserts `wrapForExecute` /
 //! `encodeExecutePayload` reproduce them byte-for-byte against independently-
@@ -12,9 +12,8 @@
 //! fixtures dir, so a wrapper regression fails CI instead of self-updating.
 //!
 //! All inputs are DETERMINISTIC (fixed byte patterns), so regeneration is
-//! reproducible.
+//! reproducible. (`node:url`/`node:path` here compute a path STRING only — no fs.)
 
-import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { PublicKey, TransactionInstruction, TransactionMessage } from "@solana/web3.js";
@@ -103,17 +102,18 @@ export function coalescedWrap() {
   return wrapForExecute(dMsg, { wardenProgram: WARDEN_PROGRAM, smartAccount: COALESCED_SMART, signer: COALESCED_SIGNER });
 }
 
-/** Write every golden fixture. */
-export function generate(): void {
-  mkdirSync(FIXTURES_DIR, { recursive: true });
-  writeFileSync(resolve(FIXTURES_DIR, "payload_vector.bin"), encodeExecutePayload(PAYLOAD_VECTOR));
-  writeFileSync(resolve(FIXTURES_DIR, "payload_accounts_hash.hex"), hex(computeAccountsHash(PAYLOAD_VECTOR_LOGICAL)));
-  writeFileSync(resolve(FIXTURES_DIR, "payload_writable_pda_close.bin"), encodeExecutePayload(CLOSE_PAYLOAD));
+/** The exact content every golden fixture must hold, keyed by file name. A pure
+ *  function of the deterministic inputs — no filesystem access. The `gen-fixtures`
+ *  runner writes these; the tests read the committed files and compare against them. */
+export function goldenContents(): Record<string, Uint8Array | string> {
   const r = coalescedWrap();
-  writeFileSync(resolve(FIXTURES_DIR, "payload_coalesced_logical.bin"), serializeLogical(r.logical));
-  writeFileSync(resolve(FIXTURES_DIR, "payload_coalesced_hash.hex"), hex(r.accountsHash));
-  // eslint-disable-next-line no-console
-  console.log(`wrote 5 fixtures to ${FIXTURES_DIR}`);
+  return {
+    "payload_vector.bin": encodeExecutePayload(PAYLOAD_VECTOR),
+    "payload_accounts_hash.hex": hex(computeAccountsHash(PAYLOAD_VECTOR_LOGICAL)),
+    "payload_writable_pda_close.bin": encodeExecutePayload(CLOSE_PAYLOAD),
+    "payload_coalesced_logical.bin": serializeLogical(r.logical),
+    "payload_coalesced_hash.hex": hex(r.accountsHash),
+  };
 }
-// NO top-level side effects: importing this module never writes. Only the
-// `gen-fixtures.ts` runner (or an explicit caller) invokes `generate()`.
+// NO top-level side effects and NO `node:fs` import: importing this module cannot
+// write. The `gen-fixtures.ts` runner is the sole writer.

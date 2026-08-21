@@ -142,6 +142,12 @@ export function buildScorecardLines(doc, record) {
       ruling: "pending",
       ruled_by: null,
       rationale: f.rationale,
+      // The model's REPRODUCER is untrusted self-report, but the scorecard must
+      // carry its coordinates (base/fixed SHA, test path/name) so a
+      // reproducer-verified claim is auditable and a fresh clone can re-run it
+      // (WRDF-0015). Kept verbatim under the claimed_ prefix; the derived boolean
+      // stays consistent with the stored object.
+      claimed_reproducer: f.reproducer ?? null,
       claimed_reproducer_verified: !!(f.reproducer && f.reproducer.verified),
     }),
   );
