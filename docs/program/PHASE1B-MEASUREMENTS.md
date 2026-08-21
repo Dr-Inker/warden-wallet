@@ -1390,3 +1390,19 @@ Fixed/adjudicated at `011903d`.
 **Gate on the immutable ledger HEAD `b545f085439b39b61a9dc74375805770588e6bd0`:**
 `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
 205/205, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
+
+## Task 11R review round 7 — Codex sol@max (thread 9a459ac846f2-20260821T225514Z)
+
+Round 7 (`72aae3c..9a459ac`, seeded=41) raised 3 findings (2 important, 1 minor).
+Fixed/adjudicated at `5e5ce7a`.
+
+- **WRDF-0085** (important, 7th) — (1) leading-anchor column parse (a value mid-cell
+  no longer binds); (2) removed the shell's SECOND grep parser — one canonical
+  parser via `--parse-release-hash` for both local + on-chain hash checks.
+- **WRDF-0088** (important) — added a hermetic FULL-gate wiring test (temp repo,
+  release + attestation commits, stubbed verifier) asserting the normalized SHA +
+  release file + manifest are forwarded and a dirty tree refuses first.
+- **WRDF-0091** (minor) — hermetic temp repos moved from /tmp to the repo's
+  gitignored target/ (on /opt) with prefix-guarded cleanup.
+
+208 core tests. Gate evidence on the ledger HEAD below.
