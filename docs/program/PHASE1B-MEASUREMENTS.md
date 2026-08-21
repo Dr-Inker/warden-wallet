@@ -1427,3 +1427,8 @@ CLEARED (not re-flagged). Fixed/adjudicated at `e9c07cc`.
   refusal assertions.
 
 209 core tests. Gate evidence on the ledger HEAD below.
+
+### Task 11R round-8 gate evidence
+**Gate on the immutable ledger HEAD `53527a008165251ea3d6d4ad8e4b776f9f6aa8ec`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
+209/209, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
