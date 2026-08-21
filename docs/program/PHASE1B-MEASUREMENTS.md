@@ -985,3 +985,11 @@ outer instruction. `wrapForExecute` was rewritten around a single source of trut
 Seeded invariants **WRD-EXEC-11/12** rewritten to the compile/decompile contract;
 evidence pinned at `f2f92e4`. **Gate evidence (WRDF-0075 discipline):** recorded
 on the immutable ledger HEAD below.
+
+### Round-2 gate evidence
+
+**Gate re-run on the immutable ledger HEAD `8bd412bbe1c77e7a5a736db52c824e226eae1a46`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, **all suites green** —
+`@warden/core` **141 passed (141)** (incl. the security ledger + the round-2 wrap
+regressions), `ui-tokens` 11/11, and the full Rust workspace under
+`--features test-jup` (0 failed).
