@@ -1342,3 +1342,9 @@ Round 4 (`d42b212..eaf59e4`, seeded=41) raised 3 findings (1 critical, 1 importa
   proposal audit (no bypass).
 
 198 core tests. Gate evidence on the ledger HEAD below.
+
+### Task 11R round-4 gate evidence
+**Gate on the immutable ledger HEAD `8eea3ff706af146a27915462418e3ca30fb15e96`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
+198/198 (incl. the shell integration + digest binding), `ui-tokens` 11/11, Rust
+workspace under `--features test-jup` (0 failed).
