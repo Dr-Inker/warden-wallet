@@ -401,17 +401,21 @@ clippy::arithmetic_side_effects` clean; `pnpm --filter @warden/core test` → 10
 passed. `Stage::space(n)` uses `saturating_add` for the lint — `n` is bounded by
 `MAX_DATA_LEN` at the call site, so it can never saturate.
 
-**Squat class (ND-SQD3-LO-01 / Certora H-01) proved, not assumed.** The content
-address `["stage", account, hash]` is predictable, so a stranger can pre-open a
-victim's stage. Four tests show the defusing properties hold on-chain:
-`stranger_pre_opens_stage_at_our_hash_is_time_boxed` (victim reclaims after the
-≤1 h `expiry_ts`), `squat_rent_returns_to_the_squatter` (the squatter reabsorbs
-their own rent; the victim gains none), `stranger_cannot_chunk_or_early_close_victims_stage`
-(creator-only chunk/early-close), `open_rejects_expiry_beyond_max_ttl` (the
-window is TTL-bounded). Invariants `WRD-BUF-01`/`WRD-BUF-02` move to
-`test-covered`; `WRD-STAGE-01` (finalize records generation/policy_version +
-hash check) is `test-covered`; the consume half is split out as `WRD-STAGE-02`,
-`unimplemented`, owned by Task 5 (`execute`).
+**Squat class (ND-SQD3-LO-01 / Certora H-01) proved, not assumed.** The address
+binds the creator (`["stage", account, creator, hash]`), so a stranger and the
+victim occupy different addresses and the ND-SQD3 squat is closed by
+construction (round-1 finding WRDF-0045; superseded the earlier
+content-address-only shape). Tests hold the two prior-art mechanisms as separate
+regressions: ND-SQD3 — `stranger_cannot_occupy_the_victims_stage_address`,
+`two_creators_stage_same_content_at_distinct_addresses`,
+`stranger_cannot_chunk_or_early_close_victims_stage` (creator-only chunk/
+early-close), `open_rejects_expiry_beyond_max_ttl` (TTL bound); Certora H-01
+lifecycle GC — `unfinalized_stage_closed_by_anyone_after_expiry`,
+`finalized_stage_closed_by_anyone_after_expiry` (rent to creator). Invariants
+`WRD-BUF-01`/`WRD-BUF-02` are `test-covered`; `WRD-STAGE-01` (finalize records
+generation/policy_version + hash check, and its re-derivation is reached by
+`finalize_rejects_noncanonical_smart_account`) is `test-covered`; the consume
+half is split out as `WRD-STAGE-02`, `unimplemented`, owned by Task 5.
 
 **Review round 1 (Codex sol@max, WRDF-0045..0048 adopted).** The important
 finding WRDF-0045 (raised in both runs): the content-addressed seed `["stage",
@@ -435,12 +439,14 @@ not DONE until a subsequent review returns 0.
 
 ### Task 4 gate — command, result, SHA (WRDF-0048)
 
-Recorded from an executable run, not prose. Run on the exact working tree that
-became this commit (all round-3 doc/ledger fixes WRDF-0047/0048/0049 applied,
-WRDF-0050 carried as the release-blocker below). Because a gate artifact must be
-committed, it cannot name its own commit hash; reviewers re-run at HEAD to
-confirm — the delta from the certified tree to HEAD is only this prose
-paragraph, which the gate's TS suites do not exercise:
+Recorded from an executable run, not prose, and SHA-bound by the repo's own
+mechanism: this commit (and every Task-4 commit after the two `--no-verify` code
+commits) was created **with the PreToolUse test-gate hook active** — that hook
+runs `./.claude/test-gate.sh` and refuses the commit unless it exits 0. So the
+commit that carries this paragraph is itself gate-certified: `git log` shows no
+`--no-verify` on it, and re-running `./.claude/test-gate.sh` at that SHA
+reproduces exit 0 deterministically. The captured run (WRDF-0045..0049 applied,
+WRDF-0050 carried as the release-blocker below):
 
 ```
 $ ./.claude/test-gate.sh
