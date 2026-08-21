@@ -23,12 +23,12 @@ use sha2::{Digest, Sha256};
 use solana_sdk::{
     account::Account,
     instruction::{AccountMeta, Instruction},
-    message::Message,
+    message::{v0, Message, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     sysvar,
-    transaction::Transaction,
+    transaction::{Transaction, VersionedTransaction},
 };
 use anchor_lang::system_program;
 
@@ -554,37 +554,51 @@ fn open_rejects_past_expiry() {
 fn stage_chunk_payload_cap_is_measured() {
     // Binary-search the largest payload a single stage_chunk transaction can
     // carry under the fixed 3-account layout (disc + offset:u32 + len:u32 +
-    // payload) against the 1,232 B packet. SIZE only — no send.
+    // payload) against the 1,232 B packet, for BOTH serializers. SIZE only.
+    //
+    // The production client compiles v0 (VersionedTransaction), which is 2 B
+    // larger than legacy (a version byte + the address-table-lookups length), so
+    // the v0 cap (977) is stricter than the legacy cap (979). STAGE_CHUNK_PAYLOAD_CAP
+    // is the v0 number — the conservative contract that lands under either format
+    // (WRDF-0047).
     let (svm, payer) = svm_at_now();
     let account = Pubkey::new_unique();
     let hash = [7u8; 32];
     let (stage, _) = stage_pda(&account, &payer.pubkey(), &hash);
-    let measure = |n: usize| -> usize {
-        let ix = chunk_ix(payer.pubkey(), stage, &StageChunkArgs { offset: 0, bytes: vec![0u8; n] });
-        let tx = Transaction::new(&[&payer], Message::new(&[ix], Some(&payer.pubkey())), svm.latest_blockhash());
+    let ixn = |n: usize| chunk_ix(payer.pubkey(), stage, &StageChunkArgs { offset: 0, bytes: vec![0u8; n] });
+    let measure_legacy = |n: usize| -> usize {
+        let tx = Transaction::new(&[&payer], Message::new(&[ixn(n)], Some(&payer.pubkey())), svm.latest_blockhash());
         bincode::serialize(&tx).unwrap().len()
     };
-    let mut lo = 0usize;
-    let mut hi = Stage::MAX_DATA_LEN;
-    while lo < hi {
-        let mid = lo + (hi - lo + 1) / 2;
-        if measure(mid) <= PACKET_DATA_SIZE {
-            lo = mid;
-        } else {
-            hi = mid - 1;
+    let measure_v0 = |n: usize| -> usize {
+        let msg = v0::Message::try_compile(&payer.pubkey(), &[ixn(n)], &[], svm.latest_blockhash()).unwrap();
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&payer]).unwrap();
+        bincode::serialize(&tx).unwrap().len()
+    };
+    let search = |measure: &dyn Fn(usize) -> usize| -> usize {
+        let mut lo = 0usize;
+        let mut hi = Stage::MAX_DATA_LEN;
+        while lo < hi {
+            let mid = lo + (hi - lo + 1) / 2;
+            if measure(mid) <= PACKET_DATA_SIZE { lo = mid } else { hi = mid - 1 }
         }
-    }
-    let cap = lo;
-    println!("MEASURED stage_chunk payload cap: {cap} B (tx at cap = {} B)", measure(cap));
-    // Pin the exact number: a serialization/layout drift that moves it must
-    // fail here and force the constant + PHASE1B-MEASUREMENTS.md to move too.
-    assert_eq!(cap, 979, "the measured stage_chunk payload cap");
+        lo
+    };
+    let legacy_cap = search(&measure_legacy);
+    let v0_cap = search(&measure_v0);
+    println!("MEASURED stage_chunk cap — legacy {legacy_cap} B, v0 {v0_cap} B");
+
+    // Legacy pinned for reference; v0 is the exported client contract.
+    assert_eq!(legacy_cap, 979, "legacy stage_chunk payload cap");
+    assert_eq!(v0_cap, 977, "v0 stage_chunk payload cap (the client contract)");
     assert_eq!(
-        cap, STAGE_CHUNK_PAYLOAD_CAP,
-        "the client contract constant must equal the measured cap"
+        v0_cap, STAGE_CHUNK_PAYLOAD_CAP,
+        "STAGE_CHUNK_PAYLOAD_CAP must equal the measured v0 cap"
     );
-    assert_eq!(measure(979), PACKET_DATA_SIZE, "the tx at the cap is exactly the packet");
-    assert!(measure(980) > PACKET_DATA_SIZE, "one byte past the cap overflows");
+    assert_eq!(measure_v0(977), PACKET_DATA_SIZE, "the v0 tx at the cap is exactly the packet");
+    assert!(measure_v0(978) > PACKET_DATA_SIZE, "one byte past the v0 cap overflows");
+    // v0 is the stricter format, so its cap never exceeds legacy's.
+    assert!(v0_cap <= legacy_cap, "v0 cap must be the conservative one");
 }
 
 /// Pins the exact 3-account chunk layout so a stray extra account cannot creep

@@ -16,14 +16,18 @@ pub const STAGE_MAX_DATA_LEN: usize = 4096;
 /// `creator` into the PDA seeds, not by this bound.
 pub const STAGE_MAX_TTL_SECS: i64 = 3600;
 /// The client contract for the largest payload a single `stage_chunk`
-/// transaction may carry under the fixed 3-account layout (spec §5.1). MEASURED
-/// against the built program and pinned exactly by
-/// `stage::stage_chunk_payload_cap_is_measured` (the transaction at this cap is
-/// exactly 1,232 B; one more byte overflows). A client splits a payload into
-/// `ceil(len / STAGE_CHUNK_PAYLOAD_CAP)` chunks, so this number is a wire
-/// contract, not a soft estimate — the test fails loudly if a layout change
-/// moves it, forcing this constant and PHASE1B-MEASUREMENTS.md to move with it.
-pub const STAGE_CHUNK_PAYLOAD_CAP: usize = 979;
+/// transaction may carry under the fixed 3-account layout (spec §5.1).
+///
+/// This is the **v0 (`VersionedTransaction`) cap = 977 B** — the format the
+/// production client compiles (`compileToV0Message`), which carries a version
+/// byte + an address-table-lookups length that a legacy transaction does not, so
+/// it is 2 B larger on the wire and thus 2 B stricter. It is the CONSERVATIVE of
+/// the two formats (legacy fits 979), so a client that splits a payload into
+/// `ceil(len / STAGE_CHUNK_PAYLOAD_CAP)` chunks lands under either serializer.
+/// MEASURED against the built program and pinned exactly by
+/// `stage::stage_chunk_payload_cap_is_measured` (the v0 tx at this cap is exactly
+/// 1,232 B; one more byte overflows) — a wire contract, not a soft estimate.
+pub const STAGE_CHUNK_PAYLOAD_CAP: usize = 977;
 pub const MAX_CLIENT_DATA_LEN: usize = 512;
 pub const MAX_ROOT_EXPIRY_SECS: i64 = 600;
 /// Maximum age, **in slots**, of a root passkey ceremony (spec §4, rev 8).

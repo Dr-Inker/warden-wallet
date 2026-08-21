@@ -18,9 +18,10 @@
 //! **Authorization is deliberately thin.** Any payer may `stage_open` (a stage
 //! is not an authorization, it is a byte buffer — the root ceremony in
 //! `execute` is what authorizes). The PDA is `["stage", account, creator,
-//! hash]`, so each opener gets their *own* address for a given `(account,
-//! content)` and no stranger can occupy the victim's (ND-SQD3-LO-01 squat
-//! closed by construction — see `state::stage`). Only the recorded `creator`
+//! hash]` (the standard per-owner PDA-namespacing pattern), so each opener gets
+//! their *own* address for a given `(account, content)` and no stranger can
+//! occupy the victim's — see `state::stage` for the full argument and the
+//! provenance note. Only the recorded `creator`
 //! may `stage_chunk` or `stage_finalize` (so a third party cannot corrupt an
 //! in-flight upload), and only the creator may `stage_close` before finalize;
 //! after `expiry_ts` anyone may close it (Certora H-01 lifecycle GC). Every

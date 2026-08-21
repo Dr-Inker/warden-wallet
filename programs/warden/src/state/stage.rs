@@ -12,17 +12,25 @@
 //! The PDA is `["stage", account, creator, hash]` where `hash ==
 //! Keccak256(data)`. The `hash` makes a stage tamper-evident (finalize re-hashes
 //! the bytes and rejects a mismatch) and lets the root ceremony bind only the
-//! 32-byte hash instead of the whole payload. The `creator` closes the Squads v3
-//! buffer-squat class (Neodyme `ND-SQD3-LO-01`, Certora `H-01`) **by
-//! construction**: a content address alone is predictable, so a stranger who
-//! observes a payload could pre-open `["stage", account, hash]`, block the
-//! victim, and — worse — re-open it the instant anyone closed it, renewing the
-//! grief every cycle. With the creator in the seeds the stranger's stage and the
-//! victim's stage are simply *different addresses*: the victim opens their own
-//! `["stage", account, victim, hash]` regardless of any stranger. ND-SQD3's own
-//! remedy was exactly this — "seeds must bind the creator." A stage is therefore
-//! per-`(account, creator, content)`: unbounded, but each one cheap and
-//! independently cleanable.
+//! 32-byte hash instead of the whole payload. Including the **`creator`** is the
+//! standard Anchor per-owner PDA-namespacing pattern (a signer key in the seeds,
+//! as in any per-user account): it gives every opener their own address for a
+//! given `(account, content)`, so a content address — which is predictable — can
+//! no longer be pre-occupied by a stranger. Without it, a stranger who observes a
+//! payload could open `["stage", account, hash]`, block the victim, and re-open
+//! it the instant anyone closed it, renewing the grief every cycle; with it, the
+//! stranger's stage and the victim's are simply *different addresses* and the
+//! victim opens their own regardless. A stage is therefore per-`(account,
+//! creator, content)`: unbounded, but each one cheap and independently cleanable.
+//!
+//! Why staging needs this at all is what the buffer-squat findings teach —
+//! Neodyme `ND-SQD3-LO-01` and Certora `H-01` are cited here as *motivation* (a
+//! content-addressed upload buffer is exactly the shape that gets squatted), not
+//! as a source whose implementation is reused: the per-owner seed is generic
+//! Solana practice, independently derivable. Provenance/licensing note: those
+//! findings describe AGPL-licensed projects (reference-only per the prior-art
+//! corpus); this file reuses no code from them, and the design decision is
+//! recorded for owner/counsel confirmation in the release evidence.
 //!
 //! Two further properties, both tested rather than assumed:
 //! - **`creator` owns the rent.** Every close refunds the recorded creator, so
