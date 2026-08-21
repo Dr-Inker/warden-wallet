@@ -1119,3 +1119,12 @@ Fixed at `5b59dcd8d404de06891a00e4e176fa2c8e29b13b`.
   (git available) that both SHAs are real commits.
 
 WRD-EXEC-11 evidence refreshed to `5b59dcd`. Gate evidence on the ledger HEAD below.
+
+### Round-6 gate evidence
+
+**Gate re-run on the immutable ledger HEAD `92d79ed0ffd8865db3ed8b68f08f327da3a707a5`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, **all suites green** —
+`@warden/core` **152 passed (152)** (incl. the appender reproducer-persistence
+tests, the injectable-sink regression, and the remediation-provenance guard),
+`ui-tokens` 11/11, the full Rust workspace under `--features test-jup` (0 failed),
+and the fixture-drift guard. The round-6 rows' `remediation_gate_sha` is this HEAD.
