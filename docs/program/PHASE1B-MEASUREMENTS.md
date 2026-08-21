@@ -1366,3 +1366,8 @@ critical; severity dropping). Fixed/adjudicated at `ff66e59`.
   asserts the specific SHA-resolution refusal.
 
 201 core tests. Gate evidence on the ledger HEAD below.
+
+### Task 11R round-5 gate evidence
+**Gate on the immutable ledger HEAD `da4819651b27b06c160846a59fd23a7e5838aefc`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
+201/201, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
