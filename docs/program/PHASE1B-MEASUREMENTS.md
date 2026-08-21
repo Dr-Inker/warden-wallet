@@ -1269,3 +1269,25 @@ Round 1 (`183dc32..5300d4f`, seeded=43) raised 5 findings (1 critical, 3 importa
 `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
 **188 passed (188)** (incl. the 28-case deploy-gate suite with the round-1
 hardening), `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
+
+## Task 11R review round 2 — Codex sol@max (thread a247952d9f70-20260821T211236Z)
+
+Round 2 (`5300d4f..a247952`, seeded=41) re-opened 2 criticals + the licensing item.
+Fixed/adjudicated at `b0d62e8`.
+
+- **WRDF-0085** (critical, re-open) — the pin was still self-authenticating. Fixed:
+  the pin is selected BY NAME from the COMMITTED `MANIFESTS` registry (no
+  arbitrary-file path); deploy-gate.sh forwards the REQUIRED
+  --expect-warden-program/--expect-multisig/--expect-authority and the verifier
+  refuses unless program+multisig match the manifest and authority == the derived
+  vault; the RPC trust model is documented (genesis catches misconfig, not a
+  malicious RPC — out of the gate's threat model).
+- **WRDF-0028** (critical, re-open) — scoped honestly (the round-1 alternative).
+  The per-proposal actionable-stale enumeration + release-digest binding is now an
+  EXPLICIT fail-closed REQUIRED LIVE STEP (live mode REFUSES unless
+  `--proposal-audit-attested`), not silently passed. Full in-tool enumeration
+  deferred (it would deepen the WRDF-0089 AGPL surface); the config-level checks
+  remain the rigorous automated part.
+- **WRDF-0089** (important, licensing) — carried UNRESOLVED for owner/counsel.
+
+Gate evidence on the ledger HEAD below.
