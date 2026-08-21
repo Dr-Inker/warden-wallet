@@ -113,17 +113,17 @@ Remaining, in campaign-plan order:
    `MAX_EXECUTE_ACCOUNTS_TOTAL=32` / `MAX_EXECUTE_WRITABLE=28`**, boundary-
    tested; **client contract: the wrapper injects a `RequestHeapFrame` sized
    for the shape on any execute past ~24 accounts** (like the CU limit). Tables
-   in PHASE1B-MEASUREMENTS §"Task 6 heap lift". **Task 6 (swap) CODE-COMPLETE @e54cc10, review CONVERGING.**
-   Jupiter v6-pinned adapter (route/shared from the pinned IDL sha256
-   764ea6d7…), treasury fee, pre-CPI `max_in ≤ caps` + post-CPI net
-   conservation, root `route_hash` byte-binding. Round 1 (9 findings incl.
-   CRITICAL WRDF-0061) fixed: native swaps REJECTED in 1B, route_hash added,
-   min_out→net gain, pre-CPI cap/lifetime/bucket probe, treasury-fee-taken
-   proof, CI prod-build isolation, assertU64. Deferred: full `Vec<RoutePlanStep>`
-   parse before mainnet (WRDF-0031/0059), events→Task 5E. Gate builds/tests
-   `--features test-jup` (swap→mock); prod omits it (CI publishes the clean
-   `.so`). **OWED before Task 6 DONE: review round 2 → 0 new findings**
-   (running @e54cc10). **Then 8 → 9.** **C1a needs a program change** (`create_account` must
+   in PHASE1B-MEASUREMENTS §"Task 6 heap lift". **Task 6 (swap) DONE @949c1f5** — Jupiter v6-pinned adapter, 4 sol@max
+   rounds → 0 program findings by round 4. Program+disc pin (real v6 / mock
+   under --features test-jup), platform_fee_bps==85, CANONICAL source/dest/fee
+   ATAs + PDA authority, net conservation. Native swaps REJECTED in 1B (CRITICAL
+   WRDF-0061). Realized fund-loss bound stacked 4-deep: route_hash root-binding
+   (0058) + treasury-fee-taken (0059) + writable-vault pinning (0065) +
+   canonical-ATA pinning (0070), over net conservation + caps. IDL pinned
+   (jup-ag/jupiter-cpi sha256 764ea6d7…). CI publishes a clean default-profile
+   production .so + pin attestation. **Deferred, NOT 1B defects:** byte-exact
+   Vec<RoutePlanStep> parse before mainnet (WRDF-0031/0059); structured events →
+   Task 5E (WRDF-0052). **NOW: Task 8 (TS client/route builder), then 9.** **C1a needs a program change** (`create_account` must
    compare against a pinned production `rp_id_hash`, not just self-consistency —
    WRDF-0016/0027) plus the owner's freeze-vs-migration decision.
 3. Corrected gating (was C1-only): **V4 waits for C1a + C2a + C3 + C4**; **U7

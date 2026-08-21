@@ -1,9 +1,13 @@
 //! `swap` — `execute` specialised to Jupiter v6 (Phase 1B Task 6, spec §5.2.7).
 //!
 //! One inner CPI, pinned to the Jupiter aggregator (`SWAP_TARGET_PROGRAM`), with
-//! the adapter preflight generic `execute` cannot do. It is the ONLY path a
-//! session or root may reach Jupiter (generic `execute` fails closed on the
-//! Jupiter id — WRDF-0051).
+//! the adapter preflight generic `execute` cannot do. It is the **intended,
+//! preflight-gated** path to Jupiter: generic `execute` fails closed on a
+//! DIRECT Jupiter inner instruction (WRDF-0051), steering the common client
+//! mistake here. It is NOT the *only* reachable path — a forwarding program can
+//! still CPI into Jupiter nested from generic `execute`, bounded there only by
+//! net conservation and the caps (the accepted §5.3 boundary); this adapter is
+//! the path that adds `max_in`/source-pin/treasury-fee on top.
 //!
 //! ## The adapter-decoded source limit (spec §5.2 rule 4b) — a design BET
 //!

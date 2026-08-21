@@ -876,3 +876,39 @@ round (round 1: 1 critical + 6; round 2: 5 real; round 3: 1 account-role
 tightening + 1 doc). The realized fund-loss bound is now stacked four deep:
 route_hash (root) + treasury-fee-taken + writable-vault pinning + canonical-ATA
 pinning, all on top of net conservation and the per-mint caps.
+
+### Task 6 swap review round 4 (Codex sol@max, 6 findings) — convergence
+
+**Zero new program-logic findings.** 3 standing deferrals (0031/0052/0059) + 3
+meta/doc/CI items, all adopted:
+
+- **WRDF-0051 (adopted, doc):** the swap module doc over-claimed swap is the
+  "ONLY path" to Jupiter — the same over-claim corrected for `execute` in Task
+  5. Reworded: swap is the *intended, preflight-gated* path; generic `execute`
+  fails closed only on a DIRECT Jupiter inner instruction, and a forwarding
+  program can still reach Jupiter nested (bounded by net conservation + caps).
+- **WRDF-0068 (adopted, CI):** the production pin check ran `--no-default-
+  features`, which drops `custom-heap` — a DIFFERENT profile than the published
+  `.so` (default features). Changed to `cargo test -p warden --lib
+  swap_target_program_is_pinned` (default features: custom-heap on, test-jup
+  off), so the attestation matches the shipped binary's profile.
+- **WRDF-0069 (adopted, doc):** round 3's canonical-ATA fix lives in
+  `949c1f55b80254fe4177dc0fdc9a884e388e26d5`, not the previously-recorded
+  `b28450d…`. Gate re-attested at that SHA below.
+
+**Task 6 gate — round-3 fix SHA.** At **`949c1f55b80254fe4177dc0fdc9a884e388e26d5`**
+(immutable; includes the canonical-ATA pinning WRDF-0070):
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → green — `cargo test --workspace
+--features test-jup` (**330 warden lib + 21 `tests/swap.rs` + all suites**),
+`cargo clippy -p warden --lib --features test-jup -- -D
+clippy::arithmetic_side_effects` clean, `@warden/core` 113 TS + 11 ui-tokens,
+IDL parity, supply-chain gate. Production attestation (published profile):
+`cargo test -p warden --lib swap_target_program_is_pinned` passes (asserts
+`SWAP_TARGET_PROGRAM == JUPITER_V6_ID`).
+
+**Task 6 CONVERGED (code):** across four rounds new-finding severity fell to
+zero program-logic issues; only the two adjudicated-`deferred` items remain
+(byte-exact `route_plan` parse pre-mainnet → WRDF-0031/0059; structured events →
+Task 5E/WRDF-0052), neither a 1B code defect. Realized fund-loss bound stacked
+four deep (route_hash + treasury-fee-taken + writable-vault pinning +
+canonical-ATA pinning) over net conservation and the caps.
