@@ -669,6 +669,27 @@ mod tests {
     }
 
     #[test]
+    fn ts_writable_pda_close_vector_parses() {
+        // WRDF-0073 cross-language parity: the TS codec now encodes the
+        // sanctioned writable-PDA close (SPL CloseAccount crediting rent to the
+        // PDA), and `parse_payload` must accept the writable idx-0 structurally —
+        // the writable-PDA gate is `enforce_pda_writable` (handler), not here.
+        let bytes = include_bytes!("../tests/fixtures/payload_writable_pda_close.bin");
+        let p = parse_payload(bytes).expect("TS writable-PDA close vector must parse");
+        assert_eq!(p.ixs.len(), 1);
+        assert_eq!(p.ixs[0].program_idx, 3);
+        assert_eq!(
+            p.ixs[0].accounts,
+            vec![
+                (2, FLAG_WRITABLE),
+                (LOGICAL_SMART_ACCOUNT, FLAG_WRITABLE),
+                (LOGICAL_SMART_ACCOUNT, FLAG_SIGNER),
+            ]
+        );
+        assert_eq!(p.ixs[0].data, vec![9]);
+    }
+
+    #[test]
     fn accounts_hash_is_order_and_flag_sensitive() {
         let a = Pubkey::new_unique();
         let b = Pubkey::new_unique();

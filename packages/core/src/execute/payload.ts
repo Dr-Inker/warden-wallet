@@ -70,10 +70,17 @@ function u8(n: number, name: string): number {
 
 /**
  * Encode an `ExecutePayload` to the exact bytes `parse_payload` reads. Enforces
- * the SAME structural rules as the Rust decoder so a client cannot build a
- * payload the program will reject: known flag bits only, the PDA (index 0)
- * never writable, a signer flag only on index 0/1. (Index-range and the
- * deny-list are the handler's job — they need the accounts.)
+ * the SAME structural rules as the Rust decoder — and ONLY those: known flag
+ * bits only, and a signer flag only on index 0/1. A writable PDA (index 0) is
+ * accepted STRUCTURALLY, exactly as `parse_payload` now does: the "PDA never
+ * writable except as a deny-validated CloseAccount rent destination" rule needs
+ * the accounts + the deny-list, so it lives in the handler's
+ * `enforce_pda_writable`, not the pure codec. (Index-range and the deny-list are
+ * likewise the handler's job — they need the accounts.) A client that means to
+ * build the sanctioned vault-sweep close therefore CAN express a writable
+ * index-0 through this codec; `wrapForExecute` — the general foreign-dApp
+ * wrapper — separately refuses a writable PDA, because that shape is a
+ * warden-native operation, not something a wrapped third-party message carries.
  */
 export function encodeExecutePayload(payload: ExecutePayload): Uint8Array {
   const out: number[] = [];
@@ -85,9 +92,6 @@ export function encodeExecutePayload(payload: ExecutePayload): Uint8Array {
       u8(a.index, "account idx");
       u8(a.flags, "account flags");
       if ((a.flags & ~FLAG_KNOWN) !== 0) throw new Error(`unknown flag bit set: ${a.flags}`);
-      if (a.index === LOGICAL_SMART_ACCOUNT && (a.flags & FLAG_WRITABLE) !== 0) {
-        throw new Error("the SmartAccount PDA (index 0) may not be writable to a CPI");
-      }
       if ((a.flags & FLAG_SIGNER) !== 0 && a.index !== LOGICAL_SMART_ACCOUNT && a.index !== LOGICAL_SIGNER) {
         throw new Error(`a signer flag is only valid on index 0 or 1, got ${a.index}`);
       }
@@ -130,9 +134,8 @@ export function decodeExecutePayload(bytes: Uint8Array): ExecutePayload {
       const index = readU8();
       const flags = readU8();
       if ((flags & ~FLAG_KNOWN) !== 0) throw new Error(`unknown flag bit set: ${flags}`);
-      if (index === LOGICAL_SMART_ACCOUNT && (flags & FLAG_WRITABLE) !== 0) {
-        throw new Error("the SmartAccount PDA (index 0) may not be writable to a CPI");
-      }
+      // A writable index 0 parses structurally (mirror of `parse_payload`); the
+      // handler's `enforce_pda_writable` is the authoritative writable-PDA gate.
       if ((flags & FLAG_SIGNER) !== 0 && index !== LOGICAL_SMART_ACCOUNT && index !== LOGICAL_SIGNER) {
         throw new Error(`a signer flag is only valid on index 0 or 1, got ${index}`);
       }

@@ -38,18 +38,51 @@ import {
   type ExecutePayload,
   type LogicalAccount,
 } from "./payload.js";
+import { MAX_EXECUTE_ACCOUNTS_TOTAL, MAX_EXECUTE_WRITABLE } from "../constants.js";
 
 /** The default compute-unit limit the wrapper injects when the dApp tx carries
  *  no ComputeBudget instruction of its own (spec §5.2). */
 export const DEFAULT_COMPUTE_UNIT_LIMIT = 600_000;
+
+/** ComputeBudget instruction discriminators (data[0]), for tag-wise
+ *  normalization — a dApp may supply any subset and the wrapper must satisfy
+ *  each budget dimension independently, never treat one tag as covering all. */
+const CB_REQUEST_HEAP_FRAME = 1;
+const CB_SET_COMPUTE_UNIT_LIMIT = 2;
+
+/** `execute`'s account caps are HEAP-bound (PHASE1B-MEASUREMENTS §"Task 5"/
+ *  §"Task 6 heap lift"): the handler snapshots the WHOLE logical list twice, so
+ *  the default 32 KiB SBF heap OOMs (fail-closed) at ~24 accounts. The custom
+ *  allocator (`src/heap.rs`) makes a top-level `RequestHeapFrame` effective; the
+ *  client contract is that the wrapper injects one sized for any large shape,
+ *  the same way it injects the CU limit. Omitting it is a fail-closed revert,
+ *  not a loss — but the SDK must not hand back a transaction that reverts. */
+export const HEAP_FRAME_BYTES = 128 * 1024;
+/** Inject the heap frame once `remaining_accounts` reaches this count. The
+ *  measured safe point on the default heap is 25 remaining (83.8k CU); 27
+ *  OOMs. 22 keeps a conservative margin, and a 128 KiB frame is measured to
+ *  carry the full 33-remaining / 30-writable shape at 113k CU. */
+export const HEAP_FRAME_TRIGGER_REMAINING = 22;
 
 export interface WrapOptions {
   wardenProgram: PublicKey;
   /** The SmartAccount PDA — logical[0], forced non-signer (it signs via
    *  invoke_signed), writable. */
   smartAccount: PublicKey;
-  /** The session/root signer — logical[1], signer, read-only. */
+  /** The session/root signer — logical[1], signer. Read-only UNLESS it is also
+   *  the outer transaction's fee payer (the common self-submit case), in which
+   *  case the runtime promotes it to writable and the handler hashes it that
+   *  way — see `payer`. */
   signer: PublicKey;
+  /** The outer transaction's fee payer. Defaults to `signer` (self-submit). The
+   *  runtime always coalesces the fee payer to signer+writable, and the handler
+   *  hashes the logical list from those RUNTIME flags (execute.rs:317). So the
+   *  SDK MUST hash whichever logical account is the payer as writable, or a root
+   *  ceremony signed over this hash fails ChallengeMismatch (WRDF-0071/0055).
+   *  A separate relayer that is NOT in the logical list leaves logical[1]
+   *  read-only — pass that relayer here and build the outer tx with the same
+   *  `payerKey`. */
+  payer?: PublicKey;
   /** Address lookup tables to resolve the dApp message and to compile with. */
   luts?: AddressLookupTableAccount[];
   /** Compute-unit limit to inject when the dApp tx has none. */
@@ -71,7 +104,9 @@ export interface WrapResult {
   /** `Keccak256` over the logical list — what the root `ExecuteBody` binds. */
   accountsHash: Uint8Array;
   /** ComputeBudget instructions to place TOP-LEVEL in the outer transaction
-   *  (never inside the payload). Either the dApp's own, or one default limit. */
+   *  (never inside the payload), normalized per budget dimension: the dApp's own
+   *  settings preserved, a `SetComputeUnitLimit` guaranteed (default injected if
+   *  absent), and an adequate `RequestHeapFrame` injected for large shapes. */
   computeBudgetIxs: TransactionInstruction[];
 }
 
@@ -86,31 +121,56 @@ const b58 = (p: PublicKey): string => p.toBase58();
  */
 export function wrapForExecute(dappMsg: VersionedMessage, opts: WrapOptions): WrapResult {
   const luts = opts.luts ?? [];
+  const payer = opts.payer ?? opts.signer;
   const decompiled = TransactionMessage.decompile(dappMsg, { addressLookupTableAccounts: luts });
   const allInner = decompiled.instructions;
 
   // ComputeBudget instructions are honored only top-level, never inside a CPI —
-  // hoist any the dApp carries; add a default limit if it carries none.
+  // hoist any the dApp carries; the rest are the inner instructions we wrap.
   const cbId = ComputeBudgetProgram.programId;
-  const computeBudgetIxs = allInner.filter((ix) => ix.programId.equals(cbId));
+  const dappComputeBudgetIxs = allInner.filter((ix) => ix.programId.equals(cbId));
   const inner = allInner.filter((ix) => !ix.programId.equals(cbId));
-  const hoisted =
-    computeBudgetIxs.length > 0
-      ? computeBudgetIxs
-      : [ComputeBudgetProgram.setComputeUnitLimit({ units: opts.defaultComputeUnitLimit ?? DEFAULT_COMPUTE_UNIT_LIMIT })];
+
+  // Fail-closed on shapes the ABI cannot honor, rather than silently rewriting
+  // them into something that means something else (WRDF-0074/0073):
+  //   * A third-party SIGNER — the program propagates a signer only for logical
+  //     slots 0/1 (the PDA and the root/session signer). Zeroing the bit so the
+  //     parser accepts it would hand the invoked program a non-signer where the
+  //     dApp required a signer — different, silent semantics. Reject.
+  //   * The SmartAccount PDA passed WRITABLE — the only sanctioned writable-PDA
+  //     shape is a deny-validated CloseAccount, a warden-native sweep built by a
+  //     dedicated helper, never carried in a wrapped foreign dApp message.
+  //     Silently clearing the bit would likewise change the CPI's semantics.
+  for (const ix of inner) {
+    for (const k of ix.keys) {
+      if (k.isSigner && !k.pubkey.equals(opts.smartAccount) && !k.pubkey.equals(opts.signer)) {
+        throw new Error(
+          `wrapForExecute: inner instruction requires a third-party signer ${b58(k.pubkey)}; ` +
+            "the execute ABI propagates a signer only for the PDA and the root/session signer",
+        );
+      }
+      if (k.pubkey.equals(opts.smartAccount) && k.isWritable) {
+        throw new Error(
+          "wrapForExecute: a wrapped instruction names the SmartAccount PDA writable; " +
+            "the only permitted writable-PDA shape is a deny-validated CloseAccount, built by a dedicated helper",
+        );
+      }
+    }
+  }
 
   // Dedup every account the inner instructions touch (their program ids too).
-  // The PDA is forced non-signer (invoke_signed authorizes it); the signer's
-  // flags are handled by the fixed prefix below. Both `smart_account` and
-  // `signer`, if a dApp ix references them, are EXCLUDED from `remaining` (they
-  // already have fixed logical slots 0/1) — keeping them would shift every later
-  // index by one and corrupt the logical index space.
+  // The PDA is forced non-signer (invoke_signed authorizes it). Both
+  // `smart_account` and `signer`, if a dApp ix references them, are EXCLUDED
+  // from `remaining` (they already have fixed logical slots 0/1) — keeping them
+  // would shift every later index by one and corrupt the logical index space.
   const metas = new Map<string, { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }>();
   for (const ix of inner) {
     const pk = b58(ix.programId);
     if (!metas.has(pk)) metas.set(pk, { pubkey: ix.programId, isSigner: false, isWritable: false });
     for (const k of ix.keys) {
       const cur = metas.get(b58(k.pubkey));
+      // No non-privileged signer survives the reject above, so remaining signer
+      // flags are always false; the PDA is forced non-signer regardless.
       const isSigner = k.pubkey.equals(opts.smartAccount) ? false : (cur?.isSigner ?? false) || k.isSigner;
       metas.set(b58(k.pubkey), {
         pubkey: k.pubkey,
@@ -123,13 +183,35 @@ export function wrapForExecute(dappMsg: VersionedMessage, opts: WrapOptions): Wr
     (m) => !m.pubkey.equals(opts.smartAccount) && !m.pubkey.equals(opts.signer),
   );
 
-  // The logical list: fixed prefix + remaining. smart_account is non-signer
-  // writable; signer is signer read-only (the outer submitter). accountsHash and
-  // payload indices are over THIS list.
+  // Client-side account caps (mirror the on-chain `TooManyExecuteAccounts` /
+  // `TooManyExecuteWritable`), so an over-cap shape fails here with a clear
+  // message instead of reverting on-chain.
+  if (remaining.length > MAX_EXECUTE_ACCOUNTS_TOTAL) {
+    throw new Error(
+      `wrapForExecute: ${remaining.length} remaining accounts exceed MAX_EXECUTE_ACCOUNTS_TOTAL (${MAX_EXECUTE_ACCOUNTS_TOTAL})`,
+    );
+  }
+  const writableRemaining = remaining.filter((m) => m.isWritable).length;
+  if (writableRemaining > MAX_EXECUTE_WRITABLE) {
+    throw new Error(
+      `wrapForExecute: ${writableRemaining} writable remaining accounts exceed MAX_EXECUTE_WRITABLE (${MAX_EXECUTE_WRITABLE})`,
+    );
+  }
+
+  // The logical list: fixed prefix + remaining. `accountsHash` and payload
+  // indices are over THIS list, and the handler hashes it from the RUNTIME
+  // AccountInfo flags — so the fee payer, which the runtime coalesces to
+  // signer+writable, must be hashed that way here too (WRDF-0071). In the common
+  // self-submit case payer === signer, so logical[1] is writable.
+  const isPayer = (key: PublicKey): boolean => key.equals(payer);
   const logical: LogicalAccount[] = [
     { key: opts.smartAccount.toBytes(), isSigner: false, isWritable: true },
-    { key: opts.signer.toBytes(), isSigner: true, isWritable: false },
-    ...remaining.map((m) => ({ key: m.pubkey.toBytes(), isSigner: m.isSigner, isWritable: m.isWritable })),
+    { key: opts.signer.toBytes(), isSigner: true, isWritable: isPayer(opts.signer) },
+    ...remaining.map((m) => ({
+      key: m.pubkey.toBytes(),
+      isSigner: m.isSigner || isPayer(m.pubkey),
+      isWritable: m.isWritable || isPayer(m.pubkey),
+    })),
   ];
 
   // Logical index of a pubkey (0 = smart_account, 1 = signer, 2+k = remaining).
@@ -148,14 +230,12 @@ export function wrapForExecute(dappMsg: VersionedMessage, opts: WrapOptions): Wr
   const decoded: ExecutePayload = {
     ixs: inner.map((ix) => ({
       programIndex: idxOf(ix.programId),
+      // Third-party signers and a writable PDA were rejected above, so every
+      // surviving flag maps straight through: a signer bit appears only on the
+      // PDA/signer (both accepted by the parser), and the PDA is never writable.
       accounts: ix.keys.map((k) => ({
         index: idxOf(k.pubkey),
-        // The PDA (index 0) is never writable to a CPI; a signer flag is honored
-        // only on 0/1. Match the handler: force those here so encode succeeds and
-        // the on-chain parser accepts the bytes.
-        flags:
-          (k.isSigner && !k.pubkey.equals(opts.smartAccount) && !k.pubkey.equals(opts.signer) ? 0 : k.isSigner ? FLAG_SIGNER : 0) |
-          (k.isWritable && !k.pubkey.equals(opts.smartAccount) ? FLAG_WRITABLE : 0),
+        flags: (k.isSigner ? FLAG_SIGNER : 0) | (k.isWritable ? FLAG_WRITABLE : 0),
       })),
       data: Uint8Array.from(ix.data),
     })),
@@ -163,7 +243,60 @@ export function wrapForExecute(dappMsg: VersionedMessage, opts: WrapOptions): Wr
   const payload = encodeExecutePayload(decoded);
   const accountsHash = computeAccountsHash(logical);
 
-  return { payload, decoded, logical, remaining, accountsHash, computeBudgetIxs: hoisted };
+  // Budget instructions, normalized so every dimension is satisfied
+  // independently and a large shape gets its mandatory heap frame.
+  const computeBudgetIxs = normalizeComputeBudget(dappComputeBudgetIxs, {
+    remainingLen: remaining.length,
+    defaultComputeUnitLimit: opts.defaultComputeUnitLimit ?? DEFAULT_COMPUTE_UNIT_LIMIT,
+  });
+
+  return { payload, decoded, logical, remaining, accountsHash, computeBudgetIxs };
+}
+
+/** Read the `u32 LE` byte count from a `RequestHeapFrame` instruction's data. */
+function heapFrameBytes(ix: TransactionInstruction): number {
+  const d = ix.data;
+  if (d.length < 5) throw new Error("wrapForExecute: malformed RequestHeapFrame (data < 5 bytes)");
+  return (d[1]! | (d[2]! << 8) | (d[3]! << 16) | (d[4]! << 24)) >>> 0;
+}
+
+/**
+ * Normalize the dApp's hoisted ComputeBudget instructions so each budget
+ * dimension is satisfied on its own (WRDF-0072). A dApp may supply any subset
+ * (e.g. only a compute-unit PRICE), so the wrapper must NOT treat the presence
+ * of one ComputeBudget instruction as covering the others:
+ *  - preserve everything the dApp set (price, limit, data-size, heap);
+ *  - ensure exactly one `SetComputeUnitLimit` (inject the default if absent);
+ *  - ensure an adequate `RequestHeapFrame` for large shapes — `execute`'s caps
+ *    are HEAP-bound and a shape past ~24 accounts OOMs (fail-closed) without one.
+ * Duplicate limit/heap requests, or a dApp heap frame smaller than the shape
+ * needs, are rejected rather than silently resolved.
+ */
+export function normalizeComputeBudget(
+  dappCbIxs: TransactionInstruction[],
+  opts: { remainingLen: number; defaultComputeUnitLimit: number },
+): TransactionInstruction[] {
+  const limits = dappCbIxs.filter((ix) => ix.data[0] === CB_SET_COMPUTE_UNIT_LIMIT);
+  const frames = dappCbIxs.filter((ix) => ix.data[0] === CB_REQUEST_HEAP_FRAME);
+  if (limits.length > 1) throw new Error("wrapForExecute: multiple SetComputeUnitLimit instructions");
+  if (frames.length > 1) throw new Error("wrapForExecute: multiple RequestHeapFrame instructions");
+
+  const out = [...dappCbIxs];
+  if (limits.length === 0) {
+    out.push(ComputeBudgetProgram.setComputeUnitLimit({ units: opts.defaultComputeUnitLimit }));
+  }
+
+  const needFrame = opts.remainingLen >= HEAP_FRAME_TRIGGER_REMAINING;
+  if (needFrame) {
+    if (frames.length === 0) {
+      out.push(ComputeBudgetProgram.requestHeapFrame({ bytes: HEAP_FRAME_BYTES }));
+    } else if (heapFrameBytes(frames[0]!) < HEAP_FRAME_BYTES) {
+      throw new Error(
+        `wrapForExecute: dApp RequestHeapFrame (${heapFrameBytes(frames[0]!)} B) is smaller than this shape needs (${HEAP_FRAME_BYTES} B)`,
+      );
+    }
+  }
+  return out;
 }
 
 /**

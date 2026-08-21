@@ -11,3 +11,16 @@ export const MAX_TX_BYTES = 1232;
  * A client splits a payload into `ceil(len / STAGE_CHUNK_PAYLOAD_CAP)` chunks.
  */
 export const STAGE_CHUNK_PAYLOAD_CAP = 977;
+/**
+ * The most `remaining_accounts` one `execute` accepts (logical accounts past the
+ * two privileged slots). MEASURED and HEAP-bound (PHASE1B-MEASUREMENTS §"Task 6
+ * heap lift"); mirrors the Rust `MAX_EXECUTE_ACCOUNTS_TOTAL`, enforced on-chain
+ * (`remaining.len() <= MAX_EXECUTE_ACCOUNTS_TOTAL`, else `TooManyExecuteAccounts`).
+ * The wrapper enforces it client-side so an over-cap shape fails fast, not on-chain.
+ */
+export const MAX_EXECUTE_ACCOUNTS_TOTAL = 32;
+/**
+ * The most WRITABLE `remaining_accounts` one `execute` accepts. Mirrors the Rust
+ * `MAX_EXECUTE_WRITABLE`, enforced on-chain (else `TooManyExecuteWritable`).
+ */
+export const MAX_EXECUTE_WRITABLE = 28;

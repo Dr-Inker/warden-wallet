@@ -63,10 +63,19 @@ describe("encodeExecutePayload / decodeExecutePayload", () => {
     expect(decodeExecutePayload(encodeExecutePayload(p))).toEqual(p);
   });
 
-  it("rejects unknown flag bits, writable PDA, and out-of-slot signers on ENCODE", () => {
+  it("rejects unknown flag bits and out-of-slot signers on ENCODE", () => {
     expect(() => encodeExecutePayload({ ixs: [{ programIndex: 2, accounts: [{ index: 3, flags: 0b100 }], data: new Uint8Array() }] })).toThrow();
-    expect(() => encodeExecutePayload({ ixs: [{ programIndex: 2, accounts: [{ index: 0, flags: FLAG_WRITABLE }], data: new Uint8Array() }] })).toThrow();
     expect(() => encodeExecutePayload({ ixs: [{ programIndex: 9, accounts: [{ index: 2, flags: FLAG_SIGNER }], data: new Uint8Array() }] })).toThrow();
+  });
+
+  it("accepts a writable index-0 structurally (parity with parse_payload)", () => {
+    // The pure codec no longer rejects a writable PDA — that rule needs the
+    // accounts + deny-list and lives in the handler's `enforce_pda_writable`.
+    // The sanctioned CloseAccount rent-destination shape must round-trip.
+    const p: ExecutePayload = {
+      ixs: [{ programIndex: 9, accounts: [{ index: 0, flags: FLAG_WRITABLE }], data: Uint8Array.from([9]) }],
+    };
+    expect(decodeExecutePayload(encodeExecutePayload(p))).toEqual(p);
   });
 
   it("rejects the same shapes on DECODE, plus trailing bytes and truncation", () => {
@@ -77,8 +86,12 @@ describe("encodeExecutePayload / decodeExecutePayload", () => {
     expect(() => decodeExecutePayload(Uint8Array.from([...ok, 0xff]))).toThrow();
     // data_len past the end: n_ixs=1, program=2, n_accts=0, data_len=5, 2 bytes.
     expect(() => decodeExecutePayload(Uint8Array.from([1, 2, 0, 5, 0, 0xaa, 0xbb]))).toThrow();
-    // writable PDA in the bytes.
-    expect(() => decodeExecutePayload(Uint8Array.from([1, 2, 1, 0, FLAG_WRITABLE, 0, 0]))).toThrow();
+    // out-of-slot signer in the bytes: idx 2 with FLAG_SIGNER.
+    expect(() => decodeExecutePayload(Uint8Array.from([1, 2, 1, 2, FLAG_SIGNER, 0, 0]))).toThrow();
+    // a writable PDA in the bytes now DECODES (handler-gated, not codec-gated).
+    expect(decodeExecutePayload(Uint8Array.from([1, 2, 1, 0, FLAG_WRITABLE, 0, 0]))).toEqual({
+      ixs: [{ programIndex: 2, accounts: [{ index: 0, flags: FLAG_WRITABLE }], data: new Uint8Array() }],
+    });
   });
 });
 
@@ -157,5 +170,28 @@ describe("cross-language fixture", () => {
     // Sanity: the vector round-trips in TS too.
     expect(decodeExecutePayload(bytes)).toEqual(payload);
     expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it("writes payload_writable_pda_close.bin — the sanctioned writable-PDA close (WRDF-0073)", () => {
+    // A vault-sweep SPL CloseAccount (tag 9): account_to_close (writable), the
+    // rent destination = the PDA (index 0, WRITABLE), owner = the PDA (index 0,
+    // SIGNER). The PDA appears twice (relaxed per-ix duplicate rule) and is
+    // WRITABLE — which the pure codec must now encode, and parse_payload accept.
+    const closePayload: ExecutePayload = {
+      ixs: [
+        {
+          programIndex: 3, // token program (logical slot)
+          accounts: [
+            { index: 2, flags: FLAG_WRITABLE }, // account being closed
+            { index: 0, flags: FLAG_WRITABLE }, // rent destination = PDA
+            { index: 0, flags: FLAG_SIGNER }, // owner = PDA
+          ],
+          data: Uint8Array.from([9]), // SPL CloseAccount
+        },
+      ],
+    };
+    const bytes = encodeExecutePayload(closePayload);
+    writeFileSync(resolve(fixturesDir, "payload_writable_pda_close.bin"), bytes);
+    expect(decodeExecutePayload(bytes)).toEqual(closePayload);
   });
 });
