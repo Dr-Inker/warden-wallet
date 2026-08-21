@@ -64,13 +64,11 @@ is_pubkey() {
 
 # The Task 11R governance+hash verifier (DEPLOY-GATE.md checks 1, 2, 4a). Hand-rolled
 # in packages/core/src/deploy (no @sqds dependency); run via the workspace's tsx.
-# Overridable via $WARDEN_DEPLOY_VERIFIER so a hermetic test can stub it (WRDF-0088).
+# There is NO command-override env var — a verdict-capable entrypoint must not honor
+# an arbitrary replacement verifier (WRDF-0092). Hermetic tests stub the underlying
+# `pnpm` on PATH instead, so this production path is unconditional.
 run_gov_hash_verifier() {
-  if [ -n "${WARDEN_DEPLOY_VERIFIER:-}" ]; then
-    "$WARDEN_DEPLOY_VERIFIER" "$@"
-  else
-    pnpm --filter @warden/core exec tsx scripts/deploy-gate-verify.ts "$@"
-  fi
+  pnpm --filter @warden/core exec tsx scripts/deploy-gate-verify.ts "$@"
 }
 
 # ---- WRDF-0085: bind a live run to the release, without self-reference --------
@@ -127,7 +125,9 @@ else
   # if it is already a full SHA not resolvable in a shallow/foreign checkout.
   parse_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}" 2>/dev/null || echo "$RELEASE_SHA")"
   if recorded_hash="$(run_gov_hash_verifier --parse-release-hash 1 --release-sha "$parse_sha" --release-integrity-file "$RELEASE_INTEGRITY_ABS" 2>/dev/null)"; then
-    :
+    recorded_hash="$(printf '%s' "$recorded_hash" | tr -d '[:space:]')"
+    # The canonical parser must yield EXACTLY one lowercase 64-hex hash (WRDF-0092).
+    [[ "$recorded_hash" =~ ^[0-9a-f]{64}$ ]] || { recorded_hash=""; fail "canonical parse did not return a single 64-hex artifact hash"; }
   else
     recorded_hash=""
     fail "canonical parse of the RELEASE-INTEGRITY row for '$RELEASE_SHA' failed (no unique row / no artifact hash / bad token)"

@@ -5,9 +5,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 
-// Hermetic shell coverage of the live deploy-gate wiring (WRDF-0085/0088/0091).
-// Temp repos live UNDER the repo's gitignored target/ (on /opt) — never /tmp —
-// and cleanup is prefix-guarded (WRDF-0091).
+// Hermetic shell coverage of the live deploy-gate wiring (WRDF-0085/0088/0091/0092).
+// Temp repos live UNDER the repo's gitignored target/ (on /opt) — never /tmp — with
+// prefix-guarded cleanup (WRDF-0091). The verifier is stubbed by shadowing `pnpm`
+// on PATH — the gate has NO production override env var (WRDF-0092).
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const TMP_ROOT = join(REPO, "target", "deploy-gate-testtmp");
 const PREFLIGHT = join(REPO, "scripts", "deploy-preflight.sh");
@@ -19,8 +20,8 @@ function mkTemp(prefix: string): string {
   mkdirSync(TMP_ROOT, { recursive: true });
   return mkdtempSync(join(TMP_ROOT, prefix));
 }
-function safeRm(dir: string): void {
-  if (dir.startsWith(TMP_ROOT + "/")) rmSync(dir, { recursive: true, force: true }); // prefix-guarded (WRDF-0091)
+function safeRm(target: string): void {
+  if (target.startsWith(TMP_ROOT + "/")) rmSync(target, { recursive: true, force: true }); // prefix-guarded (WRDF-0091)
 }
 function run(cmd: string, args: string[], cwd: string, env = process.env): { code: number; out: string; err: string } {
   try {
@@ -31,6 +32,7 @@ function run(cmd: string, args: string[], cwd: string, env = process.env): { cod
   }
 }
 const git = (dir: string, ...a: string[]) => execFileSync("git", a, { cwd: dir, stdio: "pipe", env: gitEnv });
+const head = (dir: string) => execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
 
 describe("scripts/deploy-preflight.sh — hermetic checkout binding (WRDF-0088/0091)", () => {
   let dir: string;
@@ -40,7 +42,7 @@ describe("scripts/deploy-preflight.sh — hermetic checkout binding (WRDF-0088/0
     cpSync(PREFLIGHT, join(dir, "deploy-preflight.sh"));
     git(dir, "init", "-q");
     writeFileSync(join(dir, "code.txt"), "v1"); git(dir, "add", "-A"); git(dir, "commit", "-qm", "release C");
-    releaseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+    releaseSha = head(dir);
     writeFileSync(join(dir, "attest.txt"), "row for C"); git(dir, "add", "-A"); git(dir, "commit", "-qm", "attestation A");
   });
   afterAll(() => safeRm(dir));
@@ -60,73 +62,95 @@ describe("scripts/deploy-preflight.sh — hermetic checkout binding (WRDF-0088/0
   it("REFUSES a non-ancestor commit", () => {
     git(dir, "branch", "side", releaseSha); git(dir, "checkout", "-q", "side");
     writeFileSync(join(dir, "side.txt"), "s"); git(dir, "add", "-A"); git(dir, "commit", "-qm", "side");
-    const sideSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+    const sideSha = head(dir);
     git(dir, "checkout", "-q", "-");
     const r = run("bash", ["deploy-preflight.sh", sideSha], dir);
+    expect(r.code).not.toBe(0);
     expect(r.err).toMatch(/is not an ancestor of HEAD/);
   });
   it("REFUSES an unresolved release-sha", () => {
     const r = run("bash", ["deploy-preflight.sh", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"], dir);
+    expect(r.code).not.toBe(0);
     expect(r.err).toMatch(/does not resolve to a commit/);
   });
 });
 
-describe("scripts/deploy-gate.sh — live wiring with a stubbed verifier (WRDF-0088)", () => {
+describe("scripts/deploy-gate.sh — live wiring with a PATH-shadowed verifier (WRDF-0088/0092)", () => {
   let dir: string;
   let cSha = "";
   const digest = "d462c1fcd13cff9bf0b23b0df1e28b870fd5e570dfe80408d40cc39ed4c8a143"; // synthetic manifest digest
   const artifact = createHash("sha256").update("warden-so-bytes").digest("hex");
   let argsFile = "";
+  let binDir = "";
+  let absReleaseFile = "";
 
   beforeAll(() => {
     dir = mkTemp("fullgate-");
     argsFile = join(dir, "verifier-args.txt");
-    // Minimal monorepo shape the gate touches.
-    mkdirSync(join(dir, "scripts"), { recursive: true });
-    mkdirSync(join(dir, "docs", "security"), { recursive: true });
-    mkdirSync(join(dir, "programs"), { recursive: true });
-    mkdirSync(join(dir, "packages"), { recursive: true });
-    mkdirSync(join(dir, "target", "deploy"), { recursive: true });
+    binDir = join(dir, "fakebin");
+    absReleaseFile = join(dir, "docs", "security", "RELEASE-INTEGRITY.md");
+    for (const d of ["scripts", "docs/security", "programs", "packages", "target/deploy", "fakebin"]) mkdirSync(join(dir, d), { recursive: true });
     cpSync(GATE, join(dir, "scripts", "deploy-gate.sh"));
     cpSync(PREFLIGHT, join(dir, "scripts", "deploy-preflight.sh"));
     writeFileSync(join(dir, "target", "deploy", "warden.so"), "warden-so-bytes");
-    // A stubbed verifier: prints the artifact hash for --parse-release-hash, else
-    // records its args and exits 0 (the live check). Exercises the real forwarding.
-    const stub = join(dir, "verifier-stub.sh");
-    writeFileSync(stub, `#!/usr/bin/env bash\nif [ "$1" = "--parse-release-hash" ]; then echo "${artifact}"; exit 0; fi\nprintf '%s\\n' "$@" > "${argsFile}"\nexit 0\n`);
-    chmodSync(stub, 0o755);
+
+    // A committed `pnpm` shadow (test/fixtures/fake-pnpm.sh) that ENFORCES the
+    // verifier's real flag/value contract. There is NO gate override env var
+    // (WRDF-0092) — we shadow the real `pnpm` on PATH.
+    const fakePnpm = join(binDir, "pnpm");
+    cpSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-pnpm.sh"), fakePnpm);
+    chmodSync(fakePnpm, 0o755);
 
     git(dir, "init", "-q");
-    // Release commit C (no row yet — a commit can't contain its own SHA).
     writeFileSync(join(dir, "code.txt"), "v1"); git(dir, "add", "-A"); git(dir, "commit", "-qm", "release C");
-    cSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
-    // Attestation commit A (HEAD): adds the RELEASE-INTEGRITY row binding C.
+    cSha = head(dir);
     const row = `| dev | \`${cSha}\` | \`${artifact}\` | id | x | y | none manifest:synthetic@${digest} | v |`;
-    writeFileSync(join(dir, "docs", "security", "RELEASE-INTEGRITY.md"), `# Release integrity\n\n${row}\n`);
+    writeFileSync(absReleaseFile, `# Release integrity\n\n${row}\n`);
     git(dir, "add", "-A"); git(dir, "commit", "-qm", "attestation A for C");
   });
   afterAll(() => safeRm(dir));
 
-  it("forwards the normalized full SHA + release file + manifest to the verifier", () => {
-    const r = run("bash", [join(dir, "scripts", "deploy-gate.sh"), ID, ID, ID, cSha, "--manifest", "synthetic", "--rpc-url", "http://127.0.0.1:1"],
-      dir, { ...gitEnv, WARDEN_DEPLOY_VERIFIER: join(dir, "verifier-stub.sh"), SOLANA_RPC_URL: "" });
-    // The live verifier stub was reached (preflight passed: clean + ancestor) and
-    // received the normalized full SHA, the absolute release file, and the manifest.
-    expect(existsSync(argsFile), `verifier stub not invoked; gate out:\n${r.out}\n${r.err}`).toBe(true);
-    const a = readFileSync(argsFile, "utf8");
-    expect(a).toMatch(new RegExp(`^${cSha}$`, "m")); // normalized full SHA forwarded
-    expect(a).toMatch(/RELEASE-INTEGRITY\.md/); // release file forwarded
-    expect(a).toMatch(/^synthetic$/m); // manifest forwarded
-    expect(a).not.toMatch(/command not found/);
+  const liveEnv = (exit = 0) => ({
+    ...gitEnv,
+    PATH: `${binDir}:${process.env.PATH}`,
+    SOLANA_RPC_URL: "",
+    FAKE_ARTIFACT_HASH: artifact,
+    FAKE_ARGS_FILE: argsFile,
+    FAKE_VERIFIER_EXIT: String(exit),
+  });
+  const liveArgs = () => [ID, ID, ID, cSha, "--manifest", "synthetic", "--rpc-url", "http://127.0.0.1:1"];
+
+  it("forwards the EXACT verifier argument array (normalized SHA, release file, identities)", () => {
+    safeRm(argsFile);
+    run("bash", [join(dir, "scripts", "deploy-gate.sh"), ...liveArgs()], dir, liveEnv(0));
+    expect(existsSync(argsFile)).toBe(true);
+    const got = readFileSync(argsFile, "utf8").trim().split("\n");
+    expect(got).toEqual([
+      "--rpc-url", "http://127.0.0.1:1",
+      "--manifest", "synthetic",
+      "--release-sha", cSha,
+      "--release-integrity-file", absReleaseFile,
+      "--expect-warden-program", ID,
+      "--expect-multisig", ID,
+      "--expect-authority", ID,
+    ]);
   }, 30_000);
 
-  it("REFUSES the live run when the working tree is dirty (preflight, before the verifier)", () => {
+  it("propagates a FAILING verifier to a nonzero gate result", () => {
     safeRm(argsFile);
-    writeFileSync(join(dir, "code.txt"), "MUTATED"); // dirty
-    const r = run("bash", [join(dir, "scripts", "deploy-gate.sh"), ID, ID, ID, cSha, "--manifest", "synthetic", "--rpc-url", "http://127.0.0.1:1"],
-      dir, { ...gitEnv, WARDEN_DEPLOY_VERIFIER: join(dir, "verifier-stub.sh"), SOLANA_RPC_URL: "" });
+    const r = run("bash", [join(dir, "scripts", "deploy-gate.sh"), ...liveArgs()], dir, liveEnv(7));
+    expect(r.code).not.toBe(0);
+    expect(r.err).toMatch(/live governance\+hash checks failed/);
+  }, 30_000);
+
+  it("REFUSES a dirty tree BEFORE the verifier is reached (no args recorded)", () => {
+    safeRm(argsFile);
+    writeFileSync(join(dir, "code.txt"), "MUTATED");
+    const r = run("bash", [join(dir, "scripts", "deploy-gate.sh"), ...liveArgs()], dir, liveEnv(0));
     git(dir, "checkout", "--", "code.txt");
+    expect(r.code).not.toBe(0);
     expect(r.err).toMatch(/CLEAN working tree/);
+    expect(existsSync(argsFile)).toBe(false); // verifier never ran
   }, 30_000);
 });
 
