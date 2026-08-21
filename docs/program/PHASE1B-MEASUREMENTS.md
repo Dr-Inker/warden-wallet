@@ -567,5 +567,37 @@ warden --lib -- -D clippy::arithmetic_side_effects` clean; `pnpm --filter
 @warden/core test` → 109 passed. Errors extended 6056–6057 (drift table in
 `tests/root_verify.rs` updated to 58 rows).
 
-**Owed before Task 5 is DONE:** the CU/byte measurement sweep (above) and the
-whole-task Codex sol@max review convergence to 0 findings.
+### Task 5 review rounds
+
+**Round 1 (`3632deb`, Codex sol@max, 3 findings).** WRDF-0053 (adopted,
+CONFIRMED) — the duplicate-key rejection ran only over the snapshot of
+`remaining_accounts`, missing an alias of the PDA or the signer; the handler now
+rejects any duplicate pubkey across the WHOLE logical list
+(`DuplicateLogicalAccount`, 6059). WRDF-0051 (adopted) — Jupiter fail-closed in
+generic `execute` (`JupiterViaSwapOnly`, 6058). WRDF-0052 (deferred) — structured
+events are Task 5E (`WRD-EVT-01`, unimplemented).
+
+**Round 2 (`ba2f785`, Codex sol@max, 3 findings).** WRDF-0051 (reopened,
+adopted-with-claim-corrected) — a **direct** program-id guard cannot establish
+**nested** reachability: a forwarding program can CPI into Jupiter while
+`reject_jupiter` sees only the forwarder. The round-1 claim "Jupiter reachable
+only through swap" was an **over-claim** and is corrected across the code
+comments, `WRD-EXEC-10`, and this doc: `reject_jupiter` is **defense-in-depth**
+against the trivial direct route only; the bound that holds for any nested value
+movement is conservation's **net per-mint cap** (session `per_tx`+lifetime+
+buckets; root `large_threshold`+buckets — a caller loses at most its cap, though
+possibly at a bad price), and the intra-CPI `max_in`/quote-sanity bound is the
+accepted spec §5.3 semantic boundary, deferred to `swap` (Task 6). WRDF-0052
+(deferred again) — Task 5E. WRDF-0054 (minor, confirmed-but-benign; removal =
+Task-3 hygiene) — the default registry's System-Program Transfer adapter is
+**dead by construction** (System can only debit a System-owned account, but the
+vault PDA is warden-owned; warden moves vault SOL only via its own typed
+`transfer`/`move_lamports`, never a System CPI), so `enforce_pda_writable`
+refusing the writable PDA it would need fails an already-impossible operation
+one step earlier, fail-closed — no vault value exposed. Removing the dead adapter
+belongs to Task 3's converged default set, tracked as a follow-up.
+
+**Owed before Task 5 is DONE:** the CU/byte measurement sweep (above) and one
+more Codex sol@max round returning **0 program findings** (rounds 1–2 raised
+engineering findings; the remaining seeded re-flags — `WRD-EVT-01`/Task 5E and
+the dead-adapter hygiene — are adjudicated `deferred`, not open program defects).

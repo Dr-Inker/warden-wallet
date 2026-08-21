@@ -288,16 +288,13 @@ pub(crate) fn handler<'info>(
     let parsed = parse_payload(&payload_bytes)?;
     let resolved = resolve_payload(&parsed, &logical_meta, program_id)?;
 
-    // WRD-EXEC-10 (WRDF-0051): Jupiter is fail-closed in generic `execute` on
-    // BOTH paths. Its safety in 1B comes from `swap`'s adapter preflight — the
-    // `max_in` decoded from the instruction's OWN data (never inferred from
-    // balances) plus a pinned source/destination ATA and quote-sanity (spec
-    // §5.2.7) — none of which generic `execute` performs. Conservation bounds
-    // only the NET per-mint delta, which cannot observe a same-CPI gross
-    // out-and-back (SWIG-GROSS-OUTFLOW; conservation module docs). The default
-    // registry lists Jupiter, so without this a registry-authorized session
-    // could route it through the weaker path; route it exclusively through
-    // `swap` (Task 6) instead.
+    // WRD-EXEC-10 (WRDF-0051): defense-in-depth against a DIRECT Jupiter inner
+    // instruction in generic `execute` — see `reject_jupiter`. It steers the
+    // common direct-route mistake toward `swap` (where `max_in`/quote-sanity
+    // live); it does NOT and cannot stop a forwarding program from reaching
+    // Jupiter nested. The bound that holds for any nested value movement is
+    // conservation's net per-mint cap; the intra-CPI `max_in`/quote bound is the
+    // accepted §5.3 boundary, deferred to `swap` (Task 6).
     reject_jupiter(&resolved)?;
 
     // ---- authorize --------------------------------------------------------
@@ -542,12 +539,24 @@ pub(crate) fn handler<'info>(
     Ok(())
 }
 
-/// Fail closed for Jupiter v6 in generic `execute` (WRDF-0051, spec §5.2.7).
-/// Jupiter's 1B safety is `swap`'s adapter preflight (`max_in` from the
-/// instruction's own data + pinned source/dest ATA + quote sanity); generic
-/// `execute` performs none of it and conservation bounds only the net per-mint
-/// delta. Both authorization paths are covered — a root ceremony may target any
-/// OTHER program, but Jupiter's proper home is `swap` for root and session alike.
+/// Defense-in-depth: reject a **direct** Jupiter v6 inner instruction in generic
+/// `execute` (WRDF-0051), steering the common client mistake — compiling a
+/// Jupiter transaction and pushing it straight through `execute` — toward
+/// `swap`, where the adapter preflight lives (`max_in` decoded from the
+/// instruction's own data + pinned source/dest ATA + quote sanity, spec §5.2.7).
+///
+/// **This is NOT a completeness guarantee, and does not make Jupiter
+/// "unreachable" (WRDF-0051 round 2).** A forwarding program P — reachable on
+/// the root path, which targets any program, or as a registry-listed program on
+/// the session path — can itself CPI into Jupiter while `reject_jupiter` sees
+/// only P as the direct target. The bound that actually holds for *any* such
+/// nested value movement is `conservation`'s **net per-mint cap** (session
+/// `per_tx`+lifetime+buckets; root `large_threshold`+buckets): a caller loses at
+/// most its cap, though possibly at a bad price. What generic `execute` cannot
+/// add is the intra-CPI gross-turnover / `max_in` / quote-sanity bound — that is
+/// the accepted §5.3 semantic boundary and is `swap`'s job (Task 6, WRD-EXEC-10,
+/// still `unimplemented`). This guard closes the trivial direct route; it does
+/// not claim to close the nested one.
 fn reject_jupiter(resolved: &[ResolvedInner]) -> Result<()> {
     use crate::constants::JUPITER_V6_ID;
     for r in resolved {
