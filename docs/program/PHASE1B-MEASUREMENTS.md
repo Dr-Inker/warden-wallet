@@ -993,3 +993,32 @@ on the immutable ledger HEAD below.
 `@warden/core` **141 passed (141)** (incl. the security ledger + the round-2 wrap
 regressions), `ui-tokens` 11/11, and the full Rust workspace under
 `--features test-jup` (0 failed).
+
+## Task 8 review round 3 — Codex sol@max (thread d0d9ede086f3-20260821T173126Z)
+
+Round 3 (`b0d3019..d0d9ede`, seeded=43) raised 3 findings (2 important, 1 minor);
+ALL ADOPTED and fixed at `64d4fb283cc338ae731620ae369a9c6627ffbfc7`.
+
+- **WRDF-0079** (important) — the compile/decompile rewrite reflected inner
+  writability into every logical slot EXCEPT slot 1 (the signer, hard-coded
+  read-only), so a wrapped ix needing the signer writable emitted payload flag 3
+  against a read-only outer meta and the CPI would fail. Fixed: reject a
+  writable-signer inner reference fail-closed (the signer is the authorizer, not a
+  vault funding source), symmetric with the third-party-signer / writable-PDA
+  rejects; plus a client-side payload⊆outer privilege-subset guard (the PDA's
+  invoke_signed signature exempt).
+- **WRDF-0080** (important) — a caller-supplied `RequestHeapFrame` was preserved on
+  size alone; Agave accepts a frame only when 32 KiB ≤ bytes ≤ 256 KiB AND
+  divisible by 1024. Fixed: validate alignment + range + adequacy; reject a
+  misaligned (262143) or over-ceiling (263168) frame that would revert the tx
+  on-chain before execute.
+- **WRDF-0081** (minor) — the WRD-EXEC-11 hash test was circular (reconstructed
+  from the wrapper's own metas via the same `computeAccountsHash`). Fixed: an
+  INDEPENDENT cross-boundary oracle — the wrapper writes its effective coalesced
+  logical list + hash and the Rust `ts_coalesced_logical_hash_matches` recomputes
+  with the handler's OWN `compute_accounts_hash`, asserting parity; the heap test
+  now asserts frame size/validity, not mere presence.
+
+WRD-EXEC-11/12 evidence refreshed to `64d4fb2` (subset guard, writable-signer
+reject, frame-boundary validation, cross-language coalesced-hash oracle). Gate
+evidence on the immutable ledger HEAD below.
