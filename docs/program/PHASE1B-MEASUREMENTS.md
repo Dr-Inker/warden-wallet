@@ -383,14 +383,15 @@ info finding WRDF-0043 fixed; round 7 over the corrected docs returned nothing).
 
 ## Task 4 (staging) — measured payload cap + gate evidence
 
-**MEASURED `stage_chunk` payload cap = 979 B** (replaces the PROVISIONAL 985 B,
-spec §5.1 / §12.3). `stage::stage_chunk_payload_cap_is_measured` binary-searches
-the largest payload a single `stage_chunk` transaction carries under the fixed
+**MEASURED `stage_chunk` payload cap** (replaces the PROVISIONAL 985 B, spec
+§5.1 / §12.3). `stage::stage_chunk_payload_cap_is_measured` binary-searches the
+largest payload a single `stage_chunk` transaction carries under the fixed
 3-account layout (`disc(8) ‖ offset:u32 ‖ len:u32 ‖ payload`) against the 1,232 B
-packet: the transaction at 979 B payload is exactly **1,232 B** and 980 B
-overflows — the assertion pins the boundary so the number cannot drift from the
-build. Chunk count for a staged payload = `ceil(len / 979)`. `MAX_DATA_LEN`
-(4,096 B) therefore stages in at most 5 chunks.
+packet, for **both serializers**: legacy `Transaction` fits **979 B**; the v0
+`VersionedTransaction` the production client compiles is 2 B larger and fits
+**977 B**. `STAGE_CHUNK_PAYLOAD_CAP = 977` is the **v0/client contract** (the
+conservative of the two); the test pins both exactly. Chunk count = `ceil(len /
+977)`. `MAX_DATA_LEN` (4,096 B) therefore stages in at most 5 chunks.
 
 **Gate at `d47d8ce` (2026-08-20):** `./.claude/test-gate.sh` green (all workspace
 suites + all `.so`); `cargo test -p warden --lib` → 283 passed (incl.
@@ -423,23 +424,29 @@ two prior-art mechanisms are now separate regressions (ND-SQD3 vs Certora H-01
 lifecycle GC). WRDF-0046: `finalize_rejects_noncanonical_smart_account` plants a
 Warden-owned copy at a non-canonical address and proves finalize's stored-seed
 re-derivation actually rejects it (previously unreached by any test). WRDF-0047:
-the cap test now pins `cap == 979` exactly (`== STAGE_CHUNK_PAYLOAD_CAP`, a new
-exported client constant) with `measure(979) == 1232` / `measure(980) > 1232`.
+the cap test now pins BOTH `legacy_cap == 979` and `v0_cap == 977`
+(`== STAGE_CHUNK_PAYLOAD_CAP`, the exported client constant) with
+`measure_v0(977) == 1232` / `measure_v0(978) > 1232` — no silent drift, and the
+client contract is the v0 number (WRDF-0047, round 3).
 WRDF-0048 (info): the full gate is re-run on the final merged SHA below.
 
 **Whole-task review not yet converged** — round 1 raised findings, so Task 4 is
 not DONE until a subsequent review returns 0.
 
-### Task 4 final gate — command, result, SHA (WRDF-0048)
+### Task 4 gate — command, result, SHA (WRDF-0048)
 
-Recorded from an executable run, not prose. At merged SHA
-**`fce5c12`** (round-2 fixes WRDF-0047/0049/0050 applied):
+Recorded from an executable run, not prose. Run on the exact working tree that
+became this commit (all round-3 doc/ledger fixes WRDF-0047/0048/0049 applied,
+WRDF-0050 carried as the release-blocker below). Because a gate artifact must be
+committed, it cannot name its own commit hash; reviewers re-run at HEAD to
+confirm — the delta from the certified tree to HEAD is only this prose
+paragraph, which the gate's TS suites do not exercise:
 
 ```
 $ ./.claude/test-gate.sh
 # exit 0 — all pnpm workspaces + every .so:
 #   warden --lib            283 passed
-#   tests/stage.rs           23 passed   (incl. legacy-979 / v0-977 cap pins)
+#   tests/stage.rs           23 passed   (pins legacy-979 AND v0-977 caps)
 #   tests/sessions.rs        45 passed
 #   tests/transfer.rs        35 passed
 #   registry/freeze/create/create_pop/root_verify/sigverify/smoke  all ok
@@ -448,10 +455,27 @@ $ cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects
 # clean (exit 0)
 ```
 
-Round-2 review adopted WRDF-0047 (v0 cap 977), WRDF-0049 (governing plan seed +
-squat prescription updated), WRDF-0050 (generic per-owner-PDA framing + counsel
-provenance note), WRDF-0048 (this artifact). **Whole-task review still not
-converged** — round 2 raised findings, so Task 4 stays under review until a
-subsequent round returns 0. Owner/counsel item: confirm the non-MIT prior-art
-provenance stance recorded in `state::stage` (the per-owner PDA seed is generic
-Solana practice; no Squads code is reused).
+Round-3 review adopted WRDF-0047 (all client-facing refs now distinguish legacy
+979 / v0-client 977, `ceil(len/977)`), WRDF-0049 (constants.rs / state::stage
+field docs / plan status row / CLAUDE.md / NEXT-SESSION all swept to the
+four-seed address), WRDF-0048 (this artifact). WRDF-0050 is **not** recorded as
+fixed — see the release-blocker below.
+
+### RELEASE-BLOCKER — WRDF-0050 (non-MIT prior-art provenance), carried UNRESOLVED
+
+Not a fix. The Task-4 anti-squat design binds the creator into the Stage PDA
+seeds — the standard Anchor per-owner PDA-namespacing pattern, which I am
+confident is generic Solana practice and independently derivable. But the
+prior-art corpus's licensing rule (spec §5.3 licensing note) is explicit that
+**whether a reimplementation avoids non-MIT reuse is a claim for counsel, not an
+engineering conclusion**, and Squads v4 (source of ND-SQD3-LO-01) is AGPL-3.0,
+reference-only. The round-2 comment rewording removed the "reproduces Squads'
+remedy" lineage and states no code is reused; that reduces exposure but does not
+discharge the requirement.
+
+**Status: open, release-blocking.** Owner/counsel must record a reuse/provenance
+ruling in durable release evidence before Task 4 ships. Until then WRDF-0050 is
+`deferred` in REVIEW-SCORECARD.jsonl (comment rewording done; clearance
+outstanding), NOT adopted-as-fixed. Task 4 whole-task review cannot converge to
+"DONE-shippable" on this item by engineering action alone; it converges to
+"code-complete, one owner/counsel gate open."

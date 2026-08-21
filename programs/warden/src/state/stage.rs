@@ -57,7 +57,7 @@ pub struct Stage {
     /// Schema version; `1` for the only shape Phase 1B writes. `0` is exactly
     /// "this PDA has not been initialised", mirroring `SessionKey`.
     pub version: u8,
-    /// The canonical bump for `["stage", account, hash]`, stored so a later
+    /// The canonical bump for `["stage", account, creator, hash]`, stored so a later
     /// instruction re-derives the address from the account itself rather than
     /// trusting a passed bump.
     pub bump: u8,
@@ -66,7 +66,7 @@ pub struct Stage {
     /// Who opened the stage. The rent-refund destination on every close, so the
     /// cost of a content-address squat lands on the squatter (module docs).
     pub creator: Pubkey,
-    /// `Keccak256(data)`, also the third PDA seed. `stage_finalize` re-hashes
+    /// `Keccak256(data)`, also the fourth PDA seed. `stage_finalize` re-hashes
     /// `data` and rejects a mismatch.
     pub hash: [u8; 32],
     /// Total payload length agreed at `stage_open`. `data` is allocated to

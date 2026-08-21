@@ -77,7 +77,8 @@ Remaining, in campaign-plan order:
    Round 7 confirmation returned **0 findings at `300face`** — Task 3 is DONE.
    **Task 4 CODE COMPLETE, review pending** (`d47d8ce`…`b2aa52b`): stage_open/chunk/
    finalize/close, content-addressed Stage PDA, 21 integration tests incl. the
-   ND-SQD3-LO-01 squat class, MEASURED stage_chunk cap **979 B**; whole-task
+   ND-SQD3-LO-01 squat class (closed by construction via creator-bound seeds),
+   MEASURED stage_chunk cap **977 B v0/client** (979 legacy); whole-task
    sol@max review in flight.
    **NEXT: close Task 4 review, then Task 5** (`execute`),
    then **5 → 6 → 8 → 9**. Task 5 must wire the

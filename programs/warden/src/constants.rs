@@ -3,7 +3,7 @@ use anchor_lang::prelude::Pubkey;
 pub const ACCOUNT_SEED: &[u8] = b"account";
 pub const SESSION_SEED: &[u8] = b"session";
 pub const REGISTRY_SEED: &[u8] = b"registry";
-/// PDA seed prefix for a `Stage` (Task 4): `["stage", account, hash]`.
+/// PDA seed prefix for a `Stage` (Task 4): `["stage", account, creator, hash]`.
 pub const STAGE_SEED: &[u8] = b"stage";
 /// Largest payload a single `Stage` may hold (spec §5.1). A staged payload is
 /// instruction-data relief only — the account list still rides in the `execute`

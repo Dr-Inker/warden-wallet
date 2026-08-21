@@ -2398,7 +2398,7 @@
           {
             "name": "bump",
             "docs": [
-              "The canonical bump for `[\"stage\", account, hash]`, stored so a later",
+              "The canonical bump for `[\"stage\", account, creator, hash]`, stored so a later",
               "instruction re-derives the address from the account itself rather than",
               "trusting a passed bump."
             ],
@@ -2422,7 +2422,7 @@
           {
             "name": "hash",
             "docs": [
-              "`Keccak256(data)`, also the third PDA seed. `stage_finalize` re-hashes",
+              "`Keccak256(data)`, also the fourth PDA seed. `stage_finalize` re-hashes",
               "`data` and rejects a mismatch."
             ],
             "type": {
