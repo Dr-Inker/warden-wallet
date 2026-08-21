@@ -93,12 +93,22 @@ Remaining, in campaign-plan order:
    parser into `enforce_pda_writable` (handler, post-`deny_scan`) so the rule-4a
    vault-sweep close can credit the PDA while a writable PDA stays refused
    elsewhere. Errors 6056/6057.
-   **NEXT for Task 5 → DONE:** (a) whole-task Codex sol@max review to 0 findings
-   (round 1 launched at `3632deb`); (b) the CU/byte **measurement sweep** that
-   replaces the PROVISIONAL caps `MAX_EXECUTE_ACCOUNTS_TOTAL=48`/
-   `MAX_EXECUTE_WRITABLE=40` (see PHASE1B-MEASUREMENTS §"Task 5"). Task-1-owed
-   regressions still to fold in through a real CPI: native-lamport SOL
-   (`SyncNative`+`Transfer`, WRDF-0011) and the standalone-mint case.
+   **Task 5 DONE (2026-08-21).** 4 sol@max review rounds converged (no new
+   program findings by round 4): WRDF-0053 whole-logical-list uniqueness fixed
+   (6059) + WRDF-0051 Jupiter direct-guard (6058, defense-in-depth, claim
+   corrected round 2) + WRDF-0055 ceremony-bound-submitter doc+test + WRDF-0056
+   WRD-EXEC-07 narrowed + WRDF-0057 gate evidence recorded. Standing
+   `deferred`: 0051-nested → Task 6 adapter preflight; 0052 events → Task 5E;
+   0054 dead System adapter → Task-3 hygiene. **Sweep verdict (measured, in
+   PHASE1B-MEASUREMENTS §Task 5): the caps are HEAP-bound —
+   `MAX_EXECUTE_ACCOUNTS_TOTAL=24` / `MAX_EXECUTE_WRITABLE=20`** (22-writable
+   OK / 24 OOM on the default 32 KiB heap; `RequestHeapFrame` inert under
+   Anchor's capped allocator; worst CU 83.8k ≪ 360k; v0+ALT ≤ 486 B),
+   boundary-tested on-chain. **Task 6 PREREQUISITE: a custom allocator or a
+   streaming after-snapshot (then re-sweep) before Jupiter-scale account
+   counts — a bare cap bump ships an OOM cliff.** Task-1-owed real-CPI
+   regressions (native-lamport `SyncNative`+`Transfer` WRDF-0011;
+   standalone-mint) fold into Task 6's suite alongside its Jupiter fixtures.
    **Then 6 → 8 → 9.** **C1a needs a program change** (`create_account` must
    compare against a pinned production `rp_id_hash`, not just self-consistency —
    WRDF-0016/0027) plus the owner's freeze-vs-migration decision.

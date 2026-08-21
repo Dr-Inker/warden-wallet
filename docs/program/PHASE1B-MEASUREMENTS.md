@@ -624,3 +624,66 @@ decreasing (important+minor → minor doc/claim accuracy).
 **Owed before Task 5 is DONE:** the CU/byte measurement sweep (above), and a
 confirmation round returning no NEW adoptable findings (the three standing
 re-flags are `deferred` by ruling, not open program defects).
+
+### Task 5 measurement sweep — the caps are HEAP-bound, not CU- or byte-bound
+
+**Run 2026-08-21 (LiteSVM, session path, one real SPL-transfer CPI per shape,
+top-level `SetComputeUnitLimit(600_000)`; harness = the `measure_*` tests in
+`tests/execute.rs`).**
+
+| shape | CU | legacy B | v0 B | v0+ALT B |
+|---|---|---|---|---|
+| 10 writable vault ATAs | 49,080 | 833 | 835 | 466 |
+| 19 writable vault ATAs (at-cap) | 74,244 | 1,130 | 1,132 | 484 |
+| read-heavy: 4 writable + 16 read-only token accts (23 remaining) | 62,757 | 1,163 | 1,165 | 486 |
+| T22-tail: 4 writable + 10 T22 accts w/ 151-B TLV | 55,844 | — | — | — |
+| 19-writable, staged (stage consume incl.) | 77,311 | — | — | — |
+
+**The heap-ceiling probe that SET the caps** (`probe_shape`, panic-safe): on
+the **default 32 KiB SBF heap**, a 22-writable shape (25 remaining) executes at
+83,802 CU; **24 writable (27 remaining) dies with "memory allocation failed,
+out of memory"** — two full `Vec<Snap>` snapshots at roughly 0.5 KiB/account
+are exactly that scale. **A top-level `RequestHeapFrame(128 KiB)` does NOT
+relieve it**: the frame instruction is processed (measured +198 CU) but
+Anchor's default bump allocator is hard-capped at 32 KiB regardless of the
+frame the runtime grants. CU (worst measured 83.8k ≪ the 360k = 60 %-of-600k
+ceiling) and bytes (v0+ALT ≤ 486 B; legacy/v0 without an ALT exceed 1,232 B
+past ~30 total keys, as the spec's 35–43 `totalKeys` band predicted) are
+nowhere near binding.
+
+**Caps pinned from this evidence (replaces PROVISIONAL 48/40):**
+`MAX_EXECUTE_ACCOUNTS_TOTAL = 24`, `MAX_EXECUTE_WRITABLE = 20` — one inside
+the verified 25-remaining shape. Boundary-tested on-chain now that the caps
+are within the harness's reach: `execute_writable_cap_boundary` (20 writable
+passes, 21 → 6057), `execute_total_cap_boundary` (24 remaining passes, 25 →
+6056), and `over_cap_shapes_reject_cleanly_before_the_heap_ceiling` (22/26/30-
+writable shapes fail the cheap count check, never the allocator — the OOM is
+unreachable by construction).
+
+**Task 6 prerequisite opened by this sweep:** a ~40-account Jupiter route
+cannot fit under a 24-account cap, and raising the cap requires making the
+handler's memory scale — a custom allocator honoring the requested heap frame,
+or a streaming after-snapshot that compares per-account instead of holding two
+full `Vec<Snap>`s — followed by a re-sweep. A bare constant bump would ship an
+OOM liveness cliff (fail-closed, but a cliff). Recorded here so Task 6 starts
+from the constraint, not from the PROVISIONAL numbers.
+
+### Task 5 round 4 + gate evidence at the final SHA (WRDF-0057)
+
+**Round 4 (`cfd69fa`, Codex sol@max, 4 findings):** the three standing
+re-flags (WRDF-0051/0052/0054, rulings unchanged: `deferred` to Task 6 / Task
+5E / Task-3 hygiene) plus WRDF-0057 (minor, adopted) — the round-3 section
+claimed verification without recording a **full gate at the reviewed SHA**.
+Fixed by this section: the full merged-SHA gate below is the recorded,
+reproducible evidence for the Task 5 close-out commit. **No new program
+findings in round 4** — convergence per the A0 precedent (new-finding severity
+strictly decreasing across rounds 1→4: code defect → claim correction → doc
+accuracy → evidence hygiene).
+
+**Gate at the Task 5 close-out SHA** (recorded by the close-out commit that
+carries this section; the pre-commit hook runs the same gate and blocks on
+red): `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → green end-to-end —
+`cargo test --workspace` (warden lib 321; `tests/execute.rs` 36 incl. the
+sweep + boundary tests; all other suites), `.so` builds for all four programs,
+IDL parity, `pnpm` TS suites (`@warden/core` 109, ui-tokens 11), plus
+`cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects` clean.

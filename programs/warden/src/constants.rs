@@ -28,18 +28,24 @@ pub const STAGE_MAX_TTL_SECS: i64 = 3600;
 /// `stage::stage_chunk_payload_cap_is_measured` (the v0 tx at this cap is exactly
 /// 1,232 B; one more byte overflows) — a wire contract, not a soft estimate.
 pub const STAGE_CHUNK_PAYLOAD_CAP: usize = 977;
-/// PROVISIONAL (spec §5.2 account cap): the most `remaining_accounts` one
-/// `execute` accepts — every logical account past the two privileged slots,
-/// writable or not, because ALL of them are snapshotted (spec §5.2 rule 2).
-/// Task 5's measurement sweep fixes both `MAX_EXECUTE_*` caps with margin
-/// against the CU budget the extension requests AND the 1,232-B packet;
-/// PHASE1B-MEASUREMENTS.md records the sweep that replaces PROVISIONAL.
-pub const MAX_EXECUTE_ACCOUNTS_TOTAL: usize = 48;
-/// PROVISIONAL (spec §5.2 account cap): the most **writable** remaining
-/// accounts one `execute` accepts. Writable accounts are the ones a CPI can
-/// actually mutate, so they bound the comparison work as well as the packet;
-/// the spec's observed byte breakpoint (35–43 totalKeys) motivates 40.
-pub const MAX_EXECUTE_WRITABLE: usize = 40;
+/// MEASURED (Task 5 sweep, 2026-08-21 — PHASE1B-MEASUREMENTS.md §"Task 5"):
+/// the most `remaining_accounts` one `execute` accepts — every logical account
+/// past the two privileged slots, writable or not, because ALL of them are
+/// snapshotted twice (spec §5.2 rule 2). The binding constraint is **SBF
+/// HEAP**, not CU or bytes: two full `Vec<Snap>` snapshots exhaust the default
+/// 32 KiB at ~27 remaining accounts (22-writable shape OK at 83.8k CU, 24
+/// OOM), and a `RequestHeapFrame` does NOT relieve it — Anchor's default bump
+/// allocator is hard-capped at 32 KiB regardless of the frame the runtime
+/// grants (measured: frame ix processed, +198 CU, still OOM). 24 sits one
+/// inside the verified-working 25-remaining shape. Raising this for Task 6's
+/// ~40-account Jupiter routes requires a custom allocator or a streaming
+/// after-snapshot, then a re-sweep — never a bare constant bump.
+pub const MAX_EXECUTE_ACCOUNTS_TOTAL: usize = 24;
+/// MEASURED (same sweep): the most **writable** remaining accounts one
+/// `execute` accepts. Writable accounts are the ones a CPI can actually
+/// mutate; 20 keeps the worst writable-heavy shape inside the same verified
+/// heap ceiling with the same one-account margin.
+pub const MAX_EXECUTE_WRITABLE: usize = 20;
 pub const MAX_CLIENT_DATA_LEN: usize = 512;
 pub const MAX_ROOT_EXPIRY_SECS: i64 = 600;
 /// Maximum age, **in slots**, of a root passkey ceremony (spec §4, rev 8).

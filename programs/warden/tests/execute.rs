@@ -39,7 +39,8 @@ use solana_sdk::{
     transaction::{Transaction, TransactionError},
 };
 use warden::constants::{
-    COMPUTE_BUDGET_ID, MAX_EXECUTE_ACCOUNTS_TOTAL, NATIVE_MINT, SPL_TOKEN_ID, STAGE_SEED,
+    COMPUTE_BUDGET_ID, MAX_EXECUTE_ACCOUNTS_TOTAL, NATIVE_MINT, SPL_TOKEN_2022_ID, SPL_TOKEN_ID,
+    STAGE_SEED,
 };
 use warden::instructions::create_account::MIN_TIMELOCK_SECS;
 use warden::instructions::execute::{ExecuteArgs, ExecuteBody};
@@ -579,22 +580,19 @@ fn execute_compute_budget_inside_rejected() {
     expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::COMPUTE_BUDGET_IN_EXECUTE);
 }
 
-// NOTE: `MAX_EXECUTE_ACCOUNTS_TOTAL` / `MAX_EXECUTE_WRITABLE` are enforced in
-// the handler (a length comparison, `TooManyExecuteAccounts` /
-// `TooManyExecuteWritable`) but are deliberately NOT boundary-tested here: a
-// tx carrying 49+ accounts trips a panic inside this LiteSVM/solana build's
-// compute-budget message sanitizer ("program id index is sanitized") before
-// the program ever runs — a harness limit, not a program one. Both caps are
-// PROVISIONAL and owed a Task 5 CU/byte measurement sweep (see
-// PHASE1B-MEASUREMENTS.md), which is where the real boundary values — and
-// their on-chain boundary tests — belong. `_ = MAX_EXECUTE_ACCOUNTS_TOTAL;`
-// keeps the constant referenced from a lower-count sanity assert below.
+// `MAX_EXECUTE_ACCOUNTS_TOTAL` / `MAX_EXECUTE_WRITABLE` are MEASURED values
+// (Task 5 sweep): the binding constraint is SBF heap (22-writable OK, 24 OOM
+// on the default 32 KiB; heap frames inert under Anchor's capped allocator),
+// so the caps sit one inside the verified shape. Boundary tests live in the
+// measurement section below (`execute_writable_cap_boundary`,
+// `execute_total_cap_boundary`, `over_cap_shapes_reject_cleanly_...`).
 #[test]
-fn execute_account_caps_are_provisional_and_ordered() {
-    // A sanity floor on the constants until the sweep pins them: the writable
-    // cap cannot exceed the total, and both are positive.
+fn execute_account_caps_are_measured_and_ordered() {
+    // The sweep-pinned values (PHASE1B-MEASUREMENTS §Task 5): 24 total / 20
+    // writable, one inside the verified 25-remaining default-heap shape.
+    assert_eq!(MAX_EXECUTE_ACCOUNTS_TOTAL, 24);
+    assert_eq!(warden::constants::MAX_EXECUTE_WRITABLE, 20);
     assert!(warden::constants::MAX_EXECUTE_WRITABLE <= MAX_EXECUTE_ACCOUNTS_TOTAL);
-    assert!(MAX_EXECUTE_ACCOUNTS_TOTAL > 0);
 }
 
 // ===========================================================================
@@ -1095,6 +1093,421 @@ struct StageOpenArgsMirror {
 struct StageChunkArgsMirror {
     offset: u32,
     bytes: Vec<u8>,
+}
+
+// ===========================================================================
+// Task 5 measurement sweep — CU + bytes per shape (PHASE1B-MEASUREMENTS.md).
+//
+// Replaces the PROVISIONAL account caps with evidence: every measured shape
+// must stay ≤ 60 % of the 600k-CU budget the extension requests (spec §5.2),
+// i.e. ≤ 360k CU. LiteSVM does NOT enforce the 1,232-B packet, so byte
+// figures are measured separately per serializer (legacy / v0 / v0+ALT) and
+// recorded even when a shape only fits with an ALT.
+// ===========================================================================
+
+/// Top-level `SetComputeUnitLimit` (tag 2 ‖ u32 LE) — hand-encoded so the
+/// suite needs no compute-budget crate; the tag is a stable wire fact.
+fn cu_limit_ix(limit: u32) -> Instruction {
+    let mut data = vec![2u8];
+    data.extend_from_slice(&limit.to_le_bytes());
+    Instruction { program_id: COMPUTE_BUDGET_ID, accounts: vec![], data }
+}
+
+/// The measured shape: `n_writable` vault token accounts (first is the CPI
+/// source) + `extra` appended read-only accounts, one real SPL-transfer CPI.
+/// Returns (consumed CU, legacy bytes, v0 bytes, v0+ALT bytes).
+fn measure_shape(
+    n_writable: usize,
+    extra: Vec<AccountMeta>,
+    staged: bool,
+) -> (u64, usize, usize, usize) {
+    let (mut svm, payer, _pk, account, registry, _mut, _vault_ata) = live();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let mint = tok_mint();
+    let dest = dest_ata(&mut svm);
+
+    // n writable vault token accounts of the one mint; ata[0] is the source.
+    let mut atas = Vec::with_capacity(n_writable);
+    for _ in 0..n_writable {
+        let a = Pubkey::new_unique();
+        set_token_account(&mut svm, &a, &mint, &account, 1_000_000);
+        atas.push(a);
+    }
+
+    let mut remaining: Vec<AccountMeta> =
+        atas.iter().map(|a| AccountMeta::new(*a, false)).collect();
+    remaining.push(AccountMeta::new(dest, false)); // logical 2 + n
+    remaining.push(AccountMeta::new_readonly(SPL_TOKEN_ID, false)); // 3 + n
+    remaining.push(mint_meta()); // 4 + n
+    remaining.extend(extra);
+
+    let n = n_writable as u8;
+    let mut data = vec![3u8];
+    data.extend_from_slice(&1_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        3 + n,
+        &[(2, FLAG_WRITABLE), (2 + n, FLAG_WRITABLE), (0, FLAG_SIGNER), (3 + n, 0)],
+        &data,
+    )]);
+
+    let (args, stage, creator) = if staged {
+        let (stage, creator) = stage_payload(&mut svm, &payer, &account, &payload);
+        (ExecuteArgs { root: None, payload: None }, Some(stage), Some(creator))
+    } else {
+        (ExecuteArgs { root: None, payload: Some(payload) }, None, None)
+    };
+    let (ix, _l) = execute_ix(
+        session_kp.pubkey(),
+        account,
+        Some(session),
+        false,
+        stage,
+        Some(registry),
+        creator,
+        &remaining,
+        &args,
+    );
+
+    // Byte figures for the execute transaction WITHOUT the CB instruction
+    // (the wrapper adds ~40 B for it uniformly; the shape comparison is what
+    // matters). ALT covers every remaining account, the realistic client move.
+    let blockhash = svm.latest_blockhash();
+    let legacy_tx = Transaction::new(
+        &[&payer, &session_kp],
+        Message::new(std::slice::from_ref(&ix), Some(&payer.pubkey())),
+        blockhash,
+    );
+    let legacy_bytes = bincode::serialize(&legacy_tx).unwrap().len();
+    let v0_bytes = v0_tx_size(&ix, &payer, &session_kp, blockhash, &[]);
+    let alt = solana_sdk::message::AddressLookupTableAccount {
+        key: Pubkey::new_unique(),
+        addresses: remaining.iter().map(|m| m.pubkey).collect(),
+    };
+    let alt_bytes = v0_tx_size(&ix, &payer, &session_kp, blockhash, &[alt]);
+
+    let meta = expect_ok(&mut svm, &[&payer, &session_kp], &[cu_limit_ix(600_000), ix]);
+    (meta.compute_units_consumed, legacy_bytes, v0_bytes, alt_bytes)
+}
+
+fn v0_tx_size(
+    ix: &Instruction,
+    payer: &Keypair,
+    session_kp: &Keypair,
+    blockhash: solana_sdk::hash::Hash,
+    alts: &[solana_sdk::message::AddressLookupTableAccount],
+) -> usize {
+    use solana_sdk::message::{v0, VersionedMessage};
+    use solana_sdk::transaction::VersionedTransaction;
+    let m = v0::Message::try_compile(&payer.pubkey(), std::slice::from_ref(ix), alts, blockhash)
+        .expect("v0 compile");
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(m), &[payer, session_kp])
+        .expect("v0 sign");
+    bincode::serialize(&tx).unwrap().len()
+}
+
+/// A stranger-owned SPL token account (read-only ballast for the read-heavy
+/// shape — parsed by the snapshot, ignored by the comparison).
+fn stranger_token_meta(svm: &mut LiteSVM) -> AccountMeta {
+    let a = Pubkey::new_unique();
+    set_token_account(svm, &a, &tok_mint(), &Pubkey::new_unique(), 5);
+    AccountMeta::new_readonly(a, false)
+}
+
+/// A stranger-owned Token-2022 token account carrying a ~151-B TLV tail
+/// (AccountType byte + one well-formed unmodeled entry) — measures the
+/// snapshot's tail-hash cost.
+fn t22_tail_account(svm: &mut LiteSVM) -> AccountMeta {
+    use solana_sdk::{account::Account, program_pack::Pack};
+    use spl_token::state::{Account as SplAccount, AccountState};
+    let a = SplAccount {
+        mint: tok_mint(),
+        owner: Pubkey::new_unique(),
+        amount: 5,
+        delegate: solana_sdk::program_option::COption::None,
+        state: AccountState::Initialized,
+        is_native: solana_sdk::program_option::COption::None,
+        delegated_amount: 0,
+        close_authority: solana_sdk::program_option::COption::None,
+    };
+    let mut data = vec![0u8; SplAccount::LEN];
+    a.pack_into_slice(&mut data);
+    data.push(2); // AccountType::Account at offset 165
+    data.extend_from_slice(&100u16.to_le_bytes()); // unmodeled TLV type
+    data.extend_from_slice(&146u16.to_le_bytes()); // len
+    data.extend_from_slice(&[0xAB; 146]);
+    let key = Pubkey::new_unique();
+    svm.set_account(
+        key,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(data.len()),
+            data,
+            owner: SPL_TOKEN_2022_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("plant t22");
+    AccountMeta::new_readonly(key, false)
+}
+
+const CU_BUDGET_CEILING: u64 = 360_000; // 60 % of the 600k the extension requests
+
+/// Top-level `RequestHeapFrame` (tag 1 ‖ u32 LE bytes, multiple of 1024,
+/// ≤ 256 KiB) — the wrapper adds this for large shapes, exactly as it adds
+/// `SetComputeUnitLimit` (spec §5.2's compute-budget hoisting).
+fn heap_frame_ix(bytes: u32) -> Instruction {
+    let mut data = vec![1u8];
+    data.extend_from_slice(&bytes.to_le_bytes());
+    Instruction { program_id: COMPUTE_BUDGET_ID, accounts: vec![], data }
+}
+
+/// Panic-safe probe of one writable-N shape: builds a fresh SVM, runs the
+/// shape with an optional heap frame, and classifies the outcome — the
+/// harness's own message sanitizer panics somewhere past ~42 remaining
+/// accounts, and that must read as HARNESS-CEILING, not as a program result.
+fn probe_shape(n_writable: usize, heap_bytes: Option<u32>) -> String {
+    let out = std::panic::catch_unwind(|| {
+        let (mut svm, payer, _pk, account, registry, _mut, _vault_ata) = live();
+        let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+        let mint = tok_mint();
+        let dest = dest_ata(&mut svm);
+        let mut atas = Vec::new();
+        for _ in 0..n_writable {
+            let a = Pubkey::new_unique();
+            set_token_account(&mut svm, &a, &mint, &account, 1_000_000);
+            atas.push(a);
+        }
+        let mut remaining: Vec<AccountMeta> =
+            atas.iter().map(|a| AccountMeta::new(*a, false)).collect();
+        remaining.push(AccountMeta::new(dest, false));
+        remaining.push(AccountMeta::new_readonly(SPL_TOKEN_ID, false));
+        remaining.push(mint_meta());
+        let n = n_writable as u8;
+        let mut data = vec![3u8];
+        data.extend_from_slice(&1_000u64.to_le_bytes());
+        let payload = encode_payload(&[(
+            3 + n,
+            &[(2, FLAG_WRITABLE), (2 + n, FLAG_WRITABLE), (0, FLAG_SIGNER), (3 + n, 0)],
+            &data,
+        )]);
+        let args = ExecuteArgs { root: None, payload: Some(payload) };
+        let (ix, _l) = execute_ix(
+            session_kp.pubkey(), account, Some(session), false, None, Some(registry), None,
+            &remaining, &args,
+        );
+        let mut ixs = vec![cu_limit_ix(600_000)];
+        if let Some(h) = heap_bytes {
+            ixs.push(heap_frame_ix(h));
+        }
+        ixs.push(ix);
+        match send(&mut svm, &[&payer, &session_kp], &ixs) {
+            Ok(m) => format!("OK cu={}", m.compute_units_consumed),
+            Err(e) => {
+                let oom = e.meta.logs.iter().any(|l| l.contains("out of memory"));
+                if oom { "OOM (32KiB default heap)".into() } else { format!("ERR {:?}", e.err) }
+            }
+        }
+    });
+    out.unwrap_or_else(|_| "HARNESS-CEILING (litesvm sanitizer panic)".into())
+}
+
+#[test]
+fn measure_sweep_writable_n() {
+    // Strict in-cap shapes (CU + bytes). The heap-ceiling probe that SET the
+    // caps (22-writable OK / 24 OOM on the default 32 KiB heap, heap frame
+    // inert under Anchor's capped allocator) is recorded in
+    // PHASE1B-MEASUREMENTS.md; with the measured caps in force those shapes
+    // now reject at the cap check — pinned by
+    // `over_cap_shapes_reject_cleanly_before_the_heap_ceiling` below.
+    let mut worst = 0u64;
+    println!("\n| shape | CU | legacy B | v0 B | v0+ALT B |");
+    println!("|---|---|---|---|---|");
+    for n in [10usize, 19] {
+        let (cu, lb, vb, ab) = measure_shape(n, vec![], false);
+        println!("| {n} writable vault ATAs, 1 SPL-transfer CPI | {cu} | {lb} | {vb} | {ab} |");
+        worst = worst.max(cu);
+        assert!(cu <= CU_BUDGET_CEILING, "n={n} consumed {cu} CU");
+    }
+    println!("| worst strict shape CU | {worst} | | | |");
+}
+
+#[test]
+fn over_cap_shapes_reject_cleanly_before_the_heap_ceiling() {
+    // The measured heap ceiling (OOM at 24 writable / ~27 remaining on the
+    // default 32 KiB heap) must be UNREACHABLE by construction: every over-cap
+    // shape fails the cheap count check (6056/6057), never the allocator.
+    for n in [22usize, 26, 30] {
+        let out = probe_shape(n, None);
+        assert!(
+            out.contains("Custom(6057)") || out.contains("Custom(6056)"),
+            "n={n}: expected a clean cap rejection, got {out}"
+        );
+        assert!(!out.contains("OOM"), "n={n} reached the allocator: {out}");
+    }
+}
+
+#[test]
+fn execute_writable_cap_boundary() {
+    // 19 vault ATAs + writable dest = 20 writable (== MAX_EXECUTE_WRITABLE) →
+    // OK; 20 ATAs + dest = 21 → TooManyExecuteWritable.
+    assert!(probe_shape(19, None).starts_with("OK"), "at-cap shape must pass");
+    let over = probe_shape(20, None);
+    assert!(over.contains("Custom(6057)"), "one over the writable cap: {over}");
+}
+
+#[test]
+fn execute_total_cap_boundary() {
+    // 1 writable source + writable dest + SPL + mint + N read-only strangers:
+    // 24 remaining (== MAX_EXECUTE_ACCOUNTS_TOTAL) passes, 25 rejects 6056.
+    let ok = probe_total(20); // 1W src + dest + spl + mint + 20 RO = 24
+    assert!(ok.starts_with("OK"), "at-total-cap shape must pass: {ok}");
+    let over = probe_total(21); // 25 remaining
+    assert!(over.contains("Custom(6056)"), "one over the total cap: {over}");
+}
+
+/// Panic-safe probe of a total-cap shape: 1 writable vault source + writable
+/// dest + SPL + mint + `n_readonly` stranger token accounts.
+fn probe_total(n_readonly: usize) -> String {
+    let out = std::panic::catch_unwind(|| {
+        let (mut svm, payer, _pk, account, registry, _mut, vault_ata) = live();
+        let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+        let dest = dest_ata(&mut svm);
+        let mut remaining = vec![
+            AccountMeta::new(vault_ata, false),
+            AccountMeta::new(dest, false),
+            AccountMeta::new_readonly(SPL_TOKEN_ID, false),
+            mint_meta(),
+        ];
+        for _ in 0..n_readonly {
+            remaining.push(stranger_token_meta(&mut svm));
+        }
+        let mut data = vec![3u8];
+        data.extend_from_slice(&1_000u64.to_le_bytes());
+        let payload = encode_payload(&[(
+            4,
+            &[(2, FLAG_WRITABLE), (3, FLAG_WRITABLE), (0, FLAG_SIGNER), (4, 0)],
+            &data,
+        )]);
+        let args = ExecuteArgs { root: None, payload: Some(payload) };
+        let (ix, _l) = execute_ix(
+            session_kp.pubkey(), account, Some(session), false, None, Some(registry), None,
+            &remaining, &args,
+        );
+        match send(&mut svm, &[&payer, &session_kp], &[cu_limit_ix(600_000), ix]) {
+            Ok(m) => format!("OK cu={}", m.compute_units_consumed),
+            Err(e) => format!("ERR {:?}", e.err),
+        }
+    });
+    out.unwrap_or_else(|_| "HARNESS-CEILING".into())
+}
+
+#[test]
+fn measure_read_heavy_shape() {
+    // 4 writable vault ATAs + 16 read-only stranger token accounts
+    // (23 remaining incl. dest/program/mint — one inside the measured total
+    // cap, read-heavy in shape).
+    let (cu, lb, vb, ab) = measure_read_heavy_inner(16);
+    println!("\n| read-heavy: 4 writable + 16 read-only token accts (23 remaining) | {cu} CU | legacy {lb} B | v0 {vb} B | v0+ALT {ab} B |");
+    assert!(cu <= CU_BUDGET_CEILING, "read-heavy consumed {cu} CU");
+}
+
+fn measure_read_heavy_inner(n_readonly: usize) -> (u64, usize, usize, usize) {
+    // measure_shape with strangers appended requires planting them in ITS svm;
+    // duplicate the minimal body here with the extras planted in place.
+    let (mut svm, payer, _pk, account, registry, _mut, _vault_ata) = live();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let mint = tok_mint();
+    let dest = dest_ata(&mut svm);
+    let n_writable = 4usize;
+    let mut atas = Vec::new();
+    for _ in 0..n_writable {
+        let a = Pubkey::new_unique();
+        set_token_account(&mut svm, &a, &mint, &account, 1_000_000);
+        atas.push(a);
+    }
+    let mut remaining: Vec<AccountMeta> =
+        atas.iter().map(|a| AccountMeta::new(*a, false)).collect();
+    remaining.push(AccountMeta::new(dest, false));
+    remaining.push(AccountMeta::new_readonly(SPL_TOKEN_ID, false));
+    remaining.push(mint_meta());
+    for _ in 0..n_readonly {
+        remaining.push(stranger_token_meta(&mut svm));
+    }
+    let n = n_writable as u8;
+    let mut data = vec![3u8];
+    data.extend_from_slice(&1_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        3 + n,
+        &[(2, FLAG_WRITABLE), (2 + n, FLAG_WRITABLE), (0, FLAG_SIGNER), (3 + n, 0)],
+        &data,
+    )]);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _l) = execute_ix(
+        session_kp.pubkey(), account, Some(session), false, None, Some(registry), None,
+        &remaining, &args,
+    );
+    let blockhash = svm.latest_blockhash();
+    let legacy_bytes = bincode::serialize(&Transaction::new(
+        &[&payer, &session_kp],
+        Message::new(std::slice::from_ref(&ix), Some(&payer.pubkey())),
+        blockhash,
+    ))
+    .unwrap()
+    .len();
+    let v0_bytes = v0_tx_size(&ix, &payer, &session_kp, blockhash, &[]);
+    let alt = solana_sdk::message::AddressLookupTableAccount {
+        key: Pubkey::new_unique(),
+        addresses: remaining.iter().map(|m| m.pubkey).collect(),
+    };
+    let alt_bytes = v0_tx_size(&ix, &payer, &session_kp, blockhash, &[alt]);
+    let meta = expect_ok(&mut svm, &[&payer, &session_kp], &[cu_limit_ix(600_000), ix]);
+    (meta.compute_units_consumed, legacy_bytes, v0_bytes, alt_bytes)
+}
+
+#[test]
+fn measure_t22_tail_shape() {
+    // 4 writable vault ATAs + 10 T22 accounts each carrying a ~151-B TLV tail.
+    let (mut svm, payer, _pk, account, registry, _mut, _vault_ata) = live();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let mint = tok_mint();
+    let dest = dest_ata(&mut svm);
+    let mut atas = Vec::new();
+    for _ in 0..4usize {
+        let a = Pubkey::new_unique();
+        set_token_account(&mut svm, &a, &mint, &account, 1_000_000);
+        atas.push(a);
+    }
+    let mut remaining: Vec<AccountMeta> =
+        atas.iter().map(|a| AccountMeta::new(*a, false)).collect();
+    remaining.push(AccountMeta::new(dest, false));
+    remaining.push(AccountMeta::new_readonly(SPL_TOKEN_ID, false));
+    remaining.push(mint_meta());
+    for _ in 0..10 {
+        remaining.push(t22_tail_account(&mut svm));
+    }
+    let mut data = vec![3u8];
+    data.extend_from_slice(&1_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        7,
+        &[(2, FLAG_WRITABLE), (6, FLAG_WRITABLE), (0, FLAG_SIGNER), (7, 0)],
+        &data,
+    )]);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _l) = execute_ix(
+        session_kp.pubkey(), account, Some(session), false, None, Some(registry), None,
+        &remaining, &args,
+    );
+    let meta = expect_ok(&mut svm, &[&payer, &session_kp], &[cu_limit_ix(600_000), ix]);
+    println!("\n| T22-tail: 4 writable + 10 T22 (151-B TLV) | {} CU |", meta.compute_units_consumed);
+    assert!(meta.compute_units_consumed <= CU_BUDGET_CEILING);
+}
+
+#[test]
+fn measure_staged_vs_inline() {
+    let (cu_inline, _lb, _vb, _ab) = measure_shape(19, vec![], false);
+    let (cu_staged, _lb2, _vb2, _ab2) = measure_shape(19, vec![], true);
+    println!("\n| 19-writable inline | {cu_inline} CU |\n| 19-writable staged | {cu_staged} CU |");
+    assert!(cu_inline <= CU_BUDGET_CEILING && cu_staged <= CU_BUDGET_CEILING);
 }
 
 // ---------------------------------------------------------------------------
