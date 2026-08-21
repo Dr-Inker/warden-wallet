@@ -1322,3 +1322,23 @@ important, 1 minor). Fixed/adjudicated at `a937838`.
 **Gate on the immutable ledger HEAD `a7675b609a9385b8abe494bb06bc38cb58e82623`:**
 `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
 194/194, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
+
+## Task 11R review round 4 — Codex sol@max (thread eaf59e4ab10a-20260821T215313Z)
+
+Round 4 (`d42b212..eaf59e4`, seeded=41) raised 3 findings (1 critical, 1 important,
+1 minor). Fixed/adjudicated at `3fd64f5`.
+
+- **WRDF-0085** (critical, 4th) — the release-sha now selects a UNIQUE manifest:
+  RELEASE-INTEGRITY binds `manifest:<name>@<sha256>`; deploy-gate.sh refuses a
+  --manifest name mismatch; `resolveManifestForRelease` refuses a digest mismatch.
+  With the clean-tree + HEAD==release-commit binding, the selection is unique +
+  checkout-bound.
+- **WRDF-0088** (important) — a REAL bug: `fail` was called before its definition
+  (fail-closed only by luck) — moved up. Added a shell integration suite
+  (`deploy-gate-script.test.ts`) that runs the actual script + a digest-mismatch
+  unit test; WRD-DEP-01 evidence bumped to `3fd64f5`.
+- **WRDF-0090** (minor) — DEPLOY-GATE.md no longer tells operators to pass the
+  removed `--proposal-audit-attested`; live mode is unconditionally refused on the
+  proposal audit (no bypass).
+
+198 core tests. Gate evidence on the ledger HEAD below.
