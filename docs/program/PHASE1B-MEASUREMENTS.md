@@ -1411,3 +1411,19 @@ Fixed/adjudicated at `5e5ce7a`.
 **Gate on the immutable ledger HEAD `269b7545f191887fd6d018af8d02fa95ec50d800`:**
 `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
 208/208, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
+
+## Task 11R review round 8 — Codex sol@max (thread 9aab7f1e7c2a-20260821T231648Z)
+
+Round 8 (`9a459ac..9aab7f1`, seeded=41) raised 2 important — WRDF-0085 finally
+CLEARED (not re-flagged). Fixed/adjudicated at `e9c07cc`.
+
+- **WRDF-0092** (important, new) — the `WARDEN_DEPLOY_VERIFIER` env override I added
+  for testing was a production-reachable BYPASS (set it → the gate labels RPC checks
+  passed without running them). REMOVED entirely; tests shadow `pnpm` on PATH. Shell
+  also validates the parse-only output is exactly one 64-hex hash.
+- **WRDF-0088** (important) — the full-gate test accepted broken wiring. Rewrote with
+  a committed pnpm-shadow enforcing the verifier's flag/value contract, exact-arg-
+  array assertion, a failing-verifier nonzero-propagation case, and restored explicit
+  refusal assertions.
+
+209 core tests. Gate evidence on the ledger HEAD below.
