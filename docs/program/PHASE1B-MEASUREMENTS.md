@@ -1385,3 +1385,8 @@ Fixed/adjudicated at `011903d`.
   suite (accept clean+ancestor; refuse dirty/non-ancestor/unresolved).
 
 205 core tests. Gate evidence on the ledger HEAD below.
+
+### Task 11R round-6 gate evidence
+**Gate on the immutable ledger HEAD `b545f085439b39b61a9dc74375805770588e6bd0`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
+205/205, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
