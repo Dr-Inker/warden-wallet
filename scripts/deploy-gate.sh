@@ -34,14 +34,16 @@ RELEASE_SHA="$1"; shift
 DRY_RUN=0
 RPC_URL="${SOLANA_RPC_URL:-}"
 FIXTURE_CASE=""   # Task 11R: run the governance+hash checks against a deterministic scenario
-PIN_FILE=""       # Task 11R: a reviewed pinned-config JSON for a real run (WRDF-0017)
+MANIFEST=""       # Task 11R: a COMMITTED manifest NAME for a real run (WRDF-0085, never a file path)
+PROPOSAL_AUDIT="" # Task 11R: operator attestation ref for the live per-proposal governance sweep (WRDF-0028)
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --rpc-url) RPC_URL="${2:-}"; shift 2 ;;
     --fixtures) FIXTURE_CASE="${2:-}"; shift 2 ;;
-    --pin) PIN_FILE="${2:-}"; shift 2 ;;
+    --manifest) MANIFEST="${2:-}"; shift 2 ;;
+    --proposal-audit-attested) PROPOSAL_AUDIT="${2:-}"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; usage ;;
   esac
 done
@@ -109,16 +111,23 @@ elif [ -n "$FIXTURE_CASE" ]; then
   else
     fail "governance+hash checks failed for fixture '$FIXTURE_CASE'"
   fi
-elif [ -n "$PIN_FILE" ] && [ -n "$RPC_URL" ]; then
+elif [ -n "$MANIFEST" ] && [ -n "$RPC_URL" ]; then
+  # Forward the REQUIRED shell identities so the verifier cross-checks them against
+  # the committed manifest + derived vault (WRDF-0085), and forward the operator's
+  # per-proposal audit attestation if supplied (WRDF-0028).
+  audit_args=()
+  [ -n "$PROPOSAL_AUDIT" ] && audit_args=(--proposal-audit-attested "$PROPOSAL_AUDIT")
   if [ -z "$recorded_hash" ]; then
     fail "cannot run the live governance+hash checks without a release-integrity hash"
-  elif run_gov_hash_verifier --rpc-url "$RPC_URL" --pin "$PIN_FILE" --expected-hash "$recorded_hash"; then
+  elif run_gov_hash_verifier --rpc-url "$RPC_URL" --manifest "$MANIFEST" --expected-hash "$recorded_hash" \
+        --expect-warden-program "$PROGRAM_ID" --expect-multisig "$SQUADS_MULTISIG" --expect-authority "$EXPECTED_AUTHORITY" \
+        "${audit_args[@]}"; then
     echo "   OK: live governance+hash checks passed against $RPC_URL"
   else
     fail "live governance+hash checks failed (see output above)"
   fi
 else
-  fail "checks 1/2/4a NOT RUN — supply --fixtures <case> for the fixture-verified path, or --pin <config.json> + --rpc-url <url> for a live run (a reviewed pinned config is required; CLI pubkeys alone cannot pin the member set/masks/code hash — WRDF-0017)"
+  fail "checks 1/2/4a NOT RUN — supply --fixtures <case> for the fixture-verified path, or --manifest <name> + --rpc-url <url> for a live run (the pin is a COMMITTED, reviewed manifest selected by name — never an arbitrary file; CLI pubkeys alone cannot pin the member set/masks/code hash — WRDF-0017/0085)"
 fi
 
 echo

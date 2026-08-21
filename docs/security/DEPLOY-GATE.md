@@ -116,6 +116,28 @@ the script wires it through `run_gov_hash_verifier` →
   discriminator), not the production derivations under test, and require executable
   Program accounts — so a seed/discriminator/index-encoding regression is caught.
 
+**Hardened again after the Task 11R round-2 review (WRDF-0085/0028):**
+- **The pin is a COMMITTED manifest, not a runtime file.** Live mode selects a pin
+  BY NAME from the reviewed-source `MANIFESTS` registry (`config.ts`); there is no
+  `--pin <file>` arbitrary-JSON path any more. deploy-gate.sh forwards the REQUIRED
+  `--expect-warden-program` / `--expect-multisig` / `--expect-authority`, and the
+  verifier refuses unless program+multisig match the manifest and the authority is
+  the manifest's derived vault PDA.
+- **RPC trust model (stated, not assumed authentication).** The genesis-hash bind
+  catches a wrong-cluster misconfiguration. It is NOT proof against an actively-
+  malicious RPC that reports mainnet genesis while serving fabricated accounts —
+  a malicious endpoint is OUT of the gate's threat model, mitigated operationally
+  by a known-good endpoint / multi-RPC quorum. This is documented, not silently
+  treated as cluster authentication.
+- **Per-proposal governance-state audit is a fail-closed REQUIRED LIVE STEP
+  (WRDF-0028), not silently passed.** The config-level checks (identity, 3-of-5,
+  masks, time-lock, autonomous authority, code hash) are the rigorous automated
+  part. Enumerating every Proposal / VaultTransaction / ConfigTransaction / batch
+  between the stale boundary and `transaction_index`, accepting only conclusively-
+  terminal history, and binding the intended release proposal to its reviewed
+  digest is a live-release step the tool does not perform in-process — live mode
+  **REFUSES** unless the operator passes `--proposal-audit-attested <ref>`.
+
 **Licensing:** the Squads wire-format reader is carried UNRESOLVED for owner/counsel
 (WRDF-0089, AGPL-3.0 / reference-only prior art) — see `THIRD_PARTY_NOTICES.md`.
 

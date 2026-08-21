@@ -130,3 +130,16 @@ export const SYNTHETIC_PIN: DeployPinConfig = {
   squadsCodeHashHex: "5c".repeat(32), // synthetic audited-Squads-code hash
   expectedGenesisHash: MAINNET_GENESIS_HASH,
 };
+
+/**
+ * The COMMITTED manifest registry (WRDF-0085): the deploy gate's live mode
+ * selects a pin BY NAME from this reviewed-source map, never from an arbitrary
+ * runtime file — so the trust anchor (which multisig, which members, which code
+ * hash) is code-reviewed in git, not operator input. The production `mainnet`
+ * manifest is added here at release time (a reviewed governance change); until
+ * then only the synthetic template exists, and no live run can select a real
+ * manifest that does not exist.
+ */
+export const MANIFESTS: Record<string, DeployPinConfig> = {
+  synthetic: SYNTHETIC_PIN,
+};

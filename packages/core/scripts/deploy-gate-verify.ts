@@ -3,90 +3,58 @@
 //!
 //!   tsx deploy-gate-verify.ts --fixtures <case>
 //!       Run a deterministic in-process scenario (no network) — `happy` passes,
-//!       every other case tampers with one field so the gate refuses. This is the
-//!       fixture-verified path CI/dev exercises.
+//!       every other case tampers with one field so the gate refuses.
 //!
-//!   tsx deploy-gate-verify.ts --rpc-url <url> --pin <config.json> --expected-hash <hex>
-//!       Run the REAL checks against a live cluster with a reviewed pin config.
-//!       Wired but honestly UNVERIFIED until a release candidate exists.
+//!   tsx deploy-gate-verify.ts --rpc-url <url> --manifest <name> --expected-hash <hex>
+//!       --expect-warden-program <pk> --expect-multisig <pk> --expect-authority <pk>
+//!       [--proposal-audit-attested <ref>]
+//!       Run the REAL checks against a live cluster. The pin is selected BY NAME
+//!       from the COMMITTED manifest registry (config.ts `MANIFESTS`), NEVER from
+//!       an arbitrary file (WRDF-0085) — the trust anchor is reviewed source. The
+//!       shell's positional identities are REQUIRED and cross-checked against the
+//!       pin (program/multisig) and the derived vault (authority). Live mode is
+//!       honestly UNVERIFIED until a release candidate exists, and it assumes a
+//!       TRUSTED RPC endpoint (the genesis-hash bind catches a wrong-cluster
+//!       misconfiguration, not an actively-malicious RPC — that is out of the
+//!       gate's threat model; mitigate with a known-good endpoint / quorum).
 //!
 //! Exit code is 0 only if EVERY check passes; any failure (or a bad invocation)
 //! exits non-zero — fail-closed.
 
-import { readFileSync } from "node:fs";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { verifyDeployGate, type GateVerdict, type RpcSource } from "../src/deploy/gate.js";
 import { namedScenario, FIXTURE_CASES } from "../src/deploy/fixtures.js";
-import {
-  MAINNET_GENESIS_HASH,
-  MIN_TIME_LOCK_SECONDS,
-  REQUIRED_MEMBER_COUNT,
-  REQUIRED_THRESHOLD,
-  type DeployPinConfig,
-  type PinnedMember,
-} from "../src/deploy/config.js";
+import { MANIFESTS, type DeployPinConfig } from "../src/deploy/config.js";
+import { deriveVaultPda } from "../src/deploy/accounts.js";
 
 function die(msg: string): never {
   console.error(`deploy-gate-verify: ${msg}`);
   process.exit(2);
 }
 
-function printVerdict(v: GateVerdict): never {
+function printVerdict(v: GateVerdict, extra: string[] = []): never {
   for (const r of v.results) console.log(`  [${r.ok ? "PASS" : "REFUSE"}] ${r.name}: ${r.detail}`);
-  console.log(v.ok ? "governance+hash: ALL CHECKS PASSED" : "governance+hash: REFUSE — at least one check failed");
-  process.exit(v.ok ? 0 : 1);
+  for (const line of extra) console.log(line);
+  const ok = v.ok && extra.every((l) => !l.includes("[REFUSE]"));
+  console.log(ok ? "governance+hash: ALL CHECKS PASSED" : "governance+hash: REFUSE — at least one check failed");
+  process.exit(ok ? 0 : 1);
 }
 
-/** Parse a reviewed pin config JSON (pubkeys as base58 strings). Fail-closed on a
- *  missing or malformed field — a deploy gate must not run on a half-read pin. */
-function loadPin(path: string): DeployPinConfig {
-  const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  const pk = (v: unknown, name: string): PublicKey => {
-    if (typeof v !== "string") die(`pin.${name} must be a base58 string`);
-    try {
-      return new PublicKey(v as string);
-    } catch {
-      return die(`pin.${name} is not a valid pubkey: ${String(v)}`);
-    }
-  };
-  const members = raw.members;
-  if (!Array.isArray(members) || members.length === 0) die("pin.members must be a non-empty array");
-  const parsedMembers: PinnedMember[] = members.map((m, i) => {
-    const mm = m as Record<string, unknown>;
-    if (typeof mm.mask !== "number") die(`pin.members[${i}].mask must be a number`);
-    return { key: pk(mm.key, `members[${i}].key`), mask: mm.mask };
-  });
-  return {
-    wardenProgramId: pk(raw.wardenProgramId, "wardenProgramId"),
-    squadsProgramId: pk(raw.squadsProgramId, "squadsProgramId"),
-    multisig: pk(raw.multisig, "multisig"),
-    vaultIndex: typeof raw.vaultIndex === "number" ? raw.vaultIndex : die("pin.vaultIndex must be a number"),
-    members: parsedMembers,
-    threshold: typeof raw.threshold === "number" ? raw.threshold : REQUIRED_THRESHOLD,
-    memberCount: typeof raw.memberCount === "number" ? raw.memberCount : REQUIRED_MEMBER_COUNT,
-    minTimeLockSeconds: typeof raw.minTimeLockSeconds === "number" ? raw.minTimeLockSeconds : MIN_TIME_LOCK_SECONDS,
-    configAuthority: raw.configAuthority == null ? null : pk(raw.configAuthority, "configAuthority"),
-    squadsCodeHashHex: typeof raw.squadsCodeHashHex === "string" ? raw.squadsCodeHashHex : die("pin.squadsCodeHashHex must be a hex string"),
-    expectedGenesisHash: typeof raw.expectedGenesisHash === "string" ? raw.expectedGenesisHash : MAINNET_GENESIS_HASH,
-  };
-}
-
-/**
- * Cross-check the shell's positional identities against the pin (WRDF-0085): the
- * pin is the authority, but deploy-gate.sh also prints/forwards a program id and
- * multisig; if they disagree the operator is being misled, so refuse. The
- * expected-authority is validated on-chain (== the derived vault PDA), so it is
- * intentionally not pinned here.
- */
+/** Cross-check the shell's REQUIRED positional identities against the pin and the
+ *  derived vault (WRDF-0085): the pin is the authority, but the shell also
+ *  forwards program/multisig/authority; any disagreement means the operator is
+ *  being misled, so refuse. */
 function crossCheckArgs(pin: DeployPinConfig, args: Map<string, string>): void {
   const wp = args.get("expect-warden-program");
   const ms = args.get("expect-multisig");
-  if (wp && wp !== pin.wardenProgramId.toBase58()) {
-    die(`--expect-warden-program ${wp} != pin.wardenProgramId ${pin.wardenProgramId.toBase58()} — the shell args and the pin disagree`);
+  const auth = args.get("expect-authority");
+  if (!wp || !ms || !auth) {
+    die("live mode requires --expect-warden-program, --expect-multisig, and --expect-authority (forwarded by deploy-gate.sh)");
   }
-  if (ms && ms !== pin.multisig.toBase58()) {
-    die(`--expect-multisig ${ms} != pin.multisig ${pin.multisig.toBase58()} — the shell args and the pin disagree`);
-  }
+  if (wp !== pin.wardenProgramId.toBase58()) die(`--expect-warden-program ${wp} != manifest wardenProgramId ${pin.wardenProgramId.toBase58()}`);
+  if (ms !== pin.multisig.toBase58()) die(`--expect-multisig ${ms} != manifest multisig ${pin.multisig.toBase58()}`);
+  const derivedVault = deriveVaultPda(pin.squadsProgramId, pin.multisig, pin.vaultIndex).toBase58();
+  if (auth !== derivedVault) die(`--expect-authority ${auth} != derived vault PDA ${derivedVault} (the shell's expected authority must be the manifest's canonical vault)`);
 }
 
 /** A live RpcSource over a web3.js Connection. */
@@ -117,17 +85,35 @@ async function main(argv: string[]): Promise<void> {
     printVerdict(await verifyDeployGate(scenario.pin, { rpc: scenario.rpc, expectedReleaseHashHex: scenario.expectedReleaseHashHex }));
   }
 
-  // Live mode.
+  // Live mode — pin selected from the COMMITTED registry, never an arbitrary file.
   const rpcUrl = args.get("rpc-url");
-  const pinPath = args.get("pin");
+  const manifest = args.get("manifest");
   const expectedHash = args.get("expected-hash");
-  if (!rpcUrl || !pinPath || !expectedHash) {
-    die("live mode needs --rpc-url <url> --pin <config.json> --expected-hash <hex> (or use --fixtures <case>)");
+  if (!rpcUrl || !manifest || !expectedHash) {
+    die("live mode needs --rpc-url <url> --manifest <name> --expected-hash <hex> (or use --fixtures <case>)");
   }
-  const pin = loadPin(pinPath);
-  crossCheckArgs(pin, args); // WRDF-0085: shell identities must agree with the pin
+  const pin = MANIFESTS[manifest];
+  if (!pin) die(`unknown manifest '${manifest}'; committed manifests: ${Object.keys(MANIFESTS).join(", ")}`);
+  crossCheckArgs(pin, args); // WRDF-0085: shell identities must agree with the pin + derived vault
+
   const rpc = connectionRpc(new Connection(rpcUrl, "finalized"));
-  printVerdict(await verifyDeployGate(pin, { rpc, expectedReleaseHashHex: expectedHash }));
+  const verdict = await verifyDeployGate(pin, { rpc, expectedReleaseHashHex: expectedHash });
+
+  // WRDF-0028: the per-proposal governance-state audit (enumerate every Proposal /
+  // VaultTransaction / ConfigTransaction / batch between the stale boundary and
+  // transaction_index; accept only conclusively-terminal history; bind the
+  // intended release proposal to its reviewed digest) is a REQUIRED LIVE-RELEASE
+  // step that this tool does NOT perform in-process. It is not silently passed:
+  // live mode REFUSES unless the operator attests the sweep was done at the
+  // release slot. The config-level checks above are the rigorous automated part.
+  const extra: string[] = [];
+  const attested = args.get("proposal-audit-attested");
+  if (attested) {
+    extra.push(`  [PASS] governance-proposal-audit: operator-attested live sweep at ${attested}`);
+  } else {
+    extra.push("  [REFUSE] governance-proposal-audit: per-proposal actionable-stale enumeration + release-digest binding NOT performed in-tool; run the live proposal-state sweep at the release slot and pass --proposal-audit-attested <ref>");
+  }
+  printVerdict(verdict, extra);
 }
 
 main(process.argv.slice(2)).catch((e) => die((e as Error).message));
