@@ -338,7 +338,23 @@ describe("wrapForExecute", () => {
   it("writes payload_coalesced_logical.bin + hash for the Rust hash oracle", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const fixturesDir = resolve(here, "../../../programs/warden/tests/fixtures");
-    const r = wrapForExecute(dappMsg(false).msg, { wardenProgram, smartAccount, signer }); // payer defaults to signer
+    // DETERMINISTIC inputs (fixed byte patterns) so the fixture is reproducible —
+    // a Keypair.generate() shape would rewrite the committed bytes every run.
+    const fixed = (byte: number) => new PublicKey(new Uint8Array(32).fill(byte));
+    const fSmart = fixed(0x11);
+    const fSigner = fixed(0x22); // also the default payer → logical[1] coalesces writable
+    const fProg = fixed(0x33);
+    const fAcct = fixed(0x44);
+    const dIx = new TransactionInstruction({
+      programId: fProg,
+      keys: [
+        { pubkey: fAcct, isSigner: false, isWritable: true },
+        { pubkey: fSmart, isSigner: true, isWritable: false }, // PDA authority-signer
+      ],
+      data: Buffer.from([7, 7]),
+    });
+    const dMsg = new TransactionMessage({ payerKey: fSigner, recentBlockhash: BLOCKHASH, instructions: [dIx] }).compileToV0Message();
+    const r = wrapForExecute(dMsg, { wardenProgram, smartAccount: fSmart, signer: fSigner }); // payer defaults to signer
     expect(r.logical[1]!.isWritable).toBe(true); // the coalesced case we are pinning
     // Serialize each logical entry as pubkey(32) ‖ is_signer(1) ‖ is_writable(1).
     const buf = new Uint8Array(r.logical.length * 34);
