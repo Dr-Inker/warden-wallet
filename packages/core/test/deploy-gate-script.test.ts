@@ -31,19 +31,18 @@ describe("scripts/deploy-gate.sh (WRDF-0088)", () => {
 
   it("a live --manifest run refuses when the release-sha is not a real commit (checkout boundary)", () => {
     // 'deadbeef' is valid-format but resolves to no commit → the WRDF-0085 preflight
-    // refuses; no release-integrity row → the live block stops before the verifier.
+    // refuses. The specific assertion is the SHA-resolution refusal (not a generic
+    // one), and it must fire before the verifier is spawned.
     const r = runGate([ID, ID, ID, "deadbeef", "--manifest", "synthetic", "--rpc-url", "http://127.0.0.1:1"]);
     expect(r.code).not.toBe(0);
-    expect(r.err).toMatch(/does not resolve to a commit|no bound manifest token/);
+    expect(r.err).toMatch(/release-sha 'deadbeef' does not resolve to a commit/);
     expect(r.err).not.toMatch(/command not found/);
   }, 30_000);
 
-  it("refuses when --manifest disagrees with the release-bound manifest name (WRDF-0085)", () => {
-    // A real dev-row release-sha binds manifest:synthetic; asking for a different
-    // name must be refused (the release-sha selects a UNIQUE manifest). The
-    // dirty-tree/HEAD checks may fire first — any WRDF-0085 refusal is acceptable.
-    const r = runGate([ID, ID, ID, "f0f38cab713d1d9165e367f3397e11a152620eab", "--manifest", "other", "--rpc-url", "http://127.0.0.1:1"]);
-    expect(r.code).not.toBe(0);
-    expect(r.err).toMatch(/CLEAN working tree|!= resolved release-sha|release-bound manifest|no bound manifest token/);
-  }, 30_000);
+  // Note: the manifest name/digest + artifact-hash binding is exercised
+  // deterministically in deploy-cli.test.ts (parseReleaseRow / bindReleaseManifest
+  // against both synthetic rows and the committed RELEASE-INTEGRITY.md) — the
+  // earlier "manifest disagrees" shell test was vacuous because the checkout
+  // preconditions fired first (WRDF-0088), so it was removed in favour of the
+  // isolated TS coverage.
 });

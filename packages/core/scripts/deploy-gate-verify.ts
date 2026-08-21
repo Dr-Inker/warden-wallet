@@ -16,10 +16,11 @@
 //!
 //! Exit 0 only if EVERY check passes; any failure exits non-zero (fail-closed).
 
+import { readFileSync } from "node:fs";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { verifyDeployGate, type GateVerdict, type RpcSource } from "../src/deploy/gate.js";
 import { namedScenario, FIXTURE_CASES } from "../src/deploy/fixtures.js";
-import { resolveManifest, resolveManifestForRelease, crossCheckIdentities, proposalAuditResult, parseArgs } from "../src/deploy/cli.js";
+import { parseReleaseRow, bindReleaseManifest, crossCheckIdentities, proposalAuditResult, parseArgs } from "../src/deploy/cli.js";
 
 function die(msg: string): never {
   console.error(`deploy-gate-verify: ${msg}`);
@@ -56,18 +57,22 @@ async function main(argv: string[]): Promise<void> {
     printVerdict(await verifyDeployGate(scenario.pin, { rpc: scenario.rpc, expectedReleaseHashHex: scenario.expectedReleaseHashHex }));
   }
 
-  // Live mode.
+  // Live mode. The release row (parsed here, testably) binds a UNIQUE manifest
+  // name + digest AND the on-chain artifact hash (WRDF-0085) — the shell forwards
+  // only the release-sha and the file path, not trusted values it derived itself.
   const rpcUrl = args.get("rpc-url");
   const manifest = args.get("manifest");
-  const expectedHash = args.get("expected-hash");
-  if (!rpcUrl || !manifest || !expectedHash) {
-    die("live mode needs --rpc-url <url> --manifest <name> --expected-hash <hex> (or use --fixtures <case>)");
+  const releaseSha = args.get("release-sha");
+  const releaseFile = args.get("release-integrity-file");
+  if (!rpcUrl || !manifest || !releaseSha || !releaseFile) {
+    die("live mode needs --rpc-url <url> --manifest <name> --release-sha <full-sha> --release-integrity-file <path> (or use --fixtures <case>)");
   }
-  const manifestDigest = args.get("manifest-digest");
   let pin;
+  let expectedHash: string;
   try {
-    // The release binds a unique manifest name AND digest (WRDF-0085); require both.
-    pin = manifestDigest ? resolveManifestForRelease(manifest, manifestDigest) : resolveManifest(manifest);
+    const row = parseReleaseRow(readFileSync(releaseFile, "utf8"), releaseSha);
+    pin = bindReleaseManifest(manifest, row);
+    expectedHash = row.artifactHashHex;
     crossCheckIdentities(pin, {
       wardenProgram: args.get("expect-warden-program"),
       multisig: args.get("expect-multisig"),

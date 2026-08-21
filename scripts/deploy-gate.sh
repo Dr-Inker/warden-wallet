@@ -68,36 +68,25 @@ run_gov_hash_verifier() {
   pnpm --filter @warden/core exec tsx scripts/deploy-gate-verify.ts "$@"
 }
 
-# ---- WRDF-0085: bind the release-sha to a UNIQUE, checkout-bound manifest -----
-# A live run must (a) execute AT the exact reviewed release commit on a clean tree,
-# so the committed manifest registry IS the reviewed release's, and (b) select the
-# manifest the RELEASE-INTEGRITY row bound (name @ canonical digest) — NOT a free
-# operator choice. RELEASE_MANIFEST_NAME / _DIGEST are extracted from the matched
-# row below and forwarded to the verifier, which refuses a name/digest mismatch.
-RELEASE_MANIFEST_NAME=""
-RELEASE_MANIFEST_DIGEST=""
+# ---- WRDF-0085: bind a live run to the release, without self-reference --------
+# A commit cannot contain its own SHA, so the RELEASE-INTEGRITY row for release
+# commit C (which names C + the manifest token) is ADDED in a LATER, reviewed
+# commit — the attestation point. So a live run binds like this: (a) a CLEAN tree;
+# (b) C resolves to a FULL commit id that is an ANCESTOR-OR-EQUAL of HEAD (C is in
+# the reviewed history the gate runs over); (c) the row parsing + unique
+# manifest-name/digest + artifact-hash binding is done by the verifier (testable
+# TS), reading the release-sha and the RELEASE-INTEGRITY file — the shell forwards
+# identifiers, never trusted values it derived itself.
+RELEASE_FULL_SHA=""
 if [ "$DRY_RUN" -eq 0 ] && [ -z "$FIXTURE_CASE" ] && [ -n "$MANIFEST" ]; then
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     fail "live run requires a CLEAN working tree (uncommitted changes could alter the manifest or gate code)"
   fi
-  resolved_head="$(git rev-parse HEAD 2>/dev/null || echo '')"
-  resolved_release="$(git rev-parse "$RELEASE_SHA^{commit}" 2>/dev/null || echo '')"
-  if [ -z "$resolved_release" ]; then
+  RELEASE_FULL_SHA="$(git rev-parse --verify "$RELEASE_SHA^{commit}" 2>/dev/null || echo '')"
+  if [ -z "$RELEASE_FULL_SHA" ]; then
     fail "release-sha '$RELEASE_SHA' does not resolve to a commit in this repo"
-  elif [ "$resolved_head" != "$resolved_release" ]; then
-    fail "HEAD ($resolved_head) != resolved release-sha ($resolved_release) — a live gate must run AT the reviewed release commit (WRDF-0085)"
-  fi
-  # Extract the release-bound manifest token `manifest:<name>@<digest>` from the row.
-  rel_row="$(grep -F "$RELEASE_SHA" docs/security/RELEASE-INTEGRITY.md 2>/dev/null | grep '^| ' | head -1 || true)"
-  tok="$(printf '%s' "$rel_row" | grep -oE 'manifest:[A-Za-z0-9_.-]+@[0-9a-f]{64}' | head -1 || true)"
-  if [ -z "$tok" ]; then
-    fail "release-sha '$RELEASE_SHA' has no bound manifest token (manifest:<name>@<digest>) in RELEASE-INTEGRITY.md (WRDF-0085)"
-  else
-    RELEASE_MANIFEST_NAME="${tok#manifest:}"; RELEASE_MANIFEST_NAME="${RELEASE_MANIFEST_NAME%@*}"
-    RELEASE_MANIFEST_DIGEST="${tok#*@}"
-    if [ "$MANIFEST" != "$RELEASE_MANIFEST_NAME" ]; then
-      fail "--manifest '$MANIFEST' != release-bound manifest '$RELEASE_MANIFEST_NAME' (the release-sha selects a unique manifest — WRDF-0085)"
-    fi
+  elif ! git merge-base --is-ancestor "$RELEASE_FULL_SHA" HEAD 2>/dev/null; then
+    fail "release-sha $RELEASE_FULL_SHA is not an ancestor of HEAD — the gate must run at a reviewed commit that contains the release + its attestation row (WRDF-0085)"
   fi
 fi
 
@@ -156,7 +145,8 @@ elif [ -n "$MANIFEST" ] && [ -n "$RPC_URL" ]; then
   # audit fails closed in-tool with NO bypass (WRDF-0028).
   if [ -z "$recorded_hash" ]; then
     fail "cannot run the live governance+hash checks without a release-integrity hash"
-  elif run_gov_hash_verifier --rpc-url "$RPC_URL" --manifest "$MANIFEST" --manifest-digest "$RELEASE_MANIFEST_DIGEST" --expected-hash "$recorded_hash" \
+  elif run_gov_hash_verifier --rpc-url "$RPC_URL" --manifest "$MANIFEST" \
+        --release-sha "$RELEASE_FULL_SHA" --release-integrity-file docs/security/RELEASE-INTEGRITY.md \
         --expect-warden-program "$PROGRAM_ID" --expect-multisig "$SQUADS_MULTISIG" --expect-authority "$EXPECTED_AUTHORITY"; then
     echo "   OK: live governance+hash checks passed against $RPC_URL"
   else

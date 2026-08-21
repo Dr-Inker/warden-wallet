@@ -19,7 +19,7 @@ checks: `--fixtures <case>` drives a deterministic in-process scenario (no
 network — `happy` passes, every other case tampers with one field so the gate
 refuses), and `--manifest <name> --rpc-url <url>` runs the REAL checks against a live cluster
 with a pin selected from the COMMITTED manifest registry (WRDF-0085; never an
-arbitrary file), on a clean tree at the release commit, with the shell's
+arbitrary file), on a clean tree with the release-sha an ancestor of HEAD, with the shell's
 program/multisig/authority cross-checked. Check 3 (adapter-selector re-derivation vs the on-chain Registry) is a
 separate deliverable from Task 11R (scope boundary WRDF-0018) and still refuses.
 Every RPC-dependent path **fails closed**. The 20-case fixture suite is
@@ -31,7 +31,7 @@ Every RPC-dependent path **fails closed**. The 20-case fixture suite is
 ```sh
 # fixture-verified (no network):
 scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> --fixtures happy
-# live (checks 1/2/4a): pin from the COMMITTED manifest registry, clean tree at the release commit:
+# live (checks 1/2/4a): pin from the COMMITTED manifest registry, clean tree, release-sha an ancestor of HEAD:
 scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> --manifest <name> --rpc-url <url>
 # dry-run (plan + local checks only):
 scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> --dry-run
@@ -46,7 +46,7 @@ scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <rele
 | `--dry-run` | Perform only the checks that need no RPC (arg validation, local `.so` hash lookup/comparison per 4b, scoped TODO/unimplemented!/#[ignore] grep per check 5); print, but do not execute, the RPC-dependent checks (1, 2, 3, 4a). **The final banner in `--dry-run` always reads `DRY RUN — NOT VERIFIED`, never `ALL CHECKS PASSED`** — a dry run is a shape check on the tool, not a deploy verdict. |
 | `--rpc-url <url>` | RPC endpoint for the real run. Defaults to `$SOLANA_RPC_URL` if set. Ignored in `--dry-run`. |
 | `--fixtures <case>` | Run checks 1/2/4a against a deterministic in-process scenario (no RPC); `happy` passes, others refuse. |
-| `--manifest <name>` | Live run only: select the pin BY NAME from the COMMITTED `MANIFESTS` registry (`config.ts`), never a file. Requires a clean tree with HEAD == the release-sha commit (WRDF-0085). The per-proposal governance audit fails closed in-tool with no bypass (WRDF-0028). |
+| `--manifest <name>` | Live run only: select the pin BY NAME from the COMMITTED `MANIFESTS` registry (`config.ts`), never a file. Requires a CLEAN tree with the release-sha an ANCESTOR-OR-EQUAL of HEAD (a commit cannot contain its own SHA, so the RELEASE-INTEGRITY attestation row for C is added in a later reviewed commit — WRDF-0085); the verifier parses that row for the unique manifest name+digest and artifact hash. The per-proposal governance audit fails closed in-tool with no bypass (WRDF-0028). |
 
 Exit code is non-zero if **any** check fails or is unimplemented in a
 non-dry-run invocation (fail-closed).

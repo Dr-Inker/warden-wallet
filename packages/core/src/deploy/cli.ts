@@ -57,6 +57,50 @@ export function crossCheckIdentities(
   }
 }
 
+export interface ReleaseRow {
+  artifactHashHex: string;
+  manifestName: string;
+  manifestDigest: string;
+}
+
+/**
+ * Parse the RELEASE-INTEGRITY record for a release commit (WRDF-0085 round 5).
+ * Requires an EXACT full 40-hex SHA and EXACTLY ONE matching table row (rejects
+ * abbreviated identifiers and duplicate/ambiguous rows), and extracts the bound
+ * `manifest:<name>@<64-hex digest>` token plus the artifact hash (the row's other
+ * 64-hex value). Throws on any of: bad SHA form, zero/multiple rows, missing
+ * token, or an indeterminable artifact hash.
+ */
+export function parseReleaseRow(md: string, releaseSha: string): ReleaseRow {
+  if (!/^[0-9a-f]{40}$/.test(releaseSha)) {
+    throw new Error(`release-sha '${releaseSha}' must be a full 40-hex commit id (no abbreviations)`);
+  }
+  const rows = md.split("\n").filter((l) => l.startsWith("| ") && l.includes(releaseSha));
+  if (rows.length === 0) throw new Error(`no RELEASE-INTEGRITY row contains release-sha ${releaseSha}`);
+  if (rows.length > 1) throw new Error(`${rows.length} RELEASE-INTEGRITY rows contain release-sha ${releaseSha} — ambiguous`);
+  const row = rows[0]!;
+  const tok = row.match(/manifest:([A-Za-z0-9_.-]+)@([0-9a-f]{64})/);
+  if (!tok) throw new Error(`RELEASE-INTEGRITY row for ${releaseSha} has no manifest:<name>@<digest> token`);
+  const manifestName = tok[1]!;
+  const manifestDigest = tok[2]!;
+  const hashes = [...row.matchAll(/\b[0-9a-f]{64}\b/g)].map((m) => m[0]).filter((h) => h !== manifestDigest);
+  const unique = [...new Set(hashes)];
+  if (unique.length !== 1) throw new Error(`RELEASE-INTEGRITY row for ${releaseSha} has ${unique.length} candidate artifact hashes (expected exactly 1)`);
+  return { artifactHashHex: unique[0]!, manifestName, manifestDigest };
+}
+
+/**
+ * Bind the operator-selected manifest to the release row (WRDF-0085): the selected
+ * name MUST equal the release-bound name, and the committed manifest's digest MUST
+ * equal the release-bound digest. Any disagreement is refused.
+ */
+export function bindReleaseManifest(selectedName: string, row: ReleaseRow): DeployPinConfig {
+  if (selectedName !== row.manifestName) {
+    throw new Error(`--manifest '${selectedName}' != release-bound manifest '${row.manifestName}' (the release selects a unique manifest)`);
+  }
+  return resolveManifestForRelease(row.manifestName, row.manifestDigest);
+}
+
 /**
  * The per-proposal governance-state audit (WRDF-0028/0029): enumerate every
  * Proposal / VaultTransaction / ConfigTransaction / batch between the stale
