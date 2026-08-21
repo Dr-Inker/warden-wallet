@@ -52,10 +52,30 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# Checkout binding (WRDF-0085): a live run must execute AT the exact reviewed
-# release commit on a clean tree, so the committed manifest it selects IS the
-# reviewed release's manifest — not a later checkout or a local edit. Skipped for
-# --dry-run and --fixtures (which make no live trust claim).
+# `fail` and `status` MUST be defined before the preflight that calls them
+# (WRDF-0088 — a "fail: command not found" would fail-closed only by luck).
+status=0
+fail() { echo "REFUSE: $1" >&2; status=1; }
+
+# Base58 pubkeys are 32-44 chars from the base58 alphabet (no 0, O, I, l).
+is_pubkey() {
+  [[ "$1" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]
+}
+
+# The Task 11R governance+hash verifier (DEPLOY-GATE.md checks 1, 2, 4a). Hand-rolled
+# in packages/core/src/deploy (no @sqds dependency); run via the workspace's tsx.
+run_gov_hash_verifier() {
+  pnpm --filter @warden/core exec tsx scripts/deploy-gate-verify.ts "$@"
+}
+
+# ---- WRDF-0085: bind the release-sha to a UNIQUE, checkout-bound manifest -----
+# A live run must (a) execute AT the exact reviewed release commit on a clean tree,
+# so the committed manifest registry IS the reviewed release's, and (b) select the
+# manifest the RELEASE-INTEGRITY row bound (name @ canonical digest) — NOT a free
+# operator choice. RELEASE_MANIFEST_NAME / _DIGEST are extracted from the matched
+# row below and forwarded to the verifier, which refuses a name/digest mismatch.
+RELEASE_MANIFEST_NAME=""
+RELEASE_MANIFEST_DIGEST=""
 if [ "$DRY_RUN" -eq 0 ] && [ -z "$FIXTURE_CASE" ] && [ -n "$MANIFEST" ]; then
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     fail "live run requires a CLEAN working tree (uncommitted changes could alter the manifest or gate code)"
@@ -67,21 +87,19 @@ if [ "$DRY_RUN" -eq 0 ] && [ -z "$FIXTURE_CASE" ] && [ -n "$MANIFEST" ]; then
   elif [ "$resolved_head" != "$resolved_release" ]; then
     fail "HEAD ($resolved_head) != resolved release-sha ($resolved_release) — a live gate must run AT the reviewed release commit (WRDF-0085)"
   fi
+  # Extract the release-bound manifest token `manifest:<name>@<digest>` from the row.
+  rel_row="$(grep -F "$RELEASE_SHA" docs/security/RELEASE-INTEGRITY.md 2>/dev/null | grep '^| ' | head -1 || true)"
+  tok="$(printf '%s' "$rel_row" | grep -oE 'manifest:[A-Za-z0-9_.-]+@[0-9a-f]{64}' | head -1 || true)"
+  if [ -z "$tok" ]; then
+    fail "release-sha '$RELEASE_SHA' has no bound manifest token (manifest:<name>@<digest>) in RELEASE-INTEGRITY.md (WRDF-0085)"
+  else
+    RELEASE_MANIFEST_NAME="${tok#manifest:}"; RELEASE_MANIFEST_NAME="${RELEASE_MANIFEST_NAME%@*}"
+    RELEASE_MANIFEST_DIGEST="${tok#*@}"
+    if [ "$MANIFEST" != "$RELEASE_MANIFEST_NAME" ]; then
+      fail "--manifest '$MANIFEST' != release-bound manifest '$RELEASE_MANIFEST_NAME' (the release-sha selects a unique manifest — WRDF-0085)"
+    fi
+  fi
 fi
-
-# The Task 11R governance+hash verifier (DEPLOY-GATE.md checks 1, 2, 4a). Hand-rolled
-# in packages/core/src/deploy (no @sqds dependency); run via the workspace's tsx.
-run_gov_hash_verifier() {
-  pnpm --filter @warden/core exec tsx scripts/deploy-gate-verify.ts "$@"
-}
-
-# Base58 pubkeys are 32-44 chars from the base58 alphabet (no 0, O, I, l).
-is_pubkey() {
-  [[ "$1" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]
-}
-
-status=0
-fail() { echo "REFUSE: $1" >&2; status=1; }
 
 echo "== L7 deploy gate =="
 echo "program-id:          $PROGRAM_ID"
@@ -138,7 +156,7 @@ elif [ -n "$MANIFEST" ] && [ -n "$RPC_URL" ]; then
   # audit fails closed in-tool with NO bypass (WRDF-0028).
   if [ -z "$recorded_hash" ]; then
     fail "cannot run the live governance+hash checks without a release-integrity hash"
-  elif run_gov_hash_verifier --rpc-url "$RPC_URL" --manifest "$MANIFEST" --expected-hash "$recorded_hash" \
+  elif run_gov_hash_verifier --rpc-url "$RPC_URL" --manifest "$MANIFEST" --manifest-digest "$RELEASE_MANIFEST_DIGEST" --expected-hash "$recorded_hash" \
         --expect-warden-program "$PROGRAM_ID" --expect-multisig "$SQUADS_MULTISIG" --expect-authority "$EXPECTED_AUTHORITY"; then
     echo "   OK: live governance+hash checks passed against $RPC_URL"
   else

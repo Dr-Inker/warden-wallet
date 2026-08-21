@@ -13,6 +13,7 @@
 //! (DEPLOY-GATE.md). Editing these is a governance change and must be reviewed.
 
 import { PublicKey } from "@solana/web3.js";
+import { sha256 } from "@noble/hashes/sha2";
 
 /** Squads v4 member permission bits (Squads Protocol v4 `Permissions`). */
 export const PERMISSION_INITIATE = 1 << 0; // propose
@@ -143,3 +144,30 @@ export const SYNTHETIC_PIN: DeployPinConfig = {
 export const MANIFESTS: Record<string, DeployPinConfig> = {
   synthetic: SYNTHETIC_PIN,
 };
+
+/**
+ * A canonical sha256 digest of a manifest (WRDF-0085): so the release-integrity
+ * record can bind ONE manifest name AND its exact content-digest to the release,
+ * and the gate refuses any other selection or a drifted registry entry. Canonical
+ * form = a stable field order with pubkeys as base58 and members sorted by key.
+ */
+export function manifestDigest(pin: DeployPinConfig): string {
+  const canonical = JSON.stringify({
+    wardenProgramId: pin.wardenProgramId.toBase58(),
+    squadsProgramId: pin.squadsProgramId.toBase58(),
+    multisig: pin.multisig.toBase58(),
+    vaultIndex: pin.vaultIndex,
+    threshold: pin.threshold,
+    memberCount: pin.memberCount,
+    minTimeLockSeconds: pin.minTimeLockSeconds,
+    configAuthority: pin.configAuthority ? pin.configAuthority.toBase58() : null,
+    squadsCodeHashHex: pin.squadsCodeHashHex,
+    expectedGenesisHash: pin.expectedGenesisHash,
+    members: [...pin.members]
+      .map((m) => ({ key: m.key.toBase58(), mask: m.mask }))
+      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)),
+  });
+  return Array.from(sha256(new TextEncoder().encode(canonical)))
+    .map((x) => x.toString(16).padStart(2, "0"))
+    .join("");
+}

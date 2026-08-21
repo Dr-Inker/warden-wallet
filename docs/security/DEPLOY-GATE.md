@@ -142,8 +142,11 @@ the script wires it through `run_gov_hash_verifier` →
   part. Enumerating every Proposal / VaultTransaction / ConfigTransaction / batch
   between the stale boundary and `transaction_index`, accepting only conclusively-
   terminal history, and binding the intended release proposal to its reviewed
-  digest is a live-release step the tool does not perform in-process — live mode
-  **REFUSES** unless the operator passes `--proposal-audit-attested <ref>`.
+  digest is a live-release step the tool does not perform in-process. Live mode is
+  **unconditionally REFUSED on this check** — there is NO attestation flag or
+  bypass (a plain string would verify nothing, WRDF-0028 round 3). The live gate
+  cannot pass the proposal audit until machine-verifiable proposal enumeration +
+  release-digest binding are implemented; that is the honest, fail-closed state.
 
 **Licensing:** the Squads wire-format reader is carried UNRESOLVED for owner/counsel
 (WRDF-0089, AGPL-3.0 / reference-only prior art) — see `THIRD_PARTY_NOTICES.md`.

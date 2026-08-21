@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolveManifest, crossCheckIdentities, proposalAuditResult, parseArgs, assertPubkey } from "../src/deploy/cli.js";
-import { SYNTHETIC_PIN } from "../src/deploy/config.js";
+import { resolveManifest, resolveManifestForRelease, crossCheckIdentities, proposalAuditResult, parseArgs, assertPubkey } from "../src/deploy/cli.js";
+import { SYNTHETIC_PIN, manifestDigest } from "../src/deploy/config.js";
 import { deriveVaultPda } from "../src/deploy/accounts.js";
 
 const goodIds = () => ({
@@ -27,6 +27,14 @@ describe("deploy-gate CLI logic (WRDF-0088)", () => {
     // A wrong authority (not the derived vault) is refused — the authority is
     // authenticated against the manifest's canonical vault, not accepted as-is.
     expect(() => crossCheckIdentities(SYNTHETIC_PIN, { ...goodIds(), authority: SYNTHETIC_PIN.multisig.toBase58() })).toThrow(/expect-authority .* != derived vault PDA/);
+  });
+
+  it("resolveManifestForRelease binds a unique manifest by name AND digest (WRDF-0085)", () => {
+    const digest = manifestDigest(SYNTHETIC_PIN);
+    expect(resolveManifestForRelease("synthetic", digest)).toBe(SYNTHETIC_PIN);
+    // A drifted registry entry / stale alternate / wrong digest is refused.
+    expect(() => resolveManifestForRelease("synthetic", "00".repeat(32))).toThrow(/digest .* != release-bound digest/);
+    expect(() => resolveManifestForRelease("mainnet", digest)).toThrow(/unknown manifest 'mainnet'/);
   });
 
   it("proposalAuditResult ALWAYS fails closed — no attestation bypass (WRDF-0028)", () => {

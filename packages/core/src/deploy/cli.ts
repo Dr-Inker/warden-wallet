@@ -4,7 +4,7 @@
 //! bypass has a red/green test.
 
 import { PublicKey } from "@solana/web3.js";
-import { MANIFESTS, type DeployPinConfig } from "./config.js";
+import { MANIFESTS, manifestDigest, type DeployPinConfig } from "./config.js";
 import { deriveVaultPda } from "./accounts.js";
 import type { CheckResult } from "./gate.js";
 
@@ -13,6 +13,22 @@ import type { CheckResult } from "./gate.js";
 export function resolveManifest(name: string): DeployPinConfig {
   const pin = MANIFESTS[name];
   if (!pin) throw new Error(`unknown manifest '${name}'; committed manifests: ${Object.keys(MANIFESTS).join(", ")}`);
+  return pin;
+}
+
+/**
+ * Select the manifest the RELEASE bound (WRDF-0085): the release-integrity record
+ * names ONE manifest and its canonical digest. Resolve by name AND assert the
+ * committed manifest's digest equals the release-bound digest — so a drifted
+ * registry entry, a stale alternate, or a wrong name is refused, and the
+ * release-sha selects a UNIQUE manifest. Throws on any mismatch.
+ */
+export function resolveManifestForRelease(name: string, expectedDigest: string): DeployPinConfig {
+  const pin = resolveManifest(name);
+  const actual = manifestDigest(pin);
+  if (actual !== expectedDigest) {
+    throw new Error(`manifest '${name}' digest ${actual} != release-bound digest ${expectedDigest} — the committed registry entry drifted from the reviewed release`);
+  }
   return pin;
 }
 

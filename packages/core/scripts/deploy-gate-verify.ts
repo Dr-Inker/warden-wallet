@@ -19,7 +19,7 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { verifyDeployGate, type GateVerdict, type RpcSource } from "../src/deploy/gate.js";
 import { namedScenario, FIXTURE_CASES } from "../src/deploy/fixtures.js";
-import { resolveManifest, crossCheckIdentities, proposalAuditResult, parseArgs } from "../src/deploy/cli.js";
+import { resolveManifest, resolveManifestForRelease, crossCheckIdentities, proposalAuditResult, parseArgs } from "../src/deploy/cli.js";
 
 function die(msg: string): never {
   console.error(`deploy-gate-verify: ${msg}`);
@@ -63,9 +63,11 @@ async function main(argv: string[]): Promise<void> {
   if (!rpcUrl || !manifest || !expectedHash) {
     die("live mode needs --rpc-url <url> --manifest <name> --expected-hash <hex> (or use --fixtures <case>)");
   }
+  const manifestDigest = args.get("manifest-digest");
   let pin;
   try {
-    pin = resolveManifest(manifest);
+    // The release binds a unique manifest name AND digest (WRDF-0085); require both.
+    pin = manifestDigest ? resolveManifestForRelease(manifest, manifestDigest) : resolveManifest(manifest);
     crossCheckIdentities(pin, {
       wardenProgram: args.get("expect-warden-program"),
       multisig: args.get("expect-multisig"),
