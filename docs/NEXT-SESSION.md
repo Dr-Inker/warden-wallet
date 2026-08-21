@@ -113,13 +113,17 @@ Remaining, in campaign-plan order:
    `MAX_EXECUTE_ACCOUNTS_TOTAL=32` / `MAX_EXECUTE_WRITABLE=28`**, boundary-
    tested; **client contract: the wrapper injects a `RequestHeapFrame` sized
    for the shape on any execute past ~24 accounts** (like the CU limit). Tables
-   in PHASE1B-MEASUREMENTS §"Task 6 heap lift". **NOW: Task 6 (swap) proper** —
-   Jupiter-pinned adapter (route/shared_accounts_route from a pinned v6 IDL),
-   adapter-decoded `max_in` + pinned source ATA before the CPI (the §5.2-rule-4b
-   design bet), treasury = `Registry.treasury`, out_mint allowlist, jup-mock
-   misbehave suite. Task-1-owed real-CPI regressions (native-lamport
-   `SyncNative`+`Transfer` WRDF-0011; standalone-mint) fold into Task 6's suite.
-   **Then 8 → 9.** **C1a needs a program change** (`create_account` must
+   in PHASE1B-MEASUREMENTS §"Task 6 heap lift". **Task 6 (swap) CODE-COMPLETE @e54cc10, review CONVERGING.**
+   Jupiter v6-pinned adapter (route/shared from the pinned IDL sha256
+   764ea6d7…), treasury fee, pre-CPI `max_in ≤ caps` + post-CPI net
+   conservation, root `route_hash` byte-binding. Round 1 (9 findings incl.
+   CRITICAL WRDF-0061) fixed: native swaps REJECTED in 1B, route_hash added,
+   min_out→net gain, pre-CPI cap/lifetime/bucket probe, treasury-fee-taken
+   proof, CI prod-build isolation, assertU64. Deferred: full `Vec<RoutePlanStep>`
+   parse before mainnet (WRDF-0031/0059), events→Task 5E. Gate builds/tests
+   `--features test-jup` (swap→mock); prod omits it (CI publishes the clean
+   `.so`). **OWED before Task 6 DONE: review round 2 → 0 new findings**
+   (running @e54cc10). **Then 8 → 9.** **C1a needs a program change** (`create_account` must
    compare against a pinned production `rp_id_hash`, not just self-consistency —
    WRDF-0016/0027) plus the owner's freeze-vs-migration decision.
 3. Corrected gating (was C1-only): **V4 waits for C1a + C2a + C3 + C4**; **U7
