@@ -63,6 +63,14 @@ describe("deploy-gate CLI logic (WRDF-0088)", () => {
     expect(() => parseReleaseRow(noToken, DEV_SHA)).toThrow(/has 0 manifest:<name>@<digest> tokens/);
   });
 
+  it("requires the LEADING backtick value of the Git-SHA column, not one mid-cell (WRDF-0085 round 7)", () => {
+    const A = "1".repeat(40);
+    // A appears in the Git-SHA cell but NOT as its leading value (it is in a
+    // trailing caveat) → must not bind for A.
+    const midCell = `| dev | \`${"2".repeat(40)}\` supersedes \`${A}\` | \`${"2a".repeat(32)}\` | manifest:synthetic@${digest()} |`;
+    expect(() => parseReleaseRow(midCell, A)).toThrow(/no RELEASE-INTEGRITY row has release-sha .* in its Git-SHA column/);
+  });
+
   it("anchors to the Git-SHA COLUMN, not a substring in notes (WRDF-0085 round 6)", () => {
     // A row for release B whose NOTES mention A must not bind when invoked for A.
     const A = "1".repeat(40);

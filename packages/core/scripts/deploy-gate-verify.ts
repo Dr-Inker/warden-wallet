@@ -50,6 +50,21 @@ function connectionRpc(connection: Connection): RpcSource {
 async function main(argv: string[]): Promise<void> {
   const args = parseArgs(argv);
 
+  // Parse-only mode (WRDF-0085 round 7): the ONE canonical parser, used by the
+  // shell for BOTH the local (.so) and on-chain hash checks — no second shell grep
+  // parser that could bind a different row. Prints the release-bound artifact hash.
+  if (args.get("parse-release-hash") !== undefined) {
+    const releaseSha = args.get("release-sha");
+    const releaseFile = args.get("release-integrity-file");
+    if (!releaseSha || !releaseFile) die("--parse-release-hash needs --release-sha <full-sha> --release-integrity-file <path>");
+    try {
+      console.log(parseReleaseRow(readFileSync(releaseFile, "utf8"), releaseSha).artifactHashHex);
+      process.exit(0);
+    } catch (e) {
+      die((e as Error).message);
+    }
+  }
+
   const fixtureCase = args.get("fixtures");
   if (fixtureCase !== undefined) {
     const scenario = namedScenario(fixtureCase);

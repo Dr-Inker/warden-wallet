@@ -22,7 +22,7 @@ Usage: scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig
   --fixtures <case>         run checks 1/2/4a against a deterministic scenario (no RPC)
   --manifest <name> --rpc-url <url>
                             live run: pin from the COMMITTED manifest registry (never a file);
-                            requires a clean tree with HEAD == the release-sha commit (WRDF-0085).
+                            requires a clean tree with the release-sha an ancestor of HEAD (WRDF-0085).
                             The per-proposal governance audit fails closed in-tool (WRDF-0028).
 EOF
   exit 2
@@ -64,8 +64,13 @@ is_pubkey() {
 
 # The Task 11R governance+hash verifier (DEPLOY-GATE.md checks 1, 2, 4a). Hand-rolled
 # in packages/core/src/deploy (no @sqds dependency); run via the workspace's tsx.
+# Overridable via $WARDEN_DEPLOY_VERIFIER so a hermetic test can stub it (WRDF-0088).
 run_gov_hash_verifier() {
-  pnpm --filter @warden/core exec tsx scripts/deploy-gate-verify.ts "$@"
+  if [ -n "${WARDEN_DEPLOY_VERIFIER:-}" ]; then
+    "$WARDEN_DEPLOY_VERIFIER" "$@"
+  else
+    pnpm --filter @warden/core exec tsx scripts/deploy-gate-verify.ts "$@"
+  fi
 }
 
 # ---- WRDF-0085: bind a live run to the release, without self-reference --------
@@ -107,19 +112,25 @@ echo
 echo "-- checks 1, 2, 4a: governance + release-hash (deploy-gate-verify, Task 11R) --"
 echo "   (upgrade authority chain, pinned Squads 3-of-5 governance, on-chain program hash)"
 
-# Extract the recorded release hash up front — the verifier's live mode needs it,
-# and check 4b (local .so) reuses it. A missing row is fatal (fail-closed).
+# Extract the recorded release hash via the ONE canonical parser (WRDF-0085 round
+# 7) — the same `parseReleaseRow` the verifier uses, so the local (.so) check and
+# the on-chain check can never bind different rows. No second shell grep parser.
+# A missing file / no row / ambiguous row / missing hash all fail closed.
 RELEASE_INTEGRITY_DOC="docs/security/RELEASE-INTEGRITY.md"
+RELEASE_INTEGRITY_ABS="$(pwd)/$RELEASE_INTEGRITY_DOC"  # absolute: pnpm exec runs the verifier in packages/core
 recorded_hash=""
 if [ ! -f "$RELEASE_INTEGRITY_DOC" ]; then
   fail "$RELEASE_INTEGRITY_DOC is missing"
 else
-  row="$(grep -F "$RELEASE_SHA" "$RELEASE_INTEGRITY_DOC" | grep '^| ' || true)"
-  if [ -z "$row" ]; then
-    fail "no row for release-sha '$RELEASE_SHA' found in $RELEASE_INTEGRITY_DOC"
+  # Resolve to a full 40-hex commit id so the canonical parser (which requires the
+  # full SHA) can key on the Git-SHA column exactly. Falls back to the raw arg only
+  # if it is already a full SHA not resolvable in a shallow/foreign checkout.
+  parse_sha="$(git rev-parse --verify "${RELEASE_SHA}^{commit}" 2>/dev/null || echo "$RELEASE_SHA")"
+  if recorded_hash="$(run_gov_hash_verifier --parse-release-hash 1 --release-sha "$parse_sha" --release-integrity-file "$RELEASE_INTEGRITY_ABS" 2>/dev/null)"; then
+    :
   else
-    recorded_hash="$(echo "$row" | grep -oE '[0-9a-f]{64}' | head -1 || true)"
-    [ -z "$recorded_hash" ] && fail "could not extract a sha256 hash from the matched row in $RELEASE_INTEGRITY_DOC"
+    recorded_hash=""
+    fail "canonical parse of the RELEASE-INTEGRITY row for '$RELEASE_SHA' failed (no unique row / no artifact hash / bad token)"
   fi
 fi
 
@@ -145,7 +156,7 @@ elif [ -n "$MANIFEST" ] && [ -n "$RPC_URL" ]; then
   if [ -z "$recorded_hash" ]; then
     fail "cannot run the live governance+hash checks without a release-integrity hash"
   elif run_gov_hash_verifier --rpc-url "$RPC_URL" --manifest "$MANIFEST" \
-        --release-sha "$RELEASE_FULL_SHA" --release-integrity-file docs/security/RELEASE-INTEGRITY.md \
+        --release-sha "$RELEASE_FULL_SHA" --release-integrity-file "$RELEASE_INTEGRITY_ABS" \
         --expect-warden-program "$PROGRAM_ID" --expect-multisig "$SQUADS_MULTISIG" --expect-authority "$EXPECTED_AUTHORITY"; then
     echo "   OK: live governance+hash checks passed against $RPC_URL"
   else

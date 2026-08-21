@@ -78,9 +78,12 @@ export interface ReleaseRow {
 // caveats), so the value is the leading backtick-wrapped token of the column.
 const COL_GIT_SHA = 2;
 const COL_ARTIFACT_HASH = 3;
-/** The first backtick-wrapped token matching `re` inside a table cell, or null. */
-function backtickToken(cell: string | undefined, re: RegExp): string | null {
-  const m = (cell ?? "").match(new RegExp("`(" + re.source + ")`"));
+/** The LEADING backtick-wrapped token matching `re` in a table cell (the cell must
+ *  START with it, after trimming), or null — so a value merely MENTIONED later in
+ *  the cell's free-text (e.g. "UNVERIFIED; supersedes `A`") is never accepted as
+ *  the column's designated value (WRDF-0085 round 7). */
+function leadingBacktickToken(cell: string | undefined, re: RegExp): string | null {
+  const m = (cell ?? "").trim().match(new RegExp("^`(" + re.source + ")`"));
   return m ? m[1]! : null;
 }
 
@@ -95,12 +98,12 @@ export function parseReleaseRow(md: string, releaseSha: string): ReleaseRow {
   const rows = md
     .split("\n")
     .filter((l) => l.startsWith("| "))
-    .filter((l) => backtickToken(l.split("|")[COL_GIT_SHA], /[0-9a-f]{40}/) === releaseSha);
+    .filter((l) => leadingBacktickToken(l.split("|")[COL_GIT_SHA], /[0-9a-f]{40}/) === releaseSha);
   if (rows.length === 0) throw new Error(`no RELEASE-INTEGRITY row has release-sha ${releaseSha} in its Git-SHA column`);
   if (rows.length > 1) throw new Error(`${rows.length} RELEASE-INTEGRITY rows have release-sha ${releaseSha} in their Git-SHA column — ambiguous`);
   const cols = rows[0]!.split("|");
 
-  const artifactHashHex = backtickToken(cols[COL_ARTIFACT_HASH], /[0-9a-f]{64}/);
+  const artifactHashHex = leadingBacktickToken(cols[COL_ARTIFACT_HASH], /[0-9a-f]{64}/);
   if (!artifactHashHex) {
     throw new Error(`RELEASE-INTEGRITY row for ${releaseSha} has no backtick-wrapped 64-hex artifact hash in the artifact-hash column`);
   }
