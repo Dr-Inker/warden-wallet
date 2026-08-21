@@ -950,3 +950,38 @@ Adversarial review of the Task 8 client (`3fdca69..d098d32`, seeded=44) raised
   `invariant ledger … AT the SHA` test — was the documented post-build
   git-under-load timeout flake and passes 40/40 standalone; it is green on the
   retry recorded here.
+
+## Task 8 review round 2 — Codex sol@max (thread b0d3019ef2d3-20260821T165748Z)
+
+Round 2 (`d098d32..b0d3019`, seeded=44) raised 5 findings; ALL ADOPTED and fixed
+at `f2f92e4dabd83d8e95c6f64081bb830c5e9239cc`. The core insight: the round-1
+fixes patched symptoms of ONE root cause — the SDK derived `accountsHash` + caps
+from a hand-reconstructed logical list, not the effective metas of the compiled
+outer instruction. `wrapForExecute` was rewritten around a single source of truth.
+
+- **WRDF-0071** (important, re-open) — round-1 coalesced only `payer==signer`; a
+  named optional aliasing the signer (`stageCreator==signer`, writable) still
+  drifted. Fixed: `wrapForExecute` takes the named optionals + the real payer,
+  builds the COMPLETE outer execute ix, compiles+decompiles it, and derives
+  `accountsHash` from the runtime-coalesced instruction metas. Also fixes
+  **WRDF-0077** (caps counted post-coalescing: a read-only remaining account
+  chosen as the outer payer now counts against the writable cap).
+- **WRDF-0072** (important, re-open) — the heap trigger keyed on remaining-account
+  count, but the heap is driven by inner-INSTRUCTION count (two capacity-`n_ixs`
+  Vecs in `parse_payload`/`resolve_payload`, bump-allocated, never freed): 255
+  empty ixs is `remainingLen==1` yet OOMs. Fixed: a `RequestHeapFrame` is ALWAYS
+  attached, sized from inner-ix count + account refs + payload bytes, clamped to
+  [128 KiB floor, 256 KiB ceiling].
+- **WRDF-0076** (important) — `SetComputeUnitLimit` was identified by tag only; a
+  1-unit or malformed limit passed. Fixed: strict 5-byte decode, reject below the
+  measured 120k floor (handler alone ~113k CU) or above the 1.4M ceiling; the
+  configured default is validated the same way.
+- **WRDF-0077** (minor) — see WRDF-0071 (caps from effective privileges).
+- **WRDF-0078** (minor) — the "dedicated CloseAccount helper" the comments/ledger
+  implied did not exist. Fixed: **WRD-EXEC-11** narrowed to the proved property
+  (raw-codec writable-idx0 expressibility + the wrapper's fail-closed refusal); a
+  typed vault-sweep close builder is an explicit deferred client deliverable.
+
+Seeded invariants **WRD-EXEC-11/12** rewritten to the compile/decompile contract;
+evidence pinned at `f2f92e4`. **Gate evidence (WRDF-0075 discipline):** recorded
+on the immutable ledger HEAD below.
