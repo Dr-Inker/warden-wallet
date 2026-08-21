@@ -1371,3 +1371,17 @@ critical; severity dropping). Fixed/adjudicated at `ff66e59`.
 **Gate on the immutable ledger HEAD `da4819651b27b06c160846a59fd23a7e5838aefc`:**
 `WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
 201/201, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
+
+## Task 11R review round 6 — Codex sol@max (thread 72aae3c0deff-20260821T223710Z)
+
+Round 6 (`aca5ddf..72aae3c`, seeded=41) raised 2 findings, both IMPORTANT.
+Fixed/adjudicated at `011903d`.
+
+- **WRDF-0085** (important, 6th) — parseReleaseRow matched by SUBSTRING (a row for
+  B mentioning A in notes could bind for A). Fixed: column-anchored match against
+  the designated Git-SHA column + artifact-hash column + exactly one manifest token.
+- **WRDF-0088** (important) — the live checkout boundary had no executable coverage.
+  Extracted `scripts/deploy-preflight.sh` (git-only) + a HERMETIC temp-repo test
+  suite (accept clean+ancestor; refuse dirty/non-ancestor/unresolved).
+
+205 core tests. Gate evidence on the ledger HEAD below.
