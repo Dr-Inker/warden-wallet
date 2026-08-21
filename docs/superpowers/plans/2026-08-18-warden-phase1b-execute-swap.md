@@ -14,7 +14,7 @@
 | 10 | DONE | 8250e1b + fix 9f95b15 | 1 round (thread not retained) |
 | 1 | DONE | f0f38ca + fixes 2023902, d394b74 | 2 rounds (r1 = `01a018fa`, r2 thread not retained) |
 | 2b | DONE | 50dc590, evidence pinned b6ec220 | 1 round (thread not retained) |
-| 11 | **PARTIAL** | b320ecd + fixes d8e3f54, 56c543b, d0072fd | 3 rounds (threads not retained). Deploy gate = spec + partial dry-run (`DEPLOY-GATE.md:12`); **Task 11R** (campaign plan G11) owns the RPC checks before Task 9 |
+| 11 | **PARTIAL** (11R DONE @f0f898e; WRD-DEP-02 remains) | b320ecd + fixes d8e3f54, 56c543b, d0072fd; **11R** f0f898e | 3 rounds + **Task 11R** DONE: checks 1/2/4a (governance+hash) implemented in packages/core/src/deploy, 21-case fixture suite, `WRD-DEP-01` test-covered. Task 11 → DONE only when the WRD-DEP-02 adapter-selector/Registry check (WRDF-0018) also lands |
 | 2 | DONE (2026-08-20) | 2A 204a118, 2B 4c8575a | 4 rounds, converged 0 findings (WRDF-0031/-0032/-0033 adopted); test-mutator + test-jup-mock + 18 harness tests |
 | 3 | **DONE** (a7b7824…300face) | Registry + registry_allows (authority-position role, fail-closed) + defaults + init_registry (upgrade-auth-gated) + grant_session allowlist (LOADS registry + requires `is_allocated_list`, WRDF-0044) + create_account registry (ceremony-bound) + canonical `encodeCreateBody` (WRDF-0042) + TS parity + integ; 282 lib + 104 TS + 42 integ. Full `./.claude/test-gate.sh` at **3361d2c** | 7 rounds WRDF-0034..0044 adopted; **round 7 confirmation = 0 findings at 300face** |
 | 4 | **DONE — code-complete** (d47d8ce…08a8b56) | stage_open/chunk/finalize/close — Stage PDA `["stage", account, creator, hash]` (creator-bound, ND-SQD3-LO-01 closed by construction — WRDF-0045), sequential chunk upload, finalize (hash + generation/policy_version binding, account PDA re-derived), close (creator pre-finalize / anyone post-expiry, rent→creator); 23 integration tests, two prior-art mechanisms as separate regressions; MEASURED stage_chunk cap **977 B v0/client** (979 legacy), `STAGE_CHUNK_PAYLOAD_CAP`; WRD-BUF-01/02 + WRD-STAGE-01 test-covered, WRD-STAGE-02 (consume) → Task 5. Full gate green (see PHASE1B-MEASUREMENTS Task 4). **RELEASE-BLOCKER: WRDF-0050 (owner/counsel) carried UNRESOLVED** | 5 sol@max rounds; engineering findings WRDF-0045..0049 converged; WRDF-0050 = owner/counsel release-blocker carried (blocks SHIP, not code) |
@@ -319,7 +319,7 @@ Task 11 is therefore **PARTIAL** until this task closes the live checks.
 readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
 `docs/security/DEPLOY-GATE.md`.
 
-- [ ] **Upgrade-governance check (WRDF-0017, `WRD-DEP-01`), the load-bearing one.**
+- [x] **Upgrade-governance check (WRDF-0017, `WRD-DEP-01`), the load-bearing one.**
   Comparing `ProgramData.upgrade_authority_address` against an operator-supplied
   "expected authority" and *separately* checking that some 3-of-5 multisig is
   healthy is **insufficient** — an operator can pass a single-key authority as
@@ -343,7 +343,7 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   pin and independently attest an explicitly approved config authority. Add a
   negative fixture: a structurally-perfect multisig with a non-default
   `configAuthority`.
-- [ ] **Authenticate Warden's canonical ProgramData first (WRDF-0017 round 5).**
+- [x] **Authenticate Warden's canonical ProgramData first (WRDF-0017 round 5).**
   Do not compare "an unnamed ProgramData account" to the vault — an attacker could
   present some *other* program's ProgramData whose authority happens to be the
   Squads vault. Instead: fetch the **pinned Warden `Program` account**, require it
@@ -353,7 +353,7 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   Negative fixtures: a `Program` account not owned by the loader, a wrong Program
   state variant, and a ProgramData address that does not match the one Warden's
   Program encodes.
-- [ ] **Authenticate the Squads program's code, and terminate the trust root
+- [x] **Authenticate the Squads program's code, and terminate the trust root
   (WRDF-0017 round 6).** A pinned Squads *program id* is not a code identity while
   its ProgramData is upgradeable: replacement Squads code keeps the same id, can
   `invoke_signed` for the canonical vault PDA, and could authorize a Warden
@@ -364,7 +364,7 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   governance is an accepted, documented external assumption (recorded in
   `THREATMODEL.md`), not a thing this gate recurses into further — pinning the
   audited Squads code hash is the concrete anchor.
-- [ ] **No actionable stale governance state (WRDF-0028, distinct class).** The
+- [x] **No actionable stale governance state (WRDF-0028, distinct class).** The
   current config being correct is not enough: `vault_transaction_execute` permits
   a proposal **already Approved before it became stale**, so an upgrade tx created
   and approved under an earlier weak threshold can still execute after the config
@@ -378,7 +378,7 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   touch the Warden upgrade authority. The exhaustive per-mechanism index list is a
   Task 11R implementation artifact against the pinned Squads IDL; the closed
   requirement is "no actionable stale governance state of any kind".
-- [ ] **Every member's permission mask, and the completeness terminus (WRDF-0017
+- [x] **Every member's permission mask, and the completeness terminus (WRDF-0017
   round 7).** Assert each pinned member's permission bits (a member with only a
   subset, or an unexpected proposer/executor, changes the real control), not just
   the member pubkey set. **This is where the pre-implementation spec terminates:**
@@ -388,9 +388,9 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   fixtures are finalized at Task 11R implementation against the pinned Squads
   IDL**, not enumerated further here. "Attest the complete pinned configuration"
   is the closed requirement; the field inventory is an implementation artifact.
-- [ ] Assert the on-chain program hash equals `solana-verify get-program-hash` of
+- [x] Assert the on-chain program hash equals `solana-verify get-program-hash` of
   the release artifact; **refuse on any mismatch**.
-- [ ] **The checks must be explicit assertions, and each must have a valid-looking
+- [x] **The checks must be explicit assertions, and each must have a valid-looking
   negative fixture that would pass a lazy implementation (WRDF-0017).** Assert, by
   name: the multisig account's **owner == the pinned Squads program id** and its
   **discriminator**; **member_count == 5** (not merely `threshold == 3`); the
@@ -404,14 +404,14 @@ readback + assertions), fixtures under `scripts/fixtures/deploy-gate/`,
   and — the round-3 case — **a well-formed 3-of-5 / 7-day Squads multisig with
   the wrong pubkey or an attacker member set** (structurally perfect, wrong
   identity).
-- [ ] Deterministic pass/fail fixtures — recorded RPC responses (happy path plus
+- [x] Deterministic pass/fail fixtures — recorded RPC responses (happy path plus
   each mismatch class above, plus authority ≠ derived vault PDA, single-key
   authority + a healthy but unrelated multisig, wrong threshold, wrong timelock,
   wrong hash, missing account, and RPC error ⇒ **fail closed**) driven through the
   same code path via a `--fixtures` flag; **no network in CI**.
-- [ ] `DEPLOY-GATE.md` updated: "implemented, fixture-verified; live-chain run
+- [x] `DEPLOY-GATE.md` updated: "implemented, fixture-verified; live-chain run
   UNVERIFIED until a release candidate exists" — the honest residual, stated.
-- [ ] Commit `feat(security): deploy-gate RPC checks + deterministic fixtures`.
+- [x] Commit `feat(security): deploy-gate RPC checks + deterministic fixtures`.
 
 **Scope boundary (WRDF-0018).** Task 11R covers the ProgramData/governance and
 program-hash checks. It does **not** cover DEPLOY-GATE check 3 — adapter-selector
@@ -420,7 +420,7 @@ the `Registry` account from Task 3 and the selector rules from Task 5. That chec
 is its own deliverable, landed with or after the registry; do not fold it into
 11R's fixtures and do not let 11R's green stand in for it.
 
-**Task 11R acceptance:** the governance + hash fixture suite is green at the
+**Task 11R DONE (2026-08-21, @f0f898e):** checks 1/2/4a implemented in `packages/core/src/deploy` (hand-rolled pinned decoders, no `@sqds` dep; injectable RpcSource; fail-closed), 21-case fixture suite, wired into `scripts/deploy-gate.sh` (`--fixtures`/`--pin`+`--rpc-url`), `WRD-DEP-01` → test-covered. **Task 11R acceptance:** the governance + hash fixture suite is green at the
 merged SHA (`WRD-DEP-01` → `test-covered`); a live-cluster run stays a
 release-time step. **Task 11 moves PARTIAL → DONE only when BOTH 11R and the
 `WRD-DEP-02` selector/registry check are green** — 11R alone does not complete

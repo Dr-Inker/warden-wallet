@@ -1207,3 +1207,33 @@ and its assurance ledger are converged.**
 CloseAccount payload builder, and an on-chain relayer/optional-alias execute
 integration proving privilege parity end-to-end (the client subset guard + the
 independent Rust cross-language hash oracle cover it short of that).
+
+## Task 11R — deploy-gate RPC checks (WRD-DEP-01), 2026-08-21
+
+Implemented DEPLOY-GATE.md checks 1 (upgrade authority), 2 (Squads governance),
+and 4a (on-chain program hash) as `packages/core/src/deploy` + a CLI wired into
+`scripts/deploy-gate.sh`. Hand-rolled pinned decoders (no `@sqds/multisig`
+dependency — the gate exists to shrink supply-chain surface). Code @`f0f898e`
+(core @`25c0621`).
+
+**What it verifies (fail-closed throughout):** the Warden `Program`→`ProgramData`
+chain (BPF-loader ownership + loader-state variant), `upgrade_authority` == the
+derived canonical Squads vault PDA, the multisig IS the pinned pubkey (owner +
+Anchor discriminator), threshold == 3 AND member_count == 5 AND time_lock ≥ 7 days
+AND `configAuthority` == default AND no actionable stale governance state AND the
+complete member set with exact permission masks, the Squads program's own code
+hash == the pinned audited hash (trust-root terminus, WRDF-0017 round 6), and the
+Warden on-chain code hash == the RELEASE-INTEGRITY row.
+
+**Fixture suite (21 cases, no network):** happy path + every WRDF-0017
+lazy-implementation trap — wrong owner/discriminator, member_count ≠ 5, wrong
+threshold/time-lock, non-default configAuthority (round 4), stale governance
+(WRDF-0028), attacker member set (round 3), wrong permission mask (round 7),
+authority ≠ vault PDA, replacement Squads code (round 6), release-hash mismatch,
+missing account, RPC error, immutable ProgramData. `WRD-DEP-01` → test-covered.
+
+**Scope + residual:** covers `WRD-DEP-01` only. `WRD-DEP-02` (adapter-selector
+re-derivation vs the on-chain Registry) is a SEPARATE deliverable (scope boundary
+WRDF-0018) — the Registry now exists (Task 3) but the diff tool is not wired here.
+Byte-exact `solana-verify` parity on a live cluster is the honest residual until a
+release candidate. **Task 11 → DONE only when WRD-DEP-02 also lands.**
