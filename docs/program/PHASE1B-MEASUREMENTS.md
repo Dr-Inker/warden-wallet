@@ -1291,3 +1291,8 @@ Fixed/adjudicated at `b0d62e8`.
 - **WRDF-0089** (important, licensing) — carried UNRESOLVED for owner/counsel.
 
 Gate evidence on the ledger HEAD below.
+
+### Task 11R round-2 gate evidence
+**Gate on the immutable ledger HEAD `8ccd4445c2a40c317e9a7e002d453fa3f4c84b8a`:**
+`WARDEN_SKIP_SPIKES=1 ./.claude/test-gate.sh` → exit 0, all green — `@warden/core`
+188/188, `ui-tokens` 11/11, Rust workspace under `--features test-jup` (0 failed).
