@@ -10,7 +10,39 @@
 //! source of truth), so the reviewed pin cannot silently diverge from what `init_registry`
 //! actually writes. This module is pure `.ts` (no JSON import) so it stays inside the
 //! deploy verifier's attested source closure (WRD-DEP-01).
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { sha256 } from "@noble/hashes/sha2";
 import { anchorInstructionSighash, type DecodedRegistry } from "./accounts.js";
+
+// The committed, hash-pinned Jupiter v6 IDL (fetched from jup-ag/jupiter-cpi). The deploy
+// verifier AUTHENTICATES each production Anchor selector's instruction NAME against this
+// upstream source (WRDF-0095) — so a stale/typo'd name coordinated across Warden's own
+// mirrors cannot pass: it must name a real instruction of the pinned target program.
+export const JUPITER_V6_IDL_SHA256 = "764ea6d71b77458fd33aeb308d6e6bb19e660fc5320c5359f3b9cac96eba5c50";
+const JUPITER_V6_IDL_PATH = fileURLToPath(new URL("./idl/jupiter-v6.idl.json", import.meta.url));
+
+// Anchor computes an instruction sighash from the SNAKE_CASE name; Jupiter's IDL lists
+// camelCase (`sharedAccountsRoute`), so normalize before matching.
+const toSnakeCase = (s: string): string => s.replace(/([A-Z])/g, (m) => "_" + m.toLowerCase());
+
+let _jupNames: Set<string> | null = null;
+/** Read the committed Jupiter v6 IDL, verify its pinned sha256, and return its instruction
+ *  names in Anchor snake_case form. Fail-closed: a missing / hash-mismatched / unparseable
+ *  IDL throws, so the deploy verifier refuses rather than trust an unauthenticated source. */
+export function authenticatedJupiterInstructionNames(): Set<string> {
+  if (_jupNames) return _jupNames;
+  const raw = readFileSync(JUPITER_V6_IDL_PATH);
+  const got = Array.from(sha256(raw)).map((x) => x.toString(16).padStart(2, "0")).join("");
+  if (got !== JUPITER_V6_IDL_SHA256) {
+    throw new Error(`Jupiter v6 IDL sha256 ${got} != pinned ${JUPITER_V6_IDL_SHA256} — refusing an unauthenticated selector source`);
+  }
+  const idl = JSON.parse(new TextDecoder().decode(raw)) as { instructions?: { name: string }[] };
+  const names = new Set<string>();
+  for (const ix of idl.instructions ?? []) names.add(toSnakeCase(ix.name));
+  _jupNames = names;
+  return names;
+}
 
 // Adapter program ids (base58), mirrored from programs/warden/src/constants.rs.
 export const SPL_TOKEN_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -28,7 +60,13 @@ export type ExpectedAdapter = {
   program: string;
   roleRules: number;
   lists: number[];
-} & ({ anchor: string } | { tag: number[] });
+} & (
+  // An Anchor instruction: selector = re-derived sighash. `source` says how the NAME is
+  // authenticated — against the hash-pinned Jupiter IDL, or (test-only, list 2) a reviewed
+  // Warden test-program instruction with no public IDL.
+  | { anchor: string; source: "jupiter-idl" | "warden-test" }
+  | { tag: number[] }
+);
 
 // The complete reviewed default registry (insertion order matches registry_default.rs).
 export const EXPECTED_ADAPTERS: readonly ExpectedAdapter[] = [
@@ -37,12 +75,12 @@ export const EXPECTED_ADAPTERS: readonly ExpectedAdapter[] = [
   { program: ATA_PROGRAM_ID, tag: [1], roleRules: 0, lists: [1] }, // ATA CreateIdempotent
   { program: SYSTEM_PROGRAM_ID, tag: [2, 0, 0, 0], roleRules: 1, lists: [1] }, // System Transfer (u32 LE tag)
   { program: MEMO_PROGRAM_ID, tag: [], roleRules: 0, lists: [1] }, // Memo (tagless)
-  { program: JUPITER_V6_ID, anchor: "route", roleRules: 0, lists: [1] },
-  { program: JUPITER_V6_ID, anchor: "shared_accounts_route", roleRules: 0, lists: [1] },
-  { program: TEST_MUTATOR_ID, anchor: "noop", roleRules: 0, lists: [2] },
-  { program: TEST_MUTATOR_ID, anchor: "transfer_out", roleRules: 3, lists: [2] },
-  { program: TEST_JUP_MOCK_ID, anchor: "route", roleRules: 0, lists: [2] },
-  { program: TEST_JUP_MOCK_ID, anchor: "shared_accounts_route", roleRules: 0, lists: [2] },
+  { program: JUPITER_V6_ID, anchor: "route", source: "jupiter-idl", roleRules: 0, lists: [1] },
+  { program: JUPITER_V6_ID, anchor: "shared_accounts_route", source: "jupiter-idl", roleRules: 0, lists: [1] },
+  { program: TEST_MUTATOR_ID, anchor: "noop", source: "warden-test", roleRules: 0, lists: [2] },
+  { program: TEST_MUTATOR_ID, anchor: "transfer_out", source: "warden-test", roleRules: 3, lists: [2] },
+  { program: TEST_JUP_MOCK_ID, anchor: "route", source: "jupiter-idl", roleRules: 0, lists: [2] },
+  { program: TEST_JUP_MOCK_ID, anchor: "shared_accounts_route", source: "jupiter-idl", roleRules: 0, lists: [2] },
 ];
 
 export const hexOf = (b: Uint8Array | number[]): string =>
@@ -60,10 +98,17 @@ export interface ExpectedEntry {
 /** Build the expected entries, RE-DERIVING every Anchor selector from its instruction
  *  name and validating literal tags. Throws if a tag is malformed (>8 bytes). */
 export function expectedRegistryConfig(): ExpectedEntry[] {
+  const jupNames = authenticatedJupiterInstructionNames();
   return EXPECTED_ADAPTERS.map((a) => {
     let selector: Uint8Array;
     if ("anchor" in a) {
-      selector = anchorInstructionSighash(a.anchor); // 8 bytes, re-derived from source
+      // Authenticate the instruction NAME against the pinned upstream IDL before hashing it
+      // (WRDF-0095): a Jupiter-sourced name must be a real instruction of the authenticated
+      // Jupiter v6 IDL, so a Warden-mirror typo cannot yield a self-consistent wrong selector.
+      if (a.source === "jupiter-idl" && !jupNames.has(a.anchor)) {
+        throw new Error(`Anchor adapter "${a.anchor}" (${a.program}) is not an instruction in the authenticated Jupiter v6 IDL`);
+      }
+      selector = anchorInstructionSighash(a.anchor); // 8 bytes, sighash of the authenticated name
     } else {
       if (a.tag.length > 8) throw new Error(`literal tag for ${a.program} exceeds 8 bytes`);
       selector = Uint8Array.from(a.tag);

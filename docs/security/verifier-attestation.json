@@ -8,6 +8,6 @@
     "packages/core/src/deploy/config.ts": "d46dd613f9aea8b3ed0a685c0b3c2fc480cd35a078ff2d83eb513339966000ba",
     "packages/core/src/deploy/fixtures.ts": "7bf4eede9725f8345ecffb790a7241e26ad705e3995c86dd53ce404343e5259b",
     "packages/core/src/deploy/gate.ts": "6f7ef1a60b7ca5ba02f2565c380789d1526671f3a82ef955cc6d1b2be0c83125",
-    "packages/core/src/deploy/registry-config.ts": "ae011d000618a82ee2a86ee880a5eb0a3a9d77d890f653210016836ff5803c69"
+    "packages/core/src/deploy/registry-config.ts": "9fe72b070c382aa26acf163b8f558765e074accfc9688d1e6160e208279c61f8"
   }
 }

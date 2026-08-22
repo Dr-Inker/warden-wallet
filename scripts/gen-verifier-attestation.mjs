@@ -62,6 +62,7 @@ export const PERMITTED_EXTERNAL = new Set([
   "@solana/web3.js",
   "@noble/hashes/sha2",
   "node:fs",
+  "node:url", // fileURLToPath, to resolve the committed hash-pinned Jupiter IDL (WRDF-0095)
 ]);
 
 // Classify a static module specifier: "local" (relative → traverse in-repo), "external"

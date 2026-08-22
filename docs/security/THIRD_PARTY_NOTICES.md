@@ -92,6 +92,18 @@ license posture.
   for owner/counsel sign-off** (parallels WRDF-0050); record the counsel ruling
   and any attribution/notice requirement here before SHIP. Do not treat the deploy
   gate's Squads reader as release-cleared until then.
+- **Vendored Jupiter v6 IDL (WRDF-0095):**
+  `packages/core/src/deploy/idl/jupiter-v6.idl.json` is the Jupiter aggregator v6
+  IDL fetched from `https://raw.githubusercontent.com/jup-ag/jupiter-cpi/main/idl.json`
+  (sha256 `764ea6d71b77458fd33aeb308d6e6bb19e660fc5320c5359f3b9cac96eba5c50`,
+  76,690 bytes, fetched 2026-08-22). The deploy gate authenticates it by that
+  pinned hash and reads only instruction NAMES from it to prove each production
+  Anchor selector names a real target instruction (deploy-gate check 3). It is an
+  interface description of published on-chain program facts (the same category as
+  the Squads wire-format reader above), NOT Jupiter program source. **Confirm the
+  jup-ag/jupiter-cpi license and any attribution/redistribution requirement with
+  counsel before SHIP** — carried UNRESOLVED (parallels the Squads reader); record
+  the ruling here.
 - `rpc-websockets` (LGPL-3.0-only) and `text-encoding-utf-8` (unknown
   license) — re-evaluate at Phase 2 when the extension bundle's actual
   build/link shape (webpack/esbuild single-file bundle vs. npm tree) is

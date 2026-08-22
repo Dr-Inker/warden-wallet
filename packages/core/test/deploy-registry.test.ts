@@ -14,6 +14,8 @@ import {
   diffRegistry,
   EXPECTED_ADAPTERS,
   hexOf,
+  authenticatedJupiterInstructionNames,
+  JUPITER_V6_IDL_SHA256,
 } from "../src/deploy/registry-config.js";
 import { encodeRegistry, defaultRegistryEntries, namedScenario, GOLDEN_VAULT_PDA } from "../src/deploy/fixtures.js";
 import { verifyDeployGate, deriveRegistryPda } from "../src/deploy/gate.js";
@@ -88,6 +90,26 @@ describe("selector re-derivation (registry-config.ts)", () => {
 
   it("EXPECTED_ADAPTERS covers all 11 default adapters", () => {
     expect(EXPECTED_ADAPTERS).toHaveLength(11);
+  });
+});
+
+describe("Jupiter IDL authentication (registry-config.ts) — WRDF-0095", () => {
+  it("authenticates the committed IDL against its pinned sha256 and exposes its instruction names (snake_case)", () => {
+    const names = authenticatedJupiterInstructionNames();
+    expect(JUPITER_V6_IDL_SHA256).toMatch(/^[0-9a-f]{64}$/);
+    expect(names.has("route")).toBe(true);
+    expect(names.has("shared_accounts_route")).toBe(true); // camelCase sharedAccountsRoute in the IDL
+    expect(names.size).toBeGreaterThan(10);
+  });
+
+  it("a shared Warden-mirror typo cannot pass: a name absent from the authenticated IDL is rejected", () => {
+    // expectedRegistryConfig throws for any jupiter-idl adapter whose name is not in this set,
+    // so a coordinated typo ('rout') across Warden's own mirrors is caught by the upstream source.
+    const names = authenticatedJupiterInstructionNames();
+    expect(names.has("rout")).toBe(false);
+    expect(names.has("shared_accounts_rout")).toBe(false);
+    // And the real config, whose Jupiter names ARE in the IDL, builds without throwing.
+    expect(() => expectedRegistryConfig()).not.toThrow();
   });
 });
 
