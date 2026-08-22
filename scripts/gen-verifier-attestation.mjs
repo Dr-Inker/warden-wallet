@@ -44,6 +44,7 @@ export const EXPECTED_CLOSURE = [
   "packages/core/src/deploy/accounts.ts",
   "packages/core/src/deploy/cli.ts",
   "packages/core/src/deploy/fixtures.ts",
+  "packages/core/src/deploy/registry-config.ts",
 ];
 
 export function sha256File(absPath) {

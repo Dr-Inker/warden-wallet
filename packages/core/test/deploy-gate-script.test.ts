@@ -102,7 +102,7 @@ describe("scripts/deploy-gate.sh — live wiring via the repo's own toolchain (W
   let dir: string;
   let outDir: string;
   let cSha = "";
-  const digest = "d462c1fcd13cff9bf0b23b0df1e28b870fd5e570dfe80408d40cc39ed4c8a143"; // synthetic manifest digest
+  const digest = "1b14016c8978d3202f54185f7e7f86aaed881537b3f9544c2eb24d82a00886b3"; // synthetic manifest digest
   const artifact = createHash("sha256").update("warden-so-bytes").digest("hex");
   let argsFile = "";
   let parseArgsFile = "";

@@ -1,10 +1,8 @@
 //! The deploy-gate governance + hash verification (Task 11R, `WRD-DEP-01`). Given
 //! a PINNED config (`config.ts`) and an injectable RPC source, it authenticates
 //! the on-chain accounts and refuses on any mismatch. It covers DEPLOY-GATE.md
-//! checks 1 (upgrade authority), 2 (Squads governance), and 4a (on-chain program
-//! hash). It deliberately does NOT cover check 3 (adapter-selector diff vs the
-//! on-chain Registry, `WRD-DEP-02`) — that is a separate deliverable (scope
-//! boundary WRDF-0018).
+//! checks 1 (upgrade authority), 2 (Squads governance), 3 (adapter-selector diff
+//! vs the on-chain Registry, `WRD-DEP-02`), and 4a (on-chain program hash).
 //!
 //! Every path is FAIL-CLOSED: a missing account, an RPC error, a wrong owner or
 //! discriminator, or any assertion mismatch produces a failing result. There is
@@ -15,10 +13,18 @@ import {
   decodeProgramAccount,
   decodeProgramDataAccount,
   decodeMultisig,
+  decodeRegistry,
   deriveVaultPda,
   type RpcAccount,
 } from "./accounts.js";
 import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, assertPinSpecFloors, type DeployPinConfig } from "./config.js";
+import { diffRegistry } from "./registry-config.js";
+
+/** The Warden adapter Registry is a program singleton PDA at seeds ["registry"]. */
+export function deriveRegistryPda(wardenProgramId: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync([new TextEncoder().encode("registry")], wardenProgramId);
+  return pda;
+}
 
 /** An injectable account reader. A live run wires this to an RPC endpoint; the
  *  fixture suite wires it to recorded responses. `null` = account does not exist. */
@@ -199,6 +205,29 @@ export async function verifyDeployGate(
       throw new Error(`on-chain Warden code hash ${wardenCodeHashHex} != release-integrity hash ${opts.expectedReleaseHashHex}`);
     }
     return `on-chain Warden code hash matches the RELEASE-INTEGRITY row`;
+  });
+
+  // --- Check 3: adapter Registry authenticated + config matches source --------
+  // (WRD-DEP-02) Fetch the canonical Registry PDA, owner-check it against the
+  // Warden program, decode (the Registry discriminator is verified in-decoder),
+  // and diff its complete config — every adapter selector RE-DERIVED from source,
+  // role_rules, list membership, version, and the treasury — rejecting any
+  // missing / extra / wrong / duplicate entry.
+  await check("registry-config", async () => {
+    const registryPda = deriveRegistryPda(pin.wardenProgramId);
+    const acct = await fetchOrThrow(rpc(opts), registryPda, "Registry");
+    if (!acct.owner.equals(pin.wardenProgramId)) {
+      throw new Error(`Registry ${b58(registryPda)} is not owned by the Warden program ${b58(pin.wardenProgramId)} (owner ${b58(acct.owner)})`);
+    }
+    const reg = decodeRegistry(acct.data); // verifies the Registry discriminator + bounds
+    const violations = diffRegistry(reg, {
+      expectedVersion: pin.registryVersion,
+      expectedTreasuryB58: pin.registryTreasury.toBase58(),
+    });
+    if (violations.length > 0) {
+      throw new Error(`Registry config mismatch (${violations.length}): ${violations.join("; ")}`);
+    }
+    return `Registry authenticated at ${b58(registryPda)}: ${reg.nEntries} adapters, version ${reg.version}, treasury + all selectors/roles/lists match the source-re-derived pin`;
   });
 
   return { ok: results.every((r) => r.ok), results };

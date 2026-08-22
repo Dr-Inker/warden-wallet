@@ -9,7 +9,8 @@ import { PublicKey } from "@solana/web3.js";
 import { sha256 } from "@noble/hashes/sha2";
 import { type RpcAccount } from "./accounts.js";
 import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, MAINNET_GENESIS_HASH, PERMISSION_ALL, SYNTHETIC_PIN, type DeployPinConfig, type PinnedMember } from "./config.js";
-import type { RpcSource } from "./gate.js";
+import { deriveRegistryPda, type RpcSource } from "./gate.js";
+import { expectedRegistryConfig } from "./registry-config.js";
 
 // INDEPENDENT golden vectors — hard-coded, NOT derived from the production
 // functions under test, so a bug in `anchorAccountDiscriminator`/`deriveVaultPda`
@@ -74,6 +75,76 @@ export function encodeMultisig(spec: MultisigSpec): Uint8Array {
   return Uint8Array.from(bytes);
 }
 
+// INDEPENDENT golden Registry discriminator = sha256("account:Registry")[..8],
+// hard-coded (not from anchorAccountDiscriminator) so a regression in the derivation
+// makes decodeRegistry reject the fixture rather than round-trip a shared wrong value.
+const GOLDEN_REGISTRY_DISC = Uint8Array.from([0x2f, 0xae, 0x6e, 0xf6, 0xb8, 0xb6, 0xfc, 0xda]);
+
+export interface RegistryEntrySpec {
+  program: PublicKey;
+  /** The significant selector bytes (length must equal discLen, <= 8). */
+  selector: Uint8Array;
+  discLen: number;
+  roleRules: number;
+  /** Allowlist ids this entry belongs to. */
+  lists: number[];
+}
+export interface RegistrySpec {
+  version?: number;
+  bump?: number;
+  authority?: PublicKey;
+  treasury: PublicKey;
+  entries: RegistryEntrySpec[];
+}
+
+/** Encode a Warden `Registry` account (zero-copy #[repr(C)], fixed 3488 bytes) at the
+ *  pinned offsets, packing the used entries, per-list bitmasks and allocated_lists. */
+export function encodeRegistry(spec: RegistrySpec): Uint8Array {
+  const MAX_ENTRIES = 64, MAX_LISTS = 8, STRIDE = 48;
+  const buf = new Uint8Array(3488);
+  buf.set(GOLDEN_REGISTRY_DISC, 0);
+  buf[8] = spec.version ?? 1;
+  buf[9] = spec.bump ?? 255;
+  buf.set((spec.authority ?? DEFAULT_PUBKEY).toBytes(), 16);
+  buf.set(spec.treasury.toBytes(), 48);
+  const n = spec.entries.length;
+  if (n > MAX_ENTRIES) throw new Error(`too many registry entries (${n} > ${MAX_ENTRIES})`);
+  buf[80] = n & 0xff; buf[81] = (n >> 8) & 0xff; // n_entries u16 LE
+  const listMasks = new Array<bigint>(MAX_LISTS).fill(0n);
+  let allocated = 0;
+  spec.entries.forEach((e, i) => {
+    if (e.selector.length !== e.discLen || e.discLen > 8) throw new Error(`entry ${i} selector length != disc_len`);
+    const base = 88 + i * STRIDE;
+    buf.set(e.program.toBytes(), base);
+    buf.set(e.selector.slice(0, e.discLen), base + 32); // remaining selector bytes stay 0
+    buf[base + 40] = e.discLen & 0xff;
+    buf[base + 41] = e.roleRules & 0xff;
+    for (const id of e.lists) {
+      if (id < 1 || id > MAX_LISTS) throw new Error(`entry ${i} bad list id ${id}`);
+      listMasks[id - 1]! |= 1n << BigInt(i);
+      allocated |= 1 << (id - 1);
+    }
+  });
+  for (let k = 0; k < MAX_LISTS; k++) {
+    let v = listMasks[k]!;
+    for (let b = 0; b < 8; b++) { buf[3160 + k * 8 + b] = Number(v & 0xffn); v >>= 8n; }
+  }
+  buf[3224] = allocated & 0xff;
+  return buf;
+}
+
+/** The complete default adapter set as encodable entries — re-derived from source
+ *  via `expectedRegistryConfig()`, so the happy Registry matches the check-3 pin. */
+export function defaultRegistryEntries(): RegistryEntrySpec[] {
+  return expectedRegistryConfig().map((e) => ({
+    program: new PublicKey(e.program),
+    selector: Uint8Array.from((e.selectorHex.match(/../g) ?? []).map((h) => parseInt(h, 16))),
+    discLen: e.discLen,
+    roleRules: e.roleRules,
+    lists: e.lists,
+  }));
+}
+
 /** A map-backed RpcSource over a mutable account table. */
 export class MapRpc implements RpcSource {
   public genesis: string = MAINNET_GENESIS_HASH;
@@ -109,6 +180,7 @@ export interface Scenario {
     wardenProgramData: PublicKey;
     squadsProgramData: PublicKey;
     vaultPda: PublicKey;
+    registryPda: PublicKey;
   };
 }
 
@@ -148,8 +220,15 @@ export function buildHappyScenario(base: DeployPinConfig): Scenario {
     timeLock: pin.minTimeLockSeconds,
     members: pin.members,
   })));
+  // The adapter Registry: owned by the Warden program, default adapters, pinned treasury.
+  const registryPda = deriveRegistryPda(pin.wardenProgramId);
+  rpc.set(registryPda, acct(pin.wardenProgramId, encodeRegistry({
+    version: pin.registryVersion,
+    treasury: pin.registryTreasury,
+    entries: defaultRegistryEntries(),
+  })));
 
-  return { rpc, pin, expectedReleaseHashHex, addrs: { wardenProgramData, squadsProgramData, vaultPda } };
+  return { rpc, pin, expectedReleaseHashHex, addrs: { wardenProgramData, squadsProgramData, vaultPda, registryPda } };
 }
 
 /** A fresh 5-member all-permission set on deterministic keys. */
@@ -171,6 +250,15 @@ export const FIXTURE_CASES = [
   "authority-not-vault",
   "squads-code",
   "release-hash",
+  "registry-wrong-owner",
+  "registry-bad-discriminator",
+  "registry-wrong-treasury",
+  "registry-wrong-version",
+  "registry-wrong-selector",
+  "registry-extra-entry",
+  "registry-wrong-role",
+  "registry-missing-entry",
+  "registry-wrong-list",
 ] as const;
 export type FixtureCase = (typeof FIXTURE_CASES)[number];
 
@@ -205,8 +293,62 @@ export function namedScenario(name: string): Scenario | null {
       break;
     case "release-hash":
       return { ...s, expectedReleaseHashHex: "00".repeat(32) };
+    case "registry-wrong-owner": // Registry not owned by the Warden program
+      s.rpc.set(s.addrs.registryPda, acct(synthetic(0x77), encodeRegistry({ treasury: s.pin.registryTreasury, entries: defaultRegistryEntries() })));
+      break;
+    case "registry-bad-discriminator": {
+      const bad = encodeRegistry({ treasury: s.pin.registryTreasury, entries: defaultRegistryEntries() });
+      bad[0] = bad[0]! ^ 0xff; // corrupt the discriminator
+      s.rpc.set(s.addrs.registryPda, acct(s.pin.wardenProgramId, bad));
+      break;
+    }
+    case "registry-wrong-treasury":
+      s.rpc.set(s.addrs.registryPda, regAcct(s, { treasury: synthetic(0x99), entries: defaultRegistryEntries() }));
+      break;
+    case "registry-wrong-version":
+      s.rpc.set(s.addrs.registryPda, regAcct(s, { version: 2, entries: defaultRegistryEntries() }));
+      break;
+    case "registry-wrong-selector": {
+      const e = defaultRegistryEntries();
+      e[5] = { ...e[5]!, selector: Uint8Array.from([9, 9, 9, 9, 9, 9, 9, 9]) }; // Jupiter route sighash tampered
+      s.rpc.set(s.addrs.registryPda, regAcct(s, { entries: e }));
+      break;
+    }
+    case "registry-extra-entry": {
+      const e = defaultRegistryEntries();
+      e.push({ program: synthetic(0x55), selector: Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]), discLen: 8, roleRules: 0, lists: [1] });
+      s.rpc.set(s.addrs.registryPda, regAcct(s, { entries: e }));
+      break;
+    }
+    case "registry-wrong-role": {
+      const e = defaultRegistryEntries();
+      e[0] = { ...e[0]!, roleRules: 0 }; // SPL Transfer must be role 3 (vault-signer + token-program)
+      s.rpc.set(s.addrs.registryPda, regAcct(s, { entries: e }));
+      break;
+    }
+    case "registry-missing-entry": {
+      const e = defaultRegistryEntries();
+      e.splice(6, 1); // drop Jupiter shared_accounts_route
+      s.rpc.set(s.addrs.registryPda, regAcct(s, { entries: e }));
+      break;
+    }
+    case "registry-wrong-list": {
+      const e = defaultRegistryEntries();
+      e[0] = { ...e[0]!, lists: [2] }; // production adapter moved to the test list
+      s.rpc.set(s.addrs.registryPda, regAcct(s, { entries: e }));
+      break;
+    }
   }
   return s;
+}
+
+/** A Registry account for the current scenario's Warden program, overriding fields. */
+function regAcct(s: Scenario, over: Partial<RegistrySpec> & Pick<RegistrySpec, "entries">): RpcAccount {
+  return acct(s.pin.wardenProgramId, encodeRegistry({
+    version: over.version ?? s.pin.registryVersion,
+    treasury: over.treasury ?? s.pin.registryTreasury,
+    entries: over.entries,
+  }));
 }
 
 // Indirection so `namedScenario` uses the exported synthetic pin without a

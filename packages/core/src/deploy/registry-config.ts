@@ -1,0 +1,147 @@
+//! Deploy-gate check 3 (WRD-DEP-02): the pinned, source-re-derived expectation for the
+//! on-chain adapter `Registry`, and the diff that rejects any deviation.
+//!
+//! The expected adapter set is authored here as a reviewed constant and every 8-byte
+//! selector is RE-DERIVED from its Anchor instruction name (sha256("global:<name>")[..8]),
+//! never trusted as an opaque byte blob; non-Anchor targets carry their pinned literal
+//! instruction tag (SPL/System/Memo/ATA use 1-byte / fixed-layout tags, not 8-byte
+//! discriminators — spec §5.2 rule 1). A drift test asserts this constant agrees with
+//! programs/warden's parity-locked `registry-default.json` (which agrees with the Rust
+//! source of truth), so the reviewed pin cannot silently diverge from what `init_registry`
+//! actually writes. This module is pure `.ts` (no JSON import) so it stays inside the
+//! deploy verifier's attested source closure (WRD-DEP-01).
+import { anchorInstructionSighash, type DecodedRegistry } from "./accounts.js";
+
+// Adapter program ids (base58), mirrored from programs/warden/src/constants.rs.
+export const SPL_TOKEN_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+export const ATA_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+export const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+export const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+export const JUPITER_V6_ID = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
+export const TEST_MUTATOR_ID = "An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W";
+export const TEST_JUP_MOCK_ID = "3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU";
+
+/** One reviewed adapter: an Anchor instruction (selector = re-derived sighash) or a
+ *  literal-tag instruction (selector = the pinned tag bytes). `roleRules` is the
+ *  authority-position role bitmask; `lists` are the allowlist ids it belongs to. */
+export type ExpectedAdapter = {
+  program: string;
+  roleRules: number;
+  lists: number[];
+} & ({ anchor: string } | { tag: number[] });
+
+// The complete reviewed default registry (insertion order matches registry_default.rs).
+export const EXPECTED_ADAPTERS: readonly ExpectedAdapter[] = [
+  { program: SPL_TOKEN_ID, tag: [3], roleRules: 3, lists: [1] }, // SPL Transfer
+  { program: SPL_TOKEN_ID, tag: [12], roleRules: 3, lists: [1] }, // SPL TransferChecked
+  { program: ATA_PROGRAM_ID, tag: [1], roleRules: 0, lists: [1] }, // ATA CreateIdempotent
+  { program: SYSTEM_PROGRAM_ID, tag: [2, 0, 0, 0], roleRules: 1, lists: [1] }, // System Transfer (u32 LE tag)
+  { program: MEMO_PROGRAM_ID, tag: [], roleRules: 0, lists: [1] }, // Memo (tagless)
+  { program: JUPITER_V6_ID, anchor: "route", roleRules: 0, lists: [1] },
+  { program: JUPITER_V6_ID, anchor: "shared_accounts_route", roleRules: 0, lists: [1] },
+  { program: TEST_MUTATOR_ID, anchor: "noop", roleRules: 0, lists: [2] },
+  { program: TEST_MUTATOR_ID, anchor: "transfer_out", roleRules: 3, lists: [2] },
+  { program: TEST_JUP_MOCK_ID, anchor: "route", roleRules: 0, lists: [2] },
+  { program: TEST_JUP_MOCK_ID, anchor: "shared_accounts_route", roleRules: 0, lists: [2] },
+];
+
+export const hexOf = (b: Uint8Array | number[]): string =>
+  Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
+
+export interface ExpectedEntry {
+  program: string;
+  /** Hex of the significant selector bytes (length === discLen). */
+  selectorHex: string;
+  discLen: number;
+  roleRules: number;
+  lists: number[];
+}
+
+/** Build the expected entries, RE-DERIVING every Anchor selector from its instruction
+ *  name and validating literal tags. Throws if a tag is malformed (>8 bytes). */
+export function expectedRegistryConfig(): ExpectedEntry[] {
+  return EXPECTED_ADAPTERS.map((a) => {
+    let selector: Uint8Array;
+    if ("anchor" in a) {
+      selector = anchorInstructionSighash(a.anchor); // 8 bytes, re-derived from source
+    } else {
+      if (a.tag.length > 8) throw new Error(`literal tag for ${a.program} exceeds 8 bytes`);
+      selector = Uint8Array.from(a.tag);
+    }
+    return {
+      program: a.program,
+      selectorHex: hexOf(selector),
+      discLen: selector.length,
+      roleRules: a.roleRules,
+      lists: [...a.lists].sort((x, y) => x - y),
+    };
+  });
+}
+
+/** The list ids an on-chain entry index belongs to, from the per-list bitmasks. */
+export function onchainEntryLists(reg: DecodedRegistry, entryIndex: number): number[] {
+  const ids: number[] = [];
+  for (let k = 0; k < reg.lists.length; k++) {
+    if ((reg.lists[k]! >> BigInt(entryIndex)) & 1n) ids.push(k + 1);
+  }
+  return ids;
+}
+
+const key = (program: string, selectorHex: string, discLen: number) => `${program}|${selectorHex}|${discLen}`;
+
+/**
+ * Diff a decoded on-chain Registry against the pinned, re-derived expectation. Returns a
+ * list of violation strings (empty ⇒ the registry exactly matches). Rejects a wrong
+ * version, a wrong treasury, and any missing / extra / duplicate / wrong-selector entry,
+ * a role-validator (`role_rules`) mismatch, a list-membership mismatch, and any list bit
+ * set for a non-existent entry index.
+ */
+export function diffRegistry(
+  reg: DecodedRegistry,
+  opts: { expectedVersion: number; expectedTreasuryB58: string },
+): string[] {
+  const v: string[] = [];
+  if (reg.version !== opts.expectedVersion) v.push(`version ${reg.version} != expected ${opts.expectedVersion}`);
+  if (reg.treasury.toBase58() !== opts.expectedTreasuryB58) {
+    v.push(`treasury ${reg.treasury.toBase58()} != pinned ${opts.expectedTreasuryB58}`);
+  }
+
+  const expected = expectedRegistryConfig();
+  const expByKey = new Map<string, ExpectedEntry>();
+  for (const e of expected) expByKey.set(key(e.program, e.selectorHex, e.discLen), e);
+
+  const seen = new Map<string, number>();
+  reg.entries.forEach((entry, i) => {
+    const program = entry.programId.toBase58();
+    const selectorHex = hexOf(entry.selector.slice(0, entry.discLen));
+    const k = key(program, selectorHex, entry.discLen);
+    seen.set(k, (seen.get(k) ?? 0) + 1);
+    const exp = expByKey.get(k);
+    if (!exp) {
+      v.push(`unexpected entry #${i}: program ${program} selector 0x${selectorHex || "∅"} (disc_len ${entry.discLen})`);
+      return;
+    }
+    if (entry.roleRules !== exp.roleRules) {
+      v.push(`entry #${i} (${program} 0x${selectorHex || "∅"}) role_rules ${entry.roleRules} != expected ${exp.roleRules}`);
+    }
+    const gotLists = onchainEntryLists(reg, i);
+    if (gotLists.join(",") !== exp.lists.join(",")) {
+      v.push(`entry #${i} (${program} 0x${selectorHex || "∅"}) lists [${gotLists}] != expected [${exp.lists}]`);
+    }
+  });
+
+  for (const [k, count] of seen) if (count > 1) v.push(`duplicate entry ${k} appears ${count} times`);
+  for (const e of expected) {
+    const k = key(e.program, e.selectorHex, e.discLen);
+    if (!seen.has(k)) v.push(`missing expected entry: ${e.program} 0x${e.selectorHex || "∅"} (disc_len ${e.discLen})`);
+  }
+
+  // No list bitmask may reference an entry index >= n_entries (a stale/forged membership).
+  for (let k = 0; k < reg.lists.length; k++) {
+    const mask = reg.lists[k]!;
+    for (let bit = reg.nEntries; bit < 64; bit++) {
+      if ((mask >> BigInt(bit)) & 1n) { v.push(`list ${k + 1} has a bit set for non-existent entry index ${bit}`); break; }
+    }
+  }
+  return v;
+}

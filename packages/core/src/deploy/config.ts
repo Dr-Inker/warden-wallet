@@ -77,6 +77,11 @@ export interface DeployPinConfig {
   /** The expected cluster genesis hash — normally mainnet-beta. Bound so the
    *  gate cannot be satisfied by an attacker-controlled fork (WRDF-0085). */
   expectedGenesisHash: string;
+  /** The on-chain adapter Registry's expected `version` (check 3, WRD-DEP-02). */
+  registryVersion: number;
+  /** The pinned Registry `treasury` — the mandatory swap-fee destination
+   *  (WRDF-0030). A live registry whose treasury differs is refused. */
+  registryTreasury: PublicKey;
 }
 
 /**
@@ -130,6 +135,8 @@ export const SYNTHETIC_PIN: DeployPinConfig = {
   configAuthority: null, // require the autonomous default
   squadsCodeHashHex: "5c".repeat(32), // synthetic audited-Squads-code hash
   expectedGenesisHash: MAINNET_GENESIS_HASH,
+  registryVersion: 1,
+  registryTreasury: synthetic(0xc3), // synthetic swap-fee treasury SmartAccount
 };
 
 /**
@@ -163,6 +170,8 @@ export function manifestDigest(pin: DeployPinConfig): string {
     configAuthority: pin.configAuthority ? pin.configAuthority.toBase58() : null,
     squadsCodeHashHex: pin.squadsCodeHashHex,
     expectedGenesisHash: pin.expectedGenesisHash,
+    registryVersion: pin.registryVersion,
+    registryTreasury: pin.registryTreasury.toBase58(),
     members: [...pin.members]
       .map((m) => ({ key: m.key.toBase58(), mask: m.mask }))
       .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)),

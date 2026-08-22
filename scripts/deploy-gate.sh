@@ -23,7 +23,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> [options]
   --dry-run                 print the plan, run only the local checks (no RPC)
-  --fixtures <case>         run checks 1/2/4a against a deterministic scenario (no RPC)
+  --fixtures <case>         run checks 1/2/3/4a against a deterministic scenario (no RPC)
   --manifest <name> --rpc-url <url>
                             live run: pin from the COMMITTED manifest registry (never a file);
                             requires a clean tree with the release-sha an ancestor of HEAD (WRDF-0085).
@@ -66,7 +66,7 @@ is_pubkey() {
   [[ "$1" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]
 }
 
-# The Task 11R governance+hash verifier (DEPLOY-GATE.md checks 1, 2, 4a). Hand-rolled
+# The Task 11R governance+hash verifier (DEPLOY-GATE.md checks 1, 2, 3, 4a). Hand-rolled
 # in packages/core/src/deploy (no @sqds dependency). Invoked via the REPO's OWN
 # toolchain by ABSOLUTE path — never a bare `pnpm`/`tsx` resolved through the caller's
 # $PATH, never a command-override env var (WRDF-0092).
@@ -163,7 +163,7 @@ fi
 echo "   OK: verifier source closure matches the committed attestation"
 
 echo
-echo "-- checks 1, 2, 4a: governance + release-hash (deploy-gate-verify, Task 11R) --"
+echo "-- checks 1, 2, 3, 4a: governance + registry + release-hash (deploy-gate-verify, Task 11R) --"
 echo "   (upgrade authority chain, pinned Squads 3-of-5 governance, on-chain program hash)"
 
 # Extract the recorded release hash via the ONE canonical parser (WRDF-0085 round
@@ -219,16 +219,16 @@ elif [ -n "$MANIFEST" ] && [ -n "$RPC_URL" ]; then
     fail "live governance+hash checks failed (see output above)"
   fi
 else
-  fail "checks 1/2/4a NOT RUN — supply --fixtures <case> for the fixture-verified path, or --manifest <name> + --rpc-url <url> for a live run (the pin is a COMMITTED, reviewed manifest selected by name — never an arbitrary file; CLI pubkeys alone cannot pin the member set/masks/code hash — WRDF-0017/0085)"
+  fail "checks 1/2/3/4a NOT RUN — supply --fixtures <case> for the fixture-verified path, or --manifest <name> + --rpc-url <url> for a live run (the pin is a COMMITTED, reviewed manifest selected by name — never an arbitrary file; CLI pubkeys alone cannot pin the member set/masks/code hash — WRDF-0017/0085)"
 fi
 
 echo
 echo "-- check 3/5: adapter selectors re-derived from source, diffed against on-chain Registry (WRD-DEP-02) --"
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "[dry-run] would re-derive: Anchor IDL sighash per target, or per-program instruction tag for non-Anchor targets (spec §5.2 rule 1 / DECISION.md C9)"
-  echo "[dry-run] would diff against: on-chain Registry account contents"
+  echo "[dry-run] would re-derive: Anchor sighash per target, or per-program instruction tag for non-Anchor targets (spec §5.2 rule 1 / DECISION.md C9)"
+  echo "[dry-run] would authenticate the Registry PDA (owner + discriminator + version) and diff every selector/role/list + treasury against the pinned source-re-derived config"
 else
-  fail "check 3 (adapter selector diff, WRD-DEP-02) NOT IMPLEMENTED — a separate deliverable from Task 11R (scope boundary WRDF-0018); the Registry exists (Task 3) but the selector re-derivation + diff tool is not wired here yet"
+  echo "   run inside the governance+hash verifier above (verifyDeployGate 'registry-config' check) — a failure there refuses this gate (WRD-DEP-02)"
 fi
 
 echo

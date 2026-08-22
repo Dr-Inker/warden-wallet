@@ -173,3 +173,84 @@ export function deriveVaultPda(squadsProgramId: PublicKey, multisig: PublicKey, 
   );
   return pda;
 }
+
+// ---------------------------------------------------------------------------
+// Warden adapter Registry (Anchor #[account(zero_copy)], #[repr(C)]) — the deploy
+// gate's check-3 authenticates this against the pinned, source-re-derived config.
+// Fixed layout after the 8-byte discriminator (offsets absolute, discriminator
+// included). MAX_REGISTRY_ENTRIES=64, MAX_REGISTRY_LISTS=8, MAX_SELECTOR_LEN=8.
+//   8  version:u8 | 9 bump:u8 | 10 _pad[6]
+//   16 authority:Pubkey(32) | 48 treasury:Pubkey(32)
+//   80 n_entries:u16 | 82 _pad2[6]
+//   88 entries[64] (stride 48: program_id(32) selector[8] disc_len:u8 role_rules:u8 _pad[6])
+//   3160 lists[8] (u64 LE each) | 3224 allocated_lists:u8 | 3225 _reserved[255]
+//   3480 end → total account data = 3488
+// ---------------------------------------------------------------------------
+/** Anchor instruction sighash: sha256("global:<name>")[..8] — the selector re-derivation. */
+export function anchorInstructionSighash(name: string): Uint8Array {
+  return sha256(new TextEncoder().encode(`global:${name}`)).slice(0, 8);
+}
+/** The pinned `Registry` account discriminator. */
+export const REGISTRY_DISCRIMINATOR = anchorAccountDiscriminator("Registry");
+
+export const MAX_REGISTRY_ENTRIES = 64;
+export const MAX_REGISTRY_LISTS = 8;
+export const MAX_SELECTOR_LEN = 8;
+/** Total on-chain account data length (8-byte discriminator + 3480-byte struct). */
+export const REGISTRY_DATA_LEN = 3488;
+const REG_OFF_ENTRIES = 88;
+const REG_ENTRY_STRIDE = 48;
+const REG_OFF_LISTS = 3160;
+const REG_OFF_ALLOCATED = 3224;
+
+export interface DecodedRegistryEntry {
+  programId: PublicKey;
+  /** The full 8-byte selector slot; only the leading `discLen` bytes are significant. */
+  selector: Uint8Array;
+  discLen: number;
+  roleRules: number;
+}
+export interface DecodedRegistry {
+  version: number;
+  bump: number;
+  authority: PublicKey;
+  treasury: PublicKey;
+  nEntries: number;
+  entries: DecodedRegistryEntry[];
+  /** One bitmask per list id; `lists[k]` bit `i` set ⇒ entry `i` is in list `k+1`. */
+  lists: bigint[];
+  allocatedLists: number;
+}
+
+/**
+ * Decode a Warden `Registry` account. Verifies the 8-byte discriminator, then reads
+ * every field by pinned offset. Only the `nEntries` used entries are returned; a
+ * discriminator mismatch, an out-of-range `nEntries`, or a too-short account throws
+ * (a decoder that skipped the discriminator would read spoofed bytes — WRDF-0017).
+ */
+export function decodeRegistry(data: Uint8Array): DecodedRegistry {
+  if (data.length < REGISTRY_DATA_LEN) throw new Error(`Registry account too short (${data.length} < ${REGISTRY_DATA_LEN})`);
+  for (let i = 0; i < 8; i++) {
+    if (data[i] !== REGISTRY_DISCRIMINATOR[i]) throw new Error("account discriminator is not Registry");
+  }
+  const version = data[8]!;
+  const bump = data[9]!;
+  const authority = pubkeyAt(data, 16);
+  const treasury = pubkeyAt(data, 48);
+  const nEntries = u16le(data, 80);
+  if (nEntries > MAX_REGISTRY_ENTRIES) throw new Error(`Registry n_entries ${nEntries} exceeds ${MAX_REGISTRY_ENTRIES}`);
+  const entries: DecodedRegistryEntry[] = [];
+  for (let i = 0; i < nEntries; i++) {
+    const base = REG_OFF_ENTRIES + i * REG_ENTRY_STRIDE;
+    const programId = pubkeyAt(data, base);
+    const selector = data.slice(base + 32, base + 40);
+    const discLen = data[base + 40]!;
+    const roleRules = data[base + 41]!;
+    if (discLen > MAX_SELECTOR_LEN) throw new Error(`Registry entry ${i} disc_len ${discLen} exceeds ${MAX_SELECTOR_LEN}`);
+    entries.push({ programId, selector, discLen, roleRules });
+  }
+  const lists: bigint[] = [];
+  for (let k = 0; k < MAX_REGISTRY_LISTS; k++) lists.push(u64le(data, REG_OFF_LISTS + k * 8));
+  const allocatedLists = data[REG_OFF_ALLOCATED]!;
+  return { version, bump, authority, treasury, nEntries, entries, lists, allocatedLists };
+}

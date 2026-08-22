@@ -39,6 +39,7 @@ describe("deploy-gate verifyDeployGate", () => {
     expect(v.results.map((r) => r.name).sort()).toEqual([
       "cluster-genesis",
       "pin-spec-floors",
+      "registry-config",
       "squads-code-hash",
       "squads-multisig-governance",
       "upgrade-authority-is-vault-pda",
