@@ -15,8 +15,8 @@ import {
   EXPECTED_ADAPTERS,
   hexOf,
 } from "../src/deploy/registry-config.js";
-import { encodeRegistry, defaultRegistryEntries, namedScenario } from "../src/deploy/fixtures.js";
-import { verifyDeployGate } from "../src/deploy/gate.js";
+import { encodeRegistry, defaultRegistryEntries, namedScenario, GOLDEN_VAULT_PDA } from "../src/deploy/fixtures.js";
+import { verifyDeployGate, deriveRegistryPda } from "../src/deploy/gate.js";
 import { SYNTHETIC_PIN } from "../src/deploy/config.js";
 
 // WRD-DEP-02 (deploy-gate check 3): the on-chain adapter Registry is authenticated and its
@@ -24,8 +24,16 @@ import { SYNTHETIC_PIN } from "../src/deploy/config.js";
 // and the treasury — is diffed against the pinned expectation, rejecting any deviation.
 
 const TREASURY = SYNTHETIC_PIN.registryTreasury;
-const opts = { expectedVersion: 1, expectedTreasuryB58: TREASURY.toBase58() };
-const happyRegistry = () => decodeRegistry(encodeRegistry({ version: 1, treasury: TREASURY, entries: defaultRegistryEntries() }));
+const REG_BUMP = deriveRegistryPda(SYNTHETIC_PIN.wardenProgramId).bump;
+const opts = {
+  expectedVersion: 1,
+  expectedTreasuryB58: TREASURY.toBase58(),
+  expectedAuthorityB58: GOLDEN_VAULT_PDA.toBase58(),
+  expectedBump: REG_BUMP,
+};
+const happyBytes = (over: Partial<Parameters<typeof encodeRegistry>[0]> = {}) =>
+  encodeRegistry({ version: 1, bump: REG_BUMP, authority: GOLDEN_VAULT_PDA, treasury: TREASURY, entries: defaultRegistryEntries(), ...over });
+const happyRegistry = () => decodeRegistry(happyBytes());
 
 describe("Registry decoder (accounts.ts)", () => {
   it("round-trips encodeRegistry → decodeRegistry with the pinned discriminator, treasury, and 11 default entries", () => {
@@ -39,18 +47,20 @@ describe("Registry decoder (accounts.ts)", () => {
     expect(reg.entries[0]!.roleRules).toBe(3);
   });
 
-  it("rejects a wrong discriminator, a short account, and an out-of-range n_entries", () => {
-    const good = encodeRegistry({ treasury: TREASURY, entries: defaultRegistryEntries() });
+  it("rejects a wrong discriminator, a non-canonical length, and an out-of-range n_entries", () => {
+    const good = happyBytes();
+    expect(good.length).toBe(3480); // exactly Registry::LEN
     const bad = Uint8Array.from(good); bad[0] = bad[0]! ^ 0xff;
     expect(() => decodeRegistry(bad)).toThrow(/discriminator is not Registry/);
-    expect(() => decodeRegistry(good.slice(0, 100))).toThrow(/too short/);
+    expect(() => decodeRegistry(good.slice(0, 100))).toThrow(/length 100 != canonical 3480/);
+    expect(() => decodeRegistry(Uint8Array.from([...good, 0]))).toThrow(/length 3481 != canonical 3480/); // trailing byte
     const nBad = Uint8Array.from(good); nBad[80] = 0xff; nBad[81] = 0xff; // n_entries = 65535
     expect(() => decodeRegistry(nBad)).toThrow(/n_entries .* exceeds/);
   });
 
-  it("REGISTRY_DISCRIMINATOR is the Anchor account discriminator and REGISTRY_DATA_LEN is 3488", () => {
+  it("REGISTRY_DISCRIMINATOR is the Anchor account discriminator and REGISTRY_DATA_LEN is 3480", () => {
     expect(hexOf(REGISTRY_DISCRIMINATOR)).toBe("2fae6ef6b8b6fcda"); // sha256("account:Registry")[..8]
-    expect(REGISTRY_DATA_LEN).toBe(3488);
+    expect(REGISTRY_DATA_LEN).toBe(3480); // 8 disc + size_of::<Registry>() (3472)
   });
 });
 
@@ -86,19 +96,25 @@ describe("diffRegistry (registry-config.ts)", () => {
     expect(diffRegistry(happyRegistry(), opts)).toEqual([]);
   });
 
-  const mutant = (over: Parameters<typeof encodeRegistry>[0]) => decodeRegistry(encodeRegistry(over));
+  // Each mutant differs from the happy registry in EXACTLY one field (correct authority +
+  // canonical bump elsewhere), so a matched violation is isolated to what was mutated.
+  const mutant = (over: Partial<Parameters<typeof encodeRegistry>[0]>) => decodeRegistry(happyBytes(over));
 
   it("rejects a wrong version", () => {
-    const v = diffRegistry(mutant({ version: 2, treasury: TREASURY, entries: defaultRegistryEntries() }), opts);
-    expect(v.join()).toMatch(/version 2 != expected 1/);
+    expect(diffRegistry(mutant({ version: 2 }), opts).join()).toMatch(/version 2 != expected 1/);
   });
   it("rejects a wrong treasury", () => {
-    const v = diffRegistry(mutant({ treasury: new PublicKey(new Uint8Array(32).fill(0x99)), entries: defaultRegistryEntries() }), opts);
-    expect(v.join()).toMatch(/treasury .* != pinned/);
+    expect(diffRegistry(mutant({ treasury: new PublicKey(new Uint8Array(32).fill(0x99)) }), opts).join()).toMatch(/treasury .* != pinned/);
+  });
+  it("rejects a wrong authority (not the governed vault PDA)", () => {
+    expect(diffRegistry(mutant({ authority: new PublicKey(new Uint8Array(32).fill(0x88)) }), opts).join()).toMatch(/authority .* != expected governed authority/);
+  });
+  it("rejects a non-canonical bump", () => {
+    expect(diffRegistry(mutant({ bump: 0 }), opts).join()).toMatch(/bump 0 != canonical/);
   });
   it("rejects a tampered selector (Jupiter route sighash swapped) as unexpected + missing", () => {
     const e = defaultRegistryEntries(); e[5] = { ...e[5]!, selector: Uint8Array.from([9, 9, 9, 9, 9, 9, 9, 9]) };
-    const v = diffRegistry(mutant({ treasury: TREASURY, entries: e }), opts).join();
+    const v = diffRegistry(mutant({ entries: e }), opts).join();
     expect(v).toMatch(/unexpected entry/);
     expect(v).toMatch(/missing expected entry/);
   });
@@ -123,10 +139,15 @@ describe("diffRegistry (registry-config.ts)", () => {
     expect(diffRegistry(mutant({ treasury: TREASURY, entries: e }), opts).join()).toMatch(/duplicate entry/);
   });
   it("rejects a list bitmask bit set past n_entries", () => {
-    const buf = encodeRegistry({ treasury: TREASURY, entries: defaultRegistryEntries() });
+    const buf = happyBytes();
     // list 1 mask is at offset 3160; set bit 40 (>> 11 entries) by writing byte 5.
     buf[3160 + 5] = buf[3160 + 5]! | 0x01; // bit 40
     expect(diffRegistry(decodeRegistry(buf), opts).join()).toMatch(/bit set for non-existent entry index 40/);
+  });
+  it("rejects a tampered allocated_lists (0x03 → 0xff makes lists 3-8 grantable — WRDF-0094)", () => {
+    const buf = happyBytes();
+    buf[3224] = 0xff;
+    expect(diffRegistry(decodeRegistry(buf), opts).join()).toMatch(/allocated_lists 0xff != expected 0x3/);
   });
 });
 
@@ -138,7 +159,7 @@ describe("deploy gate check-3 wiring (gate.ts)", () => {
     expect(reg.ok, reg.detail).toBe(true);
   });
 
-  for (const name of ["registry-wrong-owner", "registry-bad-discriminator", "registry-wrong-treasury", "registry-wrong-version", "registry-wrong-selector", "registry-extra-entry", "registry-wrong-role", "registry-missing-entry", "registry-wrong-list"]) {
+  for (const name of ["registry-wrong-owner", "registry-bad-discriminator", "registry-wrong-treasury", "registry-wrong-version", "registry-wrong-selector", "registry-extra-entry", "registry-wrong-role", "registry-missing-entry", "registry-wrong-list", "registry-wrong-authority", "registry-wrong-allocated", "registry-wrong-bump"]) {
     it(`fixture ${name} fails specifically on registry-config`, async () => {
       const s = namedScenario(name)!;
       const v = await verifyDeployGate(s.pin, { rpc: s.rpc, expectedReleaseHashHex: s.expectedReleaseHashHex });

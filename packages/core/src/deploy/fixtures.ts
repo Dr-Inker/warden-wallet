@@ -10,7 +10,6 @@ import { sha256 } from "@noble/hashes/sha2";
 import { type RpcAccount } from "./accounts.js";
 import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, MAINNET_GENESIS_HASH, PERMISSION_ALL, SYNTHETIC_PIN, type DeployPinConfig, type PinnedMember } from "./config.js";
 import { deriveRegistryPda, type RpcSource } from "./gate.js";
-import { expectedRegistryConfig } from "./registry-config.js";
 
 // INDEPENDENT golden vectors — hard-coded, NOT derived from the production
 // functions under test, so a bug in `anchorAccountDiscriminator`/`deriveVaultPda`
@@ -101,7 +100,7 @@ export interface RegistrySpec {
  *  pinned offsets, packing the used entries, per-list bitmasks and allocated_lists. */
 export function encodeRegistry(spec: RegistrySpec): Uint8Array {
   const MAX_ENTRIES = 64, MAX_LISTS = 8, STRIDE = 48;
-  const buf = new Uint8Array(3488);
+  const buf = new Uint8Array(3480); // Registry::LEN = 8 disc + size_of (3472); WRDF-0093
   buf.set(GOLDEN_REGISTRY_DISC, 0);
   buf[8] = spec.version ?? 1;
   buf[9] = spec.bump ?? 255;
@@ -133,15 +132,32 @@ export function encodeRegistry(spec: RegistrySpec): Uint8Array {
   return buf;
 }
 
-/** The complete default adapter set as encodable entries — re-derived from source
- *  via `expectedRegistryConfig()`, so the happy Registry matches the check-3 pin. */
+// INDEPENDENT golden default adapter set — the selector bytes are HARD-CODED from the
+// pinned registry-default.json, NOT produced by expectedRegistryConfig() (WRDF-0095). So a
+// shared-wrong Anchor name or literal tag in registry-config.ts would make the happy
+// Registry MISMATCH the diff rather than agree with it: the fixture and the checker are two
+// genuinely independent code paths.
+const GOLDEN_DEFAULT_ADAPTERS: readonly [string, number[], number, number, number[]][] = [
+  ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", [3], 1, 3, [1]],
+  ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", [12], 1, 3, [1]],
+  ["ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", [1], 1, 0, [1]],
+  ["11111111111111111111111111111111", [2, 0, 0, 0], 4, 1, [1]],
+  ["MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr", [], 0, 0, [1]],
+  ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", [229, 23, 203, 151, 122, 227, 173, 42], 8, 0, [1]],
+  ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", [193, 32, 155, 51, 65, 214, 156, 129], 8, 0, [1]],
+  ["An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W", [9, 178, 13, 115, 129, 35, 237, 102], 8, 0, [2]],
+  ["An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W", [202, 137, 44, 229, 158, 255, 205, 174], 8, 3, [2]],
+  ["3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU", [229, 23, 203, 151, 122, 227, 173, 42], 8, 0, [2]],
+  ["3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU", [193, 32, 155, 51, 65, 214, 156, 129], 8, 0, [2]],
+];
+/** The complete default adapter set as encodable entries, from INDEPENDENT golden bytes. */
 export function defaultRegistryEntries(): RegistryEntrySpec[] {
-  return expectedRegistryConfig().map((e) => ({
-    program: new PublicKey(e.program),
-    selector: Uint8Array.from((e.selectorHex.match(/../g) ?? []).map((h) => parseInt(h, 16))),
-    discLen: e.discLen,
-    roleRules: e.roleRules,
-    lists: e.lists,
+  return GOLDEN_DEFAULT_ADAPTERS.map(([program, selector, discLen, roleRules, lists]) => ({
+    program: new PublicKey(program),
+    selector: Uint8Array.from(selector),
+    discLen,
+    roleRules,
+    lists,
   }));
 }
 
@@ -220,10 +236,13 @@ export function buildHappyScenario(base: DeployPinConfig): Scenario {
     timeLock: pin.minTimeLockSeconds,
     members: pin.members,
   })));
-  // The adapter Registry: owned by the Warden program, default adapters, pinned treasury.
-  const registryPda = deriveRegistryPda(pin.wardenProgramId);
+  // The adapter Registry: owned by the Warden program; init_registry records the governed
+  // upgrade authority (= the vault PDA) and the canonical PDA bump; default adapters; treasury.
+  const { pda: registryPda, bump: registryBump } = deriveRegistryPda(pin.wardenProgramId);
   rpc.set(registryPda, acct(pin.wardenProgramId, encodeRegistry({
     version: pin.registryVersion,
+    bump: registryBump,
+    authority: vaultPda,
     treasury: pin.registryTreasury,
     entries: defaultRegistryEntries(),
   })));
@@ -259,6 +278,9 @@ export const FIXTURE_CASES = [
   "registry-wrong-role",
   "registry-missing-entry",
   "registry-wrong-list",
+  "registry-wrong-authority",
+  "registry-wrong-allocated",
+  "registry-wrong-bump",
 ] as const;
 export type FixtureCase = (typeof FIXTURE_CASES)[number];
 
@@ -338,14 +360,31 @@ export function namedScenario(name: string): Scenario | null {
       s.rpc.set(s.addrs.registryPda, regAcct(s, { entries: e }));
       break;
     }
+    case "registry-wrong-authority": // authority != the governed vault PDA (WRDF-0094)
+      s.rpc.set(s.addrs.registryPda, regAcct(s, { authority: synthetic(0x88), entries: defaultRegistryEntries() }));
+      break;
+    case "registry-wrong-allocated": { // allocated_lists 0x03 → 0xff makes lists 3-8 grantable
+      const buf = encodeRegistry({ version: s.pin.registryVersion, bump: deriveRegistryPda(s.pin.wardenProgramId).bump, authority: s.addrs.vaultPda, treasury: s.pin.registryTreasury, entries: defaultRegistryEntries() });
+      buf[3224] = 0xff;
+      s.rpc.set(s.addrs.registryPda, acct(s.pin.wardenProgramId, buf));
+      break;
+    }
+    case "registry-wrong-bump": // non-canonical bump
+      s.rpc.set(s.addrs.registryPda, regAcct(s, { bump: 0, entries: defaultRegistryEntries() }));
+      break;
   }
   return s;
 }
 
-/** A Registry account for the current scenario's Warden program, overriding fields. */
+/** A Registry account for the current scenario's Warden program, overriding fields but
+ *  otherwise matching the happy registry (correct authority + canonical bump) so a negative
+ *  fixture isolates exactly the one field it mutates. */
 function regAcct(s: Scenario, over: Partial<RegistrySpec> & Pick<RegistrySpec, "entries">): RpcAccount {
+  const { bump } = deriveRegistryPda(s.pin.wardenProgramId);
   return acct(s.pin.wardenProgramId, encodeRegistry({
     version: over.version ?? s.pin.registryVersion,
+    bump: over.bump ?? bump,
+    authority: over.authority ?? s.addrs.vaultPda,
     treasury: over.treasury ?? s.pin.registryTreasury,
     entries: over.entries,
   }));

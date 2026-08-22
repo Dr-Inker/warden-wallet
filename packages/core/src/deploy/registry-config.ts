@@ -89,21 +89,38 @@ export function onchainEntryLists(reg: DecodedRegistry, entryIndex: number): num
 
 const key = (program: string, selectorHex: string, discLen: number) => `${program}|${selectorHex}|${discLen}`;
 
+/** The expected `allocated_lists` bitmask: bit (id-1) set for every list id that the
+ *  reviewed config places at least one adapter into. `grant_session` authorizes against
+ *  this exact field (WRDF-0094), so it is part of the complete config. */
+export function expectedAllocatedLists(): number {
+  let mask = 0;
+  for (const e of expectedRegistryConfig()) for (const id of e.lists) mask |= 1 << (id - 1);
+  return mask & 0xff;
+}
+
 /**
  * Diff a decoded on-chain Registry against the pinned, re-derived expectation. Returns a
  * list of violation strings (empty ⇒ the registry exactly matches). Rejects a wrong
- * version, a wrong treasury, and any missing / extra / duplicate / wrong-selector entry,
- * a role-validator (`role_rules`) mismatch, a list-membership mismatch, and any list bit
- * set for a non-existent entry index.
+ * version, bump, authority, treasury, or `allocated_lists`, and any missing / extra /
+ * duplicate / wrong-selector entry, a role-validator (`role_rules`) mismatch, a
+ * list-membership mismatch, and any list bit set for a non-existent entry index.
  */
 export function diffRegistry(
   reg: DecodedRegistry,
-  opts: { expectedVersion: number; expectedTreasuryB58: string },
+  opts: { expectedVersion: number; expectedTreasuryB58: string; expectedAuthorityB58: string; expectedBump: number },
 ): string[] {
   const v: string[] = [];
   if (reg.version !== opts.expectedVersion) v.push(`version ${reg.version} != expected ${opts.expectedVersion}`);
+  if (reg.bump !== opts.expectedBump) v.push(`bump ${reg.bump} != canonical ${opts.expectedBump}`);
+  if (reg.authority.toBase58() !== opts.expectedAuthorityB58) {
+    v.push(`authority ${reg.authority.toBase58()} != expected governed authority ${opts.expectedAuthorityB58}`);
+  }
   if (reg.treasury.toBase58() !== opts.expectedTreasuryB58) {
     v.push(`treasury ${reg.treasury.toBase58()} != pinned ${opts.expectedTreasuryB58}`);
+  }
+  const expAllocated = expectedAllocatedLists();
+  if (reg.allocatedLists !== expAllocated) {
+    v.push(`allocated_lists 0x${reg.allocatedLists.toString(16)} != expected 0x${expAllocated.toString(16)} (grant_session authorizes against this — WRDF-0094)`);
   }
 
   const expected = expectedRegistryConfig();

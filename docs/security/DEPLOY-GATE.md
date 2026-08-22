@@ -20,18 +20,20 @@ network — `happy` passes, every other case tampers with one field so the gate
 refuses), and `--manifest <name> --rpc-url <url>` runs the REAL checks against a live cluster
 with a pin selected from the COMMITTED manifest registry (WRDF-0085; never an
 arbitrary file), on a clean tree with the release-sha an ancestor of HEAD, with the shell's
-program/multisig/authority cross-checked. Check 3 (adapter-selector re-derivation vs the on-chain Registry) is a
-separate deliverable from Task 11R (scope boundary WRDF-0018) and still refuses.
-Every RPC-dependent path **fails closed**. The 20-case fixture suite is
-`packages/core/test/deploy-gate.test.ts`; the byte-exact match against
-`solana-verify` on a real cluster is the honest residual, verified at release.
+program/multisig/authority cross-checked. Check 3 (adapter-selector re-derivation vs the on-chain Registry) is now implemented and
+fixture-verified as the verifier's `registry-config` check (WRD-DEP-02).
+Every RPC-dependent path **fails closed**. The fixture suites are
+`packages/core/test/deploy-gate.test.ts` (governance/hash) and
+`packages/core/test/deploy-registry.test.ts` (check 3); the byte-exact match against
+`solana-verify` on a real cluster, and a golden Registry vector from the real Anchor writer,
+are the honest residuals verified at a release candidate.
 
 ## Invocation
 
 ```sh
 # fixture-verified (no network):
 scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> --fixtures happy
-# live (checks 1/2/4a): pin from the COMMITTED manifest registry, clean tree, release-sha an ancestor of HEAD:
+# live (checks 1/2/3/4a): pin from the COMMITTED manifest registry, clean tree, release-sha an ancestor of HEAD:
 scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> --manifest <name> --rpc-url <url>
 # dry-run (plan + local checks only):
 scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <release-sha> --dry-run
@@ -45,7 +47,7 @@ scripts/deploy-gate.sh <program-id> <expected-authority> <squads-multisig> <rele
 | `<release-sha>` | The git SHA being deployed — looked up as a row key in `docs/security/RELEASE-INTEGRITY.md`. |
 | `--dry-run` | Perform only the checks that need no RPC (arg validation, local `.so` hash lookup/comparison per 4b, scoped TODO/unimplemented!/#[ignore] grep per check 5); print, but do not execute, the RPC-dependent checks (1, 2, 3, 4a). **The final banner in `--dry-run` always reads `DRY RUN — NOT VERIFIED`, never `ALL CHECKS PASSED`** — a dry run is a shape check on the tool, not a deploy verdict. |
 | `--rpc-url <url>` | RPC endpoint for the real run. Defaults to `$SOLANA_RPC_URL` if set. Ignored in `--dry-run`. |
-| `--fixtures <case>` | Run checks 1/2/4a against a deterministic in-process scenario (no RPC); `happy` passes, others refuse. |
+| `--fixtures <case>` | Run checks 1/2/3/4a against a deterministic in-process scenario (no RPC); `happy` passes, others refuse. |
 | `--manifest <name>` | Live run only: select the pin BY NAME from the COMMITTED `MANIFESTS` registry (`config.ts`), never a file. Requires a CLEAN tree with the release-sha an ANCESTOR-OR-EQUAL of HEAD (a commit cannot contain its own SHA, so the RELEASE-INTEGRITY attestation row for C is added in a later reviewed commit — WRDF-0085); the verifier parses that row for the unique manifest name+digest and artifact hash. The per-proposal governance audit fails closed in-tool with no bypass (WRDF-0028). |
 
 Exit code is non-zero if **any** check fails or is unimplemented in a
@@ -97,8 +99,9 @@ non-dry-run invocation (fail-closed).
 | 4b. Local `target/deploy/warden.so` hash (best-effort sanity) | **Runs for real** — fails if the `.so` is missing (no silent pass) | Same | Same — no RPC |
 | 5. Scoped TODO/unimplemented!/#[ignore] grep | **Runs for real** | Same | Same — no RPC |
 
-The governance + hash logic (checks 1/2/4a) lives in `packages/core/src/deploy`
-and is exercised by the 28-case fixture suite `packages/core/test/deploy-gate.test.ts`;
+The governance + hash + registry logic (checks 1/2/3/4a) lives in `packages/core/src/deploy`
+and is exercised by the fixture suites `packages/core/test/deploy-gate.test.ts` +
+`packages/core/test/deploy-registry.test.ts`;
 the script wires it through `run_gov_hash_verifier` →
 `packages/core/scripts/deploy-gate-verify.ts`.
 
@@ -164,8 +167,10 @@ CI or a developer should run today to exercise the script's shape.
   (`solana program show --url <rpc> <program-id> --output json`).
 - Wire check 2 via `@sqds/multisig` (Squads v4 TypeScript SDK) once it's a
   dependency somewhere in `packages/`, or a Rust equivalent.
-- Wire check 3 once `programs/warden` has a `Registry` account (C9) and an
-  IDL-driven selector derivation tool exists (spec §5.2 rule 1 follow-up).
+- Check 3 is implemented (WRD-DEP-02). Residual, tracked for a release candidate: a golden
+  Registry byte vector produced by the REAL Anchor writer (the current fixtures round-trip an
+  independent encoder), and consuming the pinned Jupiter IDL by hash to auto-extract instruction
+  names rather than pinning the reviewed name constants in source.
 - Add an integration test that runs the real checks against a local
   validator fork with a known-good multisig/registry fixture — the plan's
   "no network calls in tests" constraint means this belongs in a separate,

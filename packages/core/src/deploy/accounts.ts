@@ -196,8 +196,10 @@ export const REGISTRY_DISCRIMINATOR = anchorAccountDiscriminator("Registry");
 export const MAX_REGISTRY_ENTRIES = 64;
 export const MAX_REGISTRY_LISTS = 8;
 export const MAX_SELECTOR_LEN = 8;
-/** Total on-chain account data length (8-byte discriminator + 3480-byte struct). */
-export const REGISTRY_DATA_LEN = 3488;
+/** Total on-chain account data length. `init_registry` allocates exactly
+ *  `Registry::LEN = 8 (Anchor discriminator) + size_of::<Registry>() (3472)` = 3480
+ *  (programs/warden/src/state/registry.rs). Zero-copy accounts are EXACTLY this size. */
+export const REGISTRY_DATA_LEN = 3480;
 const REG_OFF_ENTRIES = 88;
 const REG_ENTRY_STRIDE = 48;
 const REG_OFF_LISTS = 3160;
@@ -229,7 +231,9 @@ export interface DecodedRegistry {
  * (a decoder that skipped the discriminator would read spoofed bytes — WRDF-0017).
  */
 export function decodeRegistry(data: Uint8Array): DecodedRegistry {
-  if (data.length < REGISTRY_DATA_LEN) throw new Error(`Registry account too short (${data.length} < ${REGISTRY_DATA_LEN})`);
+  // Zero-copy accounts are EXACTLY Registry::LEN — reject a short buffer AND unexpected
+  // trailing bytes (a padded/oversized account is not what init_registry writes, WRDF-0093).
+  if (data.length !== REGISTRY_DATA_LEN) throw new Error(`Registry account length ${data.length} != canonical ${REGISTRY_DATA_LEN}`);
   for (let i = 0; i < 8; i++) {
     if (data[i] !== REGISTRY_DISCRIMINATOR[i]) throw new Error("account discriminator is not Registry");
   }

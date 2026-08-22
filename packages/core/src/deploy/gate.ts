@@ -21,9 +21,9 @@ import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, assertPinSpecFloors, type Deplo
 import { diffRegistry } from "./registry-config.js";
 
 /** The Warden adapter Registry is a program singleton PDA at seeds ["registry"]. */
-export function deriveRegistryPda(wardenProgramId: PublicKey): PublicKey {
-  const [pda] = PublicKey.findProgramAddressSync([new TextEncoder().encode("registry")], wardenProgramId);
-  return pda;
+export function deriveRegistryPda(wardenProgramId: PublicKey): { pda: PublicKey; bump: number } {
+  const [pda, bump] = PublicKey.findProgramAddressSync([new TextEncoder().encode("registry")], wardenProgramId);
+  return { pda, bump };
 }
 
 /** An injectable account reader. A live run wires this to an RPC endpoint; the
@@ -214,20 +214,25 @@ export async function verifyDeployGate(
   // role_rules, list membership, version, and the treasury — rejecting any
   // missing / extra / wrong / duplicate entry.
   await check("registry-config", async () => {
-    const registryPda = deriveRegistryPda(pin.wardenProgramId);
+    const { pda: registryPda, bump: registryBump } = deriveRegistryPda(pin.wardenProgramId);
     const acct = await fetchOrThrow(rpc(opts), registryPda, "Registry");
     if (!acct.owner.equals(pin.wardenProgramId)) {
       throw new Error(`Registry ${b58(registryPda)} is not owned by the Warden program ${b58(pin.wardenProgramId)} (owner ${b58(acct.owner)})`);
     }
-    const reg = decodeRegistry(acct.data); // verifies the Registry discriminator + bounds
+    const reg = decodeRegistry(acct.data); // verifies the Registry discriminator + exact length
+    // init_registry records the authenticated Warden upgrade authority = the governed
+    // vault PDA (registry_admin.rs); bind the Registry authority to that same derived PDA.
+    const expectedAuthority = deriveVaultPda(pin.squadsProgramId, pin.multisig, pin.vaultIndex);
     const violations = diffRegistry(reg, {
       expectedVersion: pin.registryVersion,
       expectedTreasuryB58: pin.registryTreasury.toBase58(),
+      expectedAuthorityB58: expectedAuthority.toBase58(),
+      expectedBump: registryBump,
     });
     if (violations.length > 0) {
       throw new Error(`Registry config mismatch (${violations.length}): ${violations.join("; ")}`);
     }
-    return `Registry authenticated at ${b58(registryPda)}: ${reg.nEntries} adapters, version ${reg.version}, treasury + all selectors/roles/lists match the source-re-derived pin`;
+    return `Registry authenticated at ${b58(registryPda)}: ${reg.nEntries} adapters, version ${reg.version}, bump ${reg.bump}, governed authority + treasury + allocated_lists + all selectors/roles/lists match the source-re-derived pin`;
   });
 
   return { ok: results.every((r) => r.ok), results };
