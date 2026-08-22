@@ -6,7 +6,9 @@ import {
   EXPECTED_CLOSURE,
   VERIFIER_ENTRYPOINT,
   ATTESTATION_PATH,
+  PERMITTED_EXTERNAL,
   discoverClosure,
+  externalDeps,
   buildManifest,
   serializeManifest,
 } from "../../../scripts/gen-verifier-attestation.mjs";
@@ -114,6 +116,32 @@ describe("verifier source attestation (docs/security/verifier-attestation.json)"
     } finally {
       rmSync(d, { recursive: true, force: true });
     }
+  });
+
+  // WRDF-0088 round 13: a deny-list cannot bound a reflective language, so classification is
+  // an ALLOW-list — relative OR an exact permitted external; everything else fail-closed.
+  for (const [label, entrySrc, pattern] of [
+    ["an absolute-path import (executed but non-relative)", `import x from "/tmp/ignored-evil.mjs";\n`, /disallowed module specifier/],
+    ["a node:module import (the only path to createRequire)", `import * as m from "node:module";\n`, /disallowed module specifier/],
+    ["a file: URL import", `import x from "file:///tmp/evil.mjs";\n`, /disallowed module specifier/],
+    ["a surprise bare package not on the allow-list", `import x from "left-pad";\n`, /disallowed module specifier/],
+  ] as const) {
+    it(`REJECTS ${label} (allow-list, fail-closed)`, () => {
+      mkdirSync(TMP_ROOT, { recursive: true });
+      const d = mkdtempSync(join(TMP_ROOT, "allow-"));
+      try {
+        const entryRel = "packages/core/scripts/deploy-gate-verify.ts";
+        mkdirSync(join(d, dirname(entryRel)), { recursive: true });
+        writeFileSync(join(d, entryRel), entrySrc);
+        expect(() => discoverClosure(d)).toThrow(pattern);
+      } finally {
+        rmSync(d, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("the permitted-external allow-list exactly matches the closure's real external deps (no dead/missing entries)", () => {
+    expect(externalDeps(REPO)).toEqual([...(PERMITTED_EXTERNAL as Set<string>)].sort());
   });
 
   it("the gate script reads exactly this manifest path and entrypoint", () => {

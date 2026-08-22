@@ -10,12 +10,16 @@
 // declared trust-root terminus (docs/security/DEPLOY-GATE-TRUST-ROOT.md), the same kind of
 // external THREATMODEL assumption already accepted for the Squads audited-code hash.
 //
-// The closure is DISCOVERED by traversing the entrypoint's local import graph with the real
-// TypeScript parser (WRDF-0088 rounds 11-12) — never regex, which missed escaped specifiers
-// (`"./x.js"`) and comment-separated forms. String-literal specifiers are read DECODED
-// from the AST; every non-static loading form (dynamic import(), require/createRequire,
-// `import x = require(...)`, a non-literal specifier, a local import resolving outside the
-// repo) is rejected FAIL-CLOSED. Run from the repo root:
+// The closure is DISCOVERED by traversing the entrypoint's import graph with the real
+// TypeScript parser (WRDF-0088 rounds 11-13) — never regex, which missed escaped specifiers
+// and comment-separated forms. String-literal specifiers are read DECODED from the AST and
+// classified by an ALLOW-list (round 13): a relative import is traversed in-repo, an
+// exact-match permitted external dependency is the terminus, and EVERYTHING ELSE is rejected
+// fail-closed — absolute paths, file:/data: URLs, surprise packages, `node:module` (the path
+// to createRequire), and every non-static loading form (dynamic import(), require/
+// createRequire, `import x = require(...)`, a non-literal specifier, an out-of-repo
+// resolution). A deny-list cannot bound a reflective language; the allow-list can.
+// Run from the repo root:
 // `node scripts/gen-verifier-attestation.mjs`. A drift guard
 // (packages/core/test/deploy-attestation.test.ts) fails if the committed manifest is stale
 // or if discovery diverges from what is pinned.
@@ -46,10 +50,26 @@ export function sha256File(absPath) {
   return createHash("sha256").update(readFileSync(absPath)).digest("hex");
 }
 
-// A LOCAL module specifier is a relative path (./ or ../); anything else (@scope/…,
-// node:…) is an external dependency and the declared trust-root terminus — not traversed.
-function isLocal(spec) {
-  return spec.startsWith("./") || spec.startsWith("../");
+// The verifier's ONLY permitted external dependencies (the declared toolchain terminus).
+// This is an ALLOW-list, not a deny-list (WRDF-0088 round 13): a deny-list cannot win
+// against a reflective language, so every specifier that is neither a relative import nor
+// an exact member of this set is rejected fail-closed — including absolute paths, file:/
+// data: URLs, surprise packages, and reflective-loading modules such as `node:module`
+// (which is the only way to reach createRequire). A new genuine dependency requires a
+// reviewed edit here; the drift guard asserts this set matches the closure's real externals.
+export const PERMITTED_EXTERNAL = new Set([
+  "@solana/web3.js",
+  "@noble/hashes/sha2",
+  "node:fs",
+]);
+
+// Classify a static module specifier: "local" (relative → traverse in-repo), "external"
+// (an allow-listed dependency → terminus, not traversed), or null (everything else →
+// reject fail-closed).
+function classifySpecifier(spec) {
+  if (spec.startsWith("./") || spec.startsWith("../")) return "local";
+  if (PERMITTED_EXTERNAL.has(spec)) return "external";
+  return null;
 }
 
 // Resolve a local specifier from the importing file to a source .ts on disk. Imports use
@@ -113,12 +133,29 @@ export function discoverClosure(repoRoot, entryRel = VERIFIER_ENTRYPOINT) {
     seen.add(relPath);
     const abs = `${repoRoot}/${relPath}`;
     for (const spec of staticSpecifiers(relPath, readFileSync(abs, "utf8"))) {
-      if (!isLocal(spec)) continue; // external dep = terminus
+      const kind = classifySpecifier(spec);
+      if (kind === "external") continue; // allow-listed dependency = terminus
+      if (kind === null) {
+        throw new Error(`verifier closure: disallowed module specifier ${JSON.stringify(spec)} in ${relPath} — only relative imports and the permitted external allow-list are allowed (fail-closed)`);
+      }
       walk(relative(repoRoot, resolveLocalTs(repoRoot, abs, spec)));
     }
   };
   walk(entryRel);
   return [...seen].sort();
+}
+
+// The set of EXTERNAL (allow-listed) specifiers actually imported across the discovered
+// closure — used by the drift guard to assert PERMITTED_EXTERNAL has no dead entries and no
+// missing ones. Throws (via discovery) if any disallowed specifier is present.
+export function externalDeps(repoRoot) {
+  const out = new Set();
+  for (const rel of discoverClosure(repoRoot)) {
+    for (const spec of staticSpecifiers(rel, readFileSync(`${repoRoot}/${rel}`, "utf8"))) {
+      if (classifySpecifier(spec) === "external") out.add(spec);
+    }
+  }
+  return [...out].sort();
 }
 
 export function buildManifest(repoRoot, closure = discoverClosure(repoRoot)) {
