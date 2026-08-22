@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { VERIFIER_SOURCE_CLOSURE, buildManifest, serializeManifest, ATTESTATION_PATH } from "../../../scripts/gen-verifier-attestation.mjs";
 
 // Hermetic shell coverage of the live deploy-gate wiring (WRDF-0085/0088/0091/0092).
 // Temp repos live UNDER the repo's gitignored target/ (on /opt) — never /tmp — with
@@ -85,18 +86,23 @@ describe("scripts/deploy-gate.sh — live wiring via the repo's own toolchain (W
   const artifact = createHash("sha256").update("warden-so-bytes").digest("hex");
   let argsFile = "";
   let parseArgsFile = "";
+  let entryFile = "";
   let absReleaseFile = "";
+  let expectedEntry = "";
+  const attestedSrc = (rel: string) => join(dir, rel); // an attested closure file inside the temp repo
 
   beforeAll(() => {
     dir = mkTemp("fullgate-");
-    // The recorded-args sinks live OUTSIDE the repo tree: the gate's clean-tree
-    // preflight (deploy-preflight.sh) counts untracked files as dirty, so writing
-    // them inside `dir` would make the SECOND gate run refuse before it ever
-    // reaches the verifier — a test-only artifact, not a gate property under test.
+    // The recorded sinks live OUTSIDE the repo tree: the gate's clean-tree preflight
+    // (deploy-preflight.sh) counts untracked files as dirty, so writing them inside
+    // `dir` would make the SECOND gate run refuse before it ever reaches the verifier
+    // — a test-only artifact, not a gate property under test.
     outDir = mkTemp("fullgate-out-");
     argsFile = join(outDir, "verifier-args.txt");
     parseArgsFile = join(outDir, "parse-args.txt");
+    entryFile = join(outDir, "entry.txt");
     absReleaseFile = join(dir, "docs", "security", "RELEASE-INTEGRITY.md");
+    expectedEntry = join(dir, "packages", "core", "scripts", "deploy-gate-verify.ts");
     // The gate invokes <repo>/packages/core/node_modules/.bin/tsx by ABSOLUTE path
     // (WRDF-0092): no bare pnpm/tsx, no PATH surface, no env override. The test
     // injects the stub into ITS OWN temp repo's toolchain path — exactly what a
@@ -108,6 +114,16 @@ describe("scripts/deploy-gate.sh — live wiring via the repo's own toolchain (W
     const stub = join(dir, "packages", "core", "node_modules", ".bin", "tsx");
     cpSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-verifier-tsx.sh"), stub);
     chmodSync(stub, 0o755);
+    // Place the verdict-bearing SOURCE closure (a placeholder at each attested path —
+    // the stub tsx never reads their contents) and a MATCHING committed attestation
+    // manifest, so verify_source_attestation authenticates the real entrypoint + source
+    // before invoking the verifier (WRDF-0092/0088 round 10). A later test mutates one
+    // of these files and asserts the gate refuses BEFORE reaching the verifier.
+    for (const rel of VERIFIER_SOURCE_CLOSURE as string[]) {
+      mkdirSync(dirname(attestedSrc(rel)), { recursive: true });
+      writeFileSync(attestedSrc(rel), `// hermetic placeholder for ${rel}\n`);
+    }
+    writeFileSync(join(dir, ATTESTATION_PATH as string), serializeManifest(buildManifest(dir)));
 
     git(dir, "init", "-q");
     writeFileSync(join(dir, "code.txt"), "v1"); git(dir, "add", "-A"); git(dir, "commit", "-qm", "release C");
@@ -124,14 +140,19 @@ describe("scripts/deploy-gate.sh — live wiring via the repo's own toolchain (W
     FAKE_ARTIFACT_HASH: artifact,
     FAKE_ARGS_FILE: argsFile,
     FAKE_PARSE_ARGS_FILE: parseArgsFile,
+    FAKE_ENTRY_FILE: entryFile,
     FAKE_VERIFIER_EXIT: String(exit),
   });
   const liveArgs = () => [ID, ID, ID, cSha, "--manifest", "synthetic", "--rpc-url", "http://127.0.0.1:1"];
   const gate = () => join(dir, "scripts", "deploy-gate.sh");
 
   it("forwards the EXACT parse-mode AND live verifier argument arrays", () => {
-    safeRm(argsFile); safeRm(parseArgsFile);
+    safeRm(argsFile); safeRm(parseArgsFile); safeRm(entryFile);
     run("bash", [gate(), ...liveArgs()], dir, liveEnv(0));
+    // Entrypoint identity (WRDF-0088 round 10): the gate ran the committed verifier path,
+    // not a decoy — the stub recorded argv[1] and it is exactly the attested entrypoint.
+    expect(existsSync(entryFile), "verifier entrypoint not recorded").toBe(true);
+    expect(readFileSync(entryFile, "utf8").trim()).toBe(expectedEntry);
     // Parse mode: the canonical hash lookup carries BOTH release bindings.
     expect(existsSync(parseArgsFile), "parse-mode verifier not invoked").toBe(true);
     expect(readFileSync(parseArgsFile, "utf8").trim().split("\n")).toEqual([
@@ -168,6 +189,34 @@ describe("scripts/deploy-gate.sh — live wiring via the repo's own toolchain (W
     expect(r.code).not.toBe(0);
     expect(r.err).toMatch(/CLEAN working tree/);
     expect(existsSync(argsFile)).toBe(false); // live verifier never ran
+  }, 30_000);
+
+  it("REFUSES (fatally) when an attested verifier source file is altered — verifier never runs", () => {
+    safeRm(argsFile); safeRm(parseArgsFile); safeRm(entryFile);
+    const saved = head(dir);
+    // Commit a tampered attested source WITHOUT regenerating the manifest: the tree is
+    // CLEAN (git sees a committed change) yet the committed attestation still pins the old
+    // hash. This is the swap the clean-tree check alone cannot catch.
+    const target = attestedSrc(VERIFIER_SOURCE_CLOSURE[1] as string); // an src/deploy/*.ts
+    writeFileSync(target, "// TAMPERED — not the attested content\n");
+    git(dir, "add", "-A"); git(dir, "commit", "-qm", "tamper attested source");
+    const r = run("bash", [gate(), ...liveArgs()], dir, liveEnv(0));
+    git(dir, "reset", "-q", "--hard", saved);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toMatch(/attested verifier source altered/);
+    expect(existsSync(entryFile)).toBe(false); // fatal BEFORE any verifier invocation
+    expect(existsSync(argsFile)).toBe(false);
+  }, 30_000);
+
+  it("REFUSES (fatally) when the attestation manifest is absent — verifier never runs", () => {
+    safeRm(argsFile); safeRm(entryFile);
+    const saved = head(dir);
+    git(dir, "rm", "-q", ATTESTATION_PATH as string); git(dir, "commit", "-qm", "drop attestation");
+    const r = run("bash", [gate(), ...liveArgs()], dir, liveEnv(0));
+    git(dir, "reset", "-q", "--hard", saved);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toMatch(/attestation manifest missing/);
+    expect(existsSync(entryFile)).toBe(false);
   }, 30_000);
 });
 

@@ -13,7 +13,11 @@
 # executes) the RPC-dependent ones. No network calls are made in --dry-run
 # mode, ever — this is what tests and CI exercise.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+# Resolve the script dir without an external `dirname` (one less PATH-resolved binary
+# on the way to a verdict, WRDF-0092). After this cd, the repo root is the CWD and all
+# in-repo helpers are referenced by repo-relative path.
+_sd="${0%/*}"; [ "$_sd" = "$0" ] && _sd="."
+cd "$_sd/.."
 
 usage() {
   cat >&2 <<'EOF'
@@ -64,16 +68,51 @@ is_pubkey() {
 
 # The Task 11R governance+hash verifier (DEPLOY-GATE.md checks 1, 2, 4a). Hand-rolled
 # in packages/core/src/deploy (no @sqds dependency). Invoked via the REPO's OWN
-# pinned toolchain by ABSOLUTE path — never a bare `pnpm`/`tsx` resolved through the
-# caller's $PATH, and never a command-override env var (WRDF-0092). This removes the
-# PATH/env replacement surface for the verifier; the gate still assumes a trusted
-# node runtime (the irreducible toolchain trust, documented alongside the trusted-RPC
-# assumption). A hermetic test injects ITS OWN temp repo's tsx, not the caller's PATH.
+# toolchain by ABSOLUTE path — never a bare `pnpm`/`tsx` resolved through the caller's
+# $PATH, never a command-override env var (WRDF-0092).
+#
+# TRUST BOUNDARY (WRDF-0092 round 10, docs/security/DEPLOY-GATE-TRUST-ROOT.md):
+# The gate AUTHENTICATES the verifier's verdict-bearing SOURCE — verify_source_attestation
+# re-hashes the committed closure (docs/security/verifier-attestation.json) and refuses on
+# any missing/altered file or a decoy entrypoint, independently of the clean-tree check
+# (which is blind to gitignored node_modules). Below the attested source, the JS runtime
+# and its module transpiler/resolver (node, tsx, packages/core/node_modules) are the
+# DECLARED trust-root terminus: an actor who can replace a file there already has local
+# write/execute on the deploy host and can equally replace this script, the node binary,
+# or the shell — no in-repo mechanism defends a compromised local host. This is the same
+# external THREATMODEL assumption already accepted for the Squads audited-code hash
+# (WRDF-0017 r6) and the trusted-RPC assumption. A hermetic test injects ITS OWN temp
+# repo's tsx (a controlled test repo populating its own node_modules), not production PATH.
 REPO_ROOT="$(pwd)"
 DEPLOY_VERIFIER_TSX="$REPO_ROOT/packages/core/node_modules/.bin/tsx"
-DEPLOY_VERIFIER_JS="$REPO_ROOT/packages/core/scripts/deploy-gate-verify.ts"
+DEPLOY_VERIFIER_ENTRY_REL="packages/core/scripts/deploy-gate-verify.ts"
+DEPLOY_VERIFIER_JS="$REPO_ROOT/$DEPLOY_VERIFIER_ENTRY_REL"
+VERIFIER_ATTESTATION="docs/security/verifier-attestation.json"
 run_gov_hash_verifier() {
   "$DEPLOY_VERIFIER_TSX" "$DEPLOY_VERIFIER_JS" "$@"
+}
+
+# Authenticate the verifier SOURCE the toolchain will consume, before any invocation.
+# Refuses on: missing manifest, entrypoint identity mismatch, or any attested file that
+# is missing or whose sha256 differs from the committed pin. Parses the canonical
+# manifest lines (`"<path>.ts": "<64hex>"`); the exact serialization is drift-guarded by
+# packages/core/test/deploy-attestation.test.ts, and the entrypoint line (a .ts VALUE,
+# not a hex value) is deliberately excluded from the file loop and checked separately.
+verify_source_attestation() {
+  [ -f "$VERIFIER_ATTESTATION" ] || { fail "verifier attestation manifest missing: $VERIFIER_ATTESTATION"; return; }
+  local want_entry
+  want_entry="$(grep -oE '"entrypoint": *"[^"]+"' "$VERIFIER_ATTESTATION" | sed -E 's/.*: *"([^"]+)"/\1/')"
+  [ "$want_entry" = "$DEPLOY_VERIFIER_ENTRY_REL" ] \
+    || { fail "attestation entrypoint '$want_entry' != gate entrypoint '$DEPLOY_VERIFIER_ENTRY_REL'"; return; }
+  local n=0 path want got
+  while IFS='|' read -r path want; do
+    [ -n "$path" ] || continue
+    n=$((n+1))
+    [ -f "$path" ] || { fail "attested verifier source missing: $path"; continue; }
+    got="$(sha256sum "$path" | cut -d' ' -f1)"
+    [ "$got" = "$want" ] || fail "attested verifier source altered (sha256 mismatch): $path"
+  done < <(grep -oE '"[^"]+\.ts": *"[0-9a-f]{64}"' "$VERIFIER_ATTESTATION" | sed -E 's/"([^"]+)": *"([0-9a-f]{64})"/\1|\2/')
+  [ "$n" -ge 1 ] || fail "attestation manifest listed no verifier source files"
 }
 
 # ---- WRDF-0085: bind a live run to the release, without self-reference --------
@@ -90,7 +129,7 @@ if [ "$DRY_RUN" -eq 0 ] && [ -z "$FIXTURE_CASE" ] && [ -n "$MANIFEST" ]; then
   # The git-only checkout binding lives in the separately-tested deploy-preflight.sh
   # (clean tree + release-sha resolves + ancestor-of-HEAD). Merge stdout+stderr:
   # on success stdout is the full SHA; on refusal stderr carries the reason.
-  if pf_out="$(bash "$(dirname "$0")/deploy-preflight.sh" "$RELEASE_SHA" 2>&1)"; then
+  if pf_out="$(bash scripts/deploy-preflight.sh "$RELEASE_SHA" 2>&1)"; then
     RELEASE_FULL_SHA="$pf_out"
   else
     fail "${pf_out#REFUSE: }"
@@ -110,6 +149,18 @@ is_pubkey "$PROGRAM_ID" || fail "program-id '$PROGRAM_ID' does not look like a b
 is_pubkey "$EXPECTED_AUTHORITY" || fail "expected-authority '$EXPECTED_AUTHORITY' does not look like a base58 pubkey"
 is_pubkey "$SQUADS_MULTISIG" || fail "squads-multisig '$SQUADS_MULTISIG' does not look like a base58 pubkey"
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{7,40}$ ]] || fail "release-sha '$RELEASE_SHA' does not look like a git SHA"
+
+echo
+echo "-- verifier source attestation (committed sha256 closure, WRDF-0092) --"
+# FATAL, not deferred: an unauthenticated verifier source must NEVER be executed — so we
+# refuse here, before any run_gov_hash_verifier invocation, rather than letting a forged
+# verifier run and merely marking the aggregate exit nonzero.
+verify_source_attestation
+if [ "$status" -ne 0 ]; then
+  echo "== L7 deploy gate: REFUSE TO DEPLOY (verifier source attestation failed) ==" >&2
+  exit 1
+fi
+echo "   OK: verifier source closure matches the committed attestation"
 
 echo
 echo "-- checks 1, 2, 4a: governance + release-hash (deploy-gate-verify, Task 11R) --"

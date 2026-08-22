@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "entrypoint": "packages/core/scripts/deploy-gate-verify.ts",
+  "files": {
+    "packages/core/scripts/deploy-gate-verify.ts": "f7068c03bfca9c2a53dffd7d74dc8ff9775671fc2d8b0c773b1cca0274c03c3a",
+    "packages/core/src/deploy/accounts.ts": "8b4e776683d6d31b0979e7eb0906aa1c07faf49163013e95ebf9864b1dee7ab8",
+    "packages/core/src/deploy/cli.ts": "8276098d85d1c4e1b26e70078cb9c50c9a76edf73293fa7742a668ff8d885222",
+    "packages/core/src/deploy/config.ts": "7df9c0d6d306e132be08e4cb1f8b3cecec181618f3b61e97f33356a9aa39d888",
+    "packages/core/src/deploy/fixtures.ts": "08aa4be5d422e39546e285139701a1f6c148edbf86060999ac7eb38b2f180a50",
+    "packages/core/src/deploy/gate.ts": "f9e468882b82998ab0264161ab818448562cabde9d86661e73e2f5e1326dc2c0"
+  }
+}
