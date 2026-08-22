@@ -216,3 +216,54 @@ cannot, recurse indefinitely into the governance of every dependency. The
 concrete anchor is the pinned audited Squads code hash; if Squads ships new code,
 the gate fails closed until the new hash is reviewed and re-pinned. This is the
 documented terminus of the on-chain deployment trust root.
+
+---
+
+## GROK exploit-audit remediation (EXP-01..07) — deb16e4 — 2026-08-22 — pending sign-off
+
+Independent third-model adversarial pass (`docs/security/GROK-EXPLOIT-AUDIT-2026-08-22.md`)
+against BASE `9a427aa`. Seven findings triaged; six reproducible/confirmed, patched with
+red-at-BASE regressions (details: `docs/program/PHASE1B-MEASUREMENTS.md` §"GROK exploit-audit
+remediation").
+
+**New trust surface:** none — every change is a fail-closed narrowing. No new instruction,
+account, or authority path is reachable.
+
+**Removed / narrowed:**
+- Root `execute` / nested-hop **issuance and freeze control**: `MintTo`/`MintToChecked`/
+  `FreezeAccount`/`ThawAccount` are now on the fixed deny-list (both paths, above the registry),
+  and conservation compares `supply` byte-for-byte for any mint the vault controls — so a
+  `MintTo` under a vault-held `mint_authority`, direct or nested inside a Jupiter hop, is now
+  rejected instead of being unmetered (EXP-02).
+- **Stake / Vote / BPF-upgradeable-loader value**: any *writable* remaining account owned by one
+  of these is rejected pre-CPI and in `compare_and_account`, closing the "read-only PDA signer
+  authorizes `Stake::Withdraw` with no cap debit" path on both `execute` and `swap` (EXP-03).
+- **Session `swap` reach into Jupiter hops**: the session path now refuses the `route` variant
+  (which forwards the vault PDA signer to every AMM hop), accepting only `shared_accounts_route`
+  (Jupiter signs hops with its own programAuthority); root keeps both, byte-bound by
+  `route_hash` + `accounts_hash`. Optional `route[4]` destination is pinned when writable (EXP-05).
+- **Swap protocol fee**: the treasury-fee check is now the realized 85 bps *rate*
+  (`fee_delta ≥ floor(base×85/10000)`), not "any positive delta" — a 0-bps route paying 1 base
+  unit is rejected (EXP-01).
+- **Empty `execute` payload** is rejected before the registry/stage gate, closing the list-id-0
+  stage-GC / auth-shape hole (EXP-04).
+- **Reincarnation (direct)**: ATA `Create`/`CreateIdempotent` and SPL/T22 `InitializeAccount*`
+  whose target was a vault token account in the BEFORE snapshot are deny-listed (EXP-06).
+
+**New invariants:** none seeded here; no `invariants.jsonl` status was promoted (B4 stays deferred
+per the 2026-08-22 reassessment). The ABI grew by one error only — `SwapRouteVariantSessionDenied`
+(6075); the pinned drift table went 75→76.
+
+**Residual, stated honestly:**
+- **EXP-06 nested-both-halves** (a close AND a same-pubkey recreate inside ONE middleman CPI) is
+  invisible to any before/after comparison and is **not** closed. Fund-flow analysis: rule-8
+  (non-native lamports unchanged), native metering, and the PDA-credit floor mean the *vault*
+  cannot net-lose lamports this way — only the fee payer's own rent can fund a replacement, and a
+  compromised signer can already spend its own SOL. Recorded as an accepted §5.3-class residual.
+- **EXP-01 is the realized-fee floor, not the byte-exact `route_plan` parse** (WRDF-0031/0059),
+  which remains owed before mainnet.
+- **Assurance-lane gap:** the canonical Codex `sol@max` review of this range could not be recorded
+  — both `scripts/review.sh` and the `mcp__codex__codex` lane hit OpenAI's cyber content-filter
+  false-positive on the security diff (documented class; not a convergence signal for real product
+  code). A recorded adversarial round over `9a427aa..deb16e4` is **owed** before this milestone is
+  signed off. Interim assurance = author self-review + 17 red-at-BASE regressions + full gate green.
