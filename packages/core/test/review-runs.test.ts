@@ -396,21 +396,23 @@ const EVIDENCE_TYPES = new Set(["red_test", "static_trace", "formal_counterexamp
  * `none` legal only for POTENTIAL (WRDF-0102). A verified remediation is specifically an
  * adopted CONFIRMED promotion, and REFUTED can never carry one.
  *
- * ENTRY-TIME BINDING (WRDF-0101 terminus): claimed_truth_status is captured at append time by
- * scripts/append-review-run.mjs from the model's self-report; this validator enforces it stays a
- * valid enum. Cross-checking it against the ORIGINAL review artefact (`.superpowers/reviews/*.json`)
- * is deliberately NOT done here because that artefact is never committed (public-repo policy —
- * nothing under `.superpowers/`), so a committed test has no authenticated source to compare to.
- * A post-hoc swap of claimed_truth_status to another VALID enum value on a committed row is
- * therefore caught by the two-model review of the diff (it is a visible ledger edit), the same
- * terminus that governs any malicious committed change — not by this static validator.
+ * ENTRY-TIME BINDING (WRDF-0101): claimed_truth_status is captured at append time by
+ * scripts/append-review-run.mjs from the model's self-report and is ALWAYS written, so this
+ * validator REQUIRES it on every row — its deletion / null-ing is a detectable loss and fails
+ * here. The one residual is a same-enum SUBSTITUTION (POTENTIAL→CONFIRMED on a committed row):
+ * catching that would need the ORIGINAL review artefact (`.superpowers/reviews/*.json`), which is
+ * never committed (public-repo policy forbids anything under `.superpowers/`), so a committed
+ * test has no authenticated source to compare to. That substitution is a DECLARED, ACCEPTED trust
+ * terminus — a same-enum edit on a committed row is a git-diff-visible change caught by the
+ * two-model review of the diff, the same terminus that governs any malicious committed edit.
  */
 export function validateScorecardStanding(r: Record<string, unknown>): string[] {
   const id = String(r.finding_id ?? "?");
   const errs: string[] = [];
   const ts = r.truth_status, cts = r.claimed_truth_status;
   if (!TRUTH_STATUSES.has(ts as string)) errs.push(`${id}: truth_status ${JSON.stringify(ts)} is not a valid standing`);
-  if (cts !== undefined && cts !== null && !TRUTH_STATUSES.has(cts as string)) errs.push(`${id}: claimed_truth_status ${JSON.stringify(cts)} is not a valid entry-time standing`);
+  // REQUIRED and non-null: the appender always writes it, so absence is a loss/tamper (WRDF-0101).
+  if (!TRUTH_STATUSES.has(cts as string)) errs.push(`${id}: claimed_truth_status ${JSON.stringify(cts)} is absent or not a valid entry-time standing (the appender always writes it)`);
   // Any non-POTENTIAL standing is a human adjudication → complete metadata + real evidence.
   if (ts === "CONFIRMED" || ts === "REFUTED") {
     const wantRuling = ts === "CONFIRMED" ? "adopted" : "disputed";
@@ -582,5 +584,14 @@ describe("scorecard STANDING validator (WRDF-0100/0101) — adversarial mutation
   });
   it("REJECTS a CONFIRMED row with no rationale", () => {
     expect(validateScorecardStanding({ ...good(), rationale: "   " }).join()).toMatch(/no adjudication rationale/);
+  });
+  // WRDF-0101 round 8: the appender always writes claimed_truth_status, so its deletion/null is
+  // a detectable loss even without the raw artefact.
+  it("REJECTS a row whose claimed_truth_status was deleted", () => {
+    const r = good(); delete r.claimed_truth_status;
+    expect(validateScorecardStanding(r).join()).toMatch(/claimed_truth_status .* absent or not a valid/);
+  });
+  it("REJECTS a row whose claimed_truth_status was null-ed", () => {
+    expect(validateScorecardStanding({ ...goodRefuted(), claimed_truth_status: null }).join()).toMatch(/claimed_truth_status .* absent or not a valid/);
   });
 });
