@@ -1516,3 +1516,20 @@ fix range (below) plus its scorecard adjudication.
 floor is the realized-fee bound those findings assumed was present, not a
 substitute for the parse. The EXP-06 nested-both-halves residual is documented,
 not closed (no 1B mechanism can observe an intra-CPI close+recreate).
+
+### Assurance-lane note (2026-08-22)
+
+The canonical `scripts/review.sh` Codex round over `9a427aa..deb16e4` could NOT be
+recorded: Codex's OpenAI cyber content-filter false-positived on the exploit-
+remediation diff (`ERROR: This content was flagged for possible cybersecurity
+risk`), on both the CLI review lane (twice, incl. a defensively-reframed retry)
+and the `mcp__codex__codex` sol@max lane (which hung without returning and was
+stopped). This is the documented false-positive class
+(`reference_codex_review_content_filter`); because the diff is real product
+security code (not review scaffolding), the block is NOT a convergence signal.
+`REVIEW-RUNS.jsonl` / `REVIEW-SCORECARD.jsonl` were left untouched (the wrapper
+rolls back on a failed round). **Owed:** a recorded Codex adversarial round over
+this range once the filter clears (or via an authorized path), before this
+remediation is treated as review-closed. Interim assurance = author self-review
++ the 17 red-at-BASE regressions + full gate green (644 warden / 301 core / 11
+ui-tokens) + `clippy::arithmetic_side_effects` clean.
