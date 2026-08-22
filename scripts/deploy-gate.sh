@@ -63,12 +63,17 @@ is_pubkey() {
 }
 
 # The Task 11R governance+hash verifier (DEPLOY-GATE.md checks 1, 2, 4a). Hand-rolled
-# in packages/core/src/deploy (no @sqds dependency); run via the workspace's tsx.
-# There is NO command-override env var — a verdict-capable entrypoint must not honor
-# an arbitrary replacement verifier (WRDF-0092). Hermetic tests stub the underlying
-# `pnpm` on PATH instead, so this production path is unconditional.
+# in packages/core/src/deploy (no @sqds dependency). Invoked via the REPO's OWN
+# pinned toolchain by ABSOLUTE path — never a bare `pnpm`/`tsx` resolved through the
+# caller's $PATH, and never a command-override env var (WRDF-0092). This removes the
+# PATH/env replacement surface for the verifier; the gate still assumes a trusted
+# node runtime (the irreducible toolchain trust, documented alongside the trusted-RPC
+# assumption). A hermetic test injects ITS OWN temp repo's tsx, not the caller's PATH.
+REPO_ROOT="$(pwd)"
+DEPLOY_VERIFIER_TSX="$REPO_ROOT/packages/core/node_modules/.bin/tsx"
+DEPLOY_VERIFIER_JS="$REPO_ROOT/packages/core/scripts/deploy-gate-verify.ts"
 run_gov_hash_verifier() {
-  pnpm --filter @warden/core exec tsx scripts/deploy-gate-verify.ts "$@"
+  "$DEPLOY_VERIFIER_TSX" "$DEPLOY_VERIFIER_JS" "$@"
 }
 
 # ---- WRDF-0085: bind a live run to the release, without self-reference --------

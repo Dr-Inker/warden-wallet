@@ -7,8 +7,10 @@ import { createHash } from "node:crypto";
 
 // Hermetic shell coverage of the live deploy-gate wiring (WRDF-0085/0088/0091/0092).
 // Temp repos live UNDER the repo's gitignored target/ (on /opt) — never /tmp — with
-// prefix-guarded cleanup (WRDF-0091). The verifier is stubbed by shadowing `pnpm`
-// on PATH — the gate has NO production override env var (WRDF-0092).
+// prefix-guarded cleanup (WRDF-0091). The gate runs the verifier through the repo's
+// OWN <repo>/packages/core/node_modules/.bin/tsx by absolute path — no bare binary,
+// no PATH surface, no override env var (WRDF-0092). The test injects its stub into
+// its own temp-repo toolchain, which the production gate has no equivalent of.
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const TMP_ROOT = join(REPO, "target", "deploy-gate-testtmp");
 const PREFLIGHT = join(REPO, "scripts", "deploy-preflight.sh");
@@ -75,31 +77,37 @@ describe("scripts/deploy-preflight.sh — hermetic checkout binding (WRDF-0088/0
   });
 });
 
-describe("scripts/deploy-gate.sh — live wiring with a PATH-shadowed verifier (WRDF-0088/0092)", () => {
+describe("scripts/deploy-gate.sh — live wiring via the repo's own toolchain (WRDF-0088/0092)", () => {
   let dir: string;
+  let outDir: string;
   let cSha = "";
   const digest = "d462c1fcd13cff9bf0b23b0df1e28b870fd5e570dfe80408d40cc39ed4c8a143"; // synthetic manifest digest
   const artifact = createHash("sha256").update("warden-so-bytes").digest("hex");
   let argsFile = "";
-  let binDir = "";
+  let parseArgsFile = "";
   let absReleaseFile = "";
 
   beforeAll(() => {
     dir = mkTemp("fullgate-");
-    argsFile = join(dir, "verifier-args.txt");
-    binDir = join(dir, "fakebin");
+    // The recorded-args sinks live OUTSIDE the repo tree: the gate's clean-tree
+    // preflight (deploy-preflight.sh) counts untracked files as dirty, so writing
+    // them inside `dir` would make the SECOND gate run refuse before it ever
+    // reaches the verifier — a test-only artifact, not a gate property under test.
+    outDir = mkTemp("fullgate-out-");
+    argsFile = join(outDir, "verifier-args.txt");
+    parseArgsFile = join(outDir, "parse-args.txt");
     absReleaseFile = join(dir, "docs", "security", "RELEASE-INTEGRITY.md");
-    for (const d of ["scripts", "docs/security", "programs", "packages", "target/deploy", "fakebin"]) mkdirSync(join(dir, d), { recursive: true });
+    // The gate invokes <repo>/packages/core/node_modules/.bin/tsx by ABSOLUTE path
+    // (WRDF-0092): no bare pnpm/tsx, no PATH surface, no env override. The test
+    // injects the stub into ITS OWN temp repo's toolchain path — exactly what a
+    // controlled test repo may do, and NOT a production bypass.
+    for (const d of ["scripts", "docs/security", "programs", "packages/core/node_modules/.bin", "packages/core/scripts", "target/deploy"]) mkdirSync(join(dir, d), { recursive: true });
     cpSync(GATE, join(dir, "scripts", "deploy-gate.sh"));
     cpSync(PREFLIGHT, join(dir, "scripts", "deploy-preflight.sh"));
     writeFileSync(join(dir, "target", "deploy", "warden.so"), "warden-so-bytes");
-
-    // A committed `pnpm` shadow (test/fixtures/fake-pnpm.sh) that ENFORCES the
-    // verifier's real flag/value contract. There is NO gate override env var
-    // (WRDF-0092) — we shadow the real `pnpm` on PATH.
-    const fakePnpm = join(binDir, "pnpm");
-    cpSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-pnpm.sh"), fakePnpm);
-    chmodSync(fakePnpm, 0o755);
+    const stub = join(dir, "packages", "core", "node_modules", ".bin", "tsx");
+    cpSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-verifier-tsx.sh"), stub);
+    chmodSync(stub, 0o755);
 
     git(dir, "init", "-q");
     writeFileSync(join(dir, "code.txt"), "v1"); git(dir, "add", "-A"); git(dir, "commit", "-qm", "release C");
@@ -108,24 +116,30 @@ describe("scripts/deploy-gate.sh — live wiring with a PATH-shadowed verifier (
     writeFileSync(absReleaseFile, `# Release integrity\n\n${row}\n`);
     git(dir, "add", "-A"); git(dir, "commit", "-qm", "attestation A for C");
   });
-  afterAll(() => safeRm(dir));
+  afterAll(() => { safeRm(dir); safeRm(outDir); });
 
   const liveEnv = (exit = 0) => ({
     ...gitEnv,
-    PATH: `${binDir}:${process.env.PATH}`,
     SOLANA_RPC_URL: "",
     FAKE_ARTIFACT_HASH: artifact,
     FAKE_ARGS_FILE: argsFile,
+    FAKE_PARSE_ARGS_FILE: parseArgsFile,
     FAKE_VERIFIER_EXIT: String(exit),
   });
   const liveArgs = () => [ID, ID, ID, cSha, "--manifest", "synthetic", "--rpc-url", "http://127.0.0.1:1"];
+  const gate = () => join(dir, "scripts", "deploy-gate.sh");
 
-  it("forwards the EXACT verifier argument array (normalized SHA, release file, identities)", () => {
-    safeRm(argsFile);
-    run("bash", [join(dir, "scripts", "deploy-gate.sh"), ...liveArgs()], dir, liveEnv(0));
-    expect(existsSync(argsFile)).toBe(true);
-    const got = readFileSync(argsFile, "utf8").trim().split("\n");
-    expect(got).toEqual([
+  it("forwards the EXACT parse-mode AND live verifier argument arrays", () => {
+    safeRm(argsFile); safeRm(parseArgsFile);
+    run("bash", [gate(), ...liveArgs()], dir, liveEnv(0));
+    // Parse mode: the canonical hash lookup carries BOTH release bindings.
+    expect(existsSync(parseArgsFile), "parse-mode verifier not invoked").toBe(true);
+    expect(readFileSync(parseArgsFile, "utf8").trim().split("\n")).toEqual([
+      "--parse-release-hash", "1", "--release-sha", cSha, "--release-integrity-file", absReleaseFile,
+    ]);
+    // Live mode: the exact governance+hash argument array.
+    expect(existsSync(argsFile), "live verifier not invoked").toBe(true);
+    expect(readFileSync(argsFile, "utf8").trim().split("\n")).toEqual([
       "--rpc-url", "http://127.0.0.1:1",
       "--manifest", "synthetic",
       "--release-sha", cSha,
@@ -136,21 +150,24 @@ describe("scripts/deploy-gate.sh — live wiring with a PATH-shadowed verifier (
     ]);
   }, 30_000);
 
-  it("propagates a FAILING verifier to a nonzero gate result", () => {
+  it("propagates a FAILING verifier as its OWN specific refusal (not the check-3 deferral)", () => {
     safeRm(argsFile);
-    const r = run("bash", [join(dir, "scripts", "deploy-gate.sh"), ...liveArgs()], dir, liveEnv(7));
+    const r = run("bash", [gate(), ...liveArgs()], dir, liveEnv(7));
     expect(r.code).not.toBe(0);
+    // The failure is attributed to the governance+hash verifier specifically — a
+    // message check-3's separate refusal never produces.
     expect(r.err).toMatch(/live governance\+hash checks failed/);
+    expect(existsSync(argsFile)).toBe(true); // it DID reach the live verifier (which then failed)
   }, 30_000);
 
   it("REFUSES a dirty tree BEFORE the verifier is reached (no args recorded)", () => {
-    safeRm(argsFile);
+    safeRm(argsFile); safeRm(parseArgsFile);
     writeFileSync(join(dir, "code.txt"), "MUTATED");
-    const r = run("bash", [join(dir, "scripts", "deploy-gate.sh"), ...liveArgs()], dir, liveEnv(0));
+    const r = run("bash", [gate(), ...liveArgs()], dir, liveEnv(0));
     git(dir, "checkout", "--", "code.txt");
     expect(r.code).not.toBe(0);
     expect(r.err).toMatch(/CLEAN working tree/);
-    expect(existsSync(argsFile)).toBe(false); // verifier never ran
+    expect(existsSync(argsFile)).toBe(false); // live verifier never ran
   }, 30_000);
 });
 
