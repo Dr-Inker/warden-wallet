@@ -13,6 +13,18 @@
 > (4) the client-security-hardening (C1+), vanity (V1+), and UI (U0+) plans, at their stated
 > dependency boundaries. Release-candidate residuals are enumerated in PHASE1B-MEASUREMENTS.md.
 > Read CLAUDE.md + the spec (rev 9) for the current truth before acting.
+>
+> **CLIENT TRACK (post-1B) — C2a DONE 2026-08-22.** `assertionToCompact()` (strict-DER + mandatory
+> low-S) is built + unit-verified in `packages/core/src/webauthn/assertion.ts` and converged through
+> Codex sol@max (round 4 = 0 findings @`3f56914`). **`WRD-SIG-01` intentionally stays `unimplemented`**
+> (WRDF-0103): its binding acceptance needs the recorded high-S assertion through the REAL on-chain
+> secp256r1 precompile end-to-end via the **C3** production ceremony builder (not yet built) — the
+> in-process Noble check is a proxy, not the precompile. **B4 (ledger-honesty promotion) is NOT a batch
+> flip:** of the 9 stale-unimplemented invariants, WRD-FRZ-03 needs `execute_pending` (Phase 1C),
+> WRD-DENY-02 + WRD-EXEC-08 have no covering test found, and WRD-DENY-01 is only partial — so only a
+> narrow, per-invariant-verified pass is legitimate. Immediate open choices: **C1** (MV3 extension trust
+> boundary — large greenfield, wants owner visibility), the **narrow B4 pass**, or **C2** (keyring).
+> See `docs/superpowers/plans/2026-08-19-warden-client-security-hardening.md` §C2a for detail.
 
 TO / Claude Code
 

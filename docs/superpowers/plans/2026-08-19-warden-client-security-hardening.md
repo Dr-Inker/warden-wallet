@@ -274,6 +274,20 @@ not fire. Do not derive expected ciphertext from the implementation under test.
 
 ## C2a — Assertion conversion: strict DER parsing and mandatory low-S normalization
 
+> **STATUS 2026-08-22 — CONVERSION DONE, invariant intentionally still open.** `assertionToCompact()`
+> is implemented and unit-verified in `packages/core/src/webauthn/assertion.ts` (+ `test/assertion.test.ts`,
+> 13 tests) @`b1d5968`, converged through a Codex sol@max review (round 4 clean, @`3f56914`): strict DER
+> parse (rejects trailing/indefinite/non-minimal/negative/oversized INTEGERs, r/s out of `[1,n-1]`) →
+> fixed 64-byte compact with unconditional low-S; typed errors, never a panic. Proven on the RECORDED real
+> high-S Chrome assertion (spike 02-webauthn data): normalizes to the expected bytes AND a precompile-
+> EQUIVALENT lowS verifier (`@noble/curves`, dev-only) rejects raw-high-S / accepts normalized. **BUT
+> `WRD-SIG-01` deliberately stays `unimplemented`** (WRDF-0103): its binding acceptance requires the
+> recorded assertion to pass the REAL on-chain secp256r1 precompile END TO END (LiteSVM `with_mainnet_features()`,
+> raw-high-S REJECT / normalized ACCEPT) through a production ceremony builder — and that builder is C3, not
+> yet built. The Noble check is a proxy, not the precompile. **Remaining C2a work (the checkboxes below):**
+> the LiteSVM precompile end-to-end vector + the property test over cryptographically-valid signatures, which
+> land with/after C3; then `WRD-SIG-01` → `test-covered`.
+
 **Why here (campaign plan 2026-08-20 G3; spec §Passkeys):** the spec is binding —
 low-S normalization is mandatory client-side because the secp256r1 precompile
 rejects high-S signatures and Chrome emitted a high-S signature on the very first
