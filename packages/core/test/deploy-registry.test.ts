@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { PublicKey } from "@solana/web3.js";
 import {
   decodeRegistry,
@@ -11,11 +13,13 @@ import {
 } from "../src/deploy/accounts.js";
 import {
   expectedRegistryConfig,
+  buildExpectedEntries,
   diffRegistry,
   EXPECTED_ADAPTERS,
   hexOf,
   authenticatedJupiterInstructionNames,
   JUPITER_V6_IDL_SHA256,
+  JUPITER_V6_ID,
 } from "../src/deploy/registry-config.js";
 import { encodeRegistry, defaultRegistryEntries, namedScenario, GOLDEN_VAULT_PDA } from "../src/deploy/fixtures.js";
 import { verifyDeployGate, deriveRegistryPda } from "../src/deploy/gate.js";
@@ -103,12 +107,15 @@ describe("Jupiter IDL authentication (registry-config.ts) — WRDF-0095", () => 
   });
 
   it("a shared Warden-mirror typo cannot pass: a name absent from the authenticated IDL is rejected", () => {
-    // expectedRegistryConfig throws for any jupiter-idl adapter whose name is not in this set,
-    // so a coordinated typo ('rout') across Warden's own mirrors is caught by the upstream source.
-    const names = authenticatedJupiterInstructionNames();
-    expect(names.has("rout")).toBe(false);
-    expect(names.has("shared_accounts_rout")).toBe(false);
-    // And the real config, whose Jupiter names ARE in the IDL, builds without throwing.
+    // Directly exercise the rejection branch (WRDF-0097): a jupiter-idl adapter whose name is
+    // not a real IDL instruction must throw — removing the guard makes THIS test fail.
+    expect(() =>
+      buildExpectedEntries([{ program: JUPITER_V6_ID, anchor: "rout", source: "jupiter-idl", roleRules: 0, lists: [1] }]),
+    ).toThrow(/not an instruction in the authenticated Jupiter v6 IDL/);
+    expect(() =>
+      buildExpectedEntries([{ program: JUPITER_V6_ID, anchor: "shared_accounts_rout", source: "jupiter-idl", roleRules: 0, lists: [1] }]),
+    ).toThrow(/not an instruction in the authenticated Jupiter v6 IDL/);
+    // The real config, whose Jupiter names ARE in the IDL, builds without throwing.
     expect(() => expectedRegistryConfig()).not.toThrow();
   });
 });
@@ -190,4 +197,29 @@ describe("deploy gate check-3 wiring (gate.ts)", () => {
       expect(reg.ok, `expected registry-config to fail for ${name}`).toBe(false);
     });
   }
+});
+
+describe("built @warden/core package ships + resolves the deploy IDL (WRDF-0098)", () => {
+  const PKG = join(dirname(fileURLToPath(import.meta.url)), "..");
+  it("build copies the hash-pinned IDL to dist and the COMPILED verifier resolves it", async () => {
+    // A clean build (tsc + the asset-copy step) must place the IDL where the compiled
+    // registry-config.js resolves it from — `tsc` alone does not copy .json assets.
+    execFileSync("npx", ["tsc", "-p", "tsconfig.json"], { cwd: PKG, stdio: "pipe" });
+    execFileSync("node", ["scripts/copy-deploy-assets.mjs"], { cwd: PKG, stdio: "pipe" });
+    const distIdl = join(PKG, "dist", "deploy", "idl", "jupiter-v6.idl.json");
+    expect(existsSync(distIdl), "dist IDL missing — build did not copy the asset").toBe(true);
+    expect(createHash("sha256").update(readFileSync(distIdl)).digest("hex")).toBe(
+      "764ea6d71b77458fd33aeb308d6e6bb19e660fc5320c5359f3b9cac96eba5c50",
+    );
+    // Importing the COMPILED module resolves its IDL from dist and builds the config.
+    const mod = await import(pathToFileURL(join(PKG, "dist", "deploy", "registry-config.js")).href);
+    expect(() => mod.expectedRegistryConfig()).not.toThrow();
+    expect(mod.expectedRegistryConfig()).toHaveLength(11);
+  }, 120_000);
+
+  it("package.json wires the asset copy into build and publishes dist", () => {
+    const pkg = JSON.parse(readFileSync(join(PKG, "package.json"), "utf8"));
+    expect(pkg.scripts.build).toContain("copy-deploy-assets");
+    expect(pkg.files).toContain("dist");
+  });
 });

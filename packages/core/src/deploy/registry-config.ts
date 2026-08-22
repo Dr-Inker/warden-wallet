@@ -95,11 +95,14 @@ export interface ExpectedEntry {
   lists: number[];
 }
 
-/** Build the expected entries, RE-DERIVING every Anchor selector from its instruction
- *  name and validating literal tags. Throws if a tag is malformed (>8 bytes). */
-export function expectedRegistryConfig(): ExpectedEntry[] {
+/** Build expected entries from ANY adapter list, RE-DERIVING every Anchor selector from its
+ *  instruction name (authenticated against the pinned Jupiter IDL for jupiter-idl-sourced
+ *  names) and validating literal tags. Exported so the rejection path is directly testable
+ *  with an injected bad-name adapter (WRDF-0097). Throws on an unauthenticated Jupiter name
+ *  or a malformed tag (>8 bytes). */
+export function buildExpectedEntries(adapters: readonly ExpectedAdapter[] = EXPECTED_ADAPTERS): ExpectedEntry[] {
   const jupNames = authenticatedJupiterInstructionNames();
-  return EXPECTED_ADAPTERS.map((a) => {
+  return adapters.map((a) => {
     let selector: Uint8Array;
     if ("anchor" in a) {
       // Authenticate the instruction NAME against the pinned upstream IDL before hashing it
@@ -121,6 +124,11 @@ export function expectedRegistryConfig(): ExpectedEntry[] {
       lists: [...a.lists].sort((x, y) => x - y),
     };
   });
+}
+
+/** The pinned, source-re-derived expected registry config (the reviewed default adapters). */
+export function expectedRegistryConfig(): ExpectedEntry[] {
+  return buildExpectedEntries(EXPECTED_ADAPTERS);
 }
 
 /** The list ids an on-chain entry index belongs to, from the per-list bitmasks. */
