@@ -10,7 +10,16 @@ answer instead of an infinite regress.
 1. **Remote / on-chain facts** — upgrade authority, Squads 3-of-5 config (members, masks,
    threshold, time-lock, configAuthority, no actionable stale proposal), audited Squads
    code hash, on-chain Warden program code hash — cross-checked against pinned, committed
-   config and the CLI-supplied identities. A lying RPC cannot forge a pass.
+   config and the CLI-supplied identities. **These checks establish the internal
+   *consistency* of the RPC's responses, not their *authenticity*: the genesis hash and
+   every account are read through one `Connection`, so a malicious endpoint that returns
+   the expected genesis and fabricates self-consistent account bytes (e.g. ProgramData
+   whose bytes hash to the pinned release) can forge checks 1/2/4a.** The RPC is therefore
+   a **declared trusted input** (see terminus below), not an authenticated one — the
+   operator must point the gate at a known-good endpoint (or, if malicious RPCs are moved
+   into the threat model, a multi-endpoint quorum, which is not implemented today). What
+   the gate *does* defend against, given a trusted RPC, is a stale/weak/attacker
+   governance config, a wrong program or authority identity, and a release-hash mismatch.
 2. **The release artifact** — the RELEASE-INTEGRITY row is bound non-self-referentially
    (clean tree + release-sha an ancestor of HEAD) and parsed by one canonical parser to a
    unique `manifest:<name>@<digest>` + artifact hash.

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { VERIFIER_SOURCE_CLOSURE, buildManifest, serializeManifest, ATTESTATION_PATH } from "../../../scripts/gen-verifier-attestation.mjs";
+import { EXPECTED_CLOSURE, buildManifest, serializeManifest, ATTESTATION_PATH } from "../../../scripts/gen-verifier-attestation.mjs";
 
 // Hermetic shell coverage of the live deploy-gate wiring (WRDF-0085/0088/0091/0092).
 // Temp repos live UNDER the repo's gitignored target/ (on /opt) — never /tmp — with
@@ -17,7 +17,12 @@ const TMP_ROOT = join(REPO, "target", "deploy-gate-testtmp");
 const PREFLIGHT = join(REPO, "scripts", "deploy-preflight.sh");
 const GATE = join(REPO, "scripts", "deploy-gate.sh");
 const ID = "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2";
-const gitEnv = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+// GIT_CEILING_DIRECTORIES pins git's repo search to STOP at the real repo root, so a
+// git command run in a temp repo can NEVER ascend to /opt/warden/.git — even if that
+// temp repo's own .git were momentarily absent under parallel workers (which once let a
+// mutating git op escape to the real repo during a pre-commit run). Every git in this
+// file also flows through the guarded helper below.
+const gitEnv = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CEILING_DIRECTORIES: REPO };
 
 function mkTemp(prefix: string): string {
   mkdirSync(TMP_ROOT, { recursive: true });
@@ -34,8 +39,23 @@ function run(cmd: string, args: string[], cwd: string, env = process.env): { cod
     return { code: ee.status ?? 1, out: ee.stdout ?? "", err: ee.stderr ?? "" };
   }
 }
-const git = (dir: string, ...a: string[]) => execFileSync("git", a, { cwd: dir, stdio: "pipe", env: gitEnv });
-const head = (dir: string) => execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+// Mutating subcommands must operate on the TEMP repo only. Before running one we confirm
+// git resolves to a repo UNDER TMP_ROOT (never the real /opt/warden checkout); combined
+// with GIT_CEILING_DIRECTORIES this makes an escape a loud test failure, not silent damage.
+const MUTATING = new Set(["commit", "revert", "reset", "rm", "add", "checkout", "merge", "rebase", "clean"]);
+const git = (dir: string, ...a: string[]) => {
+  if (MUTATING.has(a[0])) {
+    let top = "";
+    try {
+      top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: dir, env: gitEnv, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
+    } catch { top = ""; }
+    if (!top.startsWith(TMP_ROOT + "/")) {
+      throw new Error(`refusing mutating \`git ${a[0]}\`: cwd ${dir} resolves to repo ${top || "<none>"}, not a temp repo under ${TMP_ROOT}`);
+    }
+  }
+  return execFileSync("git", a, { cwd: dir, stdio: "pipe", env: gitEnv });
+};
+const head = (dir: string) => execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8", env: gitEnv }).trim();
 
 describe("scripts/deploy-preflight.sh — hermetic checkout binding (WRDF-0088/0091)", () => {
   let dir: string;
@@ -119,11 +139,13 @@ describe("scripts/deploy-gate.sh — live wiring via the repo's own toolchain (W
     // manifest, so verify_source_attestation authenticates the real entrypoint + source
     // before invoking the verifier (WRDF-0092/0088 round 10). A later test mutates one
     // of these files and asserts the gate refuses BEFORE reaching the verifier.
-    for (const rel of VERIFIER_SOURCE_CLOSURE as string[]) {
+    // The temp entrypoint is a placeholder with no imports, so build the manifest from an
+    // EXPLICIT closure (production discovery is exercised by deploy-attestation.test.ts).
+    for (const rel of EXPECTED_CLOSURE as string[]) {
       mkdirSync(dirname(attestedSrc(rel)), { recursive: true });
       writeFileSync(attestedSrc(rel), `// hermetic placeholder for ${rel}\n`);
     }
-    writeFileSync(join(dir, ATTESTATION_PATH as string), serializeManifest(buildManifest(dir)));
+    writeFileSync(join(dir, ATTESTATION_PATH as string), serializeManifest(buildManifest(dir, EXPECTED_CLOSURE as string[])));
 
     git(dir, "init", "-q");
     writeFileSync(join(dir, "code.txt"), "v1"); git(dir, "add", "-A"); git(dir, "commit", "-qm", "release C");
@@ -193,15 +215,14 @@ describe("scripts/deploy-gate.sh — live wiring via the repo's own toolchain (W
 
   it("REFUSES (fatally) when an attested verifier source file is altered — verifier never runs", () => {
     safeRm(argsFile); safeRm(parseArgsFile); safeRm(entryFile);
-    const saved = head(dir);
     // Commit a tampered attested source WITHOUT regenerating the manifest: the tree is
     // CLEAN (git sees a committed change) yet the committed attestation still pins the old
     // hash. This is the swap the clean-tree check alone cannot catch.
-    const target = attestedSrc(VERIFIER_SOURCE_CLOSURE[1] as string); // an src/deploy/*.ts
+    const target = attestedSrc(EXPECTED_CLOSURE[1] as string); // an src/deploy/*.ts
     writeFileSync(target, "// TAMPERED — not the attested content\n");
     git(dir, "add", "-A"); git(dir, "commit", "-qm", "tamper attested source");
     const r = run("bash", [gate(), ...liveArgs()], dir, liveEnv(0));
-    git(dir, "reset", "-q", "--hard", saved);
+    git(dir, "revert", "--no-edit", "HEAD"); // non-destructive restore (WRDF-0091)
     expect(r.code).not.toBe(0);
     expect(r.err).toMatch(/attested verifier source altered/);
     expect(existsSync(entryFile)).toBe(false); // fatal BEFORE any verifier invocation
@@ -210,10 +231,9 @@ describe("scripts/deploy-gate.sh — live wiring via the repo's own toolchain (W
 
   it("REFUSES (fatally) when the attestation manifest is absent — verifier never runs", () => {
     safeRm(argsFile); safeRm(entryFile);
-    const saved = head(dir);
     git(dir, "rm", "-q", ATTESTATION_PATH as string); git(dir, "commit", "-qm", "drop attestation");
     const r = run("bash", [gate(), ...liveArgs()], dir, liveEnv(0));
-    git(dir, "reset", "-q", "--hard", saved);
+    git(dir, "revert", "--no-edit", "HEAD"); // non-destructive restore (WRDF-0091)
     expect(r.code).not.toBe(0);
     expect(r.err).toMatch(/attestation manifest missing/);
     expect(existsSync(entryFile)).toBe(false);
