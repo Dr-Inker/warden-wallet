@@ -9,8 +9,8 @@ it *would* run, without making them.
 
 ## Status
 
-**Checks 1, 2, 4a IMPLEMENTED and fixture-verified (Task 11R); check 3 still a
-separate deliverable (`WRD-DEP-02`); live-cluster run UNVERIFIED until a release
+**Checks 1, 2, 3, 4a IMPLEMENTED and fixture-verified (Task 11R + WRD-DEP-02);
+live-cluster run UNVERIFIED until a release
 candidate exists.** The governance + hash logic is `packages/core/src/deploy`
 (`verifyDeployGate`, hand-rolled with no `@sqds` dependency — the gate exists to
 shrink supply-chain surface, so it does not add npm surface); the script invokes
@@ -92,7 +92,7 @@ non-dry-run invocation (fail-closed).
 | --- | --- | --- | --- |
 | 1. Upgrade authority (+ Program→ProgramData chain, vault-PDA binding) | Prints the plan | **Runs** — `verifyDeployGate` over a deterministic scenario | **Runs** the real check; UNVERIFIED until a release candidate |
 | 2. Squads governance (pinned identity + owner/discriminator + 3-of-5 exact + member set + masks + 7-day floor + autonomous configAuthority + no stale state) | Prints the plan | **Runs** | **Runs**; UNVERIFIED until release |
-| 3. Adapter selector diff vs on-chain `Registry` (`WRD-DEP-02`) | Prints the plan | — (out of scope) | **Refuses** — separate deliverable from Task 11R (scope boundary WRDF-0018); the Registry now exists (Task 3) but the selector re-derivation + diff tool is not wired here yet |
+| 3. Adapter selector diff vs on-chain `Registry` (`WRD-DEP-02`) | Prints the plan | ✅ implemented + fixture-verified | Authenticates the Registry PDA (owner + `Registry` discriminator + version) and diffs its complete config — every selector RE-DERIVED from source, `role_rules`, list membership, and `treasury` — rejecting any missing/extra/wrong/duplicate entry (gate.ts `registry-config`; @d8e8fce). Live-cluster byte-exact parity + a real mainnet treasury pin remain UNVERIFIED until a release candidate. |
 | 4a. On-chain program-code hash vs `RELEASE-INTEGRITY.md` | Prints the plan | **Runs** (sha256 over the trimmed ELF) | **Runs**; byte-exact `solana-verify` parity UNVERIFIED until release |
 | 4b. Local `target/deploy/warden.so` hash (best-effort sanity) | **Runs for real** — fails if the `.so` is missing (no silent pass) | Same | Same — no RPC |
 | 5. Scoped TODO/unimplemented!/#[ignore] grep | **Runs for real** | Same | Same — no RPC |
