@@ -100,7 +100,17 @@ function resolveLocalTs(repoRoot, fromAbs, spec) {
 // module graph is never SILENTLY under-attested. The primary defense remains the sha256
 // pin — this code must live in an already-attested source file, so introducing it changes
 // that file's pinned hash and the gate refuses (docs/security/DEPLOY-GATE-TRUST-ROOT.md).
-const REFLECTIVE_LOADERS = new Set(["eval", "Function", "getBuiltinModule", "createRequire", "require", "binding"]);
+// Reflection primitives + module/eval APIs. The verifier's real source references NONE of
+// these (it uses `process` for argv/exit only). This closes the demonstrated vectors
+// (Reflect.get(globalThis,"eval"), process.getBuiltinModule, etc.). It is EXPLICITLY NOT a
+// completeness proof — a reflective language admits further aliases — see the honest scope
+// note in docs/security/DEPLOY-GATE-TRUST-ROOT.md: a fully-sound guarantee needs a runtime
+// permission boundary (deferred), and the two-model review lane is the interim control
+// against malicious reflective code committed into an attested file.
+const REFLECTIVE_LOADERS = new Set([
+  "eval", "Function", "getBuiltinModule", "createRequire", "require", "binding",
+  "Reflect", "globalThis", "global", "constructor",
+]);
 
 // Parse ONE module with the TypeScript scanner/parser and return its static import/export
 // specifiers (decoded). Fail-closed on any non-static loading form (dynamic import(),

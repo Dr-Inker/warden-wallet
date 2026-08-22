@@ -31,30 +31,40 @@ answer instead of an infinite regress.
    entrypoint **independently of the clean-tree check**, which is blind to gitignored
    `node_modules`.
 
-### Why closure discovery need not be a *sound* static analysis of arbitrary code
-The attested closure is discovered by statically parsing the entrypoint's import graph.
-A reflective language can always defeat a static walk (`process.getBuiltinModule("module")`,
-`eval`, `new Function`, computed `require`), so discovery is **not** claimed to soundly
-enumerate what an *arbitrary* module could load. It does not need to, because of a
-**two-layer** argument:
+### What closure discovery does and does NOT prove
+The attested closure is discovered by statically parsing the entrypoint's import graph, and
+every discovered file is sha256-pinned. Be precise about the guarantee:
 
-- **Primary defense — the sha256 pin.** Every discovered file is hash-pinned. Reflective
-  or dynamic loading code that would pull in an unattested module has to *live in one of
-  these attested source files*; adding it changes that file's pinned hash and the gate
-  refuses. So an attacker cannot make the **real, attested** verifier load an unpinned
-  module without tripping the pin.
-- **Secondary defense — discovery is sound-OR-loud.** Discovery never *silently* under-
-  attests: it either fully resolves a module's static, allow-listed imports, or it rejects
-  fail-closed — on a disallowed specifier (anything but a relative import or an exact
-  `PERMITTED_EXTERNAL` entry: absolute paths, `file:`/`data:` URLs, surprise packages,
-  `node:module`), a dynamic `import()`, `import x = require(...)`, a non-literal specifier,
-  an out-of-repo resolution, or any reference to a reflective loader / eval API
-  (`eval`, `Function`, `getBuiltinModule`, `createRequire`, `require`, `.binding`). So a
-  future refactor that introduced an un-analyzable form would fail regeneration loudly,
-  forcing a reviewed change, rather than quietly shrinking the attested set.
+- **What the pin proves.** For the graph discovery *does* find, the pinned bytes are
+  authenticated: a swapped or missing `.ts` in that graph is refused. For the **actual**
+  verifier — which uses only static relative imports plus three allow-listed dependencies
+  (`@solana/web3.js`, `@noble/hashes/sha2`, `node:fs`) and `process` for argv/exit — the
+  graph is discovered completely and pinned exactly.
+- **What it does NOT prove (the honest limit).** Static discovery is **not** a sound
+  analysis of arbitrary code. A reflective language always admits further aliases —
+  `Reflect.get(globalThis, "eval")(readFileSync("./x.js"))` reaches `eval` through a string
+  argument no finite name list can enumerate. So the pin authenticates the *indirection*
+  present in the attested source, **not the bytes reached through a reflective load**. If a
+  verifier source file that *already passed review* contained such a reflective load of an
+  un-pinned file, a later clean descendant could swap that file without tripping any pin.
+- **Defense in depth, not a completeness proof.** Discovery still rejects fail-closed the
+  demonstrated and common vectors — a disallowed specifier (anything but a relative import
+  or an exact `PERMITTED_EXTERNAL` entry: absolute paths, `file:`/`data:` URLs, surprise
+  packages, `node:module`), a dynamic `import()`, `import x = require(...)`, a non-literal
+  specifier, an out-of-repo resolution, and references to reflective/eval APIs (`eval`,
+  `Function`, `getBuiltinModule`, `createRequire`, `require`, `.binding`, `Reflect`,
+  `globalThis`, `global`, `.constructor`). This raises the bar but is explicitly **not**
+  claimed complete.
 
-The actual verifier source uses only static relative imports and three allow-listed
-dependencies, so its closure is discovered completely and pinned exactly.
+**Residual and where it terminates.** Closing the reflective residual *soundly* requires a
+**runtime permission boundary** — executing the pinned verifier under a policy that denies
+reading/loading any un-approved file (e.g. Node's permission model). That is **deferred**
+as a hardening for a real deploy candidate, not a Phase-1B blocker. In the interim the
+operative control against malicious reflective code *entering* an attested verifier file is
+the **two-model review lane** (every commit is adversarially reviewed by Codex — which is
+exactly how this residual was found), plus the human owner's review. Attestation defends
+against file placement/swap by an actor who *cannot* pass review; a reflective self-exfil
+requires committing reviewed code, which is that review lane's boundary, not the pin's.
 
 ## Where the trust root terminates (the declared external assumption)
 Below the attested source lies the **JavaScript execution toolchain** — the Node runtime,

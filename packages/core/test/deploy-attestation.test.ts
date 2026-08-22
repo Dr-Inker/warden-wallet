@@ -145,10 +145,12 @@ describe("verifier source attestation (docs/security/verifier-attestation.json)"
   // discovery is SOUND-OR-LOUD: any such reference is rejected fail-closed (the primary
   // defense stays the sha256 pin — this code must live in an already-attested file).
   for (const [label, entrySrc] of [
-    ["process.getBuiltinModule(...).createRequire (the round-14 probe)", `const cr = process.getBuiltinModule("module").createRequire(import.meta.url); cr("./evil.cjs");\n`],
-    ["Reflect.get(getBuiltinModule(...), key)", `const m = process.getBuiltinModule("module"); Reflect.get(m, "createRequire");\n`],
+    ["process.getBuiltinModule (round-14 probe)", `const cr = process.getBuiltinModule("module");\n`],
+    ["Reflect.get(globalThis, \"eval\")(readFileSync(...)) (round-15 probe)", `import { readFileSync } from "node:fs";\nReflect.get(globalThis, "eval")(readFileSync("./evil.js", "utf8"));\n`],
+    ["globalThis element-access eval", `globalThis["eval"]("1+1");\n`],
     ["eval", `const x = eval("1+1");\n`],
     ["new Function code compilation", `const f = new Function("return process")();\n`],
+    ["constructor-chain (fn.constructor)", `const f = (() => {}).constructor("return 1");\n`],
   ] as const) {
     it(`REJECTS a reflective loader: ${label} (sound-or-loud, fail-closed)`, () => {
       mkdirSync(TMP_ROOT, { recursive: true });
