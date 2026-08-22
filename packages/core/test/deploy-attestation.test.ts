@@ -140,6 +140,30 @@ describe("verifier source attestation (docs/security/verifier-attestation.json)"
     });
   }
 
+  // WRDF-0088 round 14: reflective module-loading / eval APIs can pull in an unattested
+  // module with NO static import. Static analysis can't soundly enumerate every form, so
+  // discovery is SOUND-OR-LOUD: any such reference is rejected fail-closed (the primary
+  // defense stays the sha256 pin — this code must live in an already-attested file).
+  for (const [label, entrySrc] of [
+    ["process.getBuiltinModule(...).createRequire (the round-14 probe)", `const cr = process.getBuiltinModule("module").createRequire(import.meta.url); cr("./evil.cjs");\n`],
+    ["Reflect.get(getBuiltinModule(...), key)", `const m = process.getBuiltinModule("module"); Reflect.get(m, "createRequire");\n`],
+    ["eval", `const x = eval("1+1");\n`],
+    ["new Function code compilation", `const f = new Function("return process")();\n`],
+  ] as const) {
+    it(`REJECTS a reflective loader: ${label} (sound-or-loud, fail-closed)`, () => {
+      mkdirSync(TMP_ROOT, { recursive: true });
+      const d = mkdtempSync(join(TMP_ROOT, "refl-"));
+      try {
+        const entryRel = "packages/core/scripts/deploy-gate-verify.ts";
+        mkdirSync(join(d, dirname(entryRel)), { recursive: true });
+        writeFileSync(join(d, entryRel), entrySrc);
+        expect(() => discoverClosure(d)).toThrow(/reflective/);
+      } finally {
+        rmSync(d, { recursive: true, force: true });
+      }
+    });
+  }
+
   it("the permitted-external allow-list exactly matches the closure's real external deps (no dead/missing entries)", () => {
     expect(externalDeps(REPO)).toEqual([...(PERMITTED_EXTERNAL as Set<string>)].sort());
   });

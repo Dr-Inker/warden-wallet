@@ -93,10 +93,19 @@ function resolveLocalTs(repoRoot, fromAbs, spec) {
   throw new Error(`verifier closure: unresolved local import ${JSON.stringify(spec)} from ${fromAbs}`);
 }
 
+// Names of reflective module-loading / code-evaluation APIs that can pull in an unattested
+// module WITHOUT a static import (WRDF-0088 round 14). Static analysis can never SOUNDLY
+// enumerate every such form, so this is a SOUND-OR-LOUD gate, not the primary defense: any
+// reference to one of these in a verdict-bearing module is rejected fail-closed, so the
+// module graph is never SILENTLY under-attested. The primary defense remains the sha256
+// pin — this code must live in an already-attested source file, so introducing it changes
+// that file's pinned hash and the gate refuses (docs/security/DEPLOY-GATE-TRUST-ROOT.md).
+const REFLECTIVE_LOADERS = new Set(["eval", "Function", "getBuiltinModule", "createRequire", "require", "binding"]);
+
 // Parse ONE module with the TypeScript scanner/parser and return its static import/export
-// specifiers (decoded). Any non-static loading form is a fail-closed error: dynamic
-// import(), require()/createRequire(), `import x = require(...)`, or a non-literal
-// specifier — none of which the verdict-bearing closure is permitted to use.
+// specifiers (decoded). Fail-closed on any non-static loading form (dynamic import(),
+// `import x = require(...)`, a non-literal specifier) OR any reference to a reflective
+// loader/eval API by identifier, member name, or string element-access.
 function staticSpecifiers(relPath, srcText) {
   const sf = ts.createSourceFile(relPath, srcText, ts.ScriptTarget.Latest, /*setParentNodes*/ true, ts.ScriptKind.TS);
   const specs = [];
@@ -109,13 +118,14 @@ function staticSpecifiers(relPath, srcText) {
       specs.push(node.moduleSpecifier.text); // AST text is the DECODED specifier value
     } else if (ts.isImportEqualsDeclaration(node)) {
       reject("`import … = require(…)` form");
-    } else if (ts.isCallExpression(node)) {
-      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) reject("dynamic import()");
-      if (ts.isIdentifier(node.expression) && (node.expression.text === "require" || node.expression.text === "createRequire")) {
-        reject(`${node.expression.text}() call`);
-      }
-    } else if (ts.isIdentifier(node) && node.text === "createRequire") {
-      reject("createRequire reference");
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      reject("dynamic import()");
+    } else if (ts.isIdentifier(node) && REFLECTIVE_LOADERS.has(node.text)) {
+      reject(`reflective loader / eval reference \`${node.text}\``);
+    } else if (ts.isPropertyAccessExpression(node) && REFLECTIVE_LOADERS.has(node.name.text)) {
+      reject(`reflective member \`.${node.name.text}\``);
+    } else if (ts.isElementAccessExpression(node) && node.argumentExpression && ts.isStringLiteral(node.argumentExpression) && REFLECTIVE_LOADERS.has(node.argumentExpression.text)) {
+      reject(`reflective member [${JSON.stringify(node.argumentExpression.text)}]`);
     }
     ts.forEachChild(node, visit);
   };

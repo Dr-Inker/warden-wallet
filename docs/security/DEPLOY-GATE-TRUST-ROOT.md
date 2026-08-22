@@ -31,6 +31,31 @@ answer instead of an infinite regress.
    entrypoint **independently of the clean-tree check**, which is blind to gitignored
    `node_modules`.
 
+### Why closure discovery need not be a *sound* static analysis of arbitrary code
+The attested closure is discovered by statically parsing the entrypoint's import graph.
+A reflective language can always defeat a static walk (`process.getBuiltinModule("module")`,
+`eval`, `new Function`, computed `require`), so discovery is **not** claimed to soundly
+enumerate what an *arbitrary* module could load. It does not need to, because of a
+**two-layer** argument:
+
+- **Primary defense — the sha256 pin.** Every discovered file is hash-pinned. Reflective
+  or dynamic loading code that would pull in an unattested module has to *live in one of
+  these attested source files*; adding it changes that file's pinned hash and the gate
+  refuses. So an attacker cannot make the **real, attested** verifier load an unpinned
+  module without tripping the pin.
+- **Secondary defense — discovery is sound-OR-loud.** Discovery never *silently* under-
+  attests: it either fully resolves a module's static, allow-listed imports, or it rejects
+  fail-closed — on a disallowed specifier (anything but a relative import or an exact
+  `PERMITTED_EXTERNAL` entry: absolute paths, `file:`/`data:` URLs, surprise packages,
+  `node:module`), a dynamic `import()`, `import x = require(...)`, a non-literal specifier,
+  an out-of-repo resolution, or any reference to a reflective loader / eval API
+  (`eval`, `Function`, `getBuiltinModule`, `createRequire`, `require`, `.binding`). So a
+  future refactor that introduced an un-analyzable form would fail regeneration loudly,
+  forcing a reviewed change, rather than quietly shrinking the attested set.
+
+The actual verifier source uses only static relative imports and three allow-listed
+dependencies, so its closure is discovered completely and pinned exactly.
+
 ## Where the trust root terminates (the declared external assumption)
 Below the attested source lies the **JavaScript execution toolchain** — the Node runtime,
 the `tsx` transpiler, and their `packages/core/node_modules` closure — and the **host OS**.
