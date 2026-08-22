@@ -113,7 +113,7 @@ pub enum WardenError {
     // ---------------------------------------------------------------------
     #[msg("a CPI changed a vault-owned account in a way conservation forbids")]
     ConservationViolated,
-    #[msg("a vault-owned account that is not an SPL/Token-2022 token account was passed writable")]
+    #[msg("a writable account is of a kind 1B does not support: vault-owned non-token, or owned by the Stake / Vote / BPF-upgradeable-loader programs")]
     UnsupportedAccountKind,
     #[msg("the mint of a writable vault-owned token account is not present in the account list")]
     MintMissing,
@@ -191,8 +191,13 @@ pub enum WardenError {
     SwapUnexpectedOutflow,
     #[msg("native-mint (wrapped SOL) swaps are not supported in Phase 1B")]
     SwapNativeUnsupported,
-    #[msg("the swap did not pay a fee into the treasury account")]
+    #[msg("the swap did not pay at least the 85 bps platform fee into the treasury account")]
     SwapFeeNotTaken,
     #[msg("a writable vault-owned token account other than the swap source or destination was passed to the route")]
     SwapExtraWritableVault,
+    // ---------------------------------------------------------------------
+    // GROK-EXP-05 remediation (2026-08-22). APPEND ONLY — see above. Code 6075.
+    // ---------------------------------------------------------------------
+    #[msg("session swaps must use shared_accounts_route; the route variant forwards the vault PDA signer into every AMM hop and is root-only")]
+    SwapRouteVariantSessionDenied,
 }

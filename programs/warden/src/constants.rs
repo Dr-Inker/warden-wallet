@@ -184,6 +184,26 @@ pub const JUPITER_V6_ID: Pubkey = Pubkey::from_str_const("JUP6LkbZbjS1jKKwapdHNy
 /// hoists any compute-budget instruction into the OUTER transaction instead.
 pub const COMPUTE_BUDGET_ID: Pubkey =
     Pubkey::from_str_const("ComputeBudget111111111111111111111111111111");
+/// GROK-EXP-03 / -05 (2026-08-22): runtime owners whose accounts carry value
+/// or authority that conservation does NOT model. Spec §5.2 rule 3 says
+/// writable stake / nonce / program-owned state is unsupported in v1 and must
+/// be rejected, but the shipped check keyed "vault-owned" on
+/// `owner_program == vault pubkey`, which a Stake account never satisfies —
+/// so a root `execute` (or a session `swap`'s Jupiter hop) could
+/// `Stake::Withdraw` / `Vote::Withdraw` / BPF `SetAuthority` under the PDA's
+/// read-only signer with no cap debit. Any WRITABLE remaining account owned by
+/// one of these programs is refused BEFORE any CPI and again in
+/// `compare_and_account` (`UnsupportedAccountKind`). Nonce accounts are
+/// System-owned and are not covered by an owner rule (1B does not support
+/// durable nonces either way); Address-Lookup-Table and Config accounts hold
+/// no lamport value the PDA can withdraw and are left alone.
+pub const STAKE_PROGRAM_ID: Pubkey = Pubkey::from_str_const("Stake11111111111111111111111111111111111111");
+pub const VOTE_PROGRAM_ID: Pubkey = Pubkey::from_str_const("Vote111111111111111111111111111111111111111");
+pub const BPF_LOADER_UPGRADEABLE_ID: Pubkey =
+    Pubkey::from_str_const("BPFLoaderUpgradeab1e11111111111111111111111");
+/// The owner set `conservation::reject_unsupported_writable_owners` refuses.
+pub const UNSUPPORTED_WRITABLE_OWNERS: [Pubkey; 3] =
+    [STAKE_PROGRAM_ID, VOTE_PROGRAM_ID, BPF_LOADER_UPGRADEABLE_ID];
 /// Test-only program ids (mirrored from `programs/test-mutator` and
 /// `programs/test-jup-mock`), used only by the registry's test list.
 pub const TEST_MUTATOR_ID: Pubkey = Pubkey::from_str_const("An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W");
@@ -264,6 +284,48 @@ pub const TOKEN_IX_SET_AUTHORITY: u8 = 6;
 pub const TOKEN_IX_CLOSE_ACCOUNT: u8 = 9;
 /// `TokenInstruction::ApproveChecked` — decimal-checked `Approve`. Denied.
 pub const TOKEN_IX_APPROVE_CHECKED: u8 = 13;
+// GROK-EXP-02 (2026-08-22): the authority-EXERCISE ops. `SetAuthority` being
+// denied stops a session or a phished root `execute` from *giving away* a mint
+// or freeze authority the PDA holds, but said nothing about *using* it: a
+// `MintTo` under a vault-held `mint_authority` credits any account with no
+// vault token account changing, so conservation metered nothing and no cap was
+// charged. Issuance and freeze control are not 1B wallet operations; a typed
+// opcode can add them in 1C, the deny-list cannot be loosened by any registry.
+/// `TokenInstruction::MintTo` — unmetered issuance under a vault-held
+/// `mint_authority`. Denied.
+pub const TOKEN_IX_MINT_TO: u8 = 7;
+/// `TokenInstruction::Burn` — NOT denied: a burn from a vault account is a
+/// metered, capped outflow like any transfer (and a burn of a vault-CONTROLLED
+/// mint's supply is rejected by conservation's frozen-`supply` rule).
+pub const TOKEN_IX_BURN: u8 = 8;
+/// `TokenInstruction::FreezeAccount` — exercises a vault-held `freeze_authority`
+/// against any account. Denied.
+pub const TOKEN_IX_FREEZE_ACCOUNT: u8 = 10;
+/// `TokenInstruction::ThawAccount` — the inverse authority exercise. Denied.
+pub const TOKEN_IX_THAW_ACCOUNT: u8 = 11;
+/// `TokenInstruction::MintToChecked` — decimal-checked `MintTo`. Denied.
+pub const TOKEN_IX_MINT_TO_CHECKED: u8 = 14;
+/// `TokenInstruction::BurnChecked` — decimal-checked `Burn`. Not denied (see
+/// `TOKEN_IX_BURN`).
+pub const TOKEN_IX_BURN_CHECKED: u8 = 15;
+// GROK-EXP-06 (2026-08-22): the token-account INITIALISERS. A vault ATA that a
+// nested CPI closed and that the same `execute` then re-initialises at the same
+// pubkey survives the before/after comparison byte-for-byte, so the
+// "disappearance" detector that catches nested closes never fires. Direct
+// initialisation of a pubkey that was a vault token account BEFORE is denied
+// (`execute::deny_scan`); see `docs/program/PHASE1B-MEASUREMENTS.md` for the
+// nested-both-halves residual.
+/// `TokenInstruction::InitializeAccount` — account at index 0.
+pub const TOKEN_IX_INITIALIZE_ACCOUNT: u8 = 1;
+/// `TokenInstruction::InitializeAccount2` — account at index 0.
+pub const TOKEN_IX_INITIALIZE_ACCOUNT2: u8 = 16;
+/// `TokenInstruction::InitializeAccount3` — account at index 0.
+pub const TOKEN_IX_INITIALIZE_ACCOUNT3: u8 = 18;
+/// Associated-Token-Account program `Create` (tag 0) — the ATA is at index 1
+/// (`[funder, ata, wallet, mint, system, token]`).
+pub const ATA_IX_CREATE: u8 = 0;
+/// Associated-Token-Account program `CreateIdempotent` (tag 1) — same layout.
+pub const ATA_IX_CREATE_IDEMPOTENT: u8 = 1;
 
 // ---------------------------------------------------------------------------
 // Conservation (Phase 1B Task 1) — SPL Token / Token-2022 layout constants.

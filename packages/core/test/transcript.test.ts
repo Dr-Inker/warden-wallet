@@ -15,6 +15,11 @@ import {
   encodeCreateBody,
   encodeExecuteBody,
   encodeSwapBody,
+  encodeGrantBody,
+  OPS_MASK_TRANSFER,
+  OPS_MASK_EXECUTE,
+  OPS_MASK_SWAP,
+  OPS_MASK_SIGN_MESSAGE,
   OWNER_SEED_DOMAIN,
   deriveOwnerSeed,
 } from "../src/index.js";
@@ -445,5 +450,57 @@ describe("swap (OP_SWAP, 0x08)", () => {
     expect(hex(actionHash(OP_SWAP, body))).toBe(
       "1dc529b694012bbcfe50b10dff494ab093fbc0295494ed8f5d9b2555e8d61891",
     );
+  });
+});
+
+
+describe("grant (OP_GRANT_SESSION, 0x01) — GROK-EXP-07", () => {
+  it("OPS_MASK_* bits are the session mask, distinct from the OP_* action bytes", () => {
+    expect(OPS_MASK_TRANSFER).toBe(1);
+    expect(OPS_MASK_EXECUTE).toBe(2);
+    expect(OPS_MASK_SWAP).toBe(4);
+    expect(OPS_MASK_SIGN_MESSAGE).toBe(8);
+    expect(OP_TRANSFER).not.toBe(OPS_MASK_TRANSFER);
+    expect(OP_SWAP).not.toBe(OPS_MASK_SWAP);
+  });
+
+  const grantFields = {
+    expiryTs: 1_760_000_000n,
+    sessionPubkey: fill(32, 0x11),
+    kind: 0,
+    opsMask: OPS_MASK_TRANSFER | OPS_MASK_SWAP,
+    caps: [{ mint: fill(32, 0x22), perTx: 7n, perDay: 0n, per30d: 0n }],
+    lifetimeCap: [70n],
+    programAllowlistId: 1,
+    label: fill(16, 0xab),
+    priorAuthorityHash: fill(32, 0xcd),
+  };
+
+  it("encodeGrantBody lays out every field incl. the trailing prior_authority_hash", () => {
+    const body = encodeGrantBody(grantFields);
+    expect(body.length).toBe(8 + 32 + 1 + 2 + 60 + 12 + 2 + 16 + 32);
+    expect(hex(body.slice(body.length - 32))).toBe("cd".repeat(32));
+    expect(hex(body.slice(body.length - 48, body.length - 32))).toBe("ab".repeat(16));
+  });
+
+  it("matches the Rust-pinned GrantBody action hash", () => {
+    expect(hex(actionHash(OP_GRANT_SESSION, encodeGrantBody(grantFields)))).toBe(
+      "3dc9ab04d96990d9c48ed02c0d42b8e81f3cd1970d27449fd95594e034ccd7e7",
+    );
+  });
+
+  it("a body missing prior_authority_hash does NOT match the Rust hash (WRDF-0042 class)", () => {
+    const full = encodeGrantBody(grantFields);
+    const short = full.slice(0, full.length - 32);
+    expect(hex(actionHash(OP_GRANT_SESSION, short))).not.toBe(
+      "3dc9ab04d96990d9c48ed02c0d42b8e81f3cd1970d27449fd95594e034ccd7e7",
+    );
+  });
+
+  it("rejects wrong-size fields and mismatched cap/lifetime lengths", () => {
+    expect(() => encodeGrantBody({ ...grantFields, sessionPubkey: fill(31, 1) })).toThrow();
+    expect(() => encodeGrantBody({ ...grantFields, priorAuthorityHash: fill(31, 1) })).toThrow();
+    expect(() => encodeGrantBody({ ...grantFields, label: fill(15, 1) })).toThrow();
+    expect(() => encodeGrantBody({ ...grantFields, lifetimeCap: [] })).toThrow();
   });
 });

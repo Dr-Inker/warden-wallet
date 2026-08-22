@@ -148,6 +148,8 @@ mod err {
     pub const SWAP_NATIVE_UNSUPPORTED: u32 = 6072;
     pub const SWAP_FEE_NOT_TAKEN: u32 = 6073;
     pub const SWAP_EXTRA_WRITABLE_VAULT: u32 = 6074;
+    // GROK-EXP-05 remediation (2026-08-22), appended 6075.
+    pub const SWAP_ROUTE_VARIANT_SESSION_DENIED: u32 = 6075;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -156,7 +158,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 75] = [
+    let pairs: [(u32, WardenError, &str); 76] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -291,6 +293,11 @@ fn pinned_error_codes_match_the_enum_today() {
             err::SWAP_EXTRA_WRITABLE_VAULT,
             WardenError::SwapExtraWritableVault,
             "SwapExtraWritableVault",
+        ),
+        (
+            err::SWAP_ROUTE_VARIANT_SESSION_DENIED,
+            WardenError::SwapRouteVariantSessionDenied,
+            "SwapRouteVariantSessionDenied",
         ),
     ];
     for (pinned, variant, name) in pairs {

@@ -64,6 +64,7 @@ use anchor_lang::prelude::*;
 
 use crate::constants::{
     DANGER_NEVER_ALLOWLISTABLE, DANGER_TRANSFER_FEE, NATIVE_MINT, TOKEN_STATE_INITIALIZED,
+    UNSUPPORTED_WRITABLE_OWNERS,
 };
 use crate::errors::WardenError;
 
@@ -144,6 +145,23 @@ pub fn compare_and_account(
         );
         require!(
             !(writable && (b.owner_program == *vault || a.owner_program == *vault)),
+            WardenError::UnsupportedAccountKind
+        );
+        // GROK-EXP-03 / -05 (2026-08-22). Spec §5.2 rule 3's "no other
+        // vault-owned account types may be writable (stake accounts, nonce
+        // accounts, program-owned state…)" was keyed above on the runtime
+        // owner being the vault PUBKEY — which a Stake / Vote / ProgramData
+        // account never is (it is owned by its program; the PDA is only an
+        // authority FIELD inside it). Step (4) then skipped it as "not a vault
+        // token account", so `Stake::Withdraw` / `Vote::Withdraw` / BPF
+        // `SetAuthority` under the PDA's read-only signer moved value this
+        // function never saw and the caps never charged. Refuse those owners
+        // writable outright, here AND before any CPI runs (the handlers call
+        // `reject_unsupported_writable_owners` on the BEFORE snapshot).
+        require!(
+            !(writable
+                && (UNSUPPORTED_WRITABLE_OWNERS.contains(&b.owner_program)
+                    || UNSUPPORTED_WRITABLE_OWNERS.contains(&a.owner_program))),
             WardenError::UnsupportedAccountKind
         );
 
@@ -338,10 +356,43 @@ fn prescan_vault_mints(before: &[Snap], after: &[Snap], vault: &Pubkey) -> Resul
             // `amount` to back its lamports, so the only correct statement is
             // that they must not move. Scoped to mints the PDA holds an
             // authority on — a stranger's mint passing through is not ours.
-            && a.lamports == b.lamports;
+            && a.lamports == b.lamports
+            // GROK-EXP-02 / -05 (2026-08-22): `supply` is now compared too, for
+            // a mint the vault CONTROLS. Spec §5.2 rule 2a excluded it so "a
+            // legitimate mint/burn through an allow-listed adapter" could
+            // change it — but 1B ships no such adapter, and the exclusion was
+            // exactly the unmetered-issuance hole: a `MintTo` under the PDA's
+            // `mint_authority` to a stranger's account changes no vault token
+            // account, so nothing else in this function could see it (the
+            // direct case is also deny-listed; this catches it NESTED inside a
+            // Jupiter hop or a middleman CPI). With this, every field of a
+            // vault-controlled mint is frozen across the CPI window. A 1C mint
+            // adapter must relax this deliberately, per-opcode, not by
+            // deleting the line. `check_mint` (mints reached THROUGH a vault
+            // token account, which the vault need not control) still excludes
+            // supply: a stranger minting their own token is not ours.
+            && am.supply == bm.supply;
         require!(identical, WardenError::ConservationViolated);
-        // `supply` is still excluded: spec §5.2 rule 2a, re-confirmed in the
-        // round-1 adjudication. A legitimate mint/burn changes it.
+    }
+    Ok(())
+}
+
+/// GROK-EXP-03 / -05: refuse any WRITABLE snapshot whose runtime owner is a
+/// program whose accounts carry value or authority conservation does not model
+/// (Stake, Vote, BPF Upgradeable Loader — `UNSUPPORTED_WRITABLE_OWNERS`).
+/// Called by the handlers on the BEFORE snapshot so the reject lands before a
+/// CPI runs (a test can then assert OUR error code without needing the foreign
+/// program's instruction to succeed), and again positionally in
+/// [`compare_and_account`] so an account that BECAME such an account during
+/// the CPI is caught too. Read-only accounts are untouched: a CPI cannot debit
+/// or mutate a read-only account, so a stake account passed read-only is
+/// harmless (and common — Jupiter routes carry read-only program accounts).
+pub fn reject_unsupported_writable_owners(snaps: &[Snap]) -> Result<()> {
+    for s in snaps {
+        require!(
+            !(s.is_writable && UNSUPPORTED_WRITABLE_OWNERS.contains(&s.owner_program)),
+            WardenError::UnsupportedAccountKind
+        );
     }
     Ok(())
 }

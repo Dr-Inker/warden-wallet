@@ -75,6 +75,8 @@ impl Scene {
             pool_out_ata: self.pool_out,
             pool_in_sink: self.pool_in,
             extra,
+            extra2: None,
+            opt_dest: None,
         }
     }
 

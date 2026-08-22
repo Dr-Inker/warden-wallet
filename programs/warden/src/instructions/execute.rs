@@ -293,6 +293,14 @@ pub(crate) fn handler<'info>(
 
     // ---- structure: parse + resolve (payload rules 1–3 of the module docs) -
     let parsed = parse_payload(&payload_bytes)?;
+    // GROK-EXP-04 (2026-08-22): an EMPTY payload ran nothing, so the session
+    // list-id-0 / registry gate below (keyed on `!resolved.is_empty()`) never
+    // fired, no cap was charged, and a staged `[0]` was still consume-closed
+    // — a list-0 session could garbage-collect any Stage it could finalize a
+    // 1-byte twin of. There is no legitimate empty `execute` on either path
+    // (stage GC is `stage_close`), so refuse it before authorization, the
+    // registry, the snapshot, or the stage consume.
+    require!(!parsed.ixs.is_empty(), WardenError::PayloadInvalid);
     let resolved = resolve_payload(&parsed, &logical_meta, program_id)?;
 
     // WRD-EXEC-10 (WRDF-0051): defense-in-depth against a DIRECT Jupiter inner
@@ -373,6 +381,9 @@ pub(crate) fn handler<'info>(
     // ---- BEFORE snapshot (spec §5.2 rule 2) -------------------------------
     let before = conservation::snapshot(remaining, &account_key)?;
     let pda_lamports_before = sa_info.lamports();
+    // GROK-EXP-03: writable Stake / Vote / ProgramData accounts are refused
+    // BEFORE any CPI (and again in `compare_and_account`).
+    conservation::reject_unsupported_writable_owners(&before)?;
 
     // ---- the fixed deny-list (spec §5.2 rule 1a) — BOTH paths, before any
     // registry lookup and before any CPI runs -------------------------------
@@ -384,7 +395,9 @@ pub(crate) fn handler<'info>(
     enforce_pda_writable(&resolved, &account_key)?;
 
     // ---- the adapter registry (session path only) -------------------------
-    if args.root.is_none() && !resolved.is_empty() {
+    // (`resolved` is non-empty here — the empty payload was refused above —
+    // so a session always meets the list-id / registry gate.)
+    if args.root.is_none() {
         // List id 0 ⇒ every CPI denied: a session that wants `execute` must
         // carry a real allowlist (spec §5.2 rule 1).
         require!(session_list_id != 0, WardenError::RegistryDenied);
@@ -601,12 +614,42 @@ fn deny_scan(
     vault: &Pubkey,
 ) -> Result<Vec<CloseIntent>> {
     let mut intents = Vec::new();
+    // GROK-EXP-06 (2026-08-22): a pubkey that was a VAULT TOKEN ACCOUNT in the
+    // BEFORE snapshot may not be (re-)initialised by a direct instruction in
+    // this payload. Conservation detects a nested close only as an AFTER-state
+    // disappearance; close it nested and re-create the same pubkey before the
+    // AFTER snapshot and every compared field is byte-identical, so the
+    // detector is a no-op. The ATA program's `Create`/`CreateIdempotent` and
+    // SPL/T22 `InitializeAccount*` are the only ways to put a token account at
+    // an existing pubkey, so refusing them for BEFORE-vault-token targets is
+    // the direct-instruction half of the detector. (Both halves nested inside
+    // ONE middleman CPI remain invisible to any before/after comparison — see
+    // PHASE1B-MEASUREMENTS.md; the vault cannot net-lose lamports that way
+    // because rule 8 / rule 3 continuity still hold.)
+    let was_vault_token = |key: &Pubkey| -> bool {
+        before
+            .iter()
+            .any(|s| s.key == *key && s.token.as_ref().is_some_and(|t| t.owner == *vault))
+    };
     for r in resolved {
+        if r.program == crate::constants::ATA_PROGRAM_ID {
+            if crate::payload::is_ata_create(&r.data) {
+                // `[funder, ata, wallet, mint, system, token]` — the ATA is [1].
+                let target = r.accounts.get(1).ok_or(WardenError::DenyListed)?;
+                require!(!was_vault_token(&target.key), WardenError::DenyListed);
+            }
+            continue;
+        }
         if r.program != SPL_TOKEN_ID && r.program != SPL_TOKEN_2022_ID {
             continue;
         }
         match crate::payload::classify_spl_token_op(&r.data) {
             SplTokenOp::DeniedUnconditional => return Err(WardenError::DenyListed.into()),
+            SplTokenOp::InitializeAccount => {
+                // `[account, mint, (owner), rent?]` — the account is [0].
+                let target = r.accounts.first().ok_or(WardenError::DenyListed)?;
+                require!(!was_vault_token(&target.key), WardenError::DenyListed);
+            }
             SplTokenOp::CloseAccount => {
                 // SPL / Token-2022 CloseAccount account order:
                 // [0] account to close, [1] rent destination, [2] authority.
@@ -744,6 +787,71 @@ mod tests {
                 "tag {tag}"
             );
         }
+    }
+
+    /// GROK-EXP-02: the authority-exercise tags are denied unconditionally,
+    /// with no regard to accounts — the same class as SetAuthority.
+    #[test]
+    fn deny_scan_rejects_mint_to_and_freeze_family() {
+        use crate::constants::{
+            TOKEN_IX_FREEZE_ACCOUNT, TOKEN_IX_MINT_TO, TOKEN_IX_MINT_TO_CHECKED,
+            TOKEN_IX_THAW_ACCOUNT,
+        };
+        let vault = Pubkey::new_unique();
+        for tag in [TOKEN_IX_MINT_TO, TOKEN_IX_MINT_TO_CHECKED, TOKEN_IX_FREEZE_ACCOUNT, TOKEN_IX_THAW_ACCOUNT] {
+            let mut data = vec![tag];
+            data.extend_from_slice(&42_000u64.to_le_bytes());
+            let ix = spl_ix(data, vec![acct(Pubkey::new_unique(), false, true), acct(Pubkey::new_unique(), false, true), acct(vault, true, false)]);
+            assert_eq!(deny_scan(&[ix], &[], &vault).unwrap_err(), err(WardenError::DenyListed), "tag {tag}");
+        }
+        // Burn is NOT denied: it is a metered outflow (conservation + caps).
+        let mut burn = vec![crate::constants::TOKEN_IX_BURN];
+        burn.extend_from_slice(&1u64.to_le_bytes());
+        let ix = spl_ix(burn, vec![acct(Pubkey::new_unique(), false, true), acct(Pubkey::new_unique(), false, true), acct(vault, true, false)]);
+        assert!(deny_scan(&[ix], &[], &vault).unwrap().is_empty());
+    }
+
+    /// GROK-EXP-06: re-initialising a pubkey that was a vault token account
+    /// BEFORE is denied (the direct half of the reincarnation detector), for
+    /// every initialiser and for the ATA program's two creates; the same
+    /// instructions against a pubkey that was NOT a vault token pass.
+    #[test]
+    fn deny_scan_rejects_reinitialising_a_before_vault_token_account() {
+        use crate::constants::{
+            ATA_IX_CREATE, ATA_IX_CREATE_IDEMPOTENT, ATA_PROGRAM_ID, TOKEN_IX_INITIALIZE_ACCOUNT,
+            TOKEN_IX_INITIALIZE_ACCOUNT2, TOKEN_IX_INITIALIZE_ACCOUNT3,
+        };
+        let vault = Pubkey::new_unique();
+        let target = Pubkey::new_unique();
+        let stranger_acct = Pubkey::new_unique();
+        let before = vec![token_snap(target, vault, 0), token_snap(stranger_acct, Pubkey::new_unique(), 0)];
+        let mint = Pubkey::new_unique();
+        for tag in [TOKEN_IX_INITIALIZE_ACCOUNT, TOKEN_IX_INITIALIZE_ACCOUNT2, TOKEN_IX_INITIALIZE_ACCOUNT3] {
+            let mut data = vec![tag];
+            if tag != TOKEN_IX_INITIALIZE_ACCOUNT { data.extend_from_slice(vault.as_ref()); }
+            let denied = spl_ix(data.clone(), vec![acct(target, false, true), acct(mint, false, false)]);
+            assert_eq!(deny_scan(&[denied], &before, &vault).unwrap_err(), err(WardenError::DenyListed), "tag {tag}");
+            // A stranger's account, or a fresh pubkey: not ours, passes.
+            let ok = spl_ix(data.clone(), vec![acct(stranger_acct, false, true), acct(mint, false, false)]);
+            assert!(deny_scan(&[ok], &before, &vault).unwrap().is_empty());
+            let fresh = spl_ix(data, vec![acct(Pubkey::new_unique(), false, true), acct(mint, false, false)]);
+            assert!(deny_scan(&[fresh], &before, &vault).unwrap().is_empty());
+        }
+        let ata_ix = |data: Vec<u8>, ata: Pubkey| ResolvedInner {
+            program: ATA_PROGRAM_ID,
+            accounts: vec![acct(Pubkey::new_unique(), true, true), acct(ata, false, true), acct(vault, false, false), acct(mint, false, false)],
+            data,
+        };
+        for data in [vec![ATA_IX_CREATE], vec![ATA_IX_CREATE_IDEMPOTENT], vec![]] {
+            assert_eq!(deny_scan(&[ata_ix(data.clone(), target)], &before, &vault).unwrap_err(), err(WardenError::DenyListed), "{data:?}");
+            assert!(deny_scan(&[ata_ix(data, Pubkey::new_unique())], &before, &vault).unwrap().is_empty());
+        }
+        // A short ATA create that cannot even name the ATA fails closed.
+        let short = ResolvedInner { program: ATA_PROGRAM_ID, accounts: vec![acct(Pubkey::new_unique(), true, true)], data: vec![ATA_IX_CREATE_IDEMPOTENT] };
+        assert_eq!(deny_scan(&[short], &before, &vault).unwrap_err(), err(WardenError::DenyListed));
+        // RecoverNested (tag 2) is not a create: passes the ATA branch.
+        let recover = ResolvedInner { program: ATA_PROGRAM_ID, accounts: vec![acct(target, false, true)], data: vec![2] };
+        assert!(deny_scan(&[recover], &before, &vault).unwrap().is_empty());
     }
 
     #[test]

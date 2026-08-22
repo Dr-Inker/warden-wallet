@@ -172,10 +172,16 @@ pub fn parse_payload(bytes: &[u8]) -> Result<ExecutePayload> {
 /// paths, before any registry lookup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SplTokenOp {
-    /// `Approve` / `Revoke` / `SetAuthority` / `ApproveChecked` — refused
-    /// unconditionally (`DenyListed`); no registry entry and no policy can
-    /// re-enable them.
+    /// `Approve` / `Revoke` / `SetAuthority` / `ApproveChecked`, and since
+    /// GROK-EXP-02 the authority-EXERCISE ops `MintTo` / `MintToChecked` /
+    /// `FreezeAccount` / `ThawAccount` — refused unconditionally
+    /// (`DenyListed`); no registry entry and no policy can re-enable them.
     DeniedUnconditional,
+    /// `InitializeAccount` / `InitializeAccount2` / `InitializeAccount3` — the
+    /// token account being initialised is at index 0. Denied by the handler
+    /// when that pubkey was a vault token account in the BEFORE snapshot
+    /// (GROK-EXP-06 reincarnation); otherwise `Other`.
+    InitializeAccount,
     /// `CloseAccount` — permitted ONLY as the vault-sweep exception the handler
     /// proves against the snapshot (`amount_before == 0`, decoded destination is
     /// the SmartAccount PDA, direct payload instruction); otherwise denied.
@@ -190,16 +196,37 @@ pub enum SplTokenOp {
 /// rejects, not a deny-list case.
 pub fn classify_spl_token_op(data: &[u8]) -> SplTokenOp {
     use crate::constants::{
-        TOKEN_IX_APPROVE, TOKEN_IX_APPROVE_CHECKED, TOKEN_IX_CLOSE_ACCOUNT, TOKEN_IX_REVOKE,
-        TOKEN_IX_SET_AUTHORITY,
+        TOKEN_IX_APPROVE, TOKEN_IX_APPROVE_CHECKED, TOKEN_IX_CLOSE_ACCOUNT,
+        TOKEN_IX_FREEZE_ACCOUNT, TOKEN_IX_INITIALIZE_ACCOUNT, TOKEN_IX_INITIALIZE_ACCOUNT2,
+        TOKEN_IX_INITIALIZE_ACCOUNT3, TOKEN_IX_MINT_TO, TOKEN_IX_MINT_TO_CHECKED,
+        TOKEN_IX_REVOKE, TOKEN_IX_SET_AUTHORITY, TOKEN_IX_THAW_ACCOUNT,
     };
     match data.first().copied() {
         Some(TOKEN_IX_APPROVE)
         | Some(TOKEN_IX_REVOKE)
         | Some(TOKEN_IX_SET_AUTHORITY)
-        | Some(TOKEN_IX_APPROVE_CHECKED) => SplTokenOp::DeniedUnconditional,
+        | Some(TOKEN_IX_APPROVE_CHECKED)
+        | Some(TOKEN_IX_MINT_TO)
+        | Some(TOKEN_IX_MINT_TO_CHECKED)
+        | Some(TOKEN_IX_FREEZE_ACCOUNT)
+        | Some(TOKEN_IX_THAW_ACCOUNT) => SplTokenOp::DeniedUnconditional,
         Some(TOKEN_IX_CLOSE_ACCOUNT) => SplTokenOp::CloseAccount,
+        Some(TOKEN_IX_INITIALIZE_ACCOUNT)
+        | Some(TOKEN_IX_INITIALIZE_ACCOUNT2)
+        | Some(TOKEN_IX_INITIALIZE_ACCOUNT3) => SplTokenOp::InitializeAccount,
         _ => SplTokenOp::Other,
+    }
+}
+
+/// Is this Associated-Token-Account-program instruction one that creates (or
+/// idempotently creates) an ATA? The ATA being created is at account index 1.
+/// Empty data is the legacy `Create` (tag 0 implied) per the ATA program.
+pub fn is_ata_create(data: &[u8]) -> bool {
+    use crate::constants::{ATA_IX_CREATE, ATA_IX_CREATE_IDEMPOTENT};
+    match data.first().copied() {
+        None => true,
+        Some(ATA_IX_CREATE) | Some(ATA_IX_CREATE_IDEMPOTENT) => true,
+        _ => false,
     }
 }
 
@@ -508,10 +535,31 @@ mod tests {
         assert_eq!(classify_spl_token_op(&[5]), SplTokenOp::DeniedUnconditional); // Revoke
         assert_eq!(classify_spl_token_op(&[6]), SplTokenOp::DeniedUnconditional); // SetAuthority
         assert_eq!(classify_spl_token_op(&[13]), SplTokenOp::DeniedUnconditional); // ApproveChecked
+        // GROK-EXP-02: authority EXERCISE is denied, not only its reassignment.
+        assert_eq!(classify_spl_token_op(&[7]), SplTokenOp::DeniedUnconditional); // MintTo
+        assert_eq!(classify_spl_token_op(&[14]), SplTokenOp::DeniedUnconditional); // MintToChecked
+        assert_eq!(classify_spl_token_op(&[10]), SplTokenOp::DeniedUnconditional); // FreezeAccount
+        assert_eq!(classify_spl_token_op(&[11]), SplTokenOp::DeniedUnconditional); // ThawAccount
         assert_eq!(classify_spl_token_op(&[9]), SplTokenOp::CloseAccount);
+        // GROK-EXP-06: initialisers are classified so the handler can check
+        // the target against the BEFORE snapshot.
+        assert_eq!(classify_spl_token_op(&[1]), SplTokenOp::InitializeAccount);
+        assert_eq!(classify_spl_token_op(&[16]), SplTokenOp::InitializeAccount);
+        assert_eq!(classify_spl_token_op(&[18]), SplTokenOp::InitializeAccount);
         assert_eq!(classify_spl_token_op(&[3]), SplTokenOp::Other); // Transfer
         assert_eq!(classify_spl_token_op(&[12]), SplTokenOp::Other); // TransferChecked
+        assert_eq!(classify_spl_token_op(&[8]), SplTokenOp::Other); // Burn — metered outflow
+        assert_eq!(classify_spl_token_op(&[15]), SplTokenOp::Other); // BurnChecked
         assert_eq!(classify_spl_token_op(&[]), SplTokenOp::Other); // no tag
+    }
+
+    #[test]
+    fn is_ata_create_matches_the_two_create_tags_and_legacy_empty_data() {
+        assert!(is_ata_create(&[0]));
+        assert!(is_ata_create(&[1]));
+        assert!(is_ata_create(&[]), "legacy Create has no data");
+        assert!(!is_ata_create(&[2])); // RecoverNested
+        assert!(!is_ata_create(&[7]));
     }
 
     /// The deny-list tag constants are re-derived from the pinned `spl-token`
@@ -537,6 +585,29 @@ mod tests {
         assert_eq!(
             TokenInstruction::ApproveChecked { amount: 0, decimals: 0 }.pack()[0],
             TOKEN_IX_APPROVE_CHECKED
+        );
+        // GROK-EXP-02 / -06 additions, pinned against the crate the same way.
+        assert_eq!(TokenInstruction::MintTo { amount: 0 }.pack()[0], TOKEN_IX_MINT_TO);
+        assert_eq!(TokenInstruction::Burn { amount: 0 }.pack()[0], TOKEN_IX_BURN);
+        assert_eq!(TokenInstruction::FreezeAccount.pack()[0], TOKEN_IX_FREEZE_ACCOUNT);
+        assert_eq!(TokenInstruction::ThawAccount.pack()[0], TOKEN_IX_THAW_ACCOUNT);
+        assert_eq!(
+            TokenInstruction::MintToChecked { amount: 0, decimals: 0 }.pack()[0],
+            TOKEN_IX_MINT_TO_CHECKED
+        );
+        assert_eq!(
+            TokenInstruction::BurnChecked { amount: 0, decimals: 0 }.pack()[0],
+            TOKEN_IX_BURN_CHECKED
+        );
+        assert_eq!(TokenInstruction::InitializeAccount.pack()[0], TOKEN_IX_INITIALIZE_ACCOUNT);
+        let owner = solana_sdk::pubkey::Pubkey::new_unique();
+        assert_eq!(
+            TokenInstruction::InitializeAccount2 { owner: spl_token::solana_program::pubkey::Pubkey::from(owner.to_bytes()) }.pack()[0],
+            TOKEN_IX_INITIALIZE_ACCOUNT2
+        );
+        assert_eq!(
+            TokenInstruction::InitializeAccount3 { owner: spl_token::solana_program::pubkey::Pubkey::from(owner.to_bytes()) }.pack()[0],
+            TOKEN_IX_INITIALIZE_ACCOUNT3
         );
     }
 

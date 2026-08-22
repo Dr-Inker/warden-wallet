@@ -1479,3 +1479,40 @@ Implemented deploy-gate **check 3** end-to-end and drove it through 8 Codex sol@
 `solana-verify` byte parity, a golden Registry vector from the real Anchor writer, real
 mainnet manifest/treasury/multisig pins. Phase 1B program work is complete; the remaining
 formal item is Task 9 (spec rev 9 + Phase-1B close-out).
+
+## GROK exploit-audit remediation (2026-08-22) — post-1B hardening
+
+Source: `docs/security/GROK-EXPLOIT-AUDIT-2026-08-22.md` (independent adversarial
+pass by a third model against BASE `9a427aa`). All seven findings triaged; the
+six that were reproducible/confirmed against source are patched with
+red-at-BASE / green-at-fix regressions (the memo's own `audit_repro_*` fixtures,
+inverted from "attack succeeds" to the named defensive error, plus new
+integration + unit cases). No successful-drain fixture is kept. Error ABI:
+appended `SwapRouteVariantSessionDenied` (6075) only — every other fix reuses an
+existing code; the pinned drift table (`tests/root_verify.rs`) is updated (75→76).
+
+| ID | Verdict | Fix (file) | Regression |
+|---|---|---|---|
+| GROK-EXP-01 | CONFIRMED (protocol fee) | realized 85 bps floor `platform_fee_floor()` in `swap.rs`; require `fee_delta >= floor(base×85/10000)` where base = actual_in (fee in in_mint) else net_out_gain, AND `>= 1`. Mock now pays a real 85 bps fee. | `swap.rs::grok_exp01_honest_pays_85_bps_and_one_unit_fee_is_rejected` + unit `platform_fee_floor_is_floor_of_85_bps` |
+| GROK-EXP-02 | CONFIRMED (issuance if PDA is mint_authority) | deny-list `MintTo`(7)/`MintToChecked`(14)/`FreezeAccount`(10)/`ThawAccount`(11) as `DeniedUnconditional` (`payload.rs`), on both paths before registry; **and** conservation now freezes `supply` byte-for-byte for vault-controlled mints (`compare.rs::prescan_vault_mints`) so the NESTED case (a Jupiter hop / middleman MintTo) is caught too. `Burn`/`BurnChecked` stay `Other` (metered outflow). | `execute.rs::grok_exp02_root_mint_to_stranger_is_deny_listed`, `grok_exp02_session_mint_to_is_deny_listed`; `conservation/tests.rs::grok_exp02_vault_controlled_mint_supply_jump_is_rejected` + the two inverted `c1_a…`/`mint_supply_change_alone_is_ok` fixtures; `deny_scan_rejects_mint_to_and_freeze_family` |
+| GROK-EXP-03 | CONFIRMED (value the PDA controls outside token accounts) | reject any WRITABLE remaining account owned by Stake / Vote / BPF-upgradeable-loader (`UNSUPPORTED_WRITABLE_OWNERS` in `constants.rs`), both pre-CPI (`conservation::reject_unsupported_writable_owners`, called by `execute` and `swap`) and positionally in `compare_and_account`. Read-only such accounts stay allowed (a CPI cannot debit them; Jupiter routes carry them). | `execute.rs::grok_exp03_writable_stake_owned_remaining_rejected`; `swap.rs::grok_exp03_writable_stake_owned_in_swap_route_rejected`; `conservation/tests.rs::grok_exp03_*` (3) |
+| GROK-EXP-04 | CONFIRMED (Minor — stage grief / auth-shape) | `execute` refuses an empty payload (`parsed.ixs.is_empty()` → `PayloadInvalid`) before authorization, the list-id/registry gate, or any stage consume. | `execute.rs::grok_exp04_empty_payload_list0_is_rejected`, `grok_exp04_empty_staged_payload_does_not_consume_stage` |
+| GROK-EXP-05 | CONFIRMED (session registry-bypass into Jupiter hops) | session `swap` refuses `SWAP_VARIANT_ROUTE` (`SwapRouteVariantSessionDenied` 6075); only `shared_accounts_route` (Jupiter signs AMM hops with its own programAuthority) is session-reachable. Root keeps both (route_hash + accounts_hash bind the bytes). The nested-value classes it opened (stake withdraw / mint) are additionally closed by EXP-03 + EXP-02's supply freeze, which apply to swap hops too; optional `route[4]` destination is pinned when writable. | `swap.rs::grok_exp05_session_route_variant_is_rejected`, `grok_exp05_nested_mint_to_of_vault_controlled_mint_rejected` (root route, mock `misbehave=6`) |
+| GROK-EXP-06 | PARTIAL (spec-claim; not a proven vault drain) | direct half closed: deny ATA `Create`/`CreateIdempotent` and SPL/T22 `InitializeAccount*` whose target pubkey was a vault token account in the BEFORE snapshot (`execute.rs::deny_scan`). **Residual:** both close AND recreate nested inside ONE middleman CPI is invisible to any before/after comparison — recorded as a §5.3-class residual. Fund-flow: rule-8 (non-native lamports unchanged) / native-metering / the PDA-credit floor mean the VAULT cannot net-lose lamports this way; only the fee payer's own rent funds a replacement, and a compromised signer can already spend its own SOL. | `execute.rs::deny_scan_rejects_reinitialising_a_before_vault_token_account` |
+| GROK-EXP-07 | CONFIRMED (Minor — client brick, not a forge) | added `encodeGrantBody` (incl. trailing `prior_authority_hash`) + `OPS_MASK_*` aliases in `transcript.ts`; fixed the `OP_GRANT_SESSION` (missing prior-hash) and `OP_SWAP` (missing route_hash) layout comments. Cross-language golden pinned. | Rust `grant_session::tests::grant_body_action_hash_matches_pinned_vector`; TS `transcript.test.ts` "grant (OP_GRANT_SESSION…)" (5 cases incl. the short-body negative) |
+
+Also fixed the two stale comments the memo flagged: `state/registry.rs` ("1B does
+not yet gate grants on allocation" — it does, WRDF-0044) and `grant_session.rs`
+`MAX_MINTS_AT_CREATE` (1 in 1B, not 4).
+
+**Not promoting invariant statuses (B4 stays deferred):** these fixes add
+coverage that a narrow per-invariant B4 pass may later cite, but no
+`invariants.jsonl` `status` is flipped here — the 2026-08-22 reassessment ruling
+holds. The canonical adversarial record is the `scripts/review.sh` round over the
+fix range (below) plus its scorecard adjudication.
+
+**Declined / deferred (unchanged by this pass):** the byte-exact Jupiter
+`route_plan` parse (WRDF-0031/0059) is still owed before mainnet — the EXP-01
+floor is the realized-fee bound those findings assumed was present, not a
+substitute for the parse. The EXP-06 nested-both-halves residual is documented,
+not closed (no 1B mechanism can observe an intra-CPI close+recreate).

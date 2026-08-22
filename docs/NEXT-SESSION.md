@@ -1,5 +1,29 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> **GROK EXPLOIT AUDIT 2026-08-22 — READ FIRST.** Independent adversarial
+> pass at `9a427aa35dd6e1f89c3fe00e5b1dd482118a87c6` (`phase1b`). Pickup
+> memo: [`docs/security/GROK-EXPLOIT-AUDIT-2026-08-22.md`](security/GROK-EXPLOIT-AUDIT-2026-08-22.md).
+> Program findings to patch before C1/C2/B4/vanity/UI: **GROK-EXP-03**
+> (root `execute` can Stake/Vote/ProgramData-withdraw with no cap debit),
+> **GROK-EXP-05** (session `swap` skips the registry and forwards the PDA
+> signer into Jupiter `route` hops — same class, no root ceremony),
+> **GROK-EXP-01** (swap treasury-fee floor is 1 unit, not 85 bps),
+> **GROK-EXP-02** (root `execute` MintTo is unmetered if the PDA is mint
+> authority), **GROK-EXP-04** (empty session execute skips the list-id-0
+> gate and can consume a Stage), **GROK-EXP-06** (nested close + same-pubkey
+> reincarnation evades the disappearance detector — Important spec-hole,
+> not a proven unmetered vault drain), **GROK-EXP-07** (TS GrantBody
+> comment drops `prior_authority_hash`; brick, not a forge — add
+> `encodeGrantBody` before C3).
+> **REMEDIATION DONE 2026-08-22:** all seven triaged; the six reproducible/
+> confirmed findings are patched with red-at-BASE→green regressions (17 new
+> GROK tests + inverted repro fixtures), full gate green. EXP-06's
+> nested-both-halves case is a documented §5.3 residual (fee-payer-only, no
+> vault net-loss), not closed. See docs/program/PHASE1B-MEASUREMENTS.md
+> "GROK exploit-audit remediation" and the Codex sol@max review round in
+> docs/security/REVIEW-RUNS.jsonl. No invariant `status` was promoted (B4
+> stays deferred).
+>
 > **STATUS UPDATE 2026-08-22 — Phase 1B PROGRAM WORK COMPLETE.** All Phase 1B tasks
 > (0/10/1/2b/2/3/4/5/6/8) plus **Task 11** (deploy-gate: WRD-DEP-01 governance/hash + WRD-DEP-02
 > adapter-Registry) and **Task 9** (spec → rev 9 close-out) are DONE — 283 `@warden/core` tests,

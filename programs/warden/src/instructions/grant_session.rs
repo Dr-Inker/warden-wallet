@@ -415,9 +415,9 @@ fn validate_against_policy(account: &SmartAccount, b: &GrantBody, now: i64) -> R
 /// Merge this grant's caps into the session's fixed slots, by mint.
 ///
 /// The `CapExceeded` on "no empty slot" is unreachable in Phase 1A —
-/// `MAX_MINTS_AT_CREATE` (4) bounds how many mints a policy can have
+/// `MAX_MINTS_AT_CREATE` (1 in 1B; 4 in the original 1A sizing) bounds how many mints a policy can have
 /// `session_ceiling` entries for, and `validate_against_policy` refuses any
-/// mint without one, so at most 4 of the 8 slots can ever be filled until
+/// mint without one, so at most `MAX_MINTS_AT_CREATE` of the 8 slots can ever be filled until
 /// Phase 1B's `set_policy` lands. It is written anyway because the bound it
 /// enforces (`MAX_MINT_CAPS`) is the array's, not the policy's, and the two
 /// are deliberately independent constants.
@@ -501,6 +501,39 @@ mod tests {
     #[test]
     fn shape_accepts_the_empty_grant() {
         assert!(validate_shape(&body()).is_ok());
+    }
+
+    /// GROK-EXP-07 (2026-08-22): cross-language pin for `encodeGrantBody`. A
+    /// fixed `GrantBody` — INCLUDING a non-zero `prior_authority_hash` — hashes
+    /// under `OP_GRANT_SESSION` to this value; the TS mirror
+    /// (`packages/core/test/transcript.test.ts`) must reproduce it byte for
+    /// byte. If it moves, every outstanding grant ceremony breaks — a
+    /// deliberate migration, never a refactor. The value is asserted, not
+    /// derived, so a field-order or length-prefix drift on either side fails.
+    #[test]
+    fn grant_body_action_hash_matches_pinned_vector() {
+        let body = GrantBody {
+            expiry_ts: 1_760_000_000,
+            session_pubkey: Pubkey::new_from_array([0x11; 32]),
+            kind: SESSION_KIND_ED25519,
+            ops_mask: 0b101, // OPS_MASK_TRANSFER | OPS_MASK_SWAP
+            caps: vec![MintCap {
+                mint: Pubkey::new_from_array([0x22; 32]),
+                per_tx: 7,
+                per_day: 0,
+                per_30d: 0,
+            }],
+            lifetime_cap: vec![70],
+            program_allowlist_id: 1,
+            label: [0xAB; 16],
+            prior_authority_hash: [0xCD; 32],
+        };
+        let mut buf = Vec::new();
+        body.serialize(&mut buf).unwrap();
+        assert_eq!(
+            hex::encode(action_hash(OP_GRANT_SESSION, &buf)),
+            "3dc9ab04d96990d9c48ed02c0d42b8e81f3cd1970d27449fd95594e034ccd7e7"
+        );
     }
 
     #[test]

@@ -117,12 +117,12 @@ pub struct Registry {
     /// Bitmask of which list ids (bit `k` = id `k+1`) were ALLOCATED at init —
     /// i.e. given at least one entry. Distinct from "structurally in range"
     /// (`is_valid_list_id`): the default registry allocates only lists 1 and 2,
-    /// leaving 3..8 as capacity. **1B does not yet gate grants on this** (an
-    /// empty list denies every CPI at `execute`, so a grant against one is inert
-    /// today), but recording it now is the WRDF-0044 prerequisite: **before
-    /// Phase 1C makes the registry mutable, `grant_session` MUST load the
-    /// registry and require the selected list to be allocated** — otherwise a
-    /// 1C update that later populates a previously-empty list would silently
+    /// leaving 3..8 as capacity. **`grant_session` DOES gate on this** (WRDF-0044,
+    /// Task 3): it loads the registry and requires the selected list to be
+    /// allocated, so a grant can never name an empty list that a later 1C
+    /// registry update might populate. (An empty list would also deny every CPI
+    /// at `execute`, but that is defense in depth, not the gate.) Without the
+    /// grant-time gate, a 1C update that populated a previously-empty list would silently
     /// activate every session already granted that id, with no fresh ceremony.
     pub allocated_lists: u8,
     pub _reserved: [u8; 255],

@@ -30,6 +30,12 @@
 //!   whatever it is given and warden's pre-CPI meta check rejects it. No mock
 //!   branch (WRDF-0033).
 //! - `4` sets a **delegate** (SPL `Approve`) on the source ATA.
+//! - `5` (GROK-EXP-01) pays only **1 base unit** of platform fee instead of the
+//!   85 bps the honest path pays — the "existence-only fee" shape.
+//! - `6` (GROK-EXP-05) additionally **`MintTo`s** `remaining[3]` from the mint
+//!   at `remaining[2]`, signed by `user_transfer_authority` (the vault PDA,
+//!   which warden forwards as a signer) — the nested-issuance shape a hop
+//!   program could perform if the PDA is that mint's authority.
 //!
 //! ## Account positions (real Jupiter v6, IDL-pinned)
 //!
@@ -56,9 +62,11 @@ declare_id!("3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU");
 
 /// Seed of the PDA that owns the mock's pool ATAs.
 pub const POOL_SEED: &[u8] = b"pool";
-/// Fixed platform fee (output-mint base units) the mock skims — the exact value
-/// is not what the adapter checks (it checks the fee *destination*).
-const FEE: u64 = 1;
+/// The platform-fee rate the honest path pays, as Jupiter does: `floor(quoted
+/// × bps / 10_000)` of the OUTPUT leg, taken from the pool on top of the
+/// user's credit. Warden requires exactly this rate (GROK-EXP-01 made the
+/// realised-fee floor load-bearing, so the mock must pay a realistic fee).
+const PLATFORM_FEE_BPS: u64 = 85;
 
 #[program]
 pub mod test_jup_mock {
@@ -191,11 +199,36 @@ fn do_route<'info>(
     let out_amount = if misbehave == 1 { quoted_out_amount.saturating_sub(1) } else { quoted_out_amount };
     spl_transfer(c.token_program, pool_out, c.user_destination_ata, c.pool_authority, out_amount, Some(pool_seeds))?;
 
+    // (misbehave 6) nested MintTo under the forwarded user authority: mint at
+    // remaining[2], destination at remaining[3]. A real hop with the PDA as
+    // `mint_authority` could do exactly this; warden must reject it.
+    if misbehave == 6 {
+        let mint = remaining.get(2).expect("misbehave 6 needs the mint");
+        let dest = remaining.get(3).expect("misbehave 6 needs a destination");
+        let mut data = vec![7u8]; // TokenInstruction::MintTo
+        data.extend_from_slice(&42_000u64.to_le_bytes());
+        let ix = Instruction {
+            program_id: *c.token_program.key,
+            accounts: vec![
+                AccountMeta::new(*mint.key, false),
+                AccountMeta::new(*dest.key, false),
+                AccountMeta::new_readonly(*c.user_transfer_authority.key, true),
+            ],
+            data,
+        };
+        invoke(&ix, &[mint.clone(), dest.clone(), c.user_transfer_authority.clone()])?;
+    }
+
     // (3) Platform fee (output mint) — ALWAYS to the passed `platform_fee_account`
     // (WRDF-0033); the "wrong fee account" case is a caller-side substitution the
     // mock does not model, because warden's pre-CPI meta check owns it.
-    let _ = misbehave;
-    spl_transfer(c.token_program, pool_out, c.platform_fee_account, c.pool_authority, FEE, Some(pool_seeds))?;
+    // Honest: floor(quoted × 85 / 10_000). (misbehave 5) 1 base unit only.
+    let fee = if misbehave == 5 {
+        1
+    } else {
+        quoted_out_amount.saturating_mul(PLATFORM_FEE_BPS) / 10_000
+    };
+    spl_transfer(c.token_program, pool_out, c.platform_fee_account, c.pool_authority, fee, Some(pool_seeds))?;
 
     Ok(())
 }

@@ -1010,8 +1010,12 @@ fn mint_decimals_change_is_rejected() {
 
 #[test]
 fn mint_supply_change_alone_is_ok() {
-    // Spec 5.2 rule 2a: `supply` is not an authority field. A legitimate
-    // mint/burn through an allow-listed adapter changes it.
+    // Spec 5.2 rule 2a: `supply` is not an authority field. For a mint the
+    // vault does NOT control (no authority is the vault), a stranger minting
+    // their own token while a vault ATA of it sits in the list is none of our
+    // business — `check_mint` still excludes supply. (The vault-CONTROLLED
+    // case is the opposite since GROK-EXP-02: see
+    // `c1_a_standalone_vault_controlled_mint_supply_change_is_rejected`.)
     let m = pk(2);
     let before = vec![vault_ata(pk(3), m, 100), snap_token(m, &mint_bytes(None, 1, 6, None), true)];
     let after = vec![
@@ -1367,12 +1371,22 @@ fn c1_a_standalone_vault_controlled_mint_freeze_authority_change_is_rejected() {
 }
 
 #[test]
-fn c1_a_standalone_vault_controlled_mint_supply_change_is_still_ok() {
-    // Adjudication (1), re-confirmed: `supply` is not an authority field.
+fn c1_a_standalone_vault_controlled_mint_supply_change_is_rejected() {
+    // GROK-EXP-02 (2026-08-22) REVERSED the round-1 adjudication for mints the
+    // vault CONTROLS: `supply` excluded was the unmetered-issuance hole (a
+    // `MintTo` under the PDA's authority to a stranger changes no vault token
+    // account). 1B has no mint adapter, so a vault-controlled mint is frozen
+    // byte-for-byte across the CPI window; a 1C typed mint opcode relaxes this
+    // deliberately. This fixture was `…_is_still_ok` and asserted
+    // `Outflow::default()` at 9a427aa.
     let m = pk(2);
     let before = vec![vault_controlled_mint(m, 1, None)];
     let after = vec![vault_controlled_mint(m, 9_999, None)];
-    assert_eq!(cmp(&before, &after, &[]).expect("ok"), Outflow::default());
+    assert_eq!(cmp(&before, &after, &[]).unwrap_err(), err(WardenError::ConservationViolated));
+    // …in BOTH directions (a burn of supply is equally a change).
+    assert_eq!(cmp(&after, &before, &[]).unwrap_err(), err(WardenError::ConservationViolated));
+    // Unchanged supply still passes (the freeze is on change, not presence).
+    assert_eq!(cmp(&before, &before, &[]).expect("ok"), Outflow::default());
 }
 
 #[test]
@@ -1835,4 +1849,81 @@ fn r2_a_mint_the_vault_does_not_control_may_move_lamports() {
     let before = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT.saturating_add(9_000), &bytes, true)];
     let after = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT, &bytes, true)];
     assert_eq!(cmp(&before, &after, &[]).expect("ok"), Outflow::default());
+}
+
+// ---------------------------------------------------------------------------
+// GROK-EXP-02 / -03 regressions (2026-08-22). These were Grok's
+// `audit_repro_*` fixtures, which asserted the VULNERABLE behaviour at
+// 9a427aa (`Outflow::default()` / `out.sol == 0`); inverted here to the
+// defensive verdicts per the memo's own instruction.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn grok_exp02_vault_controlled_mint_supply_jump_is_rejected() {
+    // mint_authority == vault, supply 1 → 9_999_999, no vault ATA of that mint
+    // in the list. Was: compare returns empty outflow (no cap debit).
+    let m = pk(2);
+    let before = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT, &mint_bytes(Some(vault()), 1, 6, None), true)];
+    let after = vec![snapshot_one(
+        &m,
+        &SPL_TOKEN_ID,
+        RENT,
+        &mint_bytes(Some(vault()), 9_999_999, 6, None),
+        true,
+    )];
+    assert_eq!(cmp(&before, &after, &[]).unwrap_err(), err(WardenError::ConservationViolated));
+    // The freeze applies even when the mint was passed READ-ONLY: a hop can
+    // still have mutated it through its own writable view (conservation sees
+    // OUR flags), and a read-only mint that changed is the same evidence.
+    let before_ro = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT, &mint_bytes(Some(vault()), 1, 6, None), false)];
+    let after_ro = vec![snapshot_one(&m, &SPL_TOKEN_ID, RENT, &mint_bytes(Some(vault()), 2, 6, None), false)];
+    assert_eq!(cmp(&before_ro, &after_ro, &[]).unwrap_err(), err(WardenError::ConservationViolated));
+}
+
+#[test]
+fn grok_exp03_writable_stake_owned_account_is_rejected() {
+    // A writable remaining account owned by the Stake program. Was: not a
+    // vault token account, so ignored — 9 SOL left it with `outflow.sol == 0`.
+    let acct = pk(3);
+    let before = vec![snapshot_one(&acct, &STAKE_PROGRAM_ID, 10_000_000_000, &[0u8; 200], true)];
+    let after = vec![snapshot_one(&acct, &STAKE_PROGRAM_ID, 1_000_000_000, &[0u8; 200], true)];
+    assert_eq!(cmp(&before, &after, &[]).unwrap_err(), err(WardenError::UnsupportedAccountKind));
+    // Rejected on presence, not on change: an UNCHANGED writable stake account
+    // is refused too (the CPI could have moved it and put it back).
+    assert_eq!(cmp(&before, &before, &[]).unwrap_err(), err(WardenError::UnsupportedAccountKind));
+    // The pre-CPI entry point the handlers use agrees.
+    assert_eq!(reject_unsupported_writable_owners(&before).unwrap_err(), err(WardenError::UnsupportedAccountKind));
+}
+
+#[test]
+fn grok_exp03_writable_vote_and_program_data_are_rejected_read_only_passes() {
+    for owner in [VOTE_PROGRAM_ID, BPF_LOADER_UPGRADEABLE_ID, STAKE_PROGRAM_ID] {
+        let acct = pk(4);
+        let w = vec![snapshot_one(&acct, &owner, RENT, &[0u8; 64], true)];
+        assert_eq!(cmp(&w, &w, &[]).unwrap_err(), err(WardenError::UnsupportedAccountKind), "{owner}");
+        assert_eq!(reject_unsupported_writable_owners(&w).unwrap_err(), err(WardenError::UnsupportedAccountKind));
+        // Read-only: a CPI cannot debit it; ignored, as Jupiter routes require.
+        let ro = vec![snapshot_one(&acct, &owner, RENT, &[0u8; 64], false)];
+        assert_eq!(cmp(&ro, &ro, &[]).expect("read-only ignored"), Outflow::default());
+        assert!(reject_unsupported_writable_owners(&ro).is_ok());
+    }
+    // An account that BECOMES stake-owned during the CPI (System `Assign`) is
+    // caught positionally on the AFTER side.
+    let acct = pk(5);
+    let before = vec![snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[], true)];
+    let after = vec![snapshot_one(&acct, &STAKE_PROGRAM_ID, RENT, &[0u8; 200], true)];
+    assert_eq!(cmp(&before, &after, &[]).unwrap_err(), err(WardenError::UnsupportedAccountKind));
+    // A writable System-owned account (an ATA about to be allocated, a
+    // stranger wallet) is still fine — nonce accounts are not owner-keyed.
+    assert_eq!(cmp(&before, &before, &[]).expect("system ok"), Outflow::default());
+}
+
+#[test]
+fn unsupported_writable_owner_ids_are_the_canonical_programs() {
+    // The literals are spelled, not derived; pin the one the SDK exposes and
+    // the well-known base58 of the other two so a typo cannot hide.
+    assert_eq!(BPF_LOADER_UPGRADEABLE_ID, anchor_lang::solana_program::bpf_loader_upgradeable::ID);
+    assert_eq!(STAKE_PROGRAM_ID.to_string(), "Stake11111111111111111111111111111111111111");
+    assert_eq!(VOTE_PROGRAM_ID.to_string(), "Vote111111111111111111111111111111111111111");
+    assert_eq!(UNSUPPORTED_WRITABLE_OWNERS.len(), 3);
 }

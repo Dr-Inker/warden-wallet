@@ -52,8 +52,14 @@ pub struct RouteAccounts {
     pub platform_fee_account: Pubkey,
     pub pool_out_ata: Pubkey,
     pub pool_in_sink: Pubkey,
-    /// misbehave 2: a second source ATA; misbehave 4: the delegate. Ignored otherwise.
+    /// misbehave 2: a second source ATA; misbehave 4: the delegate; misbehave
+    /// 6: the MINT. Ignored otherwise. Lands at `remaining[2]`.
     pub extra: Option<Pubkey>,
+    /// misbehave 6: the MintTo destination. Lands at `remaining[3]`.
+    pub extra2: Option<Pubkey>,
+    /// Override for the optional `destinationTokenAccount` slot (route [4]);
+    /// `None` ⇒ a read-only filler. `Some((key, writable))` plants that meta.
+    pub opt_dest: Option<(Pubkey, bool)>,
 }
 
 /// Jupiter v6 tail (WRDF-0031): empty `route_plan` (`u32` 0), `in_amount`,
@@ -86,7 +92,10 @@ pub fn route_metas(a: &RouteAccounts) -> Vec<AccountMeta> {
         AccountMeta::new_readonly(a.user_transfer_authority, true), // 1
         AccountMeta::new(a.user_source_ata, false), // 2
         AccountMeta::new(a.user_destination_ata, false), // 3
-        AccountMeta::new_readonly(filler(), false), // 4 destinationTokenAccount (opt)
+        match a.opt_dest {
+            Some((k, w)) => AccountMeta { pubkey: k, is_signer: false, is_writable: w },
+            None => AccountMeta::new_readonly(filler(), false), // 4 destinationTokenAccount (opt)
+        },
         AccountMeta::new_readonly(a.destination_mint, false), // 5
         AccountMeta::new(a.platform_fee_account, false), // 6
         AccountMeta::new_readonly(filler(), false), // 7 eventAuthority
@@ -97,6 +106,9 @@ pub fn route_metas(a: &RouteAccounts) -> Vec<AccountMeta> {
     ];
     if let Some(extra) = a.extra {
         m.push(AccountMeta::new(extra, false)); // remaining[2]
+    }
+    if let Some(extra2) = a.extra2 {
+        m.push(AccountMeta::new(extra2, false)); // remaining[3]
     }
     m
 }
@@ -125,6 +137,9 @@ pub fn shared_route_metas(a: &RouteAccounts) -> Vec<AccountMeta> {
     ];
     if let Some(extra) = a.extra {
         m.push(AccountMeta::new(extra, false));
+    }
+    if let Some(extra2) = a.extra2 {
+        m.push(AccountMeta::new(extra2, false));
     }
     m
 }

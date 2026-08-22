@@ -67,9 +67,99 @@ export const OP_ROTATE_NONCE = 0x00;
  * `GrantBody` field order (borsh, `programs/warden/src/instructions/grant_session.rs`):
  * `expiry_ts: i64`, `session_pubkey: Pubkey (32B)`, `kind: u8`,
  * `ops_mask: u16`, `caps: Vec<MintCap>`, `lifetime_cap: Vec<u64>`,
- * `program_allowlist_id: u16`, `label: [u8; 16]`.
+ * `program_allowlist_id: u16`, `label: [u8; 16]`,
+ * `prior_authority_hash: [u8; 32]` — the WRD-SESS-05 merge binding
+ * (`SessionKey::authority_hash()` of the session PDA BEFORE this grant, or the
+ * 32-zero sentinel for a fresh grant). Build the body with {@link
+ * encodeGrantBody}: the trailing hash is signed but carried nowhere else, so a
+ * hand-rolled short body signs a different action hash and the program answers
+ * `ChallengeMismatch` (6018) — exactly the WRDF-0042 create-body hole, which is
+ * why grant now has a canonical encoder too (GROK-EXP-07).
  */
 export const OP_GRANT_SESSION = 0x01;
+
+/**
+ * Session `ops_mask` BITS (`state::session.rs`: `OP_TRANSFER = 1<<0`,
+ * `OP_EXECUTE = 1<<1`, `OP_SWAP = 1<<2`, `OP_SIGN_MESSAGE = 1<<3`). These are a
+ * DIFFERENT namespace from the `OP_*` action-hash bytes above: the action byte
+ * `OP_TRANSFER` is `0x05`, but the transfer ops-mask bit is `0x01`. A grant's
+ * `ops_mask` MUST be built from these `OPS_MASK_*` constants — using the action
+ * bytes would grant a wider or wrong permission set that the program then
+ * verifies against, because that mask is what was hashed (defense-in-depth
+ * item 4, GROK-EXP-07).
+ */
+export const OPS_MASK_TRANSFER = 1 << 0;
+export const OPS_MASK_EXECUTE = 1 << 1;
+export const OPS_MASK_SWAP = 1 << 2;
+export const OPS_MASK_SIGN_MESSAGE = 1 << 3;
+
+/** Fields of a `grant_session` ceremony body. */
+export interface GrantBodyFields {
+  /** Absolute unix seconds the SESSION expires. */
+  expiryTs: bigint;
+  /** The session delegate key (32 bytes). */
+  sessionPubkey: Uint8Array;
+  /** `SESSION_KIND_ED25519` (0) is the only value 1B accepts. */
+  kind: number;
+  /** Bit-OR of the `OPS_MASK_*` constants — NOT the `OP_*` action bytes. */
+  opsMask: number;
+  /** Per-mint caps, in the same mint order as `lifetimeCap`. */
+  caps: { mint: Uint8Array; perTx: bigint; perDay: bigint; per30d: bigint }[];
+  /** Lifetime cap per `caps[i].mint`; exactly as long as `caps`. */
+  lifetimeCap: bigint[];
+  /** spec §5.1 adapter-registry list id (0 = none). */
+  programAllowlistId: number;
+  /** 16-byte free-form display label. */
+  label: Uint8Array;
+  /** `SessionKey::authority_hash()` before this grant, or 32 zero bytes for a
+   * fresh grant (32 bytes). */
+  priorAuthorityHash: Uint8Array;
+}
+
+/**
+ * Canonical borsh encoding of `GrantBody` — mirrors the Rust field order
+ * exactly, INCLUDING the trailing `prior_authority_hash`. Do not hand-roll it
+ * (GROK-EXP-07 / WRDF-0042).
+ */
+export function encodeGrantBody(f: GrantBodyFields): Uint8Array {
+  require32(f.sessionPubkey, "sessionPubkey");
+  require32(f.priorAuthorityHash, "priorAuthorityHash");
+  if (f.label.length !== 16) throw new Error("label must be 16 bytes");
+  if (f.caps.length !== f.lifetimeCap.length)
+    throw new Error("caps and lifetimeCap must be the same length");
+  if (f.kind < 0 || f.kind > 0xff) throw new Error("kind must be a u8");
+  if (f.opsMask < 0 || f.opsMask > 0xffff) throw new Error("opsMask must be a u16");
+  if (f.programAllowlistId < 0 || f.programAllowlistId > 0xffff)
+    throw new Error("programAllowlistId must be a u16");
+  assertU64(f.expiryTs < 0n ? 0n : f.expiryTs, "expiryTs"); // i64: range-check magnitude
+  if (f.expiryTs < -(2n ** 63n) || f.expiryTs >= 2n ** 63n)
+    throw new Error("expiryTs out of i64 range");
+  // borsh: i64 | pubkey | u8 | u16 | Vec<MintCap> | Vec<u64> | u16 | [u8;16] | [u8;32]
+  const capBytes = 4 + f.caps.length * (32 + 8 + 8 + 8);
+  const lifeBytes = 4 + f.lifetimeCap.length * 8;
+  const body = new Uint8Array(8 + 32 + 1 + 2 + capBytes + lifeBytes + 2 + 16 + 32);
+  const dv = new DataView(body.buffer);
+  let o = 0;
+  dv.setBigInt64(o, f.expiryTs, true); o += 8;
+  body.set(f.sessionPubkey, o); o += 32;
+  body[o] = f.kind; o += 1;
+  dv.setUint16(o, f.opsMask, true); o += 2;
+  dv.setUint32(o, f.caps.length, true); o += 4;
+  for (const c of f.caps) {
+    require32(c.mint, "cap.mint");
+    assertU64(c.perTx, "cap.perTx"); assertU64(c.perDay, "cap.perDay"); assertU64(c.per30d, "cap.per30d");
+    body.set(c.mint, o); o += 32;
+    dv.setBigUint64(o, c.perTx, true); o += 8;
+    dv.setBigUint64(o, c.perDay, true); o += 8;
+    dv.setBigUint64(o, c.per30d, true); o += 8;
+  }
+  dv.setUint32(o, f.lifetimeCap.length, true); o += 4;
+  for (const l of f.lifetimeCap) { assertU64(l, "lifetimeCap[i]"); dv.setBigUint64(o, l, true); o += 8; }
+  dv.setUint16(o, f.programAllowlistId, true); o += 2;
+  body.set(f.label, o); o += 16;
+  body.set(f.priorAuthorityHash, o);
+  return body;
+}
 /**
  * `op_type` byte for the root path of session revocation (Task 5); hashed
  * over `borsh(RevokeBody)`. The session-self path carries no root assertion
@@ -254,8 +344,10 @@ export function encodeExecuteBody(
  * `op_type` byte for the ROOT path of `swap` (Phase 1B Task 6); hashed over
  * `borsh(SwapBody)` — `in_mint: [u8;32]`, `out_mint: [u8;32]`, `max_in: u64 LE`,
  * `min_out: u64 LE`, `discriminator: [u8;8]` (the 8-byte Jupiter route
- * selector), `accounts_hash: [u8;32]` (the SAME logical-list construction
- * {@link OP_EXECUTE} binds). Rebuilt on-chain, so a bearer assertion cannot
+ * selector), `route_hash: [u8;32]` (`Keccak256` of the exact route bytes
+ * executed, WRDF-0058), then `accounts_hash: [u8;32]` (the SAME logical-list
+ * construction {@link OP_EXECUTE} binds). Rebuilt on-chain, so a bearer
+ * assertion cannot
  * substitute the route, the mints, the bound, or any account after signing.
  * Named `OP_SWAP_ACTION` in Rust to avoid colliding with the `ops_mask` BIT
  * `state::session::OP_SWAP` (1 << 2).

@@ -18,6 +18,7 @@
 mod common;
 
 use anchor_lang::{AnchorSerialize, Discriminator};
+use solana_sdk::program_pack::Pack;
 use common::passkey::{self, TestPasskey, FLAGS_UP_UV, TEST_ORIGIN};
 use common::token::{ata, set_mint, set_token_account, token_amount};
 use common::{
@@ -1547,6 +1548,181 @@ fn measure_staged_vs_inline() {
 }
 
 // ---------------------------------------------------------------------------
+// GROK-EXP-02 / -04 regressions (2026-08-22). Grok's `audit_repro_*` fixtures
+// asserted the VULNERABLE behaviour at 9a427aa (a successful drain / a
+// successful empty execute); inverted here to the defensive error codes per
+// the memo's instruction. No successful-drain fixture is kept.
+// ---------------------------------------------------------------------------
+
+fn set_mint_with_authority(svm: &mut LiteSVM, mint: &Pubkey, authority: &Pubkey, decimals: u8, supply: u64) {
+    use solana_sdk::program_option::COption;
+    use spl_token::state::Mint;
+    let m = Mint {
+        mint_authority: COption::Some(*authority),
+        supply,
+        decimals,
+        is_initialized: true,
+        freeze_authority: COption::None,
+    };
+    let mut data = vec![0u8; Mint::LEN];
+    m.pack_into_slice(&mut data);
+    svm.set_account(
+        *mint,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Mint::LEN),
+            data,
+            owner: SPL_TOKEN_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (mint with authority)");
+}
+
+/// GROK-EXP-02: a root `execute` MintTo of a mint the PDA controls, to a
+/// stranger ATA, is now on the fixed deny-list — refused before any supply
+/// change, on the root path that skips the registry.
+#[test]
+fn grok_exp02_root_mint_to_stranger_is_deny_listed() {
+    let (mut svm, payer, pk, account, _registry, _mut, _vault_ata) = live();
+    let mint = Pubkey::new_from_array([0x44; 32]);
+    set_mint_with_authority(&mut svm, &mint, &account, 6, 1_000);
+    let attacker = Pubkey::new_unique();
+    let dest = ata(&attacker, &mint);
+    set_token_account(&mut svm, &dest, &mint, &attacker, 0);
+
+    let submitter = Keypair::new();
+    let remaining = vec![
+        AccountMeta::new(mint, false),                  // logical 2 mint
+        AccountMeta::new(dest, false),                  // logical 3 dest
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false), // logical 4 program
+    ];
+    let mut mint_to = vec![7u8]; // TokenInstruction::MintTo
+    mint_to.extend_from_slice(&42_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        4,
+        &[(2, FLAG_WRITABLE), (3, FLAG_WRITABLE), (0, FLAG_SIGNER), (4, 0)],
+        &mint_to,
+    )]);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args);
+
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::DENY_LISTED);
+    assert_eq!(token_amount(&svm, &dest), 0, "no tokens minted");
+    let m = spl_token::state::Mint::unpack(&svm.get_account(&mint).unwrap().data).unwrap();
+    assert_eq!(m.supply, 1_000, "supply unchanged");
+}
+
+/// GROK-EXP-04: an empty session `execute` (allowlist 0, payload `[0]`) is now
+/// refused by the payload gate before the list-id / registry check is even
+/// reached — `PayloadInvalid`, not a silent success.
+#[test]
+fn grok_exp04_empty_payload_list0_is_rejected() {
+    let (mut svm, payer, _pk, account, _registry, _mut, _vault_ata) = live();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 0);
+    let args = ExecuteArgs { root: None, payload: Some(vec![0]) };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, None, None, None, &[], &args);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::PAYLOAD_INVALID);
+}
+
+/// GROK-EXP-04, staged half: a finalized 1-byte `[0]` stage must NOT be
+/// consume-closed by an empty execute — the reject happens before consume, so
+/// the Stage survives for a legitimate `stage_close`.
+#[test]
+fn grok_exp04_empty_staged_payload_does_not_consume_stage() {
+    let (mut svm, payer, pk, account, _registry, _mut, _vault_ata) = live();
+    let submitter = Keypair::new();
+    let (stage, creator) = stage_payload(&mut svm, &payer, &account, &[0u8]);
+    let args_shape = ExecuteArgs { root: None, payload: None };
+    let (_p, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, Some(stage), None, Some(creator), &[], &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&[0u8], &logical));
+    let args = ExecuteArgs { root: Some(root), payload: None };
+    let (ix, _l) =
+        execute_ix(submitter.pubkey(), account, None, true, Some(stage), None, Some(creator), &[], &args);
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::PAYLOAD_INVALID);
+    assert!(
+        svm.get_account(&stage).map(|a| a.lamports > 0).unwrap_or(false),
+        "the stage must survive an empty execute"
+    );
+}
+
+/// Negative control kept from Grok's memo: the session path denies MintTo too.
+/// It now fails on the deny-list (which runs before the registry), earlier than
+/// the `RegistryDenied` the memo observed — a strictly stronger verdict.
+#[test]
+fn grok_exp02_session_mint_to_is_deny_listed() {
+    let (mut svm, payer, _pk, account, registry, _mut, _vault_ata) = live();
+    let mint = Pubkey::new_from_array([0x44; 32]);
+    set_mint_with_authority(&mut svm, &mint, &account, 6, 1_000);
+    let attacker = Pubkey::new_unique();
+    let dest = ata(&attacker, &mint);
+    set_token_account(&mut svm, &dest, &mint, &attacker, 0);
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let remaining = vec![
+        AccountMeta::new(mint, false),
+        AccountMeta::new(dest, false),
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false),
+    ];
+    let mut mint_to = vec![7u8];
+    mint_to.extend_from_slice(&42_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        4,
+        &[(2, FLAG_WRITABLE), (3, FLAG_WRITABLE), (0, FLAG_SIGNER), (4, 0)],
+        &mint_to,
+    )]);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _l) = execute_ix(
+        session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args,
+    );
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::DENY_LISTED);
+}
+
+/// GROK-EXP-03 through generic root `execute`: a writable Stake-owned remaining
+/// account is refused before any CPI — `UnsupportedAccountKind` — even though
+/// no inner instruction targets it. Proves the conservation owner-reject
+/// without needing a live Stake CPI.
+#[test]
+fn grok_exp03_writable_stake_owned_remaining_rejected() {
+    let (mut svm, payer, pk, account, _registry, mutator_id, _vault_ata) = live();
+    let stake_acct = Pubkey::new_unique();
+    svm.set_account(
+        stake_acct,
+        Account {
+            lamports: 10_000_000_000,
+            data: vec![0u8; 200],
+            owner: warden::constants::STAKE_PROGRAM_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .unwrap();
+    let submitter = Keypair::new();
+    // One honest mutator noop, plus the writable stake account riding in
+    // remaining (not referenced by the payload — the pre-CPI snapshot scan
+    // still refuses it).
+    let remaining = vec![
+        AccountMeta::new(stake_acct, false),           // logical 2 (writable, stake-owned)
+        AccountMeta::new_readonly(mutator_id, false),  // logical 3 mutator
+    ];
+    let inner: [(u8, u8); 0] = [];
+    let data = mutator::instruction_discriminator("noop").to_vec();
+    let payload = encode_payload(&[(3, &inner, &data)]);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::UNSUPPORTED_ACCOUNT_KIND);
+}
+
+// ---------------------------------------------------------------------------
 // Error codes (mirror of tests/root_verify.rs::err, only the ones used here)
 // ---------------------------------------------------------------------------
 mod err {
@@ -1565,4 +1741,5 @@ mod err {
     pub const TOO_MANY_EXECUTE_ACCOUNTS: u32 = 6056;
     pub const JUPITER_VIA_SWAP_ONLY: u32 = 6058;
     pub const DUPLICATE_LOGICAL_ACCOUNT: u32 = 6059;
+    pub const UNSUPPORTED_ACCOUNT_KIND: u32 = 6040;
 }

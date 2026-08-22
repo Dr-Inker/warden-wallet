@@ -31,6 +31,7 @@ use solana_sdk::{
     transaction::{Transaction, TransactionError},
 };
 use anchor_lang::{AnchorSerialize, Discriminator};
+use solana_sdk::program_pack::Pack;
 use warden::instructions::create_account::MIN_TIMELOCK_SECS;
 use warden::instructions::swap::{SwapArgs, SwapBody, SWAP_VARIANT_ROUTE, SWAP_VARIANT_SHARED};
 use warden::root_verify::transcript::{action_hash, b64url_no_pad, transcript_hash, OP_SWAP_ACTION};
@@ -143,6 +144,8 @@ impl Live {
             pool_out_ata: self.pool_out,
             pool_in_sink: self.pool_in,
             extra,
+            extra2: None,
+            opt_dest: None,
         }
     }
 }
@@ -320,18 +323,111 @@ fn session_swap_args(_l: &Live, variant: u8, in_amount: u64, quoted_out: u64, ma
     SwapArgs { root: None, variant, in_mint: in_mint(), out_mint: out_mint(), max_in, min_out, route_data: Some(data) }
 }
 
+/// GROK-EXP-01 (2026-08-22): the treasury fee floor is the 85 bps RATE, not
+/// "> 0". The honest path now pays `floor(net_out_gain * 85 / 10_000)` and is
+/// accepted; a route paying only 1 base unit (the mock's `misbehave = 5`,
+/// which is the exact "existence-only fee" shape the memo reproduced) is
+/// rejected `SwapFeeNotTaken`.
 #[test]
-fn session_route_swap_honest() {
+fn grok_exp01_honest_pays_85_bps_and_one_unit_fee_is_rejected() {
+    // Honest: fee == floor(900_000 * 85 / 10_000) == 7_650, accepted.
+    let mut l = live();
+    let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
+    let ra = l.route_accounts(l.treasury_ata, None);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let (ix, _) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
+    expect_ok(&mut l.svm, &[&l.payer, &kp], &[ix]);
+    assert_eq!(token_amount(&l.svm, &l.treasury_ata), 7_650, "honest fee is 85 bps of the out gain");
+
+    // Existence-only fee (1 unit): rejected.
+    let mut l = live();
+    let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
+    let ra = l.route_accounts(l.treasury_ata, None);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 5);
+    let (ix, _) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
+    expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_FEE_NOT_TAKEN);
+}
+
+/// GROK-EXP-05 (2026-08-22): the `route` variant (which forwards the vault PDA
+/// signer into every AMM hop) is refused on the SESSION path; the user must
+/// sign a root ceremony (which binds route_hash + accounts_hash) for it. The
+/// weaker `shared_accounts_route` — Jupiter signs the hops with its own
+/// programAuthority — stays open (covered by `session_shared_route_swap_honest`).
+#[test]
+fn grok_exp05_session_route_variant_is_rejected() {
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
     let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
     let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
-    let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
-    expect_ok(&mut l.svm, &[&l.payer, &kp], &[ix]);
-    assert_eq!(token_amount(&l.svm, &l.vault_in), VAULT_IN - 1_000_000, "in taken");
-    assert_eq!(token_amount(&l.svm, &l.vault_out), 900_000, "min_out credited");
-    assert!(token_amount(&l.svm, &l.treasury_ata) >= 1, "fee reached treasury");
+    let (ix, _) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
+    expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_ROUTE_VARIANT_SESSION_DENIED);
+}
+
+/// GROK-EXP-03 through `swap`: a writable Stake-owned account riding in the
+/// route's remaining list is refused before the Jupiter CPI, on the session
+/// path (shared variant), the same conservation owner-reject `execute` uses.
+#[test]
+fn grok_exp03_writable_stake_owned_in_swap_route_rejected() {
+    let mut l = live();
+    let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
+    let stake_acct = Pubkey::new_unique();
+    l.svm.set_account(stake_acct, Account {
+        lamports: 10_000_000_000, data: vec![0u8; 200],
+        owner: warden::constants::STAKE_PROGRAM_ID, executable: false, rent_epoch: 0,
+    }).unwrap();
+    let ra = l.route_accounts(l.treasury_ata, Some(stake_acct)); // extra → remaining, writable
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let (ix, _) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
+    expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::UNSUPPORTED_ACCOUNT_KIND);
+}
+
+/// GROK-EXP-05 / -02 nested: a Jupiter hop that `MintTo`s a mint the vault
+/// controls (the mock's `misbehave = 6`, MintTo under the forwarded PDA
+/// signer) is caught by conservation's frozen-`supply` rule — even on the root
+/// path where `route` is allowed and the bytes are user-signed. The mint rides
+/// in the route's remaining as a writable account; its supply jumps; the whole
+/// transaction reverts.
+#[test]
+fn grok_exp05_nested_mint_to_of_vault_controlled_mint_rejected() {
+    let mut l = live();
+    let submitter = Keypair::new();
+    // A mint whose mint_authority is the vault PDA, plus an attacker ATA of it.
+    let evil_mint = Pubkey::new_from_array([0x77; 32]);
+    set_mint_with_authority(&mut l.svm, &evil_mint, &l.account, 6, 1);
+    let attacker = Pubkey::new_unique();
+    let evil_dest = ata(&attacker, &evil_mint);
+    set_token_account(&mut l.svm, &evil_dest, &evil_mint, &attacker, 0);
+
+    let mut ra = l.route_accounts(l.treasury_ata, Some(evil_mint)); // remaining[2] = mint
+    ra.extra2 = Some(evil_dest);                                    // remaining[3] = dest
+    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
+    let disc = jup::instruction_discriminator("route");
+    let route_data = jup::route_data(1_000_000, 900_000, 6); // misbehave 6 = nested MintTo
+    let shape = SwapArgs { root: None, variant: SWAP_VARIANT_ROUTE, in_mint: in_mint(), out_mint: out_mint(), max_in: 1_000_000, min_out: 900_000, route_data: Some(route_data.clone()) };
+    let (_p, logical) = swap_ix(submitter.pubkey(), l.account, None, true, None, l.registry, None, &remaining, &shape);
+    let (precompile, root) = ceremony(&l.svm, &l.account, &l.pk, swap_action_hash(disc, in_mint(), out_mint(), 1_000_000, 900_000, &route_data, &logical));
+    let args = SwapArgs { root: Some(root), ..shape };
+    let (ix, _l2) = swap_ix(submitter.pubkey(), l.account, None, true, None, l.registry, None, &remaining, &args);
+    expect_reject(&mut l.svm, &[&l.payer, &submitter], &[precompile, ix], 1, err::CONSERVATION_VIOLATED);
+    // Nothing minted; supply unchanged.
+    let m = spl_token::state::Mint::unpack(&l.svm.get_account(&evil_mint).unwrap().data).unwrap();
+    assert_eq!(m.supply, 1);
+    assert_eq!(token_amount(&l.svm, &evil_dest), 0);
+}
+
+/// Plant a mint whose `mint_authority` is `authority`.
+fn set_mint_with_authority(svm: &mut LiteSVM, mint: &Pubkey, authority: &Pubkey, decimals: u8, supply: u64) {
+    use solana_sdk::program_option::COption;
+    use solana_sdk::program_pack::Pack;
+    use spl_token::state::Mint;
+    let m = Mint { mint_authority: COption::Some(*authority), supply, decimals, is_initialized: true, freeze_authority: COption::None };
+    let mut data = vec![0u8; Mint::LEN];
+    m.pack_into_slice(&mut data);
+    svm.set_account(*mint, Account { lamports: svm.minimum_balance_for_rent_exemption(Mint::LEN), data, owner: common::token::token_program_id(), executable: false, rent_epoch: 0 }).unwrap();
 }
 
 #[test]
@@ -353,8 +449,8 @@ fn swap_min_out_not_met_rejected() {
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 1);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 1);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_MIN_OUT_NOT_MET);
 }
@@ -370,8 +466,8 @@ fn swap_second_writable_vault_source_rejected() {
     set_token_account(&mut l.svm, &second, &in_mint(), &l.account, 1_000);
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, Some(second));
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 2);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 2);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_EXTRA_WRITABLE_VAULT);
 }
@@ -386,8 +482,8 @@ fn swap_second_writable_vault_out_rejected() {
     set_token_account(&mut l.svm, &second_out, &out_mint(), &l.account, 500_000);
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, Some(second_out));
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_EXTRA_WRITABLE_VAULT);
 }
@@ -399,8 +495,8 @@ fn swap_delegate_set_rejected() {
     let delegate = Pubkey::new_unique();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, Some(delegate));
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 4);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 4);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::CONSERVATION_VIOLATED);
 }
@@ -414,8 +510,8 @@ fn swap_fee_to_non_treasury_rejected() {
     set_token_account(&mut l.svm, &stranger_fee, &out_mint(), &stranger_owner, 0);
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(stranger_fee, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_FEE_ACCOUNT_NOT_TREASURY);
 }
@@ -426,11 +522,12 @@ fn swap_bad_platform_fee_bps_rejected() {
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    // Build data with platform_fee_bps = 0 (last byte).
-    let mut data = jup::route_data(1_000_000, 900_000, 0);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    // Build data with platform_fee_bps = 0 (last byte). Shared-variant disc so
+    // the discriminator check passes and the fee-bps check is what fires.
+    let mut data = jup::shared_route_data(1_000_000, 900_000, 0);
     *data.last_mut().unwrap() = 0u8;
-    let args = SwapArgs { root: None, variant: SWAP_VARIANT_ROUTE, in_mint: in_mint(), out_mint: out_mint(), max_in: 1_000_000, min_out: 900_000, route_data: Some(data) };
+    let args = SwapArgs { root: None, variant: SWAP_VARIANT_SHARED, in_mint: in_mint(), out_mint: out_mint(), max_in: 1_000_000, min_out: 900_000, route_data: Some(data) };
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_PLATFORM_FEE_BPS);
 }
@@ -440,10 +537,10 @@ fn swap_bad_discriminator_rejected() {
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
     let mut data = jup::route_data(1_000_000, 900_000, 0);
     data[0] ^= 0xFF; // corrupt the discriminator
-    let args = SwapArgs { root: None, variant: SWAP_VARIANT_ROUTE, in_mint: in_mint(), out_mint: out_mint(), max_in: 1_000_000, min_out: 900_000, route_data: Some(data) };
+    let args = SwapArgs { root: None, variant: SWAP_VARIANT_SHARED, in_mint: in_mint(), out_mint: out_mint(), max_in: 1_000_000, min_out: 900_000, route_data: Some(data) };
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_BAD_DISCRIMINATOR);
 }
@@ -458,8 +555,8 @@ fn swap_source_not_vault_rejected() {
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let mut ra = l.route_accounts(l.treasury_ata, None);
     ra.user_source_ata = bad_source;
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_SOURCE_NOT_VAULT_ATA);
 }
@@ -475,8 +572,8 @@ fn swap_noncanonical_vault_source_rejected() {
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let mut ra = l.route_accounts(l.treasury_ata, None);
     ra.user_source_ata = noncanonical;
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_SOURCE_NOT_VAULT_ATA);
 }
@@ -487,9 +584,9 @@ fn swap_declared_max_in_over_cap_rejected() {
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
     let over = IN_PER_TX + 1;
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, over, 900_000, over, 900_000, 0);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, over, 900_000, over, 900_000, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::CAP_EXCEEDED);
 }
@@ -500,9 +597,9 @@ fn swap_declared_in_over_max_in_rejected() {
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
     // route declares in_amount 1_000_000 but max_in is 500_000.
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 500_000, 900_000, 0);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 500_000, 900_000, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_MAX_IN_EXCEEDED);
 }
@@ -529,8 +626,8 @@ fn swap_out_mint_not_allowed_rejected() {
     l.svm.set_account(pda, Account { lamports: l.svm.minimum_balance_for_rent_exemption(data.len()), data, owner: common::program_id(), executable: false, rent_epoch: 0 }).unwrap();
 
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
     let (ix, _lg) = swap_ix(kp.pubkey(), l.account, Some(pda), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_OUT_MINT_NOT_ALLOWED);
 }
@@ -540,8 +637,8 @@ fn swap_without_op_swap_rejected() {
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, warden::state::OP_TRANSFER);
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::OP_NOT_ALLOWED);
 }
@@ -551,8 +648,8 @@ fn session_swap_tx_fits_1232_bytes() {
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     let tx = Transaction::new(&[&l.payer, &kp], Message::new(&[ix], Some(&l.payer.pubkey())), l.svm.latest_blockhash());
     let size = bincode::serialize(&tx).unwrap().len();
@@ -607,9 +704,9 @@ fn swap_native_in_mint_rejected() {
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
     let args = SwapArgs {
-        root: None, variant: SWAP_VARIANT_ROUTE,
+        root: None, variant: SWAP_VARIANT_SHARED,
         in_mint: warden::constants::NATIVE_MINT, out_mint: out_mint(),
         max_in: 1_000_000, min_out: 900_000,
         route_data: Some(jup::route_data(1_000_000, 900_000, 0)),
@@ -629,9 +726,9 @@ fn swap_min_out_boundary_rejected() {
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
     // Pool credits 900_000 to the dest; ask for min_out 900_001 (net gain is one short).
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_001, 0);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_001, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_MIN_OUT_NOT_MET);
 }
@@ -662,8 +759,8 @@ fn swap_lifetime_headroom_checked_before_cpi() {
     l.svm.set_account(pda, Account { lamports: l.svm.minimum_balance_for_rent_exemption(data.len()), data, owner: common::program_id(), executable: false, rent_epoch: 0 }).unwrap();
 
     let ra = l.route_accounts(l.treasury_ata, None);
-    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_ROUTE, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
     let (ix, _lg) = swap_ix(kp.pubkey(), l.account, Some(pda), false, None, l.registry, None, &remaining, &args);
     // WRDF-0067: prove the check is PRE-CPI — the failure must carry CapExceeded
     // AND the mock must NOT have been invoked (its "Instruction: Route" log is
@@ -702,4 +799,7 @@ mod err {
     pub const SWAP_OUT_MINT_NOT_ALLOWED: u32 = 6070;
     pub const SWAP_NATIVE_UNSUPPORTED: u32 = 6072;
     pub const SWAP_EXTRA_WRITABLE_VAULT: u32 = 6074;
+    pub const SWAP_FEE_NOT_TAKEN: u32 = 6073;
+    pub const SWAP_ROUTE_VARIANT_SESSION_DENIED: u32 = 6075;
+    pub const UNSUPPORTED_ACCOUNT_KIND: u32 = 6040;
 }

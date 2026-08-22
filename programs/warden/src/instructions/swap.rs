@@ -159,6 +159,24 @@ pub(crate) fn handler<'info>(
         args.variant == SWAP_VARIANT_ROUTE || args.variant == SWAP_VARIANT_SHARED,
         WardenError::SwapBadDiscriminator
     );
+    // GROK-EXP-05 (2026-08-22): on the SESSION path only `shared_accounts_route`
+    // is accepted. Jupiter's `route` forwards `userTransferAuthority` — the
+    // vault PDA, which this handler signs for — as the signer of every AMM hop
+    // it CPIs, and the session path binds neither the route bytes nor the
+    // account list (root binds both via `route_hash` + `accounts_hash`, so a
+    // root `route` is what the user signed). Conservation bounds what a hop
+    // can do with vault TOKEN accounts and (since GROK-EXP-03/-02) refuses
+    // writable Stake/Vote/ProgramData accounts and freezes vault-controlled
+    // mints — but it cannot enumerate every program-specific authority the
+    // PDA might hold, so a bearer session key must not be able to point the
+    // PDA signer at arbitrary hop programs. `shared_accounts_route` signs the
+    // AMM hops with Jupiter's own `programAuthority`; the vault signs only the
+    // transfer out of its pinned source ATA. A route the API only offers as
+    // `route` needs a root ceremony in 1B.
+    require!(
+        args.root.is_some() || args.variant == SWAP_VARIANT_SHARED,
+        WardenError::SwapRouteVariantSessionDenied
+    );
     // WRDF-0061: native (wrapped-SOL) swaps are NOT supported in 1B. A native
     // token account's value is its lamports, not its `amount` cache (WRDF-0011),
     // and the merged native/SOL accounting a swap would need — bounded by
@@ -334,6 +352,10 @@ pub(crate) fn handler<'info>(
     // ---- BEFORE snapshot + position validation ---------------------------
     let before = conservation::snapshot(remaining, &account_key)?;
     let pda_lamports_before = sa_info.lamports();
+    // GROK-EXP-03 / -05: writable Stake / Vote / ProgramData accounts in the
+    // route list are refused BEFORE Jupiter ever receives the PDA signer (and
+    // again in `compare_and_account`).
+    conservation::reject_unsupported_writable_owners(&before)?;
 
     // Source: the CANONICAL vault ATA of in_mint (WRDF-0070). Owner==PDA +
     // mint alone would accept any vault-owned in_mint account (an escrow /
@@ -361,6 +383,18 @@ pub(crate) fn handler<'info>(
         canonical_ata(&account_key, &dst_snap.owner_program, &args.out_mint),
         WardenError::SwapDestNotVaultAta
     );
+    // GROK-EXP-05 item 3: `route`'s OPTIONAL `destinationTokenAccount` (index
+    // 4; the program id is Jupiter's "None" placeholder) is where Jupiter pays
+    // the output when it is present. A WRITABLE account in that slot must be
+    // the pinned vault destination; read-only cannot be credited and is
+    // ignored. (`shared_accounts_route` has no optional destination — index 6
+    // IS the destination and is pinned above.)
+    if args.variant == SWAP_VARIANT_ROUTE {
+        let opt_dest = account_at(4)?;
+        if opt_dest.is_writable {
+            require_keys_eq!(*opt_dest.key, dst_key, WardenError::SwapDestNotVaultAta);
+        }
+    }
     // Platform fee: the CANONICAL treasury ATA of in_mint or out_mint.
     let fee = before.get(fee_idx).ok_or(WardenError::SwapFeeAccountNotTreasury)?;
     let fee_tok = fee.token.as_ref().ok_or(WardenError::SwapFeeAccountNotTreasury)?;
@@ -460,9 +494,30 @@ pub(crate) fn handler<'info>(
     let _ = dst_before_amount; // superseded by the net-gain check
     let _ = dst_key;
 
-    // WRDF-0059: the treasury fee must actually have been paid (balance up).
+    // WRDF-0059: the treasury fee must actually have been paid (balance up)…
     let fee_after = find_token(&after, &fee_key).ok_or(WardenError::SwapFeeNotTaken)?;
-    require!(fee_after.amount > fee_before, WardenError::SwapFeeNotTaken);
+    let fee_delta = fee_after.amount.checked_sub(fee_before).ok_or(WardenError::SwapFeeNotTaken)?;
+    require!(fee_delta >= 1, WardenError::SwapFeeNotTaken);
+    // …and GROK-EXP-01 (2026-08-22): paid at the 85 bps RATE, not merely
+    // "some". "Balance increased" accepted 1 base unit as proof of an 85 bps
+    // fee, so a route front-parsed at `platform_fee_bps = 0` under a suffixed
+    // tail claiming 85 (WRDF-0059) kept the protocol's fee. The realised floor
+    // is `floor(base × 85 / 10_000)` over the realised leg the fee account is
+    // denominated in: the ACTUAL input when the fee is in `in_mint`, the NET
+    // out-mint gain otherwise. Floor, not ceil, because Jupiter computes its
+    // fee by integer division of the gross leg and (for an out-mint fee) the
+    // net gain the vault sees is already gross minus fee — so this floor is
+    // strictly ≤ what an honest 85 bps route pays and never rejects one,
+    // while a 0-bps route can clear it only by gifting the treasury the fee
+    // from somewhere else, which is the fee paid. This does NOT replace the
+    // byte-exact `route_plan` parse still owed before mainnet (WRDF-0031/
+    // 0059); it is the realised-fee bound those findings assumed was here.
+    let fee_base: u64 = if fee_mint == args.in_mint {
+        actual_in
+    } else {
+        u64::try_from(net_out_gain).map_err(|_| WardenError::SwapUnexpectedOutflow)?
+    };
+    require!(fee_delta >= platform_fee_floor(fee_base)?, WardenError::SwapFeeNotTaken);
 
     // The ONLY net vault outflow may be `in_mint` (≤ max_in). Any other mint
     // leaving — or any raw SOL (native is rejected up front) — is value the
@@ -502,6 +557,16 @@ pub(crate) fn handler<'info>(
     }
 
     Ok(())
+}
+
+/// `floor(base × SWAP_PLATFORM_FEE_BPS / 10_000)` — the smallest treasury fee
+/// an honest 85 bps route can have paid on a leg of `base` units (GROK-EXP-01).
+/// Checked math only; `checked_div` by a non-zero constant cannot fail but is
+/// written checked so the arithmetic lint stays silent without a proof comment.
+pub(crate) fn platform_fee_floor(base: u64) -> Result<u64> {
+    base.checked_mul(u64::from(SWAP_PLATFORM_FEE_BPS))
+        .and_then(|x| x.checked_div(10_000))
+        .ok_or_else(|| WardenError::Overflow.into())
 }
 
 /// The `TokenSnap` at `remaining[idx]`, required to be a vault-owned token
@@ -568,6 +633,19 @@ mod tests {
         assert_eq!(SWAP_TARGET_PROGRAM, crate::constants::TEST_JUP_MOCK_ID);
         #[cfg(not(feature = "test-jup"))]
         assert_eq!(SWAP_TARGET_PROGRAM, crate::constants::JUPITER_V6_ID);
+    }
+
+    /// GROK-EXP-01: the fee floor is floor(base × 85 / 10_000), checked.
+    #[test]
+    fn platform_fee_floor_is_floor_of_85_bps() {
+        assert_eq!(platform_fee_floor(0).unwrap(), 0);
+        assert_eq!(platform_fee_floor(117).unwrap(), 0); // 117 × 85 = 9945 < 10_000
+        assert_eq!(platform_fee_floor(118).unwrap(), 1); // 118 × 85 = 10_030
+        assert_eq!(platform_fee_floor(1_000_000).unwrap(), 8_500);
+        assert_eq!(platform_fee_floor(900_000).unwrap(), 7_650);
+        assert_eq!(platform_fee_floor(999_999).unwrap(), 8_499); // 84_999.915 → floor
+        assert_eq!(platform_fee_floor(u64::MAX / 85).unwrap(), (u64::MAX / 85) * 85 / 10_000);
+        assert!(platform_fee_floor(u64::MAX).is_err(), "overflow is an error, never a wrap");
     }
 
     #[test]
