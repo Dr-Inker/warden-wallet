@@ -381,6 +381,40 @@ export function validateScorecardProvenance(r: Record<string, unknown>, git: Git
   return errs;
 }
 
+// The allowed axes (from .codex/schemas/warden-findings.json), pinned here so the standing
+// validator rejects an out-of-enum value rather than merely type-checking it (WRDF-0101).
+const TRUTH_STATUSES = new Set(["POTENTIAL", "CONFIRMED", "REFUTED"]);
+const EVIDENCE_TYPES = new Set(["red_test", "static_trace", "formal_counterexample", "config_attestation", "primary_source", "none"]);
+
+/**
+ * Validate ONE scorecard row's STANDING (truth_status / ruling / adjudication metadata), a
+ * separate axis from provenance. Returns violation strings (empty = ok). A CONFIRMED standing
+ * is a human promotion, so it must carry the adjudication metadata and real evidence the
+ * ledger contract requires; claimed_truth_status must remain a valid entry-time enum value,
+ * never an arbitrary/tampered string (WRDF-0100/0101).
+ */
+export function validateScorecardStanding(r: Record<string, unknown>): string[] {
+  const id = String(r.finding_id ?? "?");
+  const errs: string[] = [];
+  const ts = r.truth_status, cts = r.claimed_truth_status;
+  if (ts !== undefined && !TRUTH_STATUSES.has(ts as string)) errs.push(`${id}: truth_status ${JSON.stringify(ts)} is not a valid standing`);
+  if (cts !== undefined && cts !== null && !TRUTH_STATUSES.has(cts as string)) errs.push(`${id}: claimed_truth_status ${JSON.stringify(cts)} is not a valid entry-time standing`);
+  if (r.remediation_verified === true) {
+    if (ts !== "CONFIRMED") errs.push(`${id}: remediation_verified but truth_status=${JSON.stringify(ts)} (a verified remediation promotes to CONFIRMED)`);
+    if (r.ruling !== "adopted") errs.push(`${id}: remediation_verified but ruling=${JSON.stringify(r.ruling)} (must be adopted)`);
+    if (typeof cts !== "string" || !TRUTH_STATUSES.has(cts)) errs.push(`${id}: remediation_verified but claimed_truth_status not a preserved enum value`);
+  }
+  if (ts === "CONFIRMED") {
+    if (r.ruling !== "adopted") errs.push(`${id}: CONFIRMED but ruling=${JSON.stringify(r.ruling)} — the promotion authority is a human adjudication`);
+    if (typeof r.ruled_by !== "string" || (r.ruled_by as string).length === 0) errs.push(`${id}: CONFIRMED but no ruled_by adjudicator`);
+    if (!EVIDENCE_TYPES.has(r.evidence_type as string) || r.evidence_type === "none") {
+      errs.push(`${id}: CONFIRMED but evidence_type=${JSON.stringify(r.evidence_type)} (a confirmed standing needs a real, non-none evidence type)`);
+    }
+  }
+  if (ts === "REFUTED" && r.remediation_verified === true) errs.push(`${id}: REFUTED yet remediation_verified (nothing to remediate)`);
+  return errs;
+}
+
 describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
   const cardRows = readFileSync(SCORECARD, "utf8")
     .split("\n")
@@ -419,22 +453,8 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
     expect(all, all.join("\n")).toEqual([]);
   }, 30_000);
 
-  // WRDF-0100: a row's CURRENT standing must be internally consistent. A human adjudication
-  // that records remediation_verified promotes truth_status POTENTIAL → CONFIRMED, while
-  // claimed_truth_status preserves the model's entry-time claim. A verified-remediation row
-  // left at POTENTIAL exposes two incompatible standings for the same finding.
-  it("keeps truth_status internally consistent: a verified remediation is CONFIRMED, ruling=adopted, and preserves claimed_truth_status", () => {
-    const bad: string[] = [];
-    for (const r of cardRows) {
-      const id = String(r.finding_id ?? "?");
-      if (r.remediation_verified === true) {
-        if (r.truth_status !== "CONFIRMED") bad.push(`${id}: remediation_verified but truth_status=${r.truth_status} (must be CONFIRMED)`);
-        if (r.ruling !== "adopted") bad.push(`${id}: remediation_verified but ruling=${r.ruling} (must be adopted)`);
-        if (typeof r.claimed_truth_status !== "string") bad.push(`${id}: remediation_verified but claimed_truth_status not preserved`);
-      }
-      // A REFUTED claim can never carry a remediation (nothing to remediate).
-      if (r.truth_status === "REFUTED" && r.remediation_verified === true) bad.push(`${id}: REFUTED yet remediation_verified`);
-    }
+  it("every committed row has an internally-consistent standing (WRDF-0100/0101)", () => {
+    const bad = cardRows.flatMap((r) => validateScorecardStanding(r));
     expect(bad, bad.join("\n")).toEqual([]);
   });
 
@@ -476,5 +496,45 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
   });
   it("accepts a well-formed remediation row", () => {
     expect(validateScorecardProvenance(row({}), stub({}))).toEqual([]);
+  });
+});
+
+describe("scorecard STANDING validator (WRDF-0100/0101) — adversarial mutations", () => {
+  // A well-formed CONFIRMED + verified-remediation row (the standing the ledger promotes to).
+  const good = (): Record<string, unknown> => ({
+    finding_id: "WRDF-STAND",
+    truth_status: "CONFIRMED",
+    claimed_truth_status: "POTENTIAL",
+    ruling: "adopted",
+    ruled_by: "claude-fable-5",
+    evidence_type: "static_trace",
+    remediation_verified: true,
+  });
+
+  it("accepts a well-formed CONFIRMED / verified-remediation row", () => {
+    expect(validateScorecardStanding(good())).toEqual([]);
+  });
+
+  // The three tampers WRDF-0101 showed the type-only check missed.
+  it("REJECTS a tampered claimed_truth_status (not a valid entry-time enum)", () => {
+    expect(validateScorecardStanding({ ...good(), claimed_truth_status: "tampered" }).join()).toMatch(/claimed_truth_status/);
+  });
+  it("REJECTS a CONFIRMED row that lost its adjudicator (ruled_by=null)", () => {
+    expect(validateScorecardStanding({ ...good(), ruled_by: null }).join()).toMatch(/no ruled_by adjudicator/);
+  });
+  it("REJECTS a CONFIRMED row with evidence_type none", () => {
+    expect(validateScorecardStanding({ ...good(), evidence_type: "none" }).join()).toMatch(/evidence_type/);
+  });
+  it("REJECTS a verified remediation left at POTENTIAL", () => {
+    expect(validateScorecardStanding({ ...good(), truth_status: "POTENTIAL" }).join()).toMatch(/promotes to CONFIRMED/);
+  });
+  it("REJECTS a CONFIRMED row that is not adopted", () => {
+    expect(validateScorecardStanding({ ...good(), ruling: "disputed" }).join()).toMatch(/promotion authority/);
+  });
+  it("REJECTS a REFUTED row carrying a remediation", () => {
+    expect(validateScorecardStanding({ ...good(), truth_status: "REFUTED" }).join()).toMatch(/REFUTED/);
+  });
+  it("REJECTS an out-of-enum truth_status", () => {
+    expect(validateScorecardStanding({ ...good(), truth_status: "MAYBE" }).join()).toMatch(/not a valid standing/);
   });
 });
