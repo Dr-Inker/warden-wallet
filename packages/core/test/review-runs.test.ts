@@ -419,6 +419,25 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
     expect(all, all.join("\n")).toEqual([]);
   }, 30_000);
 
+  // WRDF-0100: a row's CURRENT standing must be internally consistent. A human adjudication
+  // that records remediation_verified promotes truth_status POTENTIAL → CONFIRMED, while
+  // claimed_truth_status preserves the model's entry-time claim. A verified-remediation row
+  // left at POTENTIAL exposes two incompatible standings for the same finding.
+  it("keeps truth_status internally consistent: a verified remediation is CONFIRMED, ruling=adopted, and preserves claimed_truth_status", () => {
+    const bad: string[] = [];
+    for (const r of cardRows) {
+      const id = String(r.finding_id ?? "?");
+      if (r.remediation_verified === true) {
+        if (r.truth_status !== "CONFIRMED") bad.push(`${id}: remediation_verified but truth_status=${r.truth_status} (must be CONFIRMED)`);
+        if (r.ruling !== "adopted") bad.push(`${id}: remediation_verified but ruling=${r.ruling} (must be adopted)`);
+        if (typeof r.claimed_truth_status !== "string") bad.push(`${id}: remediation_verified but claimed_truth_status not preserved`);
+      }
+      // A REFUTED claim can never carry a remediation (nothing to remediate).
+      if (r.truth_status === "REFUTED" && r.remediation_verified === true) bad.push(`${id}: REFUTED yet remediation_verified`);
+    }
+    expect(bad, bad.join("\n")).toEqual([]);
+  });
+
   const stub = (opts: { exists?: (s: string) => boolean; anc?: (a: string, b: string) => boolean; head?: string; shallow?: boolean }): GitProbe => ({
     head: opts.head ?? "h".repeat(40),
     commitExists: opts.exists ?? (() => true),
