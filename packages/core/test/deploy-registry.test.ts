@@ -215,11 +215,20 @@ describe("built @warden/core package ships + resolves the deploy IDL (WRDF-0098)
     const mod = await import(pathToFileURL(join(PKG, "dist", "deploy", "registry-config.js")).href);
     expect(() => mod.expectedRegistryConfig()).not.toThrow();
     expect(mod.expectedRegistryConfig()).toHaveLength(11);
+
+    // The publish tarball must carry BOTH IDLs: the pinned Jupiter IDL (under dist) and the
+    // canonical Warden IDL (WRDF-0099) — a `files` whitelist that drops either is a defect.
+    const packed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: PKG, stdio: ["pipe", "pipe", "pipe"] }).toString());
+    const tarballFiles: string[] = packed[0].files.map((f: { path: string }) => f.path);
+    expect(tarballFiles.some((f) => f.includes("dist/deploy/idl/jupiter-v6.idl.json")), "Jupiter IDL missing from tarball").toBe(true);
+    expect(tarballFiles.some((f) => f.includes("idl/warden.json")), "canonical Warden IDL missing from tarball").toBe(true);
+    expect(tarballFiles.some((f) => f.includes("dist/index.js"))).toBe(true);
   }, 120_000);
 
-  it("package.json wires the asset copy into build and publishes dist", () => {
+  it("package.json wires the asset copy into build and publishes both dist and the canonical IDL", () => {
     const pkg = JSON.parse(readFileSync(join(PKG, "package.json"), "utf8"));
     expect(pkg.scripts.build).toContain("copy-deploy-assets");
     expect(pkg.files).toContain("dist");
+    expect(pkg.files).toContain("idl"); // canonical Warden IDL directory (WRDF-0099)
   });
 });

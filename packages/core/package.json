@@ -4,7 +4,7 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": ["dist", "idl"],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-deploy-assets.mjs",
     "test": "vitest run",
