@@ -1,5 +1,6 @@
 export * from "./constants.js";
 export * from "./webauthn/transcript.js";
+export * from "./webauthn/assertion.js";
 export * from "./execute/payload.js";
 export * from "./execute/wrap.js";
 export * from "./deploy/config.js";

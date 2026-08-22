@@ -4,7 +4,10 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "idl"],
+  "files": [
+    "dist",
+    "idl"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-deploy-assets.mjs",
     "test": "vitest run",
@@ -16,6 +19,7 @@
     "@solana/web3.js": "^1.98.0"
   },
   "devDependencies": {
+    "@noble/curves": "^1.9.7",
     "ajv": "^8.20.0",
     "tsx": "^4.23.12"
   }
