@@ -1,5 +1,19 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> **STATUS UPDATE 2026-08-22 — Phase 1B PROGRAM WORK COMPLETE.** All Phase 1B tasks
+> (0/10/1/2b/2/3/4/5/6/8) plus **Task 11** (deploy-gate: WRD-DEP-01 governance/hash + WRD-DEP-02
+> adapter-Registry) and **Task 9** (spec → rev 9 close-out) are DONE — 283 `@warden/core` tests,
+> whole `phase1b` branch pushed. The Warden landing page is SHIPPED LIVE at drinkerlabs.info/warden/.
+> The Phase-1B run order below is HISTORICAL; do not "resume Phase 1B" — it's finished.
+> **What actually remains are OWNER decisions and later phases, not more 1B implementation:**
+> (1) the C1a `create_account` production-origin + freeze-vs-migration decision before any public
+> account creation; (2) an external security audit + the on-chain deploy (the L7 deploy-gate is
+> built and tested but UNVERIFIED against a live cluster); (3) counsel sign-off on WRDF-0050
+> (Squads AGPL lineage), WRDF-0089 (Squads reader), and the Jupiter-IDL note in THIRD_PARTY_NOTICES.md;
+> (4) the client-security-hardening (C1+), vanity (V1+), and UI (U0+) plans, at their stated
+> dependency boundaries. Release-candidate residuals are enumerated in PHASE1B-MEASUREMENTS.md.
+> Read CLAUDE.md + the spec (rev 9) for the current truth before acting.
+
 TO / Claude Code
 
 TASK / Read the dated research memo, resume Phase 1B in its documented order, execute the client-security plan at its permitted boundaries, carry the approved optional vanity-primary-account feature through V0 and then V1–V6 only after its SDK/extension dependencies are stable, and execute UI U0–U10 only at the design/client/mobile boundaries stated in its plan.
