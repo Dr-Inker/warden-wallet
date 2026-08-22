@@ -10,15 +10,19 @@
 // declared trust-root terminus (docs/security/DEPLOY-GATE-TRUST-ROOT.md), the same kind of
 // external THREATMODEL assumption already accepted for the Squads audited-code hash.
 //
-// The closure is DISCOVERED by statically traversing the entrypoint's local import graph
-// (WRDF-0088 round 11) — never a hand-maintained list — so a new verdict-bearing import
-// cannot be silently omitted from attestation. Run from the repo root:
+// The closure is DISCOVERED by traversing the entrypoint's local import graph with the real
+// TypeScript parser (WRDF-0088 rounds 11-12) — never regex, which missed escaped specifiers
+// (`"./x.js"`) and comment-separated forms. String-literal specifiers are read DECODED
+// from the AST; every non-static loading form (dynamic import(), require/createRequire,
+// `import x = require(...)`, a non-literal specifier, a local import resolving outside the
+// repo) is rejected FAIL-CLOSED. Run from the repo root:
 // `node scripts/gen-verifier-attestation.mjs`. A drift guard
 // (packages/core/test/deploy-attestation.test.ts) fails if the committed manifest is stale
 // or if discovery diverges from what is pinned.
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { dirname, resolve, relative } from "node:path";
+import { dirname, resolve, relative, sep } from "node:path";
+import ts from "typescript";
 
 // The CLI entrypoint the gate is hard-wired to invoke; the seed of the import graph and
 // recorded in the manifest so the gate and tests share one source of truth.
@@ -50,39 +54,67 @@ function isLocal(spec) {
 
 // Resolve a local specifier from the importing file to a source .ts on disk. Imports use
 // NodeNext `.js` specifiers that map to sibling `.ts` sources; a bare or `.ts` specifier
-// is accepted too. Throws (fail-closed) on any local import that cannot be resolved.
-function resolveLocalTs(fromAbs, spec) {
+// is accepted too. Throws (fail-closed) on any local import that cannot be resolved, or
+// that resolves OUTSIDE the repo tree (a traversal escape).
+function resolveLocalTs(repoRoot, fromAbs, spec) {
   const base = resolve(dirname(fromAbs), spec);
   const candidates = base.endsWith(".ts")
     ? [base]
     : base.endsWith(".js")
       ? [base.slice(0, -3) + ".ts"]
       : [base + ".ts", base + "/index.ts"];
-  for (const c of candidates) if (existsSync(c)) return c;
+  for (const c of candidates) {
+    if (!existsSync(c)) continue;
+    if (c !== repoRoot && !c.startsWith(repoRoot + sep)) {
+      throw new Error(`verifier closure: local import ${JSON.stringify(spec)} resolves outside the repo (${c})`);
+    }
+    return c;
+  }
   throw new Error(`verifier closure: unresolved local import ${JSON.stringify(spec)} from ${fromAbs}`);
 }
 
-// Statically traverse every LOCAL import/export reachable from the entrypoint. Rejects
-// dynamic import() outright (unanalyzable, fail-closed). Returns sorted repo-relative
-// .ts paths. External (bare) imports terminate the walk — they are the toolchain terminus.
+// Parse ONE module with the TypeScript scanner/parser and return its static import/export
+// specifiers (decoded). Any non-static loading form is a fail-closed error: dynamic
+// import(), require()/createRequire(), `import x = require(...)`, or a non-literal
+// specifier — none of which the verdict-bearing closure is permitted to use.
+function staticSpecifiers(relPath, srcText) {
+  const sf = ts.createSourceFile(relPath, srcText, ts.ScriptTarget.Latest, /*setParentNodes*/ true, ts.ScriptKind.TS);
+  const specs = [];
+  const reject = (why) => {
+    throw new Error(`verifier closure: ${why} in ${relPath} (unanalyzable / unsupported loading form, fail-closed)`);
+  };
+  const visit = (node) => {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+      if (!ts.isStringLiteral(node.moduleSpecifier)) reject("non-literal module specifier");
+      specs.push(node.moduleSpecifier.text); // AST text is the DECODED specifier value
+    } else if (ts.isImportEqualsDeclaration(node)) {
+      reject("`import … = require(…)` form");
+    } else if (ts.isCallExpression(node)) {
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) reject("dynamic import()");
+      if (ts.isIdentifier(node.expression) && (node.expression.text === "require" || node.expression.text === "createRequire")) {
+        reject(`${node.expression.text}() call`);
+      }
+    } else if (ts.isIdentifier(node) && node.text === "createRequire") {
+      reject("createRequire reference");
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return specs;
+}
+
+// Statically traverse every LOCAL import/export reachable from the entrypoint. Returns
+// sorted repo-relative .ts paths. External (bare) imports terminate the walk — they are
+// the toolchain terminus.
 export function discoverClosure(repoRoot, entryRel = VERIFIER_ENTRYPOINT) {
   const seen = new Set();
   const walk = (relPath) => {
     if (seen.has(relPath)) return;
     seen.add(relPath);
     const abs = `${repoRoot}/${relPath}`;
-    const src = readFileSync(abs, "utf8");
-    if (/\bimport\s*\(/.test(src)) {
-      throw new Error(`verifier closure: dynamic import() is not allowed in ${relPath} (unanalyzable)`);
-    }
-    // Both `… from "spec"` (import/export) and side-effect `import "spec"`.
-    const specs = [];
-    for (const m of src.matchAll(/\bfrom\s*['"]([^'"]+)['"]/g)) specs.push(m[1]);
-    for (const m of src.matchAll(/\bimport\s+['"]([^'"]+)['"]/g)) specs.push(m[1]);
-    for (const spec of specs) {
+    for (const spec of staticSpecifiers(relPath, readFileSync(abs, "utf8"))) {
       if (!isLocal(spec)) continue; // external dep = terminus
-      const childRel = relative(repoRoot, resolveLocalTs(abs, spec));
-      walk(childRel);
+      walk(relative(repoRoot, resolveLocalTs(repoRoot, abs, spec)));
     }
   };
   walk(entryRel);

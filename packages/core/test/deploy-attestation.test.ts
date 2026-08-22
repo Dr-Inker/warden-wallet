@@ -70,6 +70,52 @@ describe("verifier source attestation (docs/security/verifier-attestation.json)"
     }
   });
 
+  it("DECODES an escaped module specifier and still attests the real target (WRDF-0088 round 12)", () => {
+    // The regex parser saw the raw chars `./…` as non-local and OMITTED the executed
+    // module; the AST reads the DECODED specifier, so the escaped import is traversed.
+    mkdirSync(TMP_ROOT, { recursive: true });
+    const d = mkdtempSync(join(TMP_ROOT, "esc-"));
+    try {
+      const entryRel = "packages/core/scripts/deploy-gate-verify.ts";
+      mkdirSync(join(d, dirname(entryRel)), { recursive: true });
+      mkdirSync(join(d, "packages/core/src/deploy"), { recursive: true });
+      // "../src/deploy/gate.js" decodes to "../src/deploy/gate.js".
+      writeFileSync(join(d, entryRel), `import { x } from "\\u002e\\u002e/src/deploy/gate.js";\n`);
+      writeFileSync(join(d, "packages/core/src/deploy/gate.ts"), `export const x = 1;\n`);
+      expect(discoverClosure(d)).toContain("packages/core/src/deploy/gate.ts");
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("REJECTS a comment-separated dynamic import that the regex check missed (WRDF-0088 round 12)", () => {
+    mkdirSync(TMP_ROOT, { recursive: true });
+    const d = mkdtempSync(join(TMP_ROOT, "cmt-"));
+    try {
+      const entryRel = "packages/core/scripts/deploy-gate-verify.ts";
+      mkdirSync(join(d, dirname(entryRel)), { recursive: true });
+      mkdirSync(join(d, "packages/core/src/deploy"), { recursive: true });
+      writeFileSync(join(d, entryRel), `import { x } from "../src/deploy/gate.js";\n`);
+      writeFileSync(join(d, "packages/core/src/deploy/gate.ts"), `const m = import /*gap*/ ("./evil.js");\n`);
+      expect(() => discoverClosure(d)).toThrow(/dynamic import/);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("REJECTS a local require()/createRequire (unsupported loading form, fail-closed)", () => {
+    mkdirSync(TMP_ROOT, { recursive: true });
+    const d = mkdtempSync(join(TMP_ROOT, "req-"));
+    try {
+      const entryRel = "packages/core/scripts/deploy-gate-verify.ts";
+      mkdirSync(join(d, dirname(entryRel)), { recursive: true });
+      writeFileSync(join(d, entryRel), `const x = require("./evil.js");\n`);
+      expect(() => discoverClosure(d)).toThrow(/require/);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
   it("the gate script reads exactly this manifest path and entrypoint", () => {
     const gate = readFileSync(join(REPO, "scripts", "deploy-gate.sh"), "utf8");
     expect(gate).toContain(ATTESTATION_PATH as string);
