@@ -2034,6 +2034,169 @@ fn wrdf0105_root_execute_with_stranger_controlled_mint_allowed() {
     assert_eq!(token_amount(&svm, &dest), 400_000);
 }
 
+// ---------------------------------------------------------------------------
+// WRDF-0105 ROUND 2 (2026-08-23): the Token-2022 EXTENSION authorities.
+//
+// The first cut of the gate tested `mint_authority` and `freeze_authority` — 2
+// of the 4 authority roles `MintSnap` models. Token-2022 keeps the other two in
+// the mint's TLV tail: `transfer_fee_config_authority` and
+// `withdraw_withheld_authority`. The concrete hole: Token-2022's
+// `WithdrawWithheldTokensFromAccounts` (outer tag 26 — `classify_spl_token_op`
+// falls through to `Other`, so `deny_scan` does not name it) takes a READ-ONLY
+// mint, WRITABLE source/receiver token accounts, and the mint's
+// `withdraw_withheld_authority` AS SIGNER. Under a root payload with the PDA
+// signer, the read-only mint stays byte-identical, the non-vault source/receiver
+// accounts are skipped by conservation, outflow is zero and no bucket is debited
+// — value moves entirely unmetered, which is exactly what WRD-EXEC-09's
+// unconditional 1B rejection exists to prevent.
+// ---------------------------------------------------------------------------
+
+/// Plant a **Token-2022** mint carrying a well-formed 108-byte
+/// `TransferFeeConfig` TLV entry, so all four authority roles are settable
+/// independently. Byte layout re-derived from `conservation/snapshot.rs`'s module
+/// docs (and pinned unit-side by
+/// `conservation::tests::wrdf0105_holds_authority_covers_all_four_roles_including_t22_extensions`):
+///
+/// ```text
+///   [0..82)    classic Mint base (mint_authority, supply, decimals, init, freeze)
+///   [82..165)  zero padding — the T22 crate REQUIRES this to be all zeroes
+///   [165]      AccountType::Mint = 1
+///   [166..]    TLV: type u16 LE ‖ len u16 LE ‖ value
+///                type 1 = TransferFeeConfig, len 108
+///                  value[0..32)  transfer_fee_config_authority  (all-zero = None)
+///                  value[32..64) withdraw_withheld_authority    (all-zero = None)
+///                  value[64..72) withheld_amount
+///                  value[72..108) older/newer transfer fee
+/// ```
+fn set_t22_transfer_fee_mint(
+    svm: &mut LiteSVM,
+    mint: &Pubkey,
+    mint_authority: Option<Pubkey>,
+    freeze_authority: Option<Pubkey>,
+    transfer_fee_config_authority: Option<Pubkey>,
+    withdraw_withheld_authority: Option<Pubkey>,
+) {
+    use solana_sdk::program_option::COption;
+    use spl_token::state::Mint;
+    let opt = |k: Option<Pubkey>| match k {
+        Some(k) => COption::Some(k),
+        None => COption::None,
+    };
+    let m = Mint {
+        mint_authority: opt(mint_authority),
+        supply: 1_000,
+        decimals: 6,
+        is_initialized: true,
+        freeze_authority: opt(freeze_authority),
+    };
+    let mut data = vec![0u8; Mint::LEN];
+    m.pack_into_slice(&mut data);
+    data.resize(165, 0); // [82..165) padding
+    data.push(1); // AccountType::Mint
+    let mut value = vec![0u8; 108];
+    // `OptionalNonZeroPubkey`, NOT a COption: a bare 32-byte key, all-zero = None.
+    value[0..32].copy_from_slice(transfer_fee_config_authority.unwrap_or_default().as_ref());
+    value[32..64].copy_from_slice(withdraw_withheld_authority.unwrap_or_default().as_ref());
+    data.extend_from_slice(&1u16.to_le_bytes()); // TransferFeeConfig
+    data.extend_from_slice(&(value.len() as u16).to_le_bytes());
+    data.extend_from_slice(&value);
+    assert_eq!(data.len(), 166 + 4 + 108);
+    svm.set_account(
+        *mint,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(data.len()),
+            data,
+            owner: SPL_TOKEN_2022_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (T22 transfer-fee mint)");
+}
+
+/// The shared body of the round-2 WRDF-0105 cases: an innocuous root `execute`
+/// SPL transfer whose account list additionally carries `extra_mint`
+/// READ-ONLY — the shape `WithdrawWithheldTokensFromAccounts` needs, and the
+/// shape a forwarding hop needs. Returns the transaction outcome so each case
+/// can assert reject-or-accept.
+fn root_execute_with_extra_readonly_mint(extra_mint: Pubkey, plant: impl FnOnce(&mut LiteSVM, &Pubkey)) -> (LiteSVM, Keypair, Keypair, Pubkey, Pubkey, Instruction, Instruction) {
+    let (mut svm, payer, pk, account, _registry, _mut, vault_ata) = live();
+    let submitter = Keypair::new();
+    let dest = dest_ata(&mut svm);
+    plant(&mut svm, &account);
+    let mut remaining = spl_transfer_remaining(vault_ata, dest);
+    // READ-ONLY: `WithdrawWithheldTokensFromAccounts` passes the mint read-only,
+    // and so does a freeze. Writability is deliberately NOT what the gate keys on.
+    remaining.push(AccountMeta::new_readonly(extra_mint, false)); // logical 6
+    let payload = spl_transfer_payload(400_000);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args);
+    (svm, payer, submitter, vault_ata, dest, precompile, ix)
+}
+
+/// WRDF-0105 round 2, the case Codex demonstrated: a READ-ONLY Token-2022 mint
+/// whose `withdraw_withheld_authority` is the vault PDA. The old two-field gate
+/// waved it through (`mint_authority` and `freeze_authority` are a stranger's);
+/// `MintSnap::holds_authority` sees it, so the root `execute` is refused
+/// `VaultControlledMintInPayload` before any CPI runs.
+#[test]
+fn wrdf0105_root_execute_with_vault_withdraw_withheld_authority_mint_rejected() {
+    let evil_mint = Pubkey::new_from_array([0x57; 32]);
+    let stranger = Pubkey::new_unique();
+    let (mut svm, payer, submitter, vault_ata, dest, precompile, ix) =
+        root_execute_with_extra_readonly_mint(evil_mint, |svm, account| {
+            set_t22_transfer_fee_mint(svm, &evil_mint, Some(stranger), Some(stranger), Some(stranger), Some(*account));
+        });
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::VAULT_CONTROLLED_MINT_IN_PAYLOAD);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "the transfer never ran");
+    assert_eq!(token_amount(&svm, &dest), 0);
+}
+
+/// WRDF-0105 round 2, the fourth role: a READ-ONLY Token-2022 mint whose
+/// `transfer_fee_config_authority` is the vault PDA. `SetTransferFee` /
+/// `SetTransferFeeConfigAuthority` under a PDA signer are the same class of
+/// unmetered authority action, and the same two-field gate missed them.
+#[test]
+fn wrdf0105_root_execute_with_vault_transfer_fee_config_authority_mint_rejected() {
+    let evil_mint = Pubkey::new_from_array([0x58; 32]);
+    let stranger = Pubkey::new_unique();
+    let (mut svm, payer, submitter, vault_ata, dest, precompile, ix) =
+        root_execute_with_extra_readonly_mint(evil_mint, |svm, account| {
+            set_t22_transfer_fee_mint(svm, &evil_mint, Some(stranger), Some(stranger), Some(*account), Some(stranger));
+        });
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::VAULT_CONTROLLED_MINT_IN_PAYLOAD);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "the transfer never ran");
+    assert_eq!(token_amount(&svm, &dest), 0);
+}
+
+/// WRDF-0105 round 2 stays NARROW — the Token-2022 half of
+/// `wrdf0105_root_execute_with_stranger_controlled_mint_allowed`. A Token-2022
+/// transfer-fee mint whose ALL FOUR authority roles belong to a stranger rides in
+/// the very same account list, built by the very same helper, and the identical
+/// innocuous transfer still succeeds. So the widened gate keys on WHO holds the
+/// authority, never on "is a Token-2022 mint present" or "does it carry a
+/// transfer-fee extension" — and, together with the two rejects above, the
+/// helper's bytes are demonstrably parsed rather than ignored.
+#[test]
+fn wrdf0105_root_execute_with_stranger_t22_all_four_authorities_allowed() {
+    let mint = Pubkey::new_from_array([0x59; 32]);
+    let s1 = Pubkey::new_unique();
+    let s2 = Pubkey::new_unique();
+    let s3 = Pubkey::new_unique();
+    let s4 = Pubkey::new_unique();
+    let (mut svm, payer, submitter, vault_ata, dest, precompile, ix) =
+        root_execute_with_extra_readonly_mint(mint, |svm, _account| {
+            set_t22_transfer_fee_mint(svm, &mint, Some(s1), Some(s2), Some(s3), Some(s4));
+        });
+    expect_ok(&mut svm, &[&payer, &submitter], &[precompile, ix]);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS - 400_000, "the transfer ran normally");
+    assert_eq!(token_amount(&svm, &dest), 400_000);
+}
+
 /// GROK-EXP-02: a root `execute` MintTo of a mint the PDA controls, to a
 /// stranger ATA, is now on the fixed deny-list — refused before any supply
 /// change, on the root path that skips the registry. WRDF-0105 ORDERING PROOF:

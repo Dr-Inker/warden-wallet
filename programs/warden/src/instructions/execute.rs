@@ -381,8 +381,12 @@ pub(crate) fn handler<'info>(
     // ---- BEFORE snapshot (spec §5.2 rule 2) -------------------------------
     let before = conservation::snapshot(remaining, &account_key)?;
     let pda_lamports_before = sa_info.lamports();
-    // GROK-EXP-03: writable Stake / Vote / ProgramData accounts are refused
-    // BEFORE any CPI (and again in `compare_and_account`).
+    // GROK-EXP-03 + WRDF-0104: writable Stake / Vote / ProgramData / Loader-v4
+    // accounts — and writable System-owned accounts that carry DATA (durable
+    // nonces) — are refused BEFORE any CPI. WRDF-0104 round 2: `compare_and_
+    // account` now re-applies BOTH of those rules positionally over the
+    // before/after pair, so state that only BECOMES unsupported during the CPI is
+    // caught as well. This call is the pre-CPI half of that pair.
     conservation::reject_unsupported_writable_owners(&before)?;
 
     // ---- the fixed deny-list (spec §5.2 rule 1a) — BOTH paths, before any
@@ -404,18 +408,36 @@ pub(crate) fn handler<'info>(
     // the final supply so the vault-controlled-mint identity check still passes.
     // Generic `execute` has NO typed decoder for those nested authority ops, so
     // it refuses to sign for a vault-controlled mint AT ALL: reject if ANY BEFORE
-    // account is a mint whose mint/freeze authority is this PDA (regardless of
-    // writability — a freeze needs only a read-only mint). Every nested attack in
-    // the finding requires the controlled mint to be present in the list, so this
-    // closes both routes. Placed AFTER `deny_scan` so the direct-MintTo tests
-    // still return DENY_LISTED. Typed mint operations are a later-phase adapter
-    // concern; `swap` (a typed, program-pinned adapter) is deliberately exempt.
+    // account is a mint this PDA holds ANY of the FOUR modelled authority roles
+    // on — `mint_authority`, `freeze_authority`, `transfer_fee_config_authority`,
+    // `withdraw_withheld_authority` — regardless of writability (a freeze, and a
+    // withheld-fee withdrawal, each need only a READ-ONLY mint). Every nested
+    // attack in the finding requires the controlled mint to be present in the
+    // list, so this closes those routes. Placed AFTER `deny_scan` so the
+    // direct-MintTo tests still return DENY_LISTED. Typed mint operations are a
+    // later-phase adapter concern; `swap` (a typed, program-pinned adapter) is
+    // deliberately exempt.
+    //
+    // WRDF-0105 ROUND 2 (2026-08-23): the first cut hand-rolled a TWO-field test
+    // (`mint_authority` / `freeze_authority`) — 2 of the 4 roles `MintSnap`
+    // already extracts. It therefore missed the Token-2022 EXTENSION authorities
+    // that live in the mint's TLV tail. The demonstrated hole: Token-2022
+    // `WithdrawWithheldTokensFromAccounts` (outer tag 26, which
+    // `classify_spl_token_op` falls through to `Other`, so `deny_scan` never
+    // names it) takes a READ-ONLY mint, WRITABLE source/receiver token accounts,
+    // and the mint's `withdraw_withheld_authority` AS SIGNER. A root payload can
+    // invoke it directly under the PDA signer: the read-only mint stays
+    // byte-identical, the non-vault source/receiver accounts are skipped by
+    // conservation, `outflow` is zero and no bucket is debited — value moves that
+    // nothing meters. `transfer_fee_config_authority` is the same shape.
+    // `MintSnap::holds_authority` is the complete predicate over all four roles,
+    // so it — never a hand-rolled subset — is what WRD-EXEC-09's UNCONDITIONAL
+    // Phase-1B rejection of a vault-controlled mint requires here. (Extensions
+    // whose authority fields this snapshot does not model at all are handled on a
+    // different axis: `MintSnap::has_unrecognized_ext` / WRDF-0012.)
     for s in &before {
         if let Some(m) = s.mint.as_ref() {
-            require!(
-                m.mint_authority != Some(account_key) && m.freeze_authority != Some(account_key),
-                WardenError::VaultControlledMintInPayload
-            );
+            require!(!m.holds_authority(&account_key), WardenError::VaultControlledMintInPayload);
         }
     }
 

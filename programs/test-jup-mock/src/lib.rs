@@ -209,7 +209,20 @@ fn do_route<'info>(
     // `outAmount`, which is ALREADY net of the platform fee. Warden's out-mint
     // fee floor must therefore reconstruct gross = net + fee, never treat the
     // net credit as the fee base.
-    let honest_fee = quoted_out_amount.saturating_mul(PLATFORM_FEE_BPS) / 10_000;
+    //
+    // WRDF-0106 round 2: computed in u128. The old `saturating_mul` form
+    // silently CAPPED for any gross leg above `u64::MAX / 85` — it happened to
+    // land on the right answer for the boundary vector
+    // `wrdf0106_high_base_unit_gross_leg_is_accepted_not_overflowed` uses (the
+    // saturation loses < 10_000 of the numerator, so the floor is unchanged),
+    // but a test double that is accidentally right is not evidence. The real
+    // Jupiter fee is `floor(gross × bps / 10_000)` over the whole u64 range.
+    let honest_fee = u64::try_from(
+        u128::from(quoted_out_amount)
+            .saturating_mul(u128::from(PLATFORM_FEE_BPS))
+            / 10_000u128,
+    )
+    .unwrap_or(u64::MAX);
     let honest_net = quoted_out_amount.saturating_sub(honest_fee);
 
     // (2) Credit the output (NET of the fee) from the pool, signed by the pool PDA.

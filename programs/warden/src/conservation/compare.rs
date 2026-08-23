@@ -164,6 +164,33 @@ pub fn compare_and_account(
                     || UNSUPPORTED_WRITABLE_OWNERS.contains(&a.owner_program))),
             WardenError::UnsupportedAccountKind
         );
+        // WRDF-0104 ROUND 2 (2026-08-23): the SECOND half of
+        // `reject_unsupported_writable_owners`, which this positional check used
+        // to omit entirely. That function refuses a writable System-owned account
+        // carrying DATA (a durable nonce and any other unmodelled System state) —
+        // a rule no owner-id list can express, because a nonce's owner is the
+        // System program, the same owner as every ordinary wallet. The handlers
+        // ran it on the BEFORE snapshot only, so an account that was zero-data
+        // System state BEFORE and data-bearing System state AFTER — i.e. a
+        // durable nonce CREATED inside the CPI window — passed the pre-CPI barrier
+        // honestly and was then skipped by step (4) as "not a vault token
+        // account". The claim in that function's docs that the rule is enforced
+        // "again positionally in `compare_and_account`" was true of the owner-id
+        // half and FALSE of this half. Both halves are now here, both keyed on
+        // the same cross-snapshot `writable`, so the two barriers genuinely agree.
+        //
+        // The condition is deliberately duplicated rather than expressed by
+        // calling `reject_unsupported_writable_owners(before)` +
+        // `(after)`: that helper tests each snapshot's OWN `is_writable`, whereas
+        // this loop uses the OR of the two, which is the stricter (and existing)
+        // behaviour for the owner-id half. Keeping one rule shape for both halves
+        // is what makes "the two barriers agree" checkable.
+        require!(
+            !(writable
+                && ((b.owner_program == SYSTEM_PROGRAM_ID && b.data_len != 0)
+                    || (a.owner_program == SYSTEM_PROGRAM_ID && a.data_len != 0))),
+            WardenError::UnsupportedAccountKind
+        );
 
         // (3) Round 1 (Codex C2). Classification used to be BEFORE-driven, so
         // an account that BECAME the vault's during the CPI was never examined
@@ -387,11 +414,25 @@ fn prescan_vault_mints(before: &[Snap], after: &[Snap], vault: &Pubkey) -> Resul
 /// three-owner list left open.
 /// Called by the handlers on the BEFORE snapshot so the reject lands before a
 /// CPI runs (a test can then assert OUR error code without needing the foreign
-/// program's instruction to succeed), and again positionally in
-/// [`compare_and_account`] so an account that BECAME such an account during
-/// the CPI is caught too. Read-only accounts are untouched: a CPI cannot debit
-/// or mutate a read-only account, so a stake account passed read-only is
-/// harmless (and common — Jupiter routes carry read-only program accounts).
+/// program's instruction to succeed). Read-only accounts are untouched: a CPI
+/// cannot debit or mutate a read-only account, so a stake account passed
+/// read-only is harmless (and common — Jupiter routes carry read-only program
+/// accounts).
+///
+/// ## The post-CPI barrier (WRDF-0104 round 2, 2026-08-23)
+///
+/// [`compare_and_account`] re-applies BOTH rules positionally over the
+/// before/after pair, so an account that BECAME unsupported state during the CPI
+/// is caught too. That claim used to be written here and was only HALF true: the
+/// comparison carried the `UNSUPPORTED_WRITABLE_OWNERS` id check but not the
+/// System-owned `data_len` check, which meant a durable nonce CREATED inside the
+/// CPI window (zero-data System BEFORE, data-bearing System AFTER) cleared this
+/// function honestly and was then ignored downstream as "not a vault token
+/// account". Both halves now live in `compare_and_account`'s step (2); this
+/// function is the pre-CPI copy. Keep them in step — the regressions
+/// `wrdf0104_loader_v4_and_data_bearing_system_writable_rejected` and
+/// `wrdf0104_system_state_transitions_are_rejected_positionally` assert each
+/// case against BOTH entry points precisely so a future edit to one is caught.
 pub fn reject_unsupported_writable_owners(snaps: &[Snap]) -> Result<()> {
     for s in snaps {
         require!(
