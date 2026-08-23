@@ -119,6 +119,16 @@ pub struct MintSnap {
     pub transfer_fee_config_authority: Option<Pubkey>,
     /// `TransferFeeConfig.withdraw_withheld_authority`, same extraction.
     pub withdraw_withheld_authority: Option<Pubkey>,
+    /// `PermanentDelegate.delegate` (Token-2022 extension type 12), same
+    /// extraction — a single `OptionalNonZeroPubkey`.
+    ///
+    /// WRDF-0105 round 3: this is an **authority** field, not a curiosity. The
+    /// permanent delegate may transfer or burn from *every* token account of
+    /// the mint, forever, without the holder's consent — the strongest of the
+    /// five roles. Before round 3 `scan_extensions` recognised the extension
+    /// only by setting `DANGER_PERMANENT_DELEGATE` and threw this pubkey away,
+    /// which left it invisible to [`Self::holds_authority`].
+    pub permanent_delegate: Option<Pubkey>,
     /// `max(older_transfer_fee.maximum_fee, newer_transfer_fee.maximum_fee)`.
     ///
     /// Recorded for Phase 1C's `delta ≥ amount − max_fee` inequality only; 1B
@@ -157,15 +167,37 @@ impl MintSnap {
     ///
     /// Round 1 (Codex C1): this is what makes a mint the vault's own concern
     /// independently of whether the vault happens to hold a token account of
-    /// it. `mint_authority` and `freeze_authority` are the classic pair;
-    /// Token-2022 adds the two transfer-fee authorities, which live inside the
-    /// TLV tail and are extracted by type.
+    /// it.
+    ///
+    /// **All FIVE modelled roles**, and adding a sixth belongs here and nowhere
+    /// else — every caller (`prescan_vault_mints`, `execute`'s
+    /// vault-controlled-mint gate) goes through this one predicate precisely so
+    /// a role cannot be dropped by a hand-rolled subset again:
+    ///
+    /// 1. `mint_authority` — classic SPL.
+    /// 2. `freeze_authority` — classic SPL.
+    /// 3. `transfer_fee_config_authority` — Token-2022 `TransferFeeConfig` TLV.
+    /// 4. `withdraw_withheld_authority` — Token-2022 `TransferFeeConfig` TLV.
+    /// 5. `permanent_delegate` — Token-2022 `PermanentDelegate` TLV.
+    ///
+    /// WRDF-0105 round 3 added (5). It was the third time this finding was
+    /// raised, and the second time a partial fix shipped: round 1 modelled
+    /// roles 1–2, round 2 added 3–4 by switching to this predicate, and both
+    /// missed the permanent delegate — the *strongest* role of the five, since
+    /// it moves or burns tokens from any account of the mint at will. The
+    /// demonstrated hole was a Token-2022 `TransferChecked` (tag 12, which
+    /// `classify_spl_token_op` maps to `Other`, so `deny_scan` never names it)
+    /// taking the mint READ-ONLY — so `prescan_vault_mints`'s writable-only
+    /// danger rule did not fire — between two THIRD-PARTY token accounts under
+    /// the PDA's propagated signer. Conservation skips both accounts, `outflow`
+    /// is zero, and no bucket is debited.
     pub fn holds_authority(&self, key: &Pubkey) -> bool {
         let k = Some(*key);
         self.mint_authority == k
             || self.freeze_authority == k
             || self.transfer_fee_config_authority == k
             || self.withdraw_withheld_authority == k
+            || self.permanent_delegate == k
     }
 }
 

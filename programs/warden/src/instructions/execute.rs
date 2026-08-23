@@ -408,10 +408,11 @@ pub(crate) fn handler<'info>(
     // the final supply so the vault-controlled-mint identity check still passes.
     // Generic `execute` has NO typed decoder for those nested authority ops, so
     // it refuses to sign for a vault-controlled mint AT ALL: reject if ANY BEFORE
-    // account is a mint this PDA holds ANY of the FOUR modelled authority roles
+    // account is a mint this PDA holds ANY of the FIVE modelled authority roles
     // on — `mint_authority`, `freeze_authority`, `transfer_fee_config_authority`,
-    // `withdraw_withheld_authority` — regardless of writability (a freeze, and a
-    // withheld-fee withdrawal, each need only a READ-ONLY mint). Every nested
+    // `withdraw_withheld_authority`, `permanent_delegate` — regardless of
+    // writability (a freeze, a withheld-fee withdrawal, and a permanent-delegate
+    // transfer each need only a READ-ONLY mint). Every nested
     // attack in the finding requires the controlled mint to be present in the
     // list, so this closes those routes. Placed AFTER `deny_scan` so the
     // direct-MintTo tests still return DENY_LISTED. Typed mint operations are a
@@ -430,11 +431,36 @@ pub(crate) fn handler<'info>(
     // byte-identical, the non-vault source/receiver accounts are skipped by
     // conservation, `outflow` is zero and no bucket is debited — value moves that
     // nothing meters. `transfer_fee_config_authority` is the same shape.
-    // `MintSnap::holds_authority` is the complete predicate over all four roles,
-    // so it — never a hand-rolled subset — is what WRD-EXEC-09's UNCONDITIONAL
-    // Phase-1B rejection of a vault-controlled mint requires here. (Extensions
-    // whose authority fields this snapshot does not model at all are handled on a
-    // different axis: `MintSnap::has_unrecognized_ext` / WRDF-0012.)
+    // `MintSnap::holds_authority` is the complete predicate over all the modelled
+    // roles, so it — never a hand-rolled subset — is what WRD-EXEC-09's
+    // UNCONDITIONAL Phase-1B rejection of a vault-controlled mint requires here.
+    // (Extensions whose authority fields this snapshot does not model at all are
+    // handled on a different axis: `MintSnap::has_unrecognized_ext` / WRDF-0012.)
+    //
+    // WRDF-0105 ROUND 3 (2026-08-23): the predicate itself was still incomplete —
+    // it modelled FOUR roles, and Token-2022 has a FIFTH. `snapshot.rs` used to
+    // recognise `PermanentDelegate` (extension type 12) only by OR-ing
+    // `DANGER_PERMANENT_DELEGATE` into `dangerous_ext` and DISCARDING the
+    // delegate pubkey. That danger bit is not a substitute: `prescan_vault_mints`
+    // refuses an unmodelable danger mint only when it is WRITABLE, and the
+    // demonstrated attack passes the mint READ-ONLY. Token-2022 `TransferChecked`
+    // (tag 12 — `classify_spl_token_op` maps it to `Other`, so `deny_scan` never
+    // names it) and `BurnChecked` both accept the mint's permanent delegate as
+    // the source account's authority, over EVERY token account of that mint. So
+    // a root payload could pass a read-only mint whose `PermanentDelegate` is
+    // this PDA, name logical slot 0 as the propagated signer, and move or burn
+    // tokens between THIRD-PARTY token accounts: conservation skips both (not
+    // vault-owned), `outflow` is zero, and no bucket is debited — value moves
+    // that nothing meters. The delegate is now extracted by TLV type and is the
+    // fifth arm of `holds_authority`, so this same line catches it.
+    //
+    // The fix is deliberately the PRECISE one (Codex's option (b)), not
+    // WRD-EXEC-09's unconditional rejection of every danger mint: this gate must
+    // keep keying on WHO holds the authority. A stranger's Token-2022 mint —
+    // transfer-fee or permanent-delegate — riding read-only in the list is still
+    // allowed through generic `execute`, which
+    // `wrdf0105_root_execute_with_stranger_t22_all_four_authorities_allowed` and
+    // `wrdf0105_root_execute_with_stranger_permanent_delegate_mint_allowed` pin.
     for s in &before {
         if let Some(m) = s.mint.as_ref() {
             require!(!m.holds_authority(&account_key), WardenError::VaultControlledMintInPayload);

@@ -2197,6 +2197,216 @@ fn wrdf0105_root_execute_with_stranger_t22_all_four_authorities_allowed() {
     assert_eq!(token_amount(&svm, &dest), 400_000);
 }
 
+// ---------------------------------------------------------------------------
+// WRDF-0105 ROUND 3 (2026-08-23): the Token-2022 PERMANENT DELEGATE.
+//
+// Round 2 widened the gate from a hand-rolled two-field test to
+// `MintSnap::holds_authority` — but that predicate itself only knew FOUR roles
+// (`mint_authority`, `freeze_authority`, `transfer_fee_config_authority`,
+// `withdraw_withheld_authority`). Token-2022 has a FIFTH: `PermanentDelegate`
+// (extension type 12), a single `OptionalNonZeroPubkey` that the token program
+// accepts as the transfer/burn authority over EVERY token account of the mint,
+// forever. `snapshot.rs` recognised the extension only by OR-ing
+// `DANGER_PERMANENT_DELEGATE` into `dangerous_ext` and THREW THE PUBKEY AWAY.
+//
+// The concrete hole Codex demonstrated: `compare.rs::prescan_vault_mints`
+// rejects an "unmodelable" danger mint only when it is WRITABLE, Token-2022
+// `TransferChecked` (tag 12) takes its mint READ-ONLY, `classify_spl_token_op`
+// maps tag 12 to `Other` so `deny_scan` never names it, and the token program
+// honours the permanent delegate as the source account's authority. So a ROOT
+// payload could pass a read-only mint whose PermanentDelegate is the
+// SmartAccount PDA, name logical slot 0 (the PDA) as the propagated signer, and
+// move tokens between THIRD-PARTY token accounts: conservation skips both (not
+// vault-owned), `outflow` is zero, and no bucket is debited. Value moves that
+// nothing meters.
+// ---------------------------------------------------------------------------
+
+/// Plant a **Token-2022** mint carrying a well-formed 32-byte
+/// `PermanentDelegate` TLV entry (extension type 12). Same byte layout as
+/// [`set_t22_transfer_fee_mint`], different extension:
+///
+/// ```text
+///   [0..82)    classic Mint base
+///   [82..165)  zero padding
+///   [165]      AccountType::Mint = 1
+///   [166..]    TLV: type u16 LE = 12 ‖ len u16 LE = 32 ‖ value
+///                value[0..32) delegate  — OptionalNonZeroPubkey, all-zero = None
+/// ```
+fn set_t22_permanent_delegate_mint(
+    svm: &mut LiteSVM,
+    mint: &Pubkey,
+    delegate: Option<Pubkey>,
+    supply: u64,
+) {
+    use solana_sdk::program_option::COption;
+    use spl_token::state::Mint;
+    let m = Mint {
+        // Every CLASSIC role deliberately unset: whatever this mint trips must
+        // be the permanent delegate and nothing else.
+        mint_authority: COption::None,
+        supply,
+        decimals: 6,
+        is_initialized: true,
+        freeze_authority: COption::None,
+    };
+    let mut data = vec![0u8; Mint::LEN];
+    m.pack_into_slice(&mut data);
+    data.resize(165, 0); // [82..165) padding
+    data.push(1); // AccountType::Mint
+    data.extend_from_slice(&12u16.to_le_bytes()); // ExtensionType::PermanentDelegate
+    data.extend_from_slice(&32u16.to_le_bytes());
+    data.extend_from_slice(delegate.unwrap_or_default().as_ref());
+    assert_eq!(data.len(), 166 + 4 + 32);
+    svm.set_account(
+        *mint,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(data.len()),
+            data,
+            owner: SPL_TOKEN_2022_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (T22 permanent-delegate mint)");
+}
+
+/// A **Token-2022**-owned 165-byte token account of `mint`, token-level owner
+/// `owner`. `PermanentDelegate` is a mint-only extension and requires no
+/// account-side extension, so the base layout is what the token program reads.
+fn set_t22_token_account(
+    svm: &mut LiteSVM,
+    address: &Pubkey,
+    mint: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+) {
+    use solana_sdk::program_option::COption;
+    use spl_token::state::{Account as SplAccount, AccountState};
+    let a = SplAccount {
+        mint: *mint,
+        owner: *owner,
+        amount,
+        delegate: COption::None,
+        state: AccountState::Initialized,
+        is_native: COption::None,
+        delegated_amount: 0,
+        close_authority: COption::None,
+    };
+    let mut data = vec![0u8; SplAccount::LEN];
+    a.pack_into_slice(&mut data);
+    svm.set_account(
+        *address,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(SplAccount::LEN),
+            data,
+            owner: SPL_TOKEN_2022_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (T22 token account)");
+}
+
+/// WRDF-0105 round 3, the gate case: a READ-ONLY Token-2022 mint whose
+/// `PermanentDelegate` is the vault PDA — and whose four modelled roles are all
+/// unset — rides in a ROOT `execute` account list. The round-2 gate waved it
+/// through (the delegate pubkey was discarded at snapshot time); with the
+/// delegate extracted and added to `holds_authority`, the whole `execute` is
+/// refused `VaultControlledMintInPayload` before any CPI runs.
+#[test]
+fn wrdf0105_root_execute_with_vault_permanent_delegate_mint_rejected() {
+    let evil_mint = Pubkey::new_from_array([0x5a; 32]);
+    let (mut svm, payer, submitter, vault_ata, dest, precompile, ix) =
+        root_execute_with_extra_readonly_mint(evil_mint, |svm, account| {
+            set_t22_permanent_delegate_mint(svm, &evil_mint, Some(*account), 1_000);
+        });
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::VAULT_CONTROLLED_MINT_IN_PAYLOAD);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "the transfer never ran");
+    assert_eq!(token_amount(&svm, &dest), 0);
+}
+
+/// WRDF-0105 round 3 stays NARROW: the identical Token-2022 mint, built by the
+/// identical helper, whose `PermanentDelegate` is a STRANGER still rides through
+/// generic `execute` and the innocuous transfer succeeds. So the fifth role is a
+/// WHO test like the other four, not a blanket "reject every Token-2022 danger
+/// mint" (which is what WRD-EXEC-09's unconditional form would have been, and
+/// which would have broken
+/// `wrdf0105_root_execute_with_stranger_t22_all_four_authorities_allowed`).
+#[test]
+fn wrdf0105_root_execute_with_stranger_permanent_delegate_mint_allowed() {
+    let mint = Pubkey::new_from_array([0x5b; 32]);
+    let stranger = Pubkey::new_unique();
+    let (mut svm, payer, submitter, vault_ata, dest, precompile, ix) =
+        root_execute_with_extra_readonly_mint(mint, |svm, _account| {
+            set_t22_permanent_delegate_mint(svm, &mint, Some(stranger), 1_000);
+        });
+    expect_ok(&mut svm, &[&payer, &submitter], &[precompile, ix]);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS - 400_000, "the transfer ran normally");
+    assert_eq!(token_amount(&svm, &dest), 400_000);
+}
+
+/// WRDF-0105 round 3, **the exploit itself**, end to end through a real
+/// Token-2022 CPI: a ROOT `execute` whose payload is a single Token-2022
+/// `TransferChecked` (tag 12) moving tokens between two THIRD-PARTY token
+/// accounts — neither is vault-owned, so conservation skips both — using the
+/// SmartAccount PDA (logical slot 0, the propagated signer) as the transfer
+/// authority purely by virtue of being the mint's `PermanentDelegate`.
+///
+/// At the vulnerable base this transaction SUCCEEDS: the mint is read-only so
+/// `prescan_vault_mints`'s writable-only danger rule does not fire, tag 12
+/// classifies as `Other` so `deny_scan` does not name it, both token accounts
+/// are non-vault so `outflow` is zero and no bucket is debited. With the fifth
+/// role modelled, the pre-dispatch gate refuses it before the CPI, so the exact
+/// error is `VaultControlledMintInPayload` and both balances are untouched.
+#[test]
+fn wrdf0105_root_execute_t22_transfer_checked_under_pda_permanent_delegate_rejected() {
+    let (mut svm, payer, pk, account, _registry, _mut, _vault_ata) = live();
+    let submitter = Keypair::new();
+
+    // A mint whose PermanentDelegate is the vault PDA, and two token accounts of
+    // it owned by strangers. Nothing here belongs to the vault.
+    let evil_mint = Pubkey::new_from_array([0x5c; 32]);
+    set_t22_permanent_delegate_mint(&mut svm, &evil_mint, Some(account), 10_000);
+    let victim_owner = Pubkey::new_unique();
+    let thief_owner = Pubkey::new_unique();
+    let victim = Pubkey::new_from_array([0x5d; 32]);
+    let thief = Pubkey::new_from_array([0x5e; 32]);
+    set_t22_token_account(&mut svm, &victim, &evil_mint, &victim_owner, 9_000);
+    set_t22_token_account(&mut svm, &thief, &evil_mint, &thief_owner, 0);
+
+    // logical 2 = source (w), 3 = mint (READ-ONLY, as TransferChecked wants),
+    // 4 = destination (w), 5 = the Token-2022 program.
+    let remaining = vec![
+        AccountMeta::new(victim, false),
+        AccountMeta::new_readonly(evil_mint, false),
+        AccountMeta::new(thief, false),
+        AccountMeta::new_readonly(SPL_TOKEN_2022_ID, false),
+    ];
+    // TransferChecked: tag 12 ‖ amount u64 LE ‖ decimals u8.
+    // Accounts: source, mint, destination, authority — authority = logical 0,
+    // the SmartAccount PDA, carrying the propagated signer.
+    let mut data = vec![12u8];
+    data.extend_from_slice(&9_000u64.to_le_bytes());
+    data.push(6);
+    let payload = encode_payload(&[(
+        5,
+        &[(2, FLAG_WRITABLE), (3, 0), (4, FLAG_WRITABLE), (0, FLAG_SIGNER)],
+        &data,
+    )]);
+
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args);
+
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::VAULT_CONTROLLED_MINT_IN_PAYLOAD);
+    // The refusal is pre-CPI: not one token moved between the third parties.
+    assert_eq!(token_amount(&svm, &victim), 9_000, "the victim was not drained");
+    assert_eq!(token_amount(&svm, &thief), 0, "the attacker received nothing");
+}
+
 /// GROK-EXP-02: a root `execute` MintTo of a mint the PDA controls, to a
 /// stranger ATA, is now on the fixed deny-list — refused before any supply
 /// change, on the root path that skips the registry. WRDF-0105 ORDERING PROOF:

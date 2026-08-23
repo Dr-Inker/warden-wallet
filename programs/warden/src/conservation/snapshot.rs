@@ -48,6 +48,9 @@
 //!   withheld_amount                64..72   u64 LE
 //!   older_transfer_fee             72..90   { epoch u64, maximum_fee u64, bps u16 }
 //!   newer_transfer_fee             90..108  same
+//!
+//! PermanentDelegate value (32 B) — `src/extension/permanent_delegate.rs`
+//!   delegate                        0..32   OptionalNonZeroPubkey
 //! ```
 //!
 //! `OptionalNonZeroPubkey` is **not** a `COption`: it is a bare 32-byte key
@@ -250,6 +253,7 @@ fn parse_mint_fields(data: &[u8], tlv: core::ops::Range<usize>, program: u8) -> 
         freeze_authority: read_coption_pubkey(data, 46)?,
         transfer_fee_config_authority: ext.transfer_fee_config_authority,
         withdraw_withheld_authority: ext.withdraw_withheld_authority,
+        permanent_delegate: ext.permanent_delegate,
         max_fee: ext.max_fee,
         tlv_hash: hash_tail(tail),
         dangerous_ext: ext.dangerous_ext,
@@ -263,6 +267,9 @@ struct ExtensionScan {
     dangerous_ext: u8,
     transfer_fee_config_authority: Option<Pubkey>,
     withdraw_withheld_authority: Option<Pubkey>,
+    /// `PermanentDelegate.delegate` (WRDF-0105 round 3), extracted by TLV type
+    /// exactly like the two transfer-fee authorities.
+    permanent_delegate: Option<Pubkey>,
     max_fee: u64,
     /// Any extension type this scan does not explicitly model (WRDF-0012).
     unrecognized_ext: bool,
@@ -302,7 +309,31 @@ fn scan_extensions(tlv: &[u8]) -> Option<ExtensionScan> {
                 let newer = read_u64(value, 98..106).unwrap_or(0);
                 out.max_fee = older.max(newer);
             }
-            EXT_PERMANENT_DELEGATE => out.dangerous_ext |= DANGER_PERMANENT_DELEGATE,
+            EXT_PERMANENT_DELEGATE => {
+                out.dangerous_ext |= DANGER_PERMANENT_DELEGATE;
+                // WRDF-0105 ROUND 3: the delegate pubkey used to be DISCARDED
+                // here — only the danger bit was kept. That bit alone is not
+                // enough: `prescan_vault_mints` refuses an unmodelable danger
+                // mint only when it is WRITABLE, and Token-2022
+                // `TransferChecked` / `BurnChecked` take their mint READ-ONLY
+                // while honouring this delegate as the source account's
+                // authority over EVERY token account of the mint. Extracting it
+                // is what lets `MintSnap::holds_authority` — and therefore
+                // `execute`'s vault-controlled-mint gate — see the fifth role.
+                //
+                // `PermanentDelegate` is a single `OptionalNonZeroPubkey`
+                // (32 B, all-zero = None), so the whole value is this one field.
+                // Best-effort on a short/garbled value, exactly like
+                // `TransferFeeConfig` above: `read_optional_nonzero_pubkey`
+                // returns `None` when the slice is under 32 bytes. That cannot
+                // open a hole, because the token program itself reads this
+                // extension through `get_extension::<PermanentDelegate>()`,
+                // which requires the value to be exactly 32 bytes — a
+                // short/garbled entry authorizes nothing on-chain. A value
+                // LONGER than 32 bytes is read from its first 32 bytes, which is
+                // the conservative direction (it can only add a reject).
+                out.permanent_delegate = read_optional_nonzero_pubkey(value, 0..32);
+            }
             EXT_TRANSFER_HOOK => out.dangerous_ext |= DANGER_TRANSFER_HOOK,
             EXT_CONFIDENTIAL_TRANSFER_MINT
             | EXT_CONFIDENTIAL_TRANSFER_ACCOUNT
