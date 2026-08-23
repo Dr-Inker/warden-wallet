@@ -1903,3 +1903,66 @@ Reclaimed 11G by removing a merged agent worktree (4.3G) and
 **Deliberately NOT relocated to `/mnt/data`** (60G free) without owner sign-off:
 that volume hosts the live Postgres tablespace, and parking tens of gigabytes of
 build churn beside a production database is not a unilateral call.
+
+## Client track — C2 keyring core (2026-08-23)
+
+Built the **provider-independent half** of plan §C2 in `packages/core/src/keyring/`:
+`aad.ts`, `envelope.ts`, `derive.ts`, `deadlines.ts`, `errors.ts` + 76 tests.
+`@warden/core` **301 → 377 tests**, typecheck clean, no new dependencies
+(WebCrypto AES-256-GCM + `@noble/hashes/argon2`).
+
+Deliberately NOT built, and NOT stubbed: `storage.session` wiring, MV3
+service-worker suspension, CSP, and PRF/WebAuthn unlock. Those are C1. A stub
+that appears to enforce a security property is worse than an honest gap.
+
+**The AAD encoding is the security-critical part and it is proven, not asserted.**
+`aad := LP(DOMAIN_TAG) ‖ u16be(version) ‖ u8(fieldCount) ‖ LP(account) ‖ LP(origin)
+‖ LP(keyKind) ‖ LP(schemaVersion) ‖ LP(genesisHash) ‖ LP(programId)`, where
+`LP(x) = u32be(len) ‖ x`. Injectivity is exhibited by a **total left inverse**
+(a decoder that recovers every field), and a function with a left inverse is
+injective. The test first *demonstrates the vulnerability* — naive concatenation
+makes `("ab","c")` and `("a","bc")` collide — then shows eight adversarial splits
+encode distinctly. `envelopeVersion` sits inside the AAD as well as the header, so
+the header bytes (outside the AEAD, attacker-mutable in storage) cannot be rolled
+without failing authentication.
+
+**Cross-cluster replay rejects** (WRDF-0023): identical account and program id,
+different genesis hash — opens on the sealing cluster, rejects on the other. This
+matters because a SmartAccount PDA is not network-qualified; its seeds carry no
+cluster identity.
+
+**The plan's anti-self-consistency rule was followed literally.** Reference AAD and
+envelope bytes are written longhand in the test from the documented format;
+acceptance-vector ciphertext comes from calling `crypto.subtle.encrypt` directly;
+interop is proven in both directions. `open(seal(x)) === x` appears exactly once,
+commented as self-consistent and near-worthless alone. The Argon2id chain is pinned
+against the **RFC 9106 §5.3 published reference vector** — an external oracle, not
+a number this codebase produced.
+
+### Honest gaps (recorded, not worked around)
+
+1. **The plan's "an Argon2id password path that can always unlock the same
+   envelope" is NOT satisfied.** As built, the password and PRF paths derive two
+   DIFFERENT unwrap keys, so they cannot open one envelope. Satisfying it needs a
+   KEK/DEK layer — one random data key, sealed twice, once under each unwrap key.
+   That composition is deliberately unimplemented and is the natural next slice of
+   C2; a test documents the current two-wrappings-required semantics explicitly.
+2. **Argon2id cost parameters are PROVISIONAL and labelled `UNVERIFIED — pending
+   the C2 benchmark`** (64 MiB / t=3 / p=1). The plan requires measuring on the
+   slowest supported desktop class before choosing a floor. No test treats them as
+   a floor. Do not cite them as measured.
+3. **Origin binding is byte-exact with no canonicalization**, on purpose: a
+   normalizer is one more place two origins could be made to collide. The cost is
+   that an inconsistent caller bricks its own envelopes — a C1 discipline
+   requirement, noted in the module doc.
+4. "Worker death and wake" beyond the clock-advance model, and "lock during pending
+   signing", are untestable here — they need a worker lifecycle (C1) and a signing
+   pipeline (C3).
+
+### Invariant standing — all three rows stay `unimplemented`
+
+`WRD-KEY-04` is satisfied at the library level but nothing yet produces or consumes
+these envelopes, so there is no evidence persistent storage holds only this format.
+`WRD-KEY-03` and `WRD-KEY-02` are partial with their remaining conjuncts named in
+the rows. This is the same call made for `WRD-SIG-01`: **a correct primitive is not
+a satisfied product invariant.**
