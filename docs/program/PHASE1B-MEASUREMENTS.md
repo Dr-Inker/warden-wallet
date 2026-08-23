@@ -1617,3 +1617,57 @@ closes that hole without promoting the row.
 rather than the registry merely failing to match. A companion test proves the
 planting back door is not inert (a benign planted selector IS honoured), so the
 main assertion cannot pass for the wrong reason.
+
+## Codex round-1 remediation — WRDF-0104 / 0105 / 0106 (2026-08-23)
+
+All three code findings from the `phase1b/grok-remediation/round-1` review were
+adjudicated ACCEPTED and fixed. Each carries a regression established RED at the
+pre-fix state by temporarily reverting the fix, not by assertion.
+
+**WRDF-0106 — out-mint platform fee used a net basis (minor, dimensional).**
+Jupiter's quote `outAmount` is already net of the platform fee, so requiring
+`fee_delta >= floor(net × 85 / 10_000)` under-charges: on the repo's own
+900_000 vector the true floor is 7_715 but 7_650 was accepted. The out-mint
+branch of `instructions/swap.rs` now reconstructs
+`gross = net_out_gain + fee_delta` (checked) and floors against that; the in-mint
+branch is unchanged because `actual_in` is already gross. **`test-jup-mock`
+repeated the same denominator error** and was fixed too — it now treats the
+quoted amount as GROSS, takes the fee off the top, and credits the vault the
+net. A new `misbehave = 7` variant replays the old net-basis under-charge and is
+rejected. Fixing the mock mattered as much as fixing the program: a mock that
+shares the implementation's error cannot fail the test that matters.
+
+**WRDF-0104 — durable-nonce and Loader-v4 value was unmetered (important).**
+`UNSUPPORTED_WRITABLE_OWNERS` held only Stake/Vote/BPF-upgradeable and its own
+comment admitted System-owned durable nonces were uncovered. Added `LOADER_V4_ID`
+(**confirmed against the pinned `solana-sdk-ids-3.1.0` source**, not from
+memory), and `reject_unsupported_writable_owners` now also refuses any WRITABLE
+System-owned account with `data_len != 0` — a durable nonce is 80 B, while a
+plain zero-data destination wallet stays allowed, so the rule is fail-closed and
+narrow. Both directions are tested, including the two negative cases that keep
+it narrow (zero-data writable allowed; read-only data-bearing allowed).
+
+**WRDF-0105 — direct-only deny-list was bypassable via a forwarding CPI
+(important, SWIG-ACC-C2 class).** `deny_scan` classifies only when the DIRECT
+payload program is SPL/Token-2022, but a PDA's signer privilege propagates down
+nested CPIs, so a forwarding program could reach FreezeAccount on a third-party
+account, or a nested MintTo→Burn round-trip that restores `supply` and passes the
+vault-controlled-mint identity check. Adjudicated fix narrows the surface rather
+than chasing nested introspection (which the runtime cannot offer): `execute`
+now rejects any payload whose account list contains a mint the PDA controls
+(`mint_authority` or `freeze_authority == account_key`), writable or not — every
+variant of the attack needs that mint present. New error
+`VaultControlledMintInPayload` (**6076**), mirrored into
+`packages/core/idl/warden.json` and verified byte-identical to the
+`anchor build` output. The check runs AFTER `deny_scan` so the existing direct
+`grok_exp02_*` tests still return `DenyListed`; that ordering is now asserted, not
+assumed. `swap` is deliberately exempt (typed adapter with its own supply freeze).
+
+**Gate at the merged SHA `04679aefc2a0fb99de3e00f672fbc1f2521c3f9a`:**
+`bash .claude/test-gate.sh` → exit **0** (unpiped), Rust **659 passed / 0 failed /
+1 ignored** (the pre-existing `resweep_writable_n_with_heap_frame`),
+`@warden/core` **301**, ui-tokens **11**, spike **8**.
+
+**Still owed:** an adversarial round over THIS remediation range. Until it is
+recorded in REVIEW-RUNS.jsonl these three fixes are author-verified only — the
+same standard WRDF-0107 was raised to enforce.
