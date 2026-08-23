@@ -1,5 +1,59 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-23 CLOSE — READ THIS FIRST; it supersedes every block below.
+>
+> **Gate green @`89bfac2`:** `bash .claude/test-gate.sh` → exit **0**, Rust **674
+> passed / 0 failed / 1 ignored**, `@warden/core` **377**, ui-tokens 11, spike 8.
+> Ledger: **89 invariants**, 56 `test-covered`, 32 `unimplemented`. **101 recorded
+> review rounds.**
+>
+> ### What is OWED (do these first)
+> 1. **A Codex round over `c5a4514..77a8273`.** Round 101 was run by `grok-4.3`
+>    through the new lane and does **NOT** discharge this. It is recorded with an
+>    explicit caveat: materially shallower than Codex, and it ruled `WRD-EXEC-09`
+>    `not_applicable` when that range is exactly what changed it. Retry
+>    `scripts/review.sh` when the OpenAI content filter clears (it blocked 3× on
+>    2026-08-23; a ~24 h wait cleared an identical block the day before).
+> 2. **The C2 KEK/DEK slice.** The plan requires "an Argon2id password path that
+>    can always unlock the same envelope". As built the password and PRF paths
+>    derive DIFFERENT unwrap keys, so they cannot open one envelope. Needs one
+>    random data key sealed twice. Deliberately unbuilt rather than half-built.
+> 3. **The Argon2id benchmark.** `PROVISIONAL_ARGON2ID_PARAMS` (64 MiB/t=3/p=1) is
+>    labelled `UNVERIFIED`. The plan requires measuring on the slowest supported
+>    desktop before choosing a floor. **Do not cite it as measured.**
+>
+> ### What changed today
+> - **WRDF-0105 took three rounds and the fix was wrong twice.** Final: a
+>   **proven** drain (third-party T2022 account 9,000 → 0 via a real
+>   `TransferChecked`, zero outflow, no cap debit) closed at `631291a`, then the
+>   **class** closed at `89bfac2` — `execute` now fails closed on
+>   `has_unrecognized_ext` or `UNMODELED_AUTHORITY_DANGERS`
+>   (`DANGER_TRANSFER_HOOK | DANGER_CONFIDENTIAL`), err **6077**. Only 2 of 17
+>   Token-2022 authority roles are extracted; the rest are refused rather than
+>   guessed at.
+> - **`WRD-EXEC-09` is HALF true by design** (transfer_hook + confidential now
+>   unconditional in generic `execute`; permanent_delegate + transfer_fee are
+>   deliberately NOT, pinned by two narrowness tests). Row stays `unimplemented` —
+>   the text likely wants splitting rather than promoting.
+> - **`WRD-CAP-09` was split** (WRDF-0108 caught the main loop promoting it while
+>   its statement certifies the unbuilt `execute_pending`). New **`WRD-CAP-10`**
+>   carries that conjunct at `unimplemented`.
+> - **B4 done** as a narrow per-invariant pass; 8 rows promoted with per-test
+>   evidence and honest caveats.
+> - **C2 keyring core** built in `packages/core/src/keyring/`. All `WRD-KEY-*` rows
+>   stay `unimplemented`: nothing produces or consumes the envelopes yet.
+> - **`scripts/review-grok.sh`** — provider-independent recorded review lane.
+>   Use `--max-chars 1000000`; the 600 K default elides whole-file context and
+>   Grok (correctly) refuses to rule on an incomplete evidence base.
+>
+> ### Standing lesson from today
+> Three of the day's findings were defects in the **adjudicator's** work, not the
+> code's: a false invariant promotion from reading a truncated statement, a case
+> dropped from a worker brief that the reviewer had explicitly named, and
+> malformed provenance written into the scorecard *while fixing a finding about
+> dishonest bookkeeping*. Also two false "green" claims from reading a piped exit
+> code. **Verify against the whole artefact, and capture the real exit status.**
+
 > **2026-08-23 — READ BEFORE THE 08-22 BLOCK BELOW; it supersedes it.**
 > The Codex round this file recorded as *owed* has RUN and is recorded:
 > `scripts/review.sh 9a427aa 0039681 --kind task-diff`, gpt-5.6-sol@max, 67
