@@ -1497,6 +1497,11 @@
       "code": 6076,
       "name": "VaultControlledMintInPayload",
       "msg": "generic execute refuses to sign for a payload whose account list contains a mint the vault controls (mint/freeze authority is the PDA); typed mint operations are a later-phase adapter concern"
+    },
+    {
+      "code": 6077,
+      "name": "UnmodelableMintExtensionInPayload",
+      "msg": "generic execute refuses to sign for a payload whose account list contains a mint whose authority semantics the snapshot cannot model (an unrecognized Token-2022 extension, or a danger class whose authority pubkey is not extracted)"
     }
   ],
   "types": [

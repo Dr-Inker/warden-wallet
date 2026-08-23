@@ -430,3 +430,41 @@ pub const DANGER_TRANSFER_HOOK: u8 = 1 << 3;
 /// NOT in this mask — it gets its own error so 1C can lift it alone.
 pub const DANGER_NEVER_ALLOWLISTABLE: u8 =
     DANGER_CONFIDENTIAL | DANGER_PERMANENT_DELEGATE | DANGER_TRANSFER_HOOK;
+
+/// The danger classes whose authority pubkeys `scan_extensions` does **not**
+/// extract — so `MintSnap::holds_authority` is structurally unable to answer
+/// "does the vault control this mint?" for them.
+///
+/// **The membership rule, in one line:** a danger bit whose authority field IS
+/// modelled — `DANGER_TRANSFER_FEE` (both `transfer_fee_config_authority` and
+/// `withdraw_withheld_authority` are extracted) and `DANGER_PERMANENT_DELEGATE`
+/// (the delegate pubkey is extracted since WRDF-0105 round 3) — does NOT belong
+/// in this mask, because `holds_authority` can decide those precisely. Adding
+/// one here would needlessly break the deliberate narrowness property that a
+/// mint whose roles are all held by THIRD PARTIES still works. Conversely, if a
+/// future round starts extracting `TransferHook.authority` or the confidential
+/// authority, that bit should be REMOVED from here in the same change.
+///
+/// Used only by `execute`'s generic vault-controlled-mint gate (WRDF-0105 round
+/// 4). Scope of what it closes, verified against spl-token-2022 10.0.0:
+///
+/// * `DANGER_CONFIDENTIAL` is the entry doing real work today.
+///   `ConfidentialTransferMint.authority` is a genuine Solana signer role, and
+///   `ApproveAccount` takes the mint **READ-ONLY** while letting that authority
+///   set a third party's token account `approved` — so
+///   `conservation::compare::prescan_vault_mints`, which refuses an unmodelable
+///   mint only when it is WRITABLE, never fires. Stated honestly: that is an
+///   unmetered third-party ACCOUNT-STATE change, not a demonstrated transfer or
+///   burn primitive. (The confidential auditor / withdrawal / supply keys are
+///   ElGamal keys, not Solana signers; the real confidential withheld-token
+///   signer is `TransferFeeConfig.withdraw_withheld_authority`, already
+///   extracted.)
+/// * `DANGER_TRANSFER_HOOK` is belt-and-braces, and the comment says so rather
+///   than overclaiming. `TransferHook.program_id` is an executable target, not
+///   a signer role, so not extracting it grants nothing.
+///   `TransferHook.authority` IS a real unextracted role, but exercising it
+///   mutates the mint — which makes the mint writable and therefore already
+///   trips `prescan_vault_mints`. It is kept here because `execute` forwards
+///   the PDA signer into arbitrary nested CPIs, which is exactly the path where
+///   an unmodelled semantic is least affordable.
+pub const UNMODELED_AUTHORITY_DANGERS: u8 = DANGER_TRANSFER_HOOK | DANGER_CONFIDENTIAL;

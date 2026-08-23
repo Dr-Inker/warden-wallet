@@ -205,4 +205,13 @@ pub enum WardenError {
     // ---------------------------------------------------------------------
     #[msg("generic execute refuses to sign for a payload whose account list contains a mint the vault controls (mint/freeze authority is the PDA); typed mint operations are a later-phase adapter concern")]
     VaultControlledMintInPayload,
+    // ---------------------------------------------------------------------
+    // WRDF-0105 round 4 / Grok review (2026-08-23). APPEND ONLY — see above.
+    // Code 6077. Deliberately NOT a reuse of `VaultControlledMintInPayload`:
+    // that error means "the vault holds a role on this mint", this one means
+    // "the snapshot cannot tell who holds what on this mint". A reader of an
+    // on-chain error deserves to know which of the two fired.
+    // ---------------------------------------------------------------------
+    #[msg("generic execute refuses to sign for a payload whose account list contains a mint whose authority semantics the snapshot cannot model (an unrecognized Token-2022 extension, or a danger class whose authority pubkey is not extracted)")]
+    UnmodelableMintExtensionInPayload,
 }

@@ -2565,6 +2565,266 @@ fn grok_exp03_writable_stake_owned_remaining_rejected() {
 }
 
 // ---------------------------------------------------------------------------
+// WRDF-0105 ROUND 4 / Grok review (2026-08-23): the CLASS, not the instance.
+//
+// Rounds 1–3 each closed one more *instance* of the same shape: a role the
+// snapshot did not extract, reachable through a READ-ONLY mint. The class is
+// structural, not enumerative — `execute`'s gate consults ONLY
+// `MintSnap::holds_authority`, which knows five roles; `scan_extensions`
+// extracts authority pubkeys for ONLY `TransferFeeConfig` and
+// `PermanentDelegate`. `TransferHook` (14) and the confidential family (4/5/16/
+// 17/24) set a danger bit and NO pubkey; every other extension type falls to
+// `unrecognized_ext`. And `prescan_vault_mints` — the "different axis" the old
+// comment pointed at — only refuses an unmodelable mint when it is WRITABLE.
+//
+// So a READ-ONLY mint whose PDA-held authority lives in an unmodelled extension
+// was caught by NOTHING. Scope, per a second static review against
+// spl-token-2022 10.0.0 (the runtime LiteSVM 0.12.0 embeds), stated honestly
+// rather than dramatically:
+//
+//   * `ConfidentialTransferMint.authority` (types 4/5) is the one confirmed
+//     LIVE read-only bypass today: `ApproveAccount` takes the mint READ-ONLY
+//     and sets a third party's token account `approved`. That is an unmetered
+//     third-party ACCOUNT-STATE change — NOT a demonstrated transfer or burn.
+//   * `TransferHook.authority` is a real unextracted role, but exercising it
+//     mutates the mint, so a WRITABLE mint is required and
+//     `prescan_vault_mints` already refuses it. Belt-and-braces here, not a
+//     live hole. (`TransferHook.program_id` is an executable target, not a
+//     signer role — correctly not extracted.)
+//   * The ~11 catch-all roles are the same story: authority-exercise mutates or
+//     closes the mint, so they are predicate omissions, not present bypasses.
+//
+// The STRUCTURAL argument is what justifies the rule anyway: rounds 1–3 each
+// closed one instance, and the enumeration missed the next one every time —
+// most expensively `PermanentDelegate`, which WAS proven (in
+// `wrdf0105_root_execute_permanent_delegate_third_party_drain_rejected`) to
+// move 9,000 tokens of a third party with zero recorded outflow and no cap
+// debited.
+//
+// The fix keeps `holds_authority` as the "vault-controlled" test and ADDS a
+// second, orthogonal refusal in the generic-`execute` gate: any mint whose
+// authority semantics the snapshot cannot represent at all is refused
+// regardless of who holds what, with its OWN error
+// (`UnmodelableMintExtensionInPayload`) so an on-chain reader can tell the two
+// refusals apart. Tests 1–2 below are the redness cases; tests 3–5 are the
+// CONTROLS that pin the narrowness property (a stranger-held mint using an
+// extension we HAVE modelled still works).
+// ---------------------------------------------------------------------------
+
+/// Plant a **Token-2022** mint carrying ONE arbitrary TLV entry of `ext_type`
+/// with `value` as its body, and every classic authority role unset. Same byte
+/// layout as [`set_t22_transfer_fee_mint`] / [`set_t22_permanent_delegate_mint`],
+/// generalised over the extension type so an UNMODELLED extension can be built
+/// without teaching the helper about it:
+///
+/// ```text
+///   [0..82)    classic Mint base (all authorities None)
+///   [82..165)  zero padding — the T22 crate REQUIRES this to be all zeroes
+///   [165]      AccountType::Mint = 1
+///   [166..]    TLV: type u16 LE ‖ len u16 LE ‖ value
+/// ```
+fn set_t22_mint_with_ext(svm: &mut LiteSVM, mint: &Pubkey, ext_type: u16, value: &[u8]) {
+    use solana_sdk::program_option::COption;
+    use spl_token::state::Mint;
+    let m = Mint {
+        // Every CLASSIC role deliberately unset, and (below) every extension
+        // authority is a STRANGER: whatever this mint trips cannot be
+        // `holds_authority`, so the reject provably comes from the new rule.
+        mint_authority: COption::None,
+        supply: 1_000,
+        decimals: 6,
+        is_initialized: true,
+        freeze_authority: COption::None,
+    };
+    let mut data = vec![0u8; Mint::LEN];
+    m.pack_into_slice(&mut data);
+    data.resize(165, 0); // [82..165) padding
+    data.push(1); // AccountType::Mint
+    data.extend_from_slice(&ext_type.to_le_bytes());
+    data.extend_from_slice(&(value.len() as u16).to_le_bytes());
+    data.extend_from_slice(value);
+    assert_eq!(data.len(), 166 + 4 + value.len());
+    svm.set_account(
+        *mint,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(data.len()),
+            data,
+            owner: SPL_TOKEN_2022_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (T22 mint with one TLV extension)");
+}
+
+/// REDNESS 1 — a READ-ONLY Token-2022 mint carrying a `ConfidentialTransferMint`
+/// (type 4) extension in a ROOT `execute` account list is refused
+/// `UnmodelableMintExtensionInPayload`.
+///
+/// This is the mask entry doing REAL work today. `ConfidentialTransferMint`'s
+/// value begins with `authority: OptionalNonZeroPubkey` — a genuine Solana
+/// signer role that `scan_extensions` collapses to `DANGER_CONFIDENTIAL` with
+/// NO pubkey extracted, so `holds_authority` cannot see it. Token-2022
+/// `ApproveAccount` takes the mint **READ-ONLY** and lets that authority set a
+/// third party's token account to `approved` — so `prescan_vault_mints`'s
+/// writable-mint fallback never fires either. Scope stated honestly: that is an
+/// unmetered third-party ACCOUNT-STATE change, not a demonstrated transfer or
+/// burn primitive.
+///
+/// The authority here is a STRANGER precisely so the reject cannot be
+/// attributed to `holds_authority`: the mint is refused because the snapshot
+/// cannot MODEL it, not because of who holds it.
+#[test]
+fn wrdf0105r4_root_execute_with_readonly_confidential_mint_rejected() {
+    let conf_mint = Pubkey::new_from_array([0x5f; 32]);
+    let stranger_authority = Pubkey::new_unique();
+    // `{ authority: OptionalNonZeroPubkey (32), auto_approve_new_accounts:
+    // PodBool (1), auditor_elgamal_pubkey: OptionalNonZeroElGamalPubkey (32) }`.
+    let mut value = vec![0u8; 65];
+    value[0..32].copy_from_slice(stranger_authority.as_ref());
+    let (mut svm, payer, submitter, vault_ata, dest, precompile, ix) =
+        root_execute_with_extra_readonly_mint(conf_mint, |svm, _account| {
+            // 4 = ExtensionType::ConfidentialTransferMint.
+            set_t22_mint_with_ext(svm, &conf_mint, 4, &value);
+        });
+    expect_reject(
+        &mut svm,
+        &[&payer, &submitter],
+        &[precompile, ix],
+        1,
+        err::UNMODELABLE_MINT_EXTENSION_IN_PAYLOAD,
+    );
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "the transfer never ran");
+    assert_eq!(token_amount(&svm, &dest), 0);
+}
+
+/// REDNESS 1b — the same refusal for a READ-ONLY `TransferHook` (type 14) mint.
+///
+/// Recorded with its scope stated precisely, because it is easy to overclaim:
+/// `TransferHook.program_id` is an EXECUTABLE target, not a signer role, so not
+/// extracting it grants nothing and is correct. `TransferHook.authority` IS a
+/// real reassignable role, but exercising it (`UpdateTransferHook`) MUTATES the
+/// mint, which makes the mint WRITABLE and therefore trips the existing
+/// `prescan_vault_mints` rule at `conservation/compare.rs`. So this test does
+/// **not** pin a live read-only bypass — it pins the fail-closed rule's
+/// belt-and-braces coverage of a danger class whose authority pubkey the
+/// snapshot does not extract, on a path (`execute`) that forwards the PDA
+/// signer into arbitrary nested CPIs.
+#[test]
+fn wrdf0105r4_root_execute_with_readonly_transfer_hook_mint_rejected() {
+    let hook_mint = Pubkey::new_from_array([0x5c; 32]);
+    let stranger_authority = Pubkey::new_unique();
+    let stranger_program = Pubkey::new_unique();
+    let mut value = vec![0u8; 64];
+    value[0..32].copy_from_slice(stranger_authority.as_ref());
+    value[32..64].copy_from_slice(stranger_program.as_ref());
+    let (mut svm, payer, submitter, vault_ata, dest, precompile, ix) =
+        root_execute_with_extra_readonly_mint(hook_mint, |svm, _account| {
+            // 14 = ExtensionType::TransferHook.
+            set_t22_mint_with_ext(svm, &hook_mint, 14, &value);
+        });
+    expect_reject(
+        &mut svm,
+        &[&payer, &submitter],
+        &[precompile, ix],
+        1,
+        err::UNMODELABLE_MINT_EXTENSION_IN_PAYLOAD,
+    );
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "the transfer never ran");
+    assert_eq!(token_amount(&svm, &dest), 0);
+}
+
+/// REDNESS 2 — a READ-ONLY Token-2022 mint carrying an extension type the scan
+/// does not model AT ALL is refused `UnmodelableMintExtensionInPayload`.
+///
+/// `MintCloseAuthority` is type 3, a real Token-2022 extension that
+/// `scan_extensions`'s `match` has no arm for, so it lands in the `_ =>
+/// unrecognized_ext = true` catch-all. Its value is a single
+/// `OptionalNonZeroPubkey` close authority — REASSIGNABLE, and invisible to
+/// `holds_authority`.
+///
+/// Scope, stated precisely rather than dramatically: under spl-token-2022
+/// 10.0.0 this role (and the other ~10 unextracted ones —
+/// `InterestBearingConfig.rate_authority`, `MetadataPointer.authority`,
+/// `TokenMetadata.update_authority`, `GroupPointer`/`GroupMemberPointer`
+/// `.authority`, `TokenGroup.update_authority`,
+/// `ScaledUiAmountConfig.authority`, `PausableConfig.authority`,
+/// `ConfidentialTransferFeeConfig.authority`) is a predicate OMISSION but not a
+/// presently-demonstrated read-only bypass: exercising any of them mutates or
+/// closes the authority-bearing mint, so the mint is WRITABLE and
+/// `prescan_vault_mints` already refuses it. What this test pins is that the
+/// rule is STRUCTURAL rather than enumerative — it needs no list of which
+/// extension is dangerous, so a Token-2022 extension invented tomorrow, whose
+/// authority semantics may well NOT require a writable mint, is covered on the
+/// day it ships instead of after the next review round finds it.
+#[test]
+fn wrdf0105r4_root_execute_with_readonly_unmodelled_ext_mint_rejected() {
+    let odd_mint = Pubkey::new_from_array([0x5d; 32]);
+    let stranger_close_authority = Pubkey::new_unique();
+    let mut value = vec![0u8; 32];
+    value[0..32].copy_from_slice(stranger_close_authority.as_ref());
+    let (mut svm, payer, submitter, vault_ata, dest, precompile, ix) =
+        root_execute_with_extra_readonly_mint(odd_mint, |svm, _account| {
+            // 3 = ExtensionType::MintCloseAuthority — a REAL type with no arm
+            // in `scan_extensions`, so `unrecognized_ext` is what it sets.
+            set_t22_mint_with_ext(svm, &odd_mint, 3, &value);
+        });
+    expect_reject(
+        &mut svm,
+        &[&payer, &submitter],
+        &[precompile, ix],
+        1,
+        err::UNMODELABLE_MINT_EXTENSION_IN_PAYLOAD,
+    );
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "the transfer never ran");
+    assert_eq!(token_amount(&svm, &dest), 0);
+}
+
+/// CONTROL (narrowness C) — a plain CLASSIC-SPL mint with no TLV tail at all,
+/// and no authorities whatsoever, still rides through generic `execute`.
+///
+/// This is not a redness case: it passes at the vulnerable base too. It exists
+/// so the two rejects above cannot be explained by "any extra mint in the list
+/// is now refused". Narrowness controls A and B — the stranger-held
+/// `TransferFeeConfig` and `PermanentDelegate` mints, both extensions whose
+/// authority field IS extracted — are
+/// `wrdf0105_root_execute_with_stranger_t22_all_four_authorities_allowed` and
+/// `wrdf0105_root_execute_with_stranger_permanent_delegate_mint_allowed`, which
+/// must keep passing UNCHANGED.
+#[test]
+fn wrdf0105r4_root_execute_with_plain_classic_spl_mint_still_allowed() {
+    use solana_sdk::program_option::COption;
+    use spl_token::state::Mint;
+    let plain_mint = Pubkey::new_from_array([0x5e; 32]);
+    let (mut svm, payer, submitter, vault_ata, dest, precompile, ix) =
+        root_execute_with_extra_readonly_mint(plain_mint, |svm, _account| {
+            let m = Mint {
+                mint_authority: COption::None,
+                supply: 1_000,
+                decimals: 6,
+                is_initialized: true,
+                freeze_authority: COption::None,
+            };
+            let mut data = vec![0u8; Mint::LEN];
+            m.pack_into_slice(&mut data);
+            svm.set_account(
+                plain_mint,
+                Account {
+                    lamports: svm.minimum_balance_for_rent_exemption(Mint::LEN),
+                    data,
+                    owner: SPL_TOKEN_ID,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .expect("set_account (plain classic SPL mint)");
+        });
+    expect_ok(&mut svm, &[&payer, &submitter], &[precompile, ix]);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS - 400_000, "the transfer ran normally");
+    assert_eq!(token_amount(&svm, &dest), 400_000);
+}
+
+// ---------------------------------------------------------------------------
 // Error codes (mirror of tests/root_verify.rs::err, only the ones used here)
 // ---------------------------------------------------------------------------
 mod err {
@@ -2586,4 +2846,5 @@ mod err {
     pub const DUPLICATE_LOGICAL_ACCOUNT: u32 = 6059;
     pub const UNSUPPORTED_ACCOUNT_KIND: u32 = 6040;
     pub const VAULT_CONTROLLED_MINT_IN_PAYLOAD: u32 = 6076;
+    pub const UNMODELABLE_MINT_EXTENSION_IN_PAYLOAD: u32 = 6077;
 }
