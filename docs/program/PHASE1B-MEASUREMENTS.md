@@ -1817,3 +1817,89 @@ being preserved rather than glossed.
 
 **Owed:** a recorded adversarial round over `c5a4514..f4880cc` once the filter
 clears. Last time this class of block cleared in roughly 24 h on an identical lane.
+
+## Two independent reviews close the CLASS, not the instance (2026-08-23)
+
+With the Codex lane content-filter-blocked on the round-4 range, the owed review
+was routed to **two** independent reviewers instead of being dropped: **Grok
+(grok-4.3, xAI)** via a new local zero-dependency MCP server, and **Codex
+sol@max** via the MCP lane with a defensively reframed completeness question.
+Neither is a recorded round — both are UNRECORDED second opinions, no `WRDF` id
+minted by hand, `REVIEW-RUNS.jsonl` still at 100. Full texts:
+`docs/security/GROK-REVIEW-2026-08-23-RESULT.md`.
+
+**They converged on the same verdict: the three WRDF-0105 remediations closed the
+INSTANCE three times and never the CLASS.** `scan_extensions` extracts authority
+pubkeys for exactly two extensions (TransferFeeConfig, PermanentDelegate).
+TransferHook and the confidential types collapse to a danger bit with **no pubkey
+extracted**; everything else falls to `has_unrecognized_ext`. `execute`'s gate
+consults **neither** flag, and the axis that does (`prescan_vault_mints`,
+compare.rs:355) only fires on **WRITABLE** mints. Verified in source before
+either was accepted.
+
+**Codex quantified what Grok found:** **5 of 17** mint-level signer-authority
+pubkeys in pinned Token-2022 10.0.0 are extracted, and — the part neither the
+main loop nor Grok had done — it separated the one live bypass from the
+theoretical ones:
+
+- **`ConfidentialTransferMint.authority` is the single genuinely live read-only
+  bypass.** `ApproveAccount` takes the mint READ-ONLY and lets that authority set
+  a third party's token account `approved` state, so the writable-mint fallback
+  never fires. Scoped honestly: an unmetered third-party **account-state** change;
+  no transfer or burn power was identified from that authority alone. Not a theft
+  primitive.
+- **The other ~11 unextracted roles are predicate omissions, not bypasses** under
+  v10: exercising them mutates or closes the authority-bearing mint, making it
+  writable and tripping the existing check.
+- **It corrected a main-loop error.** The worker brief called TransferHook an
+  unmodelled-authority danger. `TransferHook.program_id` is an *executable
+  target*, not a signer role — aiming it at the non-executable PDA grants nothing,
+  so not extracting it is correct. The real missing role, `TransferHook.authority`,
+  mutates the mint and is already covered. The correction was relayed mid-task and
+  the code comments say so rather than overclaiming.
+
+**Fix (both reviewers' recommended shape).** Keep `holds_authority` as the precise
+"vault-controlled" test, and in generic `execute` additionally fail closed on what
+the snapshot cannot reason about: `has_unrecognized_ext`, or a danger bit whose
+authority field is not extracted
+(`UNMODELED_AUTHORITY_DANGERS = DANGER_TRANSFER_HOOK | DANGER_CONFIDENTIAL`, with
+the membership rule written next to it). New error
+`UnmodelableMintExtensionInPayload` (**6077**) — deliberately not a reuse of 6076,
+because "the vault holds a role" and "the snapshot cannot tell who holds what" are
+different refusals and an on-chain error should say which fired.
+
+This preserves the deliberate narrowness property — a mint whose roles are all
+held by third parties still passes, for extensions we HAVE modelled — and the cost
+is stated in the code rather than left implicit: **a new Token-2022 extension is a
+liveness blocker in generic `execute` until it is modelled**, the same trade
+already accepted for vault mints via `has_unrecognized_ext`.
+
+Three red-at-base regressions (confidential, transfer-hook, and an unmodelled
+MintCloseAuthority type, all with STRANGER-held authorities so the refusal
+provably comes from the new rule and not `holds_authority`), plus three controls
+that pass at the vulnerable base too. The round-2 "handled on a different axis"
+comment was corrected in place rather than deleted — that claim was wrong, and it
+is why round 4 exists. `snapshot.rs:17` provenance corrected: 7.0.0 is the layout
+reference, **10.0.0 is the runtime**.
+
+**WRD-EXEC-09 is now half-true, deliberately.** transfer_hook (14) and
+confidential (4/5, plus 16/17/24 — wider than the spec's literal list) now reject
+unconditionally in generic `execute`. permanent_delegate (12) and transfer_fee (1)
+do NOT, and that is a conscious trade pinned by two committed narrowness tests, not
+an omission. The row stays `unimplemented`, which remains the honest reading; the
+invariant text likely wants splitting or rescoping to "unmodelable classes" rather
+than being marked implemented.
+
+**Gate at `89bfac2`:** `bash .claude/test-gate.sh` → exit **0**, Rust **674 passed /
+0 failed / 1 ignored**, `@warden/core` **301**, ui-tokens **11**, spike **8**.
+
+### Host issue surfaced by this build (owner action)
+
+The first gate attempt died with `GATE_EXIT=101` on **`No space left on device`** —
+a linker crash, zero test failures. `/` (150G) was at **100%, 0 bytes free**.
+Reclaimed 11G by removing a merged agent worktree (4.3G) and
+`target/debug/incremental` (6.1G); the gate then passed and `/` sits at ~94%.
+`/opt/warden/target/debug/deps` alone is **28G** and will refill.
+**Deliberately NOT relocated to `/mnt/data`** (60G free) without owner sign-off:
+that volume hosts the live Postgres tablespace, and parking tens of gigabytes of
+build churn beside a production database is not a unilateral call.
