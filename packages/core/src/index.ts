@@ -6,3 +6,8 @@ export * from "./execute/wrap.js";
 export * from "./deploy/config.js";
 export * from "./deploy/accounts.js";
 export * from "./deploy/gate.js";
+export * from "./keyring/errors.js";
+export * from "./keyring/aad.js";
+export * from "./keyring/deadlines.js";
+export * from "./keyring/derive.js";
+export * from "./keyring/envelope.js";
