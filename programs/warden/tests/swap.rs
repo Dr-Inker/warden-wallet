@@ -414,6 +414,49 @@ fn wrdf0106_out_mint_fee_uses_gross_basis_net_basis_route_rejected() {
     assert_eq!(token_amount(&l.svm, &l.vault_out), 892_350, "vault credited net of the fee");
 }
 
+/// WRDF-0106 ROUND 2 (2026-08-23): the gross-basis fix must not turn honest
+/// high-base-unit swaps into availability failures.
+///
+/// Reconstructing `gross = net + fee` makes the fee floor's basis strictly
+/// LARGER than the net basis it replaced. The floor was computed multiply-first
+/// (`base × 85 / 10_000`), so every base above `u64::MAX / 85` overflowed the
+/// intermediate and was REJECTED — even though the true floor fits a u64 with
+/// room to spare. Codex's exact witness: an honest route quoting a gross leg of
+/// `217_020_518_514_230_020` credits the vault `215_175_844_106_859_065` and
+/// pays the treasury `1_844_674_407_370_955` — a split that PASSED on the old
+/// net basis (net × 85 does not overflow) and started failing the moment the
+/// gross leg became the basis. `217_020_518_514_230_020` is exactly
+/// `u64::MAX / 85 + 1`, i.e. the first base the old form could not evaluate.
+///
+/// Nothing about the swap is unusual apart from magnitude: the INPUT leg stays a
+/// perfectly ordinary 1_000_000 units well inside `IN_PER_TX`, because the fee
+/// floor's basis is the OUT leg. Only the pool's out-mint float is scaled up.
+#[test]
+fn wrdf0106_high_base_unit_gross_leg_is_accepted_not_overflowed() {
+    const GROSS_OUT: u64 = 217_020_518_514_230_020;
+    const HONEST_FEE: u64 = 1_844_674_407_370_955;
+    const HONEST_NET: u64 = 215_175_844_106_859_065;
+    assert_eq!(GROSS_OUT, u64::MAX / 85 + 1, "the first base the multiply-first form rejected");
+    assert_eq!(GROSS_OUT, HONEST_NET + HONEST_FEE);
+
+    let mut l = live();
+    // Scale ONLY the mock pool's out-mint float so it can pay a gross leg this
+    // large. The vault's in-mint balance, caps and `max_in` are untouched.
+    let (pool, _) = jup::pool_authority();
+    set_token_account(&mut l.svm, &l.pool_out, &out_mint(), &pool, u64::MAX / 2);
+
+    let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
+    let ra = l.route_accounts(l.treasury_ata, None);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    // misbehave = 0: the mock pays the honest gross-basis fee off the top.
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, GROSS_OUT, 1_000_000, 1, 0);
+    let (ix, _) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
+    expect_ok(&mut l.svm, &[&l.payer, &kp], &[ix]);
+    assert_eq!(token_amount(&l.svm, &l.treasury_ata), HONEST_FEE, "the honest 85 bps of the gross leg");
+    assert_eq!(token_amount(&l.svm, &l.vault_out), HONEST_NET, "the vault is credited net of that fee");
+    assert_eq!(token_amount(&l.svm, &l.vault_in), VAULT_IN - 1_000_000, "an ordinary input leg");
+}
+
 /// GROK-EXP-05 (2026-08-22): the `route` variant (which forwards the vault PDA
 /// signer into every AMM hop) is refused on the SESSION path; the user must
 /// sign a root ceremony (which binds route_hash + accounts_hash) for it. The

@@ -1947,25 +1947,174 @@ fn wrdf0104_loader_v4_and_data_bearing_system_writable_rejected() {
         reject_unsupported_writable_owners(&loader_v4).unwrap_err(),
         err(WardenError::UnsupportedAccountKind)
     );
-    // …and positionally in the comparison (an account that BECAME Loader-v4's).
+    // …and in `compare_and_account`'s positional check. WRDF-0104 ROUND 2: this
+    // pair is the SAME snapshot on both sides, so it measures "Loader-v4-owned
+    // ACROSS the window is refused on presence, not on change" — it is NOT a
+    // transition test and never was (the earlier comment claiming an account
+    // "BECAME Loader-v4's" described a case this call does not build). The real
+    // BEFORE→AFTER transitions are
+    // `wrdf0104_system_state_transitions_are_rejected_positionally` below.
     assert_eq!(cmp(&loader_v4, &loader_v4, &[]).unwrap_err(), err(WardenError::UnsupportedAccountKind));
 
     // (ii) writable System-owned account holding a durable nonce (80 B) — refused
-    // on the data-length rule (System has no owner-id entry).
+    // on the data-length rule (System has no owner-id entry). Both barriers: the
+    // pre-CPI helper AND the post-CPI comparison (WRDF-0104 round 2 — the
+    // comparison used to omit this rule entirely, so the pre-CPI call was the
+    // ONLY barrier and the "again in compare_and_account" claim was false).
     let nonce = vec![snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[0u8; 80], true)];
     assert_eq!(
         reject_unsupported_writable_owners(&nonce).unwrap_err(),
         err(WardenError::UnsupportedAccountKind)
     );
+    assert_eq!(cmp(&nonce, &nonce, &[]).unwrap_err(), err(WardenError::UnsupportedAccountKind));
 
     // (iii) writable System-owned account with NO data (a plain wallet / a
     // to-be-allocated destination) — still allowed, so the rule cannot break the
-    // common case.
+    // common case. Allowed by BOTH barriers.
     let wallet = vec![snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[], true)];
     assert!(reject_unsupported_writable_owners(&wallet).is_ok());
+    assert_eq!(cmp(&wallet, &wallet, &[]).expect("zero-data system wallet is fine"), Outflow::default());
 
     // (iv) READ-ONLY System-owned data-bearing account — allowed: a CPI cannot
-    // debit a read-only account, so a read-only nonce is inert.
+    // debit a read-only account, so a read-only nonce is inert. Allowed by BOTH
+    // barriers (the comparison's `writable` is the OR of the two snapshots, and
+    // both are read-only here).
     let ro_nonce = vec![snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[0u8; 80], false)];
     assert!(reject_unsupported_writable_owners(&ro_nonce).is_ok());
+    assert_eq!(cmp(&ro_nonce, &ro_nonce, &[]).expect("read-only nonce is inert"), Outflow::default());
+}
+
+/// WRDF-0104 ROUND 2 (2026-08-23), the actual post-CPI backstop.
+///
+/// `execute` / `swap` call [`reject_unsupported_writable_owners`] on the BEFORE
+/// snapshot only. The claim in that function's docs — "and again positionally in
+/// `compare_and_account`" — held for the four `UNSUPPORTED_WRITABLE_OWNERS` ids
+/// but NOT for the System-owned `data_len != 0` rule, which the comparison did
+/// not carry at all. So an account that was zero-data System state BEFORE and
+/// data-bearing System state AFTER (a durable nonce **created during the CPI**)
+/// passed the pre-CPI helper honestly and was then skipped by the comparison as
+/// "not a vault token account" — exactly the LZR-ACC-C2 unmetered-value shape.
+///
+/// These are true BEFORE ≠ AFTER transitions driven through `compare_and_account`
+/// (unlike the same-snapshot presence cases above), in both directions, plus the
+/// narrowness controls that must stay green.
+#[test]
+fn wrdf0104_system_state_transitions_are_rejected_positionally() {
+    let acct = pk(7);
+    let sys_empty = snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[], true);
+    let sys_nonce = snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[0u8; 80], true);
+
+    // (a) System zero-data BEFORE → System data-bearing AFTER: a durable nonce
+    // (or any other unmodelled System state) allocated + initialized inside the
+    // CPI window. The pre-CPI helper CANNOT see this — it only ever runs on the
+    // BEFORE snapshot, and the BEFORE snapshot is an innocent empty wallet.
+    assert!(
+        reject_unsupported_writable_owners(std::slice::from_ref(&sys_empty)).is_ok(),
+        "the pre-CPI barrier is blind to this by construction — only the AFTER side shows it"
+    );
+    assert_eq!(
+        cmp(std::slice::from_ref(&sys_empty), std::slice::from_ref(&sys_nonce), &[]).unwrap_err(),
+        err(WardenError::UnsupportedAccountKind),
+        "System zero-data -> data-bearing must be refused by the post-CPI barrier"
+    );
+
+    // (b) The reverse transition — data-bearing System BEFORE → zero-data System
+    // AFTER — is the `WithdrawNonceAccount`-then-deallocate shape and is refused
+    // on the BEFORE side of the same positional test.
+    assert_eq!(
+        cmp(std::slice::from_ref(&sys_nonce), std::slice::from_ref(&sys_empty), &[]).unwrap_err(),
+        err(WardenError::UnsupportedAccountKind)
+    );
+
+    // (c) System zero-data BEFORE → an UNSUPPORTED OWNER AFTER (Loader-v4; the
+    // Stake variant is `grok_exp03_writable_vote_and_program_data_...`). Caught by
+    // the owner-id half of the same positional check.
+    let loader_after = snapshot_one(&acct, &LOADER_V4_ID, RENT, &[0u8; 64], true);
+    assert_eq!(
+        cmp(std::slice::from_ref(&sys_empty), std::slice::from_ref(&loader_after), &[]).unwrap_err(),
+        err(WardenError::UnsupportedAccountKind)
+    );
+
+    // (d) NARROWNESS. A writable System account that is zero-data on BOTH sides
+    // — the overwhelmingly common case (a fee payer, a stranger wallet, an ATA
+    // destination that the transaction level, never `execute`, allocates) — is
+    // still accepted, lamport movement and all.
+    let sys_empty_richer = snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT + 1_000, &[], true);
+    assert_eq!(
+        cmp(std::slice::from_ref(&sys_empty), std::slice::from_ref(&sys_empty_richer), &[])
+            .expect("zero-data System on both sides stays allowed"),
+        Outflow::default()
+    );
+
+    // (e) NARROWNESS. The same zero-data → data-bearing transition on a READ-ONLY
+    // account is inert: a CPI cannot write an account it was not given writably,
+    // so there is nothing to refuse.
+    let ro_empty = snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[], false);
+    let ro_nonce = snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[0u8; 80], false);
+    assert_eq!(
+        cmp(std::slice::from_ref(&ro_empty), std::slice::from_ref(&ro_nonce), &[])
+            .expect("read-only transition is inert"),
+        Outflow::default()
+    );
+}
+
+/// WRDF-0105 ROUND 2 (2026-08-23), the MintSnap half.
+///
+/// `execute`'s vault-controlled-mint gate used to hand-roll a two-field test
+/// (`mint_authority` / `freeze_authority`). Token-2022 puts two MORE authorities
+/// in the TLV tail — `transfer_fee_config_authority` and, the one Codex
+/// demonstrated an exploit path for, `withdraw_withheld_authority`
+/// (`WithdrawWithheldTokensFromAccounts`, outer tag 26, takes a READ-ONLY mint
+/// and that authority as signer). This pins that (a) the snapshotter really does
+/// extract all four from the exact byte layout the `execute` regressions plant,
+/// and (b) `holds_authority` — the predicate the gate now uses — is true for EACH
+/// role on its own, so no single role can be silently dropped again.
+#[test]
+fn wrdf0105_holds_authority_covers_all_four_roles_including_t22_extensions() {
+    let m = pk(0x71);
+    let stranger = pk(0x72);
+    let other = pk(0x73);
+
+    // Every role held by a different key, so a field mix-up cannot pass.
+    let all = t22_mint_bytes(
+        mint_bytes(Some(pk(1)), 1_000, 6, Some(pk(2))),
+        &tlv(&[(EXT_TRANSFER_FEE_CONFIG, transfer_fee_value(Some(pk(3)), Some(pk(4)), 0, 0, 0))]),
+    );
+    let snap = snap_t22(m, &all, false);
+    let ms = snap.mint.as_ref().expect("the planted T22 transfer-fee mint must decode as a mint");
+    assert_eq!(ms.mint_authority, Some(pk(1)));
+    assert_eq!(ms.freeze_authority, Some(pk(2)));
+    assert_eq!(ms.transfer_fee_config_authority, Some(pk(3)));
+    assert_eq!(ms.withdraw_withheld_authority, Some(pk(4)));
+    assert_eq!(ms.program, PROGRAM_T22);
+    for role in [pk(1), pk(2), pk(3), pk(4)] {
+        assert!(ms.holds_authority(&role), "role {role} must count as control");
+    }
+    assert!(!ms.holds_authority(&stranger));
+
+    // Each role ALONE is control. Roles 3 and 4 are precisely the ones the old
+    // two-field test in `execute` could not see.
+    for (mint_auth, freeze_auth, cfg_auth, ww_auth) in [
+        (Some(vault()), None, None, None),
+        (None, Some(vault()), None, None),
+        (None, None, Some(vault()), None),
+        (None, None, None, Some(vault())),
+    ] {
+        let bytes = t22_mint_bytes(
+            mint_bytes(mint_auth, 1_000, 6, freeze_auth),
+            &tlv(&[(EXT_TRANSFER_FEE_CONFIG, transfer_fee_value(cfg_auth, ww_auth, 0, 0, 0))]),
+        );
+        let s = snap_t22(m, &bytes, false);
+        let msn = s.mint.as_ref().expect("decodes");
+        assert!(msn.holds_authority(&vault()), "the vault holds exactly one role and that is enough");
+        assert!(!msn.holds_authority(&other));
+        // The two-field predicate the gate used to run: blind to roles 3 and 4.
+        let old_predicate =
+            msn.mint_authority == Some(vault()) || msn.freeze_authority == Some(vault());
+        assert_eq!(
+            old_predicate,
+            cfg_auth.is_none() && ww_auth.is_none(),
+            "documents exactly which roles the pre-round-2 predicate missed"
+        );
+    }
 }

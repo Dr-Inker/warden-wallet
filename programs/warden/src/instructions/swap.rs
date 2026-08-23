@@ -352,9 +352,12 @@ pub(crate) fn handler<'info>(
     // ---- BEFORE snapshot + position validation ---------------------------
     let before = conservation::snapshot(remaining, &account_key)?;
     let pda_lamports_before = sa_info.lamports();
-    // GROK-EXP-03 / -05: writable Stake / Vote / ProgramData accounts in the
-    // route list are refused BEFORE Jupiter ever receives the PDA signer (and
-    // again in `compare_and_account`).
+    // GROK-EXP-03 / -05 + WRDF-0104: writable Stake / Vote / ProgramData /
+    // Loader-v4 accounts — and writable System-owned accounts carrying DATA
+    // (durable nonces) — in the route list are refused BEFORE Jupiter ever
+    // receives the PDA signer, and (WRDF-0104 round 2) BOTH rules are re-applied
+    // positionally in `compare_and_account` so state that only becomes
+    // unsupported during the route is caught too.
     conservation::reject_unsupported_writable_owners(&before)?;
 
     // Source: the CANONICAL vault ATA of in_mint (WRDF-0070). Owner==PDA +
@@ -518,6 +521,13 @@ pub(crate) fn handler<'info>(
     // This does NOT replace the byte-exact `route_plan` parse still owed before
     // mainnet (WRDF-0031/0059); it is the realised-fee bound those findings
     // assumed was here.
+    //
+    // WRDF-0106 ROUND 2: reconstructing the gross leg makes the floor's basis
+    // strictly LARGER, which walked the old multiply-first `platform_fee_floor`
+    // into an intermediate overflow — and therefore a rejection — for honest
+    // routes with a large out leg. `platform_fee_floor` is now overflow-free over
+    // the whole u64 range (see its docs); the `checked_add` below still guards the
+    // reconstruction itself, which genuinely can exceed u64.
     let fee_floor = if fee_mint == args.in_mint {
         platform_fee_floor(actual_in)?
     } else {
@@ -569,12 +579,48 @@ pub(crate) fn handler<'info>(
 
 /// `floor(base × SWAP_PLATFORM_FEE_BPS / 10_000)` — the smallest treasury fee
 /// an honest 85 bps route can have paid on a leg of `base` units (GROK-EXP-01).
-/// Checked math only; `checked_div` by a non-zero constant cannot fail but is
-/// written checked so the arithmetic lint stays silent without a proof comment.
+/// Checked math only; `checked_div`/`checked_rem` by a non-zero constant cannot
+/// fail but are written checked so the arithmetic lint stays silent without a
+/// proof comment.
+///
+/// ## Why divide first (WRDF-0106 round 2, 2026-08-23)
+///
+/// The obvious `base.checked_mul(85)?.checked_div(10_000)` is exact but only
+/// DEFINED for `base ≤ u64::MAX / 85` (= 217_020_518_514_230_019); above that
+/// the intermediate overflows and the function returns `Overflow`. That was
+/// tolerable while the out-mint basis was the vault's NET gain, and stopped
+/// being tolerable the moment WRDF-0106 made the basis the reconstructed GROSS
+/// leg `net + fee` — a strictly larger number. Codex's witness: an honest split
+/// `net = 215_175_844_106_859_065`, `fee = 1_844_674_407_370_955` rebuilds
+/// `gross = 217_020_518_514_230_020`, whose true floor is that same
+/// `1_844_674_407_370_955` and fits a u64 with room to spare — yet the
+/// multiply-first form rejected the swap. Rejecting rather than wrapping keeps
+/// WRD-CONS-06, but a correct result would have been available: this is a pure
+/// availability regression on honest input.
+///
+/// The identity below removes the wide intermediate and is EXACT for every u64:
+///
+/// ```text
+///   floor(b × 85 / 10_000) = (b / 10_000) × 85  +  ((b % 10_000) × 85) / 10_000
+/// ```
+///
+/// Neither term can overflow. `b / 10_000 ≤ u64::MAX / 10_000`, so the first
+/// term is at most `85 × u64::MAX / 10_000 ≈ 1.57e17`; the remainder term is
+/// bounded by `9_999 × 85 < 850_000`. `platform_fee_floor_is_floor_of_85_bps`
+/// pins the result against a u128 reference across the whole range, `0` and both
+/// sides of the old `u64::MAX / 85` cliff included.
 pub(crate) fn platform_fee_floor(base: u64) -> Result<u64> {
-    base.checked_mul(u64::from(SWAP_PLATFORM_FEE_BPS))
+    let bps = u64::from(SWAP_PLATFORM_FEE_BPS);
+    let whole = base
+        .checked_div(10_000)
+        .and_then(|q| q.checked_mul(bps))
+        .ok_or(WardenError::Overflow)?;
+    let remainder = base
+        .checked_rem(10_000)
+        .and_then(|r| r.checked_mul(bps))
         .and_then(|x| x.checked_div(10_000))
-        .ok_or_else(|| WardenError::Overflow.into())
+        .ok_or(WardenError::Overflow)?;
+    whole.checked_add(remainder).ok_or_else(|| WardenError::Overflow.into())
 }
 
 /// The `TokenSnap` at `remaining[idx]`, required to be a vault-owned token
@@ -644,6 +690,17 @@ mod tests {
     }
 
     /// GROK-EXP-01: the fee floor is floor(base × 85 / 10_000), checked.
+    ///
+    /// WRDF-0106 ROUND 2 (2026-08-23): the small vectors are unchanged (they are
+    /// the behaviour contract), but the old `assert!(platform_fee_floor(u64::MAX)
+    /// .is_err())` expectation is GONE. It encoded the very defect this round
+    /// fixes: the implementation multiplied FIRST, so any `base > u64::MAX / 85`
+    /// overflowed the intermediate and was rejected even though the true floor
+    /// fits comfortably in a u64. Once WRDF-0106 made the out-mint basis the
+    /// GROSS leg (`net + fee`, a strictly LARGER number), that rejection stopped
+    /// being theoretical: it turns honest high-base-unit swaps into availability
+    /// failures. The divide-first form is exact over the whole u64 range, so the
+    /// correct expectation at `u64::MAX` is an exact VALUE, not an error.
     #[test]
     fn platform_fee_floor_is_floor_of_85_bps() {
         assert_eq!(platform_fee_floor(0).unwrap(), 0);
@@ -653,7 +710,48 @@ mod tests {
         assert_eq!(platform_fee_floor(900_000).unwrap(), 7_650);
         assert_eq!(platform_fee_floor(999_999).unwrap(), 8_499); // 84_999.915 → floor
         assert_eq!(platform_fee_floor(u64::MAX / 85).unwrap(), (u64::MAX / 85) * 85 / 10_000);
-        assert!(platform_fee_floor(u64::MAX).is_err(), "overflow is an error, never a wrap");
+
+        // The WRDF-0106 boundary vectors. `u64::MAX / 85` is the last base the
+        // OLD multiply-first form could take; everything above it errored.
+        assert_eq!(platform_fee_floor(u64::MAX / 85 + 1).unwrap(), 1_844_674_407_370_955);
+        assert_eq!(platform_fee_floor(u64::MAX).unwrap(), 156_797_324_626_531_188);
+        // Codex's honest split: gross = net(215_175_844_106_859_065) +
+        // fee(1_844_674_407_370_955). The fee it asserts is the floor of the gross
+        // leg — a value that fits u64 easily, but whose `× 85` intermediate does
+        // not.
+        assert_eq!(platform_fee_floor(217_020_518_514_230_020).unwrap(), 1_844_674_407_370_955);
+        assert_eq!(
+            217_020_518_514_230_020u64,
+            215_175_844_106_859_065u64 + 1_844_674_407_370_955u64,
+            "the split really does reconstruct that gross leg"
+        );
+
+        // The identity that defines the function: the divide-first form must agree
+        // with a u128 reference over every vector, including the ones the old form
+        // could not evaluate at all.
+        for base in [
+            0u64,
+            117,
+            118,
+            900_000,
+            999_999,
+            1_000_000,
+            9_999,
+            10_000,
+            10_001,
+            217_020_518_514_230_020,
+            215_175_844_106_859_065,
+            u64::MAX / 85,
+            u64::MAX / 85 + 1,
+            u64::MAX - 1,
+            u64::MAX,
+        ] {
+            let reference = u64::try_from(
+                u128::from(base) * u128::from(SWAP_PLATFORM_FEE_BPS) / 10_000u128,
+            )
+            .expect("the true 85 bps floor of any u64 always fits a u64");
+            assert_eq!(platform_fee_floor(base).unwrap(), reference, "base {base}");
+        }
     }
 
     #[test]
