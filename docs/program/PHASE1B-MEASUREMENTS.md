@@ -1966,3 +1966,56 @@ these envelopes, so there is no evidence persistent storage holds only this form
 `WRD-KEY-03` and `WRD-KEY-02` are partial with their remaining conjuncts named in
 the rows. This is the same call made for `WRD-SIG-01`: **a correct primitive is not
 a satisfied product invariant.**
+
+## Provider-independent assurance: the Grok lane (2026-08-23)
+
+`scripts/review.sh` was blocked by OpenAI's cyber content filter **three
+consecutive times** on ranges containing our own defensive regression tests —
+tests that deliberately execute a token drain to prove a vulnerability was real.
+That is a documented false-positive class, but the practical consequence was that
+the assurance methodology had a **single-provider dependency that was failing**,
+and no security round over those ranges could be recorded.
+
+`scripts/review-grok.sh` makes Grok (xAI `grok-4.3`) a **recorded** reviewer,
+reusing the identical integrity machinery: wrapper-computed seed list written to an
+`.expect.json`, `validate-findings.mjs` checking the model's output against THAT
+rather than the model's own account, and recording only via
+`append-review-run.mjs` (atomic dual-ledger write with rollback). It records
+`effort: null` rather than inventing a value xAI does not expose, and takes
+`reviewer_model` from the API response rather than the document's self-report.
+
+Because Grok has no shell, everything is embedded — diff, sibling file CONTENTS,
+prior-art corpus, inline schema, and whole-file context — so the assembled prompt
+IS the evidence base and is saved beside the artefact as `<round>.prompt.txt`.
+Without that a recorded round would be unreproducible.
+
+### Round 101 — and why it is NOT a substitute for Codex
+
+**Attempt 1 failed validation, and that is the reassuring part.** At the default
+600 K-char budget the wrapper elided ~99 K of whole-file context; Grok returned all
+51 verdicts as `not_reviewed` with the rationale *"context truncated for the
+relevant source files; cannot rule without guessing"*, and the anti-silence
+validator rejected the document with 51 errors. Three safeguards fired in sequence
+— the completeness notice stopped the model bluffing, the validator refused the
+document, and the ledger stayed at 100. A review that examined nothing did not
+become a passing round.
+
+**Attempt 2, at `--max-chars 1000000` (905 K assembled, ZERO elisions), recorded as
+round 101**: `grok-4.3`, 51 seeded, **0 findings**, 19 `upheld` / 32
+`not_applicable`.
+
+**Calibration, stated plainly: this is a materially SHALLOWER review than Codex
+`sol@max` produces, and it contains a demonstrable miss.** Grok ruled
+`WRD-EXEC-09` **`not_applicable — "danger extensions rule still unimplemented"`**,
+but this range is exactly the one that made transfer_hook and confidential mints
+reject unconditionally in generic `execute` — the invariant's status changed
+INSIDE the range under review. Its rationales are one-liners ("unchanged", "still
+unimplemented") where Codex cites `file:line` and reasons about mechanism. In the
+same session Codex found five real defects across three rounds, three of them in
+the previous round's own fixes.
+
+**Therefore:** the Grok lane is a **fallback that keeps the loop moving when the
+primary lane is blocked — not an equivalent reviewer.** Round 101 does NOT
+discharge the obligation to run a Codex round over `c5a4514..77a8273` once the
+filter clears. Treat a 0-finding Grok round as "nothing this reviewer could see",
+never as "this range is clean".
