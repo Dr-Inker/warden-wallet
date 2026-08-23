@@ -1114,10 +1114,16 @@ fn a_standalone_writable_mint_with_an_unmodeled_extension_is_rejected() {
 #[test]
 fn a_standalone_writable_mint_with_a_recognized_danger_extension_is_rejected() {
     // WRDF-0012 round 8: `PermanentDelegate` (type 12) is a RECOGNIZED danger
-    // extension, so `has_unrecognized_ext` is false — and `holds_authority`
-    // does not inspect the permanent delegate. A standalone writable mint
-    // controlled by the vault solely through it would otherwise bypass the
-    // pre-scan entirely (no vault ATA ⇒ `check_mint`'s danger gate never runs).
+    // extension, so `has_unrecognized_ext` is false. A standalone writable mint
+    // carrying one would otherwise bypass the pre-scan entirely (no vault ATA ⇒
+    // `check_mint`'s danger gate never runs).
+    //
+    // Note the delegate here is ALL-ZERO — i.e. `None` — so this stays a test of
+    // the WRITABLE danger-extension rule and not of WRDF-0105 round 3's
+    // authority path: `holds_authority` now DOES inspect the permanent delegate
+    // (see `wrdf0105_round3_permanent_delegate_is_extracted_and_counts_as_authority`),
+    // but a delegate-less mint is held by nobody, so the reject below is still
+    // the round-8 rule firing and nothing else.
     let m = pk(7);
     let mint = t22_mint_bytes(mint_bytes(None, 0, 6, None), &tlv(&[(12, vec![0u8; 32])]));
     let before = vec![snap_t22(m, &mint, true)];
@@ -2117,4 +2123,117 @@ fn wrdf0105_holds_authority_covers_all_four_roles_including_t22_extensions() {
             "documents exactly which roles the pre-round-2 predicate missed"
         );
     }
+}
+
+/// WRDF-0105 ROUND 3 (2026-08-23), the `MintSnap` half — the FIFTH role.
+///
+/// Rounds 1 and 2 each shipped a partial fix. Round 2 replaced a hand-rolled
+/// two-field test with `holds_authority`, but that predicate modelled only four
+/// roles: `scan_extensions` recognised `PermanentDelegate` (extension type 12)
+/// solely by setting `DANGER_PERMANENT_DELEGATE` and **threw the delegate pubkey
+/// away**. The danger bit is not a substitute — `prescan_vault_mints` refuses an
+/// unmodelable danger mint only when it is WRITABLE, and Token-2022
+/// `TransferChecked`/`BurnChecked` take the mint READ-ONLY while honouring the
+/// permanent delegate as the source account's authority over every token account
+/// of the mint.
+///
+/// This pins (a) the delegate is really extracted from those exact 32 bytes,
+/// (b) all-zero reads as `None` (`OptionalNonZeroPubkey`, never a `COption`),
+/// (c) a short/garbled value is best-effort `None` — the same contract as the
+/// neighbouring `TransferFeeConfig` extractor, and safe for the same reason: the
+/// token program reads this extension through `get_extension::<PermanentDelegate>`,
+/// which demands exactly 32 bytes, so a truncated entry authorizes nothing
+/// on-chain — and (d) `holds_authority` is true for the delegate role ALONE,
+/// with every classic authority unset.
+#[test]
+fn wrdf0105_round3_permanent_delegate_is_extracted_and_counts_as_authority() {
+    let m = pk(0x81);
+    let stranger = pk(0x82);
+
+    // (a) the delegate is extracted from the exact bytes, and it is the ONLY
+    // role held — every classic authority is `None` and there is no fee TLV.
+    let bytes = t22_mint_bytes(
+        mint_bytes(None, 1_000, 6, None),
+        &tlv(&[(EXT_PERMANENT_DELEGATE, vault().to_bytes().to_vec())]),
+    );
+    let snap = snap_t22(m, &bytes, false);
+    let ms = snap.mint.as_ref().expect("the planted T22 permanent-delegate mint must decode");
+    assert_eq!(ms.permanent_delegate, Some(vault()));
+    assert_eq!(ms.mint_authority, None);
+    assert_eq!(ms.freeze_authority, None);
+    assert_eq!(ms.transfer_fee_config_authority, None);
+    assert_eq!(ms.withdraw_withheld_authority, None);
+    assert_eq!(ms.dangerous_ext & DANGER_PERMANENT_DELEGATE, DANGER_PERMANENT_DELEGATE);
+    assert!(!ms.has_unrecognized_ext, "type 12 is a RECOGNIZED extension");
+
+    // (d) the delegate role ALONE is control — the whole point of round 3.
+    assert!(ms.holds_authority(&vault()), "the permanent delegate holds authority");
+    assert!(!ms.holds_authority(&stranger));
+    // The pre-round-3 predicate — the four roles as they stood — was blind to it.
+    let old_predicate = ms.mint_authority == Some(vault())
+        || ms.freeze_authority == Some(vault())
+        || ms.transfer_fee_config_authority == Some(vault())
+        || ms.withdraw_withheld_authority == Some(vault());
+    assert!(!old_predicate, "documents exactly the role the round-2 predicate missed");
+
+    // (b) all-zero is `None`, and `Pubkey::default()` must NOT read back as a
+    // holder — otherwise a delegate-less mint would look controlled by the
+    // default key and `holds_authority(&default)` would be a free reject.
+    let none_bytes = t22_mint_bytes(
+        mint_bytes(None, 1_000, 6, None),
+        &tlv(&[(EXT_PERMANENT_DELEGATE, vec![0u8; 32])]),
+    );
+    let none_ms = snap_t22(m, &none_bytes, false).mint.expect("decodes");
+    assert_eq!(none_ms.permanent_delegate, None);
+    assert!(!none_ms.holds_authority(&Pubkey::default()));
+    assert_eq!(
+        none_ms.dangerous_ext & DANGER_PERMANENT_DELEGATE,
+        DANGER_PERMANENT_DELEGATE,
+        "the danger bit is still set even with no delegate"
+    );
+
+    // (c) a SHORT value is best-effort `None`, exactly like the neighbouring
+    // `TransferFeeConfig` extraction, and the walk still completes.
+    let short_bytes = t22_mint_bytes(
+        mint_bytes(None, 1_000, 6, None),
+        &tlv(&[(EXT_PERMANENT_DELEGATE, vec![0xffu8; 16])]),
+    );
+    let short_ms = snap_t22(m, &short_bytes, false).mint.expect("a short TLV value still decodes");
+    assert_eq!(short_ms.permanent_delegate, None);
+    assert_eq!(short_ms.dangerous_ext & DANGER_PERMANENT_DELEGATE, DANGER_PERMANENT_DELEGATE);
+}
+
+/// WRDF-0105 round 3, the comparison half: `permanent_delegate` is compared
+/// field-wise on a vault-controlled mint, so it cannot be reassigned under the
+/// vault's nose.
+///
+/// DEFENCE IN DEPTH, stated honestly: `prescan_vault_mints` already compares
+/// `tlv_hash`, and the delegate lives inside that hashed tail, so these bytes
+/// were pinned before round 3 too — for a mint the vault was ALREADY seen to
+/// control. What round 3 changes is *which mints reach the comparison at all*
+/// (a mint controlled solely through the delegate now counts as controlled),
+/// and it keeps the field pinned if 1C ever relaxes the tail hash the way
+/// §5.2 rule 2a anticipates for `withheld_amount` accrual.
+#[test]
+fn wrdf0105_round3_permanent_delegate_reassignment_on_a_controlled_mint_is_rejected() {
+    let m = pk(0x83);
+    let before_bytes = t22_mint_bytes(
+        mint_bytes(None, 1_000, 6, None),
+        &tlv(&[(EXT_PERMANENT_DELEGATE, vault().to_bytes().to_vec())]),
+    );
+    // Same mint, delegate handed to a stranger — the irreversible give-away.
+    let after_bytes = t22_mint_bytes(
+        mint_bytes(None, 1_000, 6, None),
+        &tlv(&[(EXT_PERMANENT_DELEGATE, pk(0x84).to_bytes().to_vec())]),
+    );
+    let before = vec![snap_t22(m, &before_bytes, false)];
+    let after = vec![snap_t22(m, &after_bytes, false)];
+    assert_eq!(
+        cmp(&before, &after, &[]).unwrap_err(),
+        err(WardenError::ConservationViolated)
+    );
+    // And the unchanged pair is fine — the reject above is about the CHANGE,
+    // not about the extension being present. (Read-only on both sides, so the
+    // writable-unmodelable rule is not what fired.)
+    assert_eq!(cmp(&before, &before, &[]).expect("unchanged is fine"), Outflow::default());
 }

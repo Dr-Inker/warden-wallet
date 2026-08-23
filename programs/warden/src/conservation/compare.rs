@@ -337,16 +337,19 @@ pub fn compare_and_account(
 fn prescan_vault_mints(before: &[Snap], after: &[Snap], vault: &Pubkey) -> Result<()> {
     for (i, b) in before.iter().enumerate() {
         let a = after.get(i).ok_or(WardenError::ConservationViolated)?;
-        // WRDF-0012 (rounds 7 & 8): `holds_authority` sees only the FOUR
+        // WRDF-0012 (rounds 7 & 8): `holds_authority` sees only the FIVE
         // modeled authorities, and the `check_mint` danger gate is only reached
         // for a mint backing a vault token account. So a STANDALONE mint whose
         // vault-held authority lives in an extension `holds_authority` does not
         // model is never scrutinised — and that is true both for an UNMODELED
         // extension (round 7: Pausable, MetadataPointer, …) AND for a
         // RECOGNIZED danger extension whose authority field we do not extract
-        // (round 8: `PermanentDelegate` type 12, `TransferHook`, …; the
-        // permanent delegate can authorize transfers and `SetAuthority` can
-        // replace it). Fail closed here for a WRITABLE mint carrying EITHER
+        // (round 8: `TransferHook` type 14, the confidential-transfer family,
+        // …). `PermanentDelegate` (type 12) WAS in that second list until
+        // WRDF-0105 round 3 extracted its delegate pubkey; it is now a modelled
+        // role, so a read-only such mint is caught by `holds_authority` (and by
+        // `execute`'s gate) rather than only by the writable rule below. Fail
+        // closed here for a WRITABLE mint carrying EITHER
         // class — a read-only mint cannot be mutated in this transaction, so a
         // normal swap passing a stranger mint read-only is unaffected.
         let unmodelable = |m: &crate::conservation::MintSnap| {
@@ -370,6 +373,17 @@ fn prescan_vault_mints(before: &[Snap], after: &[Snap], vault: &Pubkey) -> Resul
             && am.freeze_authority == bm.freeze_authority
             && am.transfer_fee_config_authority == bm.transfer_fee_config_authority
             && am.withdraw_withheld_authority == bm.withdraw_withheld_authority
+            // WRDF-0105 round 3: `permanent_delegate` is an AUTHORITY field —
+            // the strongest of the five, since its holder may move or burn from
+            // every token account of the mint. It is compared here beside the
+            // other four so it cannot be reassigned under the vault's nose.
+            // DEFENCE IN DEPTH, not a new guarantee: this function (unlike
+            // `check_mint`) already compares `tlv_hash`, and the delegate lives
+            // in that hashed tail, so the tail hash already pinned these bytes.
+            // The explicit field survives a future 1C relaxation of the tail
+            // hash (which §5.2 rule 2a anticipates, for `withheld_amount`
+            // accrual) — that relaxation must not silently unpin the delegate.
+            && am.permanent_delegate == bm.permanent_delegate
             && am.decimals == bm.decimals
             && am.is_initialized == bm.is_initialized
             && am.dangerous_ext == bm.dangerous_ext
@@ -561,7 +575,13 @@ pub(crate) fn check_mint(bm: &MintSnap, am: &MintSnap) -> Result<()> {
         WardenError::Token2022ExtensionRejected
     );
 
-    // Every authority field, byte for byte. `supply` is deliberately absent —
+    // Every authority field, byte for byte — INCLUDING `permanent_delegate`
+    // (WRDF-0105 round 3), so the claim in this sentence stays true. That
+    // comparison is unreachable in 1B: `DANGER_PERMANENT_DELEGATE` is part of
+    // `DANGER_NEVER_ALLOWLISTABLE`, so any mint carrying the extension is
+    // already refused by the first `require!` above. It is written anyway so a
+    // 1C widening of the danger set cannot silently leave the fifth role
+    // uncompared. `supply` is deliberately absent —
     // spec §5.2 rule 2a: a legitimate mint/burn through an allow-listed
     // adapter changes it, so it is recorded but is not by itself a reject.
     // `tlv_hash` is deliberately absent too: a legitimate transfer-fee accrual
@@ -572,6 +592,7 @@ pub(crate) fn check_mint(bm: &MintSnap, am: &MintSnap) -> Result<()> {
         && am.freeze_authority == bm.freeze_authority
         && am.transfer_fee_config_authority == bm.transfer_fee_config_authority
         && am.withdraw_withheld_authority == bm.withdraw_withheld_authority
+        && am.permanent_delegate == bm.permanent_delegate
         && am.decimals == bm.decimals
         && am.is_initialized == bm.is_initialized
         && am.dangerous_ext == bm.dangerous_ext
