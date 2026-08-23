@@ -1786,3 +1786,34 @@ requires exactly 32 bytes, so a truncated entry authorises nothing on-chain.
 **Gate at `631291ab7516630b150fb9a8702235c6d598d6e2`:** `bash .claude/test-gate.sh`
 → exit **0**, Rust **670 passed / 0 failed / 1 ignored**, `@warden/core` **301**,
 ui-tokens **11**, spike **8**.
+
+### Round 4 — BLOCKED (content filter), review owed on the PermanentDelegate fix
+
+`scripts/review.sh c5a4514 f4880cc` was attempted **twice** and both attempts died
+on the OpenAI cyber content filter (`ERROR: This content was flagged for possible
+cybersecurity risk`). The wrapper rolled back both times: REVIEW-RUNS.jsonl stays
+at **100** rounds and REVIEW-SCORECARD.jsonl is untouched.
+
+The first attempt reached the invariant-verdict stage (11 not_applicable, 1
+upheld) before the block, and emitted **no findings section**. That partial output
+is INFORMATIONAL ONLY and was deliberately NOT hand-recorded: recording a round
+from a partial log would bypass the expectations-file validation and the
+anti-silence check that make these rounds worth anything. A round counts only when
+it validates and records itself.
+
+This is the documented false-positive class (see the 2026-08-22 assurance-lane
+note), and the block is **not** a convergence signal: the range under review is
+product security code, and it contains a regression test that deliberately
+executes a token drain (9,000 → 0) to prove the vulnerability was real. That test
+is almost certainly what the classifier reacts to — the same property that makes
+the evidence good makes the diff look hostile.
+
+**Standing (honest):** the PermanentDelegate fix at `631291a` is
+**gate-verified but not adversarially reviewed**. Its scorecard row is
+`remediation_verified: true` on the gate axis, which the schema defines as
+gate-confirmed — that claim is accurate and narrower than "reviewed". WRDF-0105's
+history (three re-raises across three rounds) is exactly why this distinction is
+being preserved rather than glossed.
+
+**Owed:** a recorded adversarial round over `c5a4514..f4880cc` once the filter
+clears. Last time this class of block cleared in roughly 24 h on an identical lane.
