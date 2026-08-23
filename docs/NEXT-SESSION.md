@@ -1,5 +1,31 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> **2026-08-23 — READ BEFORE THE 08-22 BLOCK BELOW; it supersedes it.**
+> The Codex round this file recorded as *owed* has RUN and is recorded:
+> `scripts/review.sh 9a427aa 0039681 --kind task-diff`, gpt-5.6-sol@max, 67
+> seeded invariants, thread `phase1b/grok-remediation/round-1`, artefact
+> `.superpowers/reviews/003968100ad1-20260823T090301Z.json` in REVIEW-RUNS.jsonl.
+> No content-filter block this time — treat the 08-22 block as transient, not as
+> a property of the diff. **4 findings, all ACCEPTED:** WRDF-0104 (important —
+> System-owned durable-nonce + Loader-v4 accounts are outside
+> `UNSUPPORTED_WRITABLE_OWNERS`, so root `execute` can move value unmetered),
+> WRDF-0105 (important — `deny_scan` keys on the DIRECT payload program, so a
+> forwarding CPI carries the PDA's propagated signer into FreezeAccount or a
+> nested MintTo→Burn round-trip on a vault-controlled mint), WRDF-0106 (minor —
+> the out-mint platform-fee floor uses NET output as its basis, but Jupiter's
+> `outAmount` is already net of the fee, so the 85 bps floor under-charges),
+> WRDF-0107 (minor — ledger/doc contradiction + green-gate claims naming no
+> command or SHA; corrected in CLAUDE.md and PHASE1B-MEASUREMENTS.md).
+>
+> **B4 is DONE** (2026-08-23) as the narrow, per-invariant-verified pass the
+> 08-22 entry called for — NOT a batch flip. 8 rows promoted with per-test
+> evidence; WRD-FRZ-03 deliberately stays `unimplemented` (compound over the
+> unbuilt `execute_pending`). Ledger 48 → 56 `test-covered`. Gate green at
+> `86907bb`: `bash .claude/test-gate.sh`, exit 0, 655 Rust / 301 core / 11
+> ui-tokens. The B4 line in the 08-22 block below is therefore CLOSED; its
+> remaining "immediate open choices" are **C1** (MV3 extension) and **C2**
+> (keyring).
+
 > **GROK EXPLOIT AUDIT 2026-08-22 — READ FIRST.** Independent adversarial
 > pass at `9a427aa35dd6e1f89c3fe00e5b1dd482118a87c6` (`phase1b`). Pickup
 > memo: [`docs/security/GROK-EXPLOIT-AUDIT-2026-08-22.md`](security/GROK-EXPLOIT-AUDIT-2026-08-22.md).
