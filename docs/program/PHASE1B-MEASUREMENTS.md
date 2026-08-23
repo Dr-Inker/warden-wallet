@@ -1733,3 +1733,56 @@ adjudicator, rationale and fixed SHA, and `remediation_verified` is **false** fo
 0104/0105/0106 precisely because this round re-raised them. Zero `pending` rows
 remain. The finding's warning that a blanket "fixed" claim was unsafe is upheld by
 its own evidence.
+
+## Codex round 3 (`c5a4514ab5e3`, 2026-08-23) — 5 findings down to 1, and a PROVEN drain
+
+`scripts/review.sh 390ff37d26a3 c5a4514ab5e3`, gpt-5.6-sol @ `max`, 47 seeded
+invariants, **1 finding** (round 1: 4, round 2: 5, round 3: 1). The round reviewed
+the range containing the round-2 fixes for WRDF-0104 and WRDF-0106 and did **not**
+re-raise either — combined with a green gate, that is what promoted those two rows
+to `remediation_verified`.
+
+**WRDF-0105, a third time — Token-2022 PermanentDelegate.** `holds_authority`
+covered four authority roles; `snapshot.rs:305` recognised `EXT_PERMANENT_DELEGATE`
+only by setting a danger bit and **discarded the delegate pubkey**; and
+`compare.rs:355` rejected an unmodelable danger mint only when it was WRITABLE.
+Token-2022 `TransferChecked` (tag 12, classified `Other`) takes its mint READ-ONLY
+and accepts the permanent delegate as transfer authority. So a root payload could
+pass a read-only mint whose PermanentDelegate is the SmartAccount PDA and move
+third-party tokens with the propagated signer.
+
+**This was not a static trace — the drain was executed.** An inverted test at
+`c5a4514` moved a victim Token-2022 account from **9,000 to 0** into an attacker
+account through a real `TransferChecked` CPI, with zero reported outflow and no
+bucket debited. The probe was reverted before the fix landed.
+
+**Adjudicator error, recorded as such:** the round-2 finding text explicitly asked
+for "withdraw-withheld authority **and PermanentDelegate**" regressions. The
+main loop dropped PermanentDelegate when writing the round-2 worker brief. The
+worker built exactly what it was asked for; the gap was in the instruction, not
+the execution. Round 3 found what round 2 had already named.
+
+**Fix (Codex option b, the precise one):** extract the delegate into
+`MintSnap::permanent_delegate` and make it a FIFTH role in `holds_authority`,
+rather than implementing WRD-EXEC-09's unconditional danger-mint rejection — the
+unconditional form would have broken the deliberate narrowness test proving a
+stranger-held TransferFeeConfig mint still passes generic `execute`. Rejecting
+more is not automatically safer when it silently degrades legitimate use. The
+field was also added to the vault-controlled-mint identity comparison; the
+worker verified `tlv_hash` already covers those bytes in `prescan_vault_mints`,
+so that specific addition is defence-in-depth, not a new guarantee, and says so
+in the code.
+
+**Honest limits carried from the worker's report:** the new unit tests cannot be
+red at the base SHA because they reference a field that does not exist there —
+the behavioural redness rests entirely on the two integration tests, which do
+compile against the vulnerable source and did fail. LiteSVM runs
+spl-token-2022 **10.0.0**, not the 7.0.0 the finding cites; the exploit
+reproduced on 10.0.0 and the 7.0.0 pin is a layout reference, not the runtime.
+A malformed (<32 B) PermanentDelegate TLV yields `None`, matching the
+neighbouring best-effort extractors — safe because the token program itself
+requires exactly 32 bytes, so a truncated entry authorises nothing on-chain.
+
+**Gate at `631291ab7516630b150fb9a8702235c6d598d6e2`:** `bash .claude/test-gate.sh`
+→ exit **0**, Rust **670 passed / 0 failed / 1 ignored**, `@warden/core` **301**,
+ui-tokens **11**, spike **8**.
