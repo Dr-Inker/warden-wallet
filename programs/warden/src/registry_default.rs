@@ -129,6 +129,41 @@ mod tests {
         assert!(Registry::is_valid_list_id(3) && !reg.is_allocated_list(3));
     }
 
+    /// WRD-DENY-02, static half: the shipped defaults must not even *claim* to
+    /// list a pair the fixed deny-list refuses. `execute::deny_scan` runs before
+    /// the registry, so a denied listing could never be exercised — but a
+    /// registry that advertised `SetAuthority` would be a lie in the one
+    /// artifact the extension shows users, and the TS mirror
+    /// (`registry-default.json`) would carry it too. Checked over BOTH token
+    /// programs, since the deny-list covers both and they share tag numbering.
+    #[test]
+    fn no_default_adapter_lists_a_denied_token_tag() {
+        use crate::constants::{
+            SPL_TOKEN_2022_ID, TOKEN_IX_APPROVE, TOKEN_IX_APPROVE_CHECKED, TOKEN_IX_REVOKE,
+            TOKEN_IX_SET_AUTHORITY,
+        };
+        let denied = [
+            TOKEN_IX_APPROVE,
+            TOKEN_IX_REVOKE,
+            TOKEN_IX_SET_AUTHORITY,
+            TOKEN_IX_APPROVE_CHECKED,
+        ];
+        for a in default_adapters() {
+            if a.program_id != SPL_TOKEN_ID && a.program_id != SPL_TOKEN_2022_ID {
+                continue;
+            }
+            // A token-program entry keys on its 1-byte instruction tag, so the
+            // selector's first byte IS the pair's instruction half.
+            let tag = a.selector.first().copied();
+            assert!(
+                !tag.is_some_and(|t| denied.contains(&t)),
+                "default adapter {} selector {:?} names a deny-listed tag",
+                a.program_id,
+                a.selector
+            );
+        }
+    }
+
     #[test]
     fn defaults_fit_and_pack_contiguously() {
         let adapters = default_adapters();

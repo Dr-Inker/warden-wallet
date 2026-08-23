@@ -22,8 +22,9 @@ use solana_sdk::program_pack::Pack;
 use common::passkey::{self, TestPasskey, FLAGS_UP_UV, TEST_ORIGIN};
 use common::token::{ata, set_mint, set_token_account, token_amount};
 use common::{
-    create_smart_account, init_registry_ix, read_smart_account, registry_pda, session_pda,
-    set_program_data, warp_clock, SmartAccountFixture,
+    bump_generation, bump_policy_version, create_smart_account, init_registry_ix,
+    read_smart_account, registry_pda, session_pda, set_program_data, warp_clock,
+    SmartAccountFixture,
 };
 use common::mutator::{self, add_mutator};
 use litesvm::LiteSVM;
@@ -40,8 +41,8 @@ use solana_sdk::{
     transaction::{Transaction, TransactionError},
 };
 use warden::constants::{
-    COMPUTE_BUDGET_ID, MAX_EXECUTE_ACCOUNTS_TOTAL, NATIVE_MINT, SPL_TOKEN_2022_ID, SPL_TOKEN_ID,
-    STAGE_SEED,
+    COMPUTE_BUDGET_ID, DAY_SECS, MAX_EXECUTE_ACCOUNTS_TOTAL, NATIVE_MINT, RING_DAYS,
+    SPL_TOKEN_2022_ID, SPL_TOKEN_ID, STAGE_SEED,
 };
 use warden::instructions::create_account::MIN_TIMELOCK_SECS;
 use warden::instructions::execute::{ExecuteArgs, ExecuteBody};
@@ -50,7 +51,10 @@ use warden::root_verify::transcript::{
     action_hash, b64url_no_pad, transcript_hash, OP_EXECUTE_ACTION,
 };
 use warden::root_verify::RootArgs;
-use warden::state::{MintCap, PolicyArgs, SessionKey, Stage, OP_EXECUTE, OP_TRANSFER};
+use warden::state::{
+    MintCap, PolicyArgs, Registry, RegistryEntry, SessionKey, Stage, MAX_SELECTOR_LEN, OP_EXECUTE,
+    OP_TRANSFER,
+};
 
 const NOW: i64 = 1_760_000_000;
 const PACKET: usize = 1232;
@@ -370,6 +374,26 @@ fn mint_meta() -> AccountMeta {
     AccountMeta::new_readonly(tok_mint(), false)
 }
 
+/// Today's slot in the account-wide rolling-30-day ring, computed exactly the
+/// way `buckets::debit` computes it (`day_number.rem_euclid(RING_DAYS)`) and
+/// from the SVM's OWN clock, so a bucket assertion cannot drift from the
+/// harness's notion of "now".
+fn ring_slot_today(svm: &LiteSVM) -> usize {
+    let clock: Clock = svm.get_sysvar();
+    clock.unix_timestamp.div_euclid(DAY_SECS).rem_euclid(RING_DAYS as i64) as usize
+}
+
+/// A second vault-owned token account of `tok_mint()`, funded with
+/// `VAULT_TOKENS`. Addressed as an ATA of a fresh owner (the same shape
+/// `direct_close_zero_balance_to_vault_pda_allowed` uses) — `execute` does not
+/// require a vault token account to be the canonical ATA, only that it is
+/// vault-owned and that its mint rides in the account list (rule 2a).
+fn second_vault_ata(svm: &mut LiteSVM, account: &Pubkey) -> Pubkey {
+    let a = ata(&Pubkey::new_unique(), &tok_mint());
+    set_token_account(svm, &a, &tok_mint(), account, VAULT_TOKENS);
+    a
+}
+
 fn spl_transfer_remaining(vault_ata: Pubkey, dest: Pubkey) -> Vec<AccountMeta> {
     vec![
         AccountMeta::new(vault_ata, false),                    // logical 2
@@ -430,6 +454,135 @@ fn root_execute_spl_transfer_bounded_by_threshold() {
     expect_ok(&mut svm, &[&payer, &submitter], &[precompile, ix]);
     assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS - 700_000);
     assert_eq!(token_amount(&svm, &dest), 700_000);
+    // WRD-CAP-09: the root path is METERED, not merely bounded — the outflow
+    // lands in the SAME account-wide buckets a session debits (bucket 1 =
+    // `tok_mint()`, per `exec_policy`), day bucket and 30-day ring alike. Ten
+    // root ceremonies therefore share one day cap, which is the whole point of
+    // routing every path through `buckets::debit`.
+    let st = read_smart_account(&svm, &account);
+    assert_eq!(st.buckets[1].spent_today, 700_000, "the token's account-wide day bucket");
+    assert_eq!(
+        st.buckets[1].ring[ring_slot_today(&svm)],
+        700_000,
+        "today's rolling-30-day ring slot"
+    );
+    assert_eq!(st.buckets[0].spent_today, 0, "SOL's bucket untouched");
+}
+
+/// WRD-CAP-09, the other side of the same rung: one unit over
+/// `large_threshold.per_tx` is refused. Identical to
+/// `root_execute_spl_transfer_bounded_by_threshold` except for the amount, so
+/// the amount is demonstrably the only thing that binds.
+#[test]
+fn root_execute_over_large_threshold_rejected() {
+    let (mut svm, payer, pk, account, _registry, _mut, vault_ata) = live();
+    let submitter = Keypair::new();
+    let dest = dest_ata(&mut svm);
+    // The vault holds VAULT_TOKENS (5_000_000), so the CPI itself would
+    // succeed: what refuses this is the cap check after conservation, and the
+    // whole transaction — CPI effects included — reverts.
+    let payload = spl_transfer_payload(TOK_PER_TX + 1);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_probe, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &spl_transfer_remaining(vault_ata, dest), &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &spl_transfer_remaining(vault_ata, dest), &args);
+
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::CAP_EXCEEDED);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "the CPI was rolled back");
+    assert_eq!(token_amount(&svm, &dest), 0);
+    assert_eq!(read_smart_account(&svm, &account).buckets[1].spent_today, 0, "nothing debited");
+}
+
+/// WRD-CAP-09: a mint ABSENT from `large_threshold` is "not allowed", never
+/// "unlimited" — the root path's `find_cap(...).ok_or(CapExceeded)` (spec
+/// §5.2.4). A fresh mint with a funded vault ATA moves a trivially small
+/// amount and is still refused.
+#[test]
+fn root_execute_mint_absent_from_large_threshold_rejected() {
+    let (mut svm, payer, pk, account, _registry, _mut, _vault_ata) = live();
+    let submitter = Keypair::new();
+    // `exec_policy` configures NATIVE_MINT and `tok_mint()` only.
+    let other = Pubkey::new_from_array([0x5Cu8; 32]);
+    set_mint(&mut svm, &other, 6, 1_000_000_000);
+    let src = ata(&account, &other);
+    set_token_account(&mut svm, &src, &other, &account, 1_000_000);
+    let dest_owner = Pubkey::new_unique();
+    let dest = ata(&dest_owner, &other);
+    set_token_account(&mut svm, &dest, &other, &dest_owner, 0);
+
+    // Same logical shape as `spl_transfer_remaining`: source 2, dest 3,
+    // program 4, mint 5 (rule 2a presence for the writable vault-owned source).
+    let remaining = vec![
+        AccountMeta::new(src, false),
+        AccountMeta::new(dest, false),
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false),
+        AccountMeta::new_readonly(other, false),
+    ];
+    let payload = spl_transfer_payload(1_000);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_probe, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args);
+
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::CAP_EXCEEDED);
+    assert_eq!(token_amount(&svm, &src), 1_000_000, "the CPI was rolled back");
+}
+
+/// WRD-EXEC-02: per-mint caps are summed across ACCOUNTS, not charged
+/// per token account. Two vault ATAs of ONE mint, each moving 600_000 in the
+/// same payload, coalesce to a single 1_200_000 charge — over the 1_000_000
+/// per-tx cap — even though neither leg alone would exceed it. Then the same
+/// shape at 2 × 400_000 succeeds with ONE coalesced 800_000 bucket debit.
+#[test]
+fn execute_two_vault_atas_of_one_mint_share_one_per_tx() {
+    let (mut svm, payer, _pk, account, registry, _mut, vault_ata) = live();
+    let second = second_vault_ata(&mut svm, &account);
+    let dest = dest_ata(&mut svm);
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+
+    // logical: 2 = vault_ata, 3 = second, 4 = dest, 5 = SPL Token, 6 = mint.
+    let remaining = vec![
+        AccountMeta::new(vault_ata, false),
+        AccountMeta::new(second, false),
+        AccountMeta::new(dest, false),
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false),
+        mint_meta(),
+    ];
+    let two_transfers = |amount: u64| -> Vec<u8> {
+        let mut data = vec![3u8];
+        data.extend_from_slice(&amount.to_le_bytes());
+        encode_payload(&[
+            (5, &[(2, FLAG_WRITABLE), (4, FLAG_WRITABLE), (0, FLAG_SIGNER), (5, 0)], &data),
+            (5, &[(3, FLAG_WRITABLE), (4, FLAG_WRITABLE), (0, FLAG_SIGNER), (5, 0)], &data),
+        ])
+    };
+
+    // 600_000 + 600_000 = 1_200_000 > TOK_PER_TX (1_000_000).
+    let args = ExecuteArgs { root: None, payload: Some(two_transfers(600_000)) };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::CAP_EXCEEDED);
+    // Nothing moved: the reject reverts the whole transaction, both CPIs included.
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS);
+    assert_eq!(token_amount(&svm, &second), VAULT_TOKENS);
+
+    // 400_000 + 400_000 = 800_000 fits — and lands as ONE debit, not two.
+    let args = ExecuteArgs { root: None, payload: Some(two_transfers(400_000)) };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args);
+    expect_ok(&mut svm, &[&payer, &session_kp], &[ix]);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS - 400_000);
+    assert_eq!(token_amount(&svm, &second), VAULT_TOKENS - 400_000);
+    assert_eq!(token_amount(&svm, &dest), 800_000);
+    let st = read_smart_account(&svm, &account);
+    assert_eq!(st.buckets[1].spent_today, 800_000, "one coalesced per-mint debit");
+    assert_eq!(st.buckets[1].ring[ring_slot_today(&svm)], 800_000);
 }
 
 #[test]
@@ -649,6 +802,156 @@ fn root_direct_approve_rejected() {
     // standing between a root ceremony and an Approve — this is the case a
     // registry-sited deny would miss.
     expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::DENY_LISTED);
+}
+
+/// A direct SPL `SetAuthority(6)` over `logical[2]`, signed by the vault PDA.
+/// Account order `[account_or_mint, current_authority]`; args are
+/// `authority_type: u8` then `COption<Pubkey>`.
+fn spl_set_authority_payload(new_authority: &Pubkey) -> Vec<u8> {
+    let mut data = vec![6u8, 2u8]; // SetAuthority, AuthorityType::AccountOwner
+    data.push(1); // COption::Some
+    data.extend_from_slice(new_authority.as_ref());
+    encode_payload(&[(4, &[(2, FLAG_WRITABLE), (0, FLAG_SIGNER)], &data)])
+}
+
+/// WRD-DENY-01, integration half: `SetAuthority` — the tag that would hand the
+/// vault's token account to a stranger outright — is refused on the ROOT path,
+/// which skips the registry entirely. Mirrors `root_direct_approve_rejected`
+/// with only the inner tag changed, so the tag is demonstrably what binds.
+#[test]
+fn root_direct_set_authority_rejected() {
+    let (mut svm, payer, pk, account, _registry, _mut, vault_ata) = live();
+    let submitter = Keypair::new();
+    let new_authority = Pubkey::new_unique();
+    let remaining = vec![
+        AccountMeta::new(vault_ata, false),                    // logical 2 = target
+        AccountMeta::new_readonly(new_authority, false),       // logical 3 (unreferenced)
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false),        // logical 4 = program
+    ];
+    let payload = spl_set_authority_payload(&new_authority);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::DENY_LISTED);
+    // The authority never moved — the reject is before the CPI, not after it.
+    let t = spl_token::state::Account::unpack(&svm.get_account(&vault_ata).unwrap().data).unwrap();
+    assert_eq!(t.owner, account, "the vault ATA's owner is unchanged");
+}
+
+// ===========================================================================
+// WRD-DENY-02 — the deny-list runs BEFORE the registry, and no listing
+// overrides it
+// ===========================================================================
+
+/// **TEST-ONLY back door**: make `(program, selector)` a member of list
+/// `list_id` in the already-init'd registry, leaving every other byte —
+/// `version`/`bump`/`authority`/`treasury` and the default entries — exactly as
+/// `init_registry` wrote them.
+///
+/// Stands in for the Phase-1C timelocked registry update, which is the only way
+/// a listing for a deny-listed pair could ever appear on chain. Its whole
+/// purpose is to build the state the ordering claim is about: a registry that
+/// SAYS yes to a pair the fixed deny-list says no to.
+///
+/// If the pair is ALREADY an entry, that entry's index is added to the list
+/// rather than a duplicate appended — `Registry::find_entry` returns the FIRST
+/// match, so a duplicate slot would be unreachable and the back door would
+/// silently do nothing.
+fn list_registry_entry(svm: &mut LiteSVM, registry: &Pubkey, program: Pubkey, selector: &[u8], list_id: u16) {
+    let existing = svm.get_account(registry).expect("registry exists");
+    assert_eq!(&existing.data[..8], Registry::DISCRIMINATOR, "registry discriminator");
+    let mut reg: Registry = *bytemuck::from_bytes::<Registry>(&existing.data[8..]);
+    let mut sel = [0u8; MAX_SELECTOR_LEN];
+    sel[..selector.len()].copy_from_slice(selector);
+    let idx = match reg.find_entry(&program, selector) {
+        Some(i) => i,
+        None => {
+            let i = reg.n_entries as usize;
+            reg.entries[i] = RegistryEntry {
+                program_id: program,
+                selector: sel,
+                disc_len: selector.len() as u8,
+                role_rules: 0,
+                _pad: [0; 6],
+            };
+            reg.n_entries = reg.n_entries.checked_add(1).expect("registry entry count");
+            i
+        }
+    };
+    let li = list_id.checked_sub(1).expect("list ids are 1-based") as usize;
+    reg.lists[li].set(idx);
+    reg.allocated_lists |= 1u8 << li;
+
+    let mut data = Registry::DISCRIMINATOR.to_vec();
+    data.extend_from_slice(bytemuck::bytes_of(&reg));
+    assert_eq!(data.len(), Registry::LEN);
+    svm.set_account(
+        *registry,
+        Account {
+            lamports: existing.lamports,
+            data,
+            owner: existing.owner,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (registry)");
+}
+
+/// WRD-DENY-02: even a registry that explicitly lists SPL `SetAuthority` for
+/// the session's own allowlist cannot re-enable it. The verdict must be
+/// `DenyListed` — NOT `RegistryDenied` — which is the observable proof that the
+/// decoder runs BEFORE the registry lookup and that no listing, however it got
+/// there, is consulted for a denied pair.
+#[test]
+fn registry_listing_set_authority_still_fails_closed() {
+    let (mut svm, payer, _pk, account, registry, _mut, vault_ata) = live();
+    // The adversarial state: list 1 (the session's list) now carries
+    // (SPL Token, SetAuthority).
+    list_registry_entry(&mut svm, &registry, SPL_TOKEN_ID, &[6u8], 1);
+    let new_authority = Pubkey::new_unique();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let remaining = vec![
+        AccountMeta::new(vault_ata, false),
+        AccountMeta::new_readonly(new_authority, false),
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false),
+    ];
+    let args = ExecuteArgs { root: None, payload: Some(spl_set_authority_payload(&new_authority)) };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::DENY_LISTED);
+    let t = spl_token::state::Account::unpack(&svm.get_account(&vault_ata).unwrap().data).unwrap();
+    assert_eq!(t.owner, account, "the vault ATA's owner is unchanged");
+}
+
+/// Control for the test above: the back door itself works — a listing the
+/// deny-list does NOT cover really is honoured by the registry gate. Without
+/// this, `registry_listing_set_authority_still_fails_closed` could pass because
+/// the planted entry was inert rather than because the deny-list outranked it.
+#[test]
+fn registry_listing_control_a_planted_entry_is_honoured() {
+    let (mut svm, payer, _pk, account, registry, mutator_id, _vault_ata) = live();
+    // `test-mutator`'s `noop` is in list 2, NOT list 1 — a list-1 session is
+    // refused it…
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let remaining = vec![AccountMeta::new_readonly(mutator_id, false)];
+    let inner: [(u8, u8); 0] = [];
+    let data = mutator::instruction_discriminator("noop").to_vec();
+    let payload = encode_payload(&[(2, &inner, &data)]);
+    let args = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::REGISTRY_DENIED);
+
+    // …and after the same back door adds it to list 1, it runs.
+    list_registry_entry(&mut svm, &registry, mutator_id, &data, 1);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args);
+    expect_ok(&mut svm, &[&payer, &session_kp], &[ix]);
 }
 
 // ===========================================================================
@@ -925,6 +1228,66 @@ fn staged_execute_expired_rejected() {
     let args = ExecuteArgs { root: Some(root), payload: None };
     let (ix, _l) = execute_ix(submitter.pubkey(), account, None, true, Some(stage), None, Some(creator), &remaining, &args);
     expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::STAGE_EXPIRED);
+}
+
+/// WRD-STAGE-02: a `Stage` is captured at the account's CURRENT
+/// `policy_version`, so a policy change voids it exactly as it voids an
+/// outstanding session (spec §5.3 item 6).
+///
+/// Deliberately the SESSION path: `policy_version` is one of the fields inside
+/// the ROOT transcript, so a root variant of this test would fail
+/// `ChallengeMismatch` on the rebuilt challenge and never reach the stage's own
+/// binding. On the session path the stale stage is the ONLY defect.
+#[test]
+fn staged_execute_with_stale_policy_version_rejected() {
+    let (mut svm, payer, _pk, account, registry, _mut, vault_ata) = live();
+    let dest = dest_ata(&mut svm);
+    let payload = spl_transfer_payload(400_000);
+    let remaining = spl_transfer_remaining(vault_ata, dest);
+    // Staged at policy version 1…
+    let (stage, creator) = stage_payload(&mut svm, &payer, &account, &payload);
+    // …then the policy moves under it (1C's `set_policy`, stood in for by the
+    // back door — nothing in 1B bumps the version).
+    let bumped = bump_policy_version(&mut svm, &account, 1);
+    assert_eq!(bumped, 2, "the stage was captured at version 1");
+    // Planted AFTER the bump so nothing else about the session is stale.
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+
+    let args = ExecuteArgs { root: None, payload: None };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, Some(stage), Some(registry), Some(creator), &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::STAGE_INVALID);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "nothing executed");
+    assert!(
+        svm.get_account(&stage).map(|a| a.lamports > 0).unwrap_or(false),
+        "the stage survives a rejected consume"
+    );
+}
+
+/// WRD-STAGE-02: same clause for `generation` — a rotation or recovery voids an
+/// outstanding stage. The session is planted AFTER the bump so its
+/// `generation_at_grant` matches the account and `stage.generation !=
+/// account.generation` is the only thing wrong.
+#[test]
+fn staged_execute_with_stale_generation_rejected() {
+    let (mut svm, payer, _pk, account, registry, _mut, vault_ata) = live();
+    let dest = dest_ata(&mut svm);
+    let payload = spl_transfer_payload(400_000);
+    let remaining = spl_transfer_remaining(vault_ata, dest);
+    let (stage, creator) = stage_payload(&mut svm, &payer, &account, &payload);
+    let generation = bump_generation(&mut svm, &account, 1);
+    assert_eq!(generation, 1, "the stage was captured at generation 0");
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+
+    let args = ExecuteArgs { root: None, payload: None };
+    let (ix, _l) =
+        execute_ix(session_kp.pubkey(), account, Some(session), false, Some(stage), Some(registry), Some(creator), &remaining, &args);
+    expect_reject(&mut svm, &[&payer, &session_kp], &[ix], 0, err::STAGE_INVALID);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "nothing executed");
+    assert!(
+        svm.get_account(&stage).map(|a| a.lamports > 0).unwrap_or(false),
+        "the stage survives a rejected consume"
+    );
 }
 
 // ===========================================================================
@@ -1645,10 +2008,20 @@ fn grok_exp04_empty_staged_payload_does_not_consume_stage() {
     let args = ExecuteArgs { root: Some(root), payload: None };
     let (ix, _l) =
         execute_ix(submitter.pubkey(), account, None, true, Some(stage), None, Some(creator), &[], &args);
+    // This is the ROOT path, so the ceremony's nonce is also at stake: the
+    // reject happens before `verify_and_consume`, and the whole transaction
+    // reverts regardless — so the user's assertion is not burned by a failed
+    // staged execute and can be retried (WRD-STAGE-02).
+    let nonce_before = read_smart_account(&svm, &account).root_nonce;
     expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::PAYLOAD_INVALID);
     assert!(
         svm.get_account(&stage).map(|a| a.lamports > 0).unwrap_or(false),
         "the stage must survive an empty execute"
+    );
+    assert_eq!(
+        read_smart_account(&svm, &account).root_nonce,
+        nonce_before,
+        "a failed staged execute must not consume the root nonce either"
     );
 }
 
@@ -1735,6 +2108,7 @@ mod err {
     pub const SELF_CPI_REJECTED: u32 = 6044;
     pub const PAYLOAD_INVALID: u32 = 6045;
     pub const REGISTRY_DENIED: u32 = 6046;
+    pub const STAGE_INVALID: u32 = 6047;
     pub const STAGE_EXPIRED: u32 = 6048;
     pub const COMPUTE_BUDGET_IN_EXECUTE: u32 = 6049;
     pub const DENY_LISTED: u32 = 6050;

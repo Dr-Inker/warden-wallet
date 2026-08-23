@@ -670,6 +670,38 @@ pub fn clear_policy_cap(svm: &mut LiteSVM, pda: &Pubkey, idx: usize) {
     .expect("set_account");
 }
 
+/// **TEST-ONLY back door.** Advance a `SmartAccount`'s `policy.version` by
+/// `delta`, leaving every other byte — including every cap — untouched.
+///
+/// Needed for the same reason as `bump_generation`: no Phase 1B instruction
+/// changes `policy.version` (that is 1C's `set_policy`), and `execute`'s staged
+/// path binds a `Stage` to the account's CURRENT `policy_version` (spec §5.3
+/// item 6), so the "a policy change voids an outstanding stage" clause
+/// (WRD-STAGE-02) has no honest way to be reached. Deliberately bumps ONLY the
+/// version, so the staged execute's sole defect is the stale binding and not a
+/// cap that moved underneath it.
+pub fn bump_policy_version(svm: &mut LiteSVM, pda: &Pubkey, delta: u32) -> u32 {
+    let existing = svm.get_account(pda).expect("account exists");
+    let mut acc = read_smart_account(svm, pda);
+    acc.policy.version = acc.policy.version.checked_add(delta).expect("policy version overflow");
+    let version = acc.policy.version;
+    let mut data = SmartAccount::DISCRIMINATOR.to_vec();
+    data.extend_from_slice(bytemuck::bytes_of(&acc));
+    assert_eq!(data.len(), SmartAccount::LEN);
+    svm.set_account(
+        *pda,
+        Account {
+            lamports: existing.lamports,
+            data,
+            owner: existing.owner,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account");
+    version
+}
+
 /// **TEST-ONLY back door.** Advance a `SmartAccount`'s `generation` by
 /// `delta`, leaving every other byte untouched.
 ///

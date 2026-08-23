@@ -154,6 +154,35 @@ fn none_account() -> AccountMeta {
     AccountMeta::new_readonly(common::program_id(), false)
 }
 
+/// Today's slot in the account-wide rolling-30-day ring, computed exactly the
+/// way `buckets::debit` computes it, from the SVM's OWN clock (mirrors the
+/// helper of the same name in `tests/execute.rs`).
+fn ring_slot_today(svm: &LiteSVM) -> usize {
+    use warden::constants::{DAY_SECS, RING_DAYS};
+    let clock: Clock = svm.get_sysvar();
+    clock.unix_timestamp.div_euclid(DAY_SECS).rem_euclid(RING_DAYS as i64) as usize
+}
+
+/// Freeze `account` through a REAL root freeze ceremony — ported verbatim from
+/// `tests/execute.rs`, where `execute_frozen_rejected` uses the same shape.
+/// `swap` needs its own copy so the frozen gate is proven on the swap path too
+/// (WRD-FRZ-03), rather than inferred from `execute` sharing a handler prelude.
+fn freeze_account(svm: &mut LiteSVM, payer: &Keypair, pk: &TestPasskey, account: &Pubkey) {
+    use warden::root_verify::transcript::OP_FREEZE;
+    let (precompile, root) = ceremony(svm, account, pk, action_hash(OP_FREEZE, &[]));
+    let mut data = Sha256::digest(b"global:freeze")[..8].to_vec();
+    root.serialize(&mut data).unwrap();
+    let ix = Instruction {
+        program_id: common::program_id(),
+        accounts: vec![
+            AccountMeta::new(*account, false),
+            AccountMeta::new_readonly(sysvar::instructions::ID, false),
+        ],
+        data,
+    };
+    expect_ok(svm, &[payer], &[precompile, ix]);
+}
+
 /// Route metas with the authority position forced to NON-signer (the vault PDA
 /// cannot sign at the tx level; warden signs it for the CPI via invoke_signed),
 /// and the `in_mint` account appended so conservation's rule-2a presence check
@@ -443,6 +472,25 @@ fn session_shared_route_swap_honest() {
     assert_eq!(token_amount(&l.svm, &l.vault_out), 700_000);
 }
 
+/// WRD-FRZ-03: a frozen account runs NOTHING — `swap` included. Identical to
+/// `session_shared_route_swap_honest` except for the freeze ceremony that
+/// precedes it, so the freeze is demonstrably the only thing that changed the
+/// verdict. (This closes the swap hole in the frozen claim; the
+/// `execute_pending` half still belongs to Phase 1C.)
+#[test]
+fn swap_frozen_rejected() {
+    let mut l = live();
+    freeze_account(&mut l.svm, &l.payer, &l.pk, &l.account);
+    let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
+    let ra = l.route_accounts(l.treasury_ata, None);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 800_000, 700_000, 800_000, 700_000, 0);
+    let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
+    expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::FROZEN);
+    assert_eq!(token_amount(&l.svm, &l.vault_in), VAULT_IN, "nothing left the vault");
+    assert_eq!(token_amount(&l.svm, &l.vault_out), 0);
+}
+
 #[test]
 fn swap_min_out_not_met_rejected() {
     // misbehave 1 credits quoted_out - 1 < min_out.
@@ -676,6 +724,47 @@ fn root_route_swap_honest_bounded() {
     expect_ok(&mut l.svm, &[&l.payer, &submitter], &[precompile, ix]);
     assert_eq!(token_amount(&l.svm, &l.vault_in), VAULT_IN - 1_000_000);
     assert_eq!(token_amount(&l.svm, &l.vault_out), 900_000);
+    // WRD-CAP-09: a root swap is METERED into the same account-wide buckets a
+    // session debits — bucket 0 = `in_mint()` per `swap_policy`. Only the
+    // in-mint is charged; the out-mint is a net GAIN, so its bucket stays at 0.
+    let st = read_smart_account(&l.svm, &l.account);
+    assert_eq!(st.buckets[0].spent_today, 1_000_000, "in_mint's account-wide day bucket");
+    assert_eq!(
+        st.buckets[0].ring[ring_slot_today(&l.svm)],
+        1_000_000,
+        "today's rolling-30-day ring slot"
+    );
+    assert_eq!(st.buckets[1].spent_today, 0, "out_mint's bucket untouched (it gained)");
+}
+
+/// WRD-CAP-09, the other side: a root swap one unit over the authorized ceiling
+/// is refused. Honest caveat about which rung fires: `swap_policy` sets
+/// `caps.per_tx == large_threshold.per_tx == IN_PER_TX`, so the pre-CPI bucket
+/// probe (spec §5.2.7 step 1) refuses `max_in` before the `large_threshold`
+/// comparison is reached. Both rungs sit at the same value, and the property
+/// this pins is the one that matters: a root ceremony is BOUNDED, never
+/// unmetered — `root_route_swap_honest_bounded` pins the metering itself.
+/// (`swap_lifetime_headroom_checked_before_cpi` is the test that proves the
+/// pre-CPI ORDERING, via the mock's absent log line.)
+#[test]
+fn root_swap_over_large_threshold_rejected() {
+    let mut l = live();
+    let submitter = Keypair::new();
+    let over = IN_PER_TX + 1;
+    let ra = l.route_accounts(l.treasury_ata, None);
+    let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
+    let disc = jup::instruction_discriminator("route");
+    let route_data = jup::route_data(over, 900_000, 0);
+    let shape = SwapArgs { root: None, variant: SWAP_VARIANT_ROUTE, in_mint: in_mint(), out_mint: out_mint(), max_in: over, min_out: 900_000, route_data: Some(route_data.clone()) };
+    let (_p, logical) = swap_ix(submitter.pubkey(), l.account, None, true, None, l.registry, None, &remaining, &shape);
+    let (precompile, root) = ceremony(&l.svm, &l.account, &l.pk, swap_action_hash(disc, in_mint(), out_mint(), over, 900_000, &route_data, &logical));
+    let args = SwapArgs { root: Some(root), ..shape };
+    let (ix, _l2) = swap_ix(submitter.pubkey(), l.account, None, true, None, l.registry, None, &remaining, &args);
+    expect_reject(&mut l.svm, &[&l.payer, &submitter], &[precompile, ix], 1, err::CAP_EXCEEDED);
+    // The vault holds VAULT_IN (10_000_000), so the route COULD have been paid:
+    // what refused it is the cap ladder, and nothing moved.
+    assert_eq!(token_amount(&l.svm, &l.vault_in), VAULT_IN);
+    assert_eq!(read_smart_account(&l.svm, &l.account).buckets[0].spent_today, 0);
 }
 
 #[test]
@@ -786,6 +875,7 @@ fn swap_lifetime_headroom_checked_before_cpi() {
 
 // ---------------------------------------------------------------------------
 mod err {
+    pub const FROZEN: u32 = 6001;
     pub const OP_NOT_ALLOWED: u32 = 6008;
     pub const CAP_EXCEEDED: u32 = 6006;
     pub const CHALLENGE_MISMATCH: u32 = 6018;

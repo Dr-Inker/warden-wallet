@@ -742,8 +742,16 @@ mod tests {
         LogicalAccount { key, is_signer: signer, is_writable: writable }
     }
 
+    /// An inner instruction resolved to an ARBITRARY token program — the
+    /// deny-list covers SPL Token AND Token-2022 identically, so every case
+    /// that is not specifically about one of them must be parametrizable over
+    /// both (WRD-DENY-01).
+    fn spl_ix_for(program: Pubkey, data: Vec<u8>, accounts: Vec<LogicalAccount>) -> ResolvedInner {
+        ResolvedInner { program, accounts, data }
+    }
+
     fn spl_ix(data: Vec<u8>, accounts: Vec<LogicalAccount>) -> ResolvedInner {
-        ResolvedInner { program: SPL_TOKEN_ID, accounts, data }
+        spl_ix_for(SPL_TOKEN_ID, data, accounts)
     }
 
     fn token_snap(key: Pubkey, vault: Pubkey, amount: u64) -> Snap {
@@ -771,21 +779,29 @@ mod tests {
         }
     }
 
+    /// WRD-DENY-01: all four unconditional tags, on BOTH token programs. The
+    /// deny branch keys on `r.program == SPL_TOKEN_ID || r.program ==
+    /// SPL_TOKEN_2022_ID`, so covering only SPL Token would leave the
+    /// Token-2022 half of the claim unproven — and Token-2022 shares the tag
+    /// numbering, so a program-id typo there is invisible to a one-program test.
     #[test]
     fn deny_scan_rejects_the_four_unconditional_tags() {
         let vault = Pubkey::new_unique();
-        for tag in [
-            TOKEN_IX_APPROVE,
-            TOKEN_IX_REVOKE,
-            TOKEN_IX_SET_AUTHORITY,
-            TOKEN_IX_APPROVE_CHECKED,
-        ] {
-            let ix = spl_ix(vec![tag], vec![acct(Pubkey::new_unique(), false, true)]);
-            assert_eq!(
-                deny_scan(&[ix], &[], &vault).unwrap_err(),
-                err(WardenError::DenyListed),
-                "tag {tag}"
-            );
+        for program in [SPL_TOKEN_ID, SPL_TOKEN_2022_ID] {
+            for tag in [
+                TOKEN_IX_APPROVE,
+                TOKEN_IX_REVOKE,
+                TOKEN_IX_SET_AUTHORITY,
+                TOKEN_IX_APPROVE_CHECKED,
+            ] {
+                let ix =
+                    spl_ix_for(program, vec![tag], vec![acct(Pubkey::new_unique(), false, true)]);
+                assert_eq!(
+                    deny_scan(&[ix], &[], &vault).unwrap_err(),
+                    err(WardenError::DenyListed),
+                    "program {program} tag {tag}"
+                );
+            }
         }
     }
 
