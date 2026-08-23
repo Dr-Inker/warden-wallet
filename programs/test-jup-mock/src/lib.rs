@@ -36,6 +36,11 @@
 //!   at `remaining[2]`, signed by `user_transfer_authority` (the vault PDA,
 //!   which warden forwards as a signer) — the nested-issuance shape a hop
 //!   program could perform if the PDA is that mint's authority.
+//! - `7` (WRDF-0106) pays the platform fee on the **net (post-fee) output**
+//!   basis — `floor(net × 85 / 10_000)` — instead of the honest gross basis
+//!   `floor(gross × 85 / 10_000)`. This is the denominator under-charge the
+//!   corrected out-mint fee floor must reject; the credit is still the honest
+//!   net, so only the fee is short.
 //!
 //! ## Account positions (real Jupiter v6, IDL-pinned)
 //!
@@ -62,10 +67,13 @@ declare_id!("3dxuCX7mnVEse9PD1WSDdXYXgwFpECkJTfwsXBbPbzWU");
 
 /// Seed of the PDA that owns the mock's pool ATAs.
 pub const POOL_SEED: &[u8] = b"pool";
-/// The platform-fee rate the honest path pays, as Jupiter does: `floor(quoted
-/// × bps / 10_000)` of the OUTPUT leg, taken from the pool on top of the
-/// user's credit. Warden requires exactly this rate (GROK-EXP-01 made the
-/// realised-fee floor load-bearing, so the mock must pay a realistic fee).
+/// The platform-fee rate the honest path pays, as Jupiter does: `floor(gross ×
+/// bps / 10_000)` of the GROSS output leg, taken OFF THE TOP of the pool's
+/// output, so the user is credited `gross − fee` (Jupiter's quoted `outAmount`,
+/// already net of the fee — WRDF-0106). Warden requires exactly this rate
+/// (GROK-EXP-01 made the realised-fee floor load-bearing, and WRDF-0106 made
+/// its gross basis load-bearing, so the mock must pay a realistic fee on the
+/// realistic — gross — basis).
 const PLATFORM_FEE_BPS: u64 = 85;
 
 #[program]
@@ -195,8 +203,17 @@ fn do_route<'info>(
         invoke(&ix, &[c.user_source_ata.clone(), delegate.clone(), c.user_transfer_authority.clone()])?;
     }
 
-    // (2) Credit the output from the pool, signed by the pool PDA.
-    let out_amount = if misbehave == 1 { quoted_out_amount.saturating_sub(1) } else { quoted_out_amount };
+    // Honest Jupiter mechanics (WRDF-0106): `quoted_out_amount` is the pool's
+    // GROSS output. The platform fee is floor(gross × 85 / 10_000), taken off
+    // the top; the user is credited gross − fee — exactly Jupiter's quoted
+    // `outAmount`, which is ALREADY net of the platform fee. Warden's out-mint
+    // fee floor must therefore reconstruct gross = net + fee, never treat the
+    // net credit as the fee base.
+    let honest_fee = quoted_out_amount.saturating_mul(PLATFORM_FEE_BPS) / 10_000;
+    let honest_net = quoted_out_amount.saturating_sub(honest_fee);
+
+    // (2) Credit the output (NET of the fee) from the pool, signed by the pool PDA.
+    let out_amount = if misbehave == 1 { honest_net.saturating_sub(1) } else { honest_net };
     spl_transfer(c.token_program, pool_out, c.user_destination_ata, c.pool_authority, out_amount, Some(pool_seeds))?;
 
     // (misbehave 6) nested MintTo under the forwarded user authority: mint at
@@ -222,11 +239,15 @@ fn do_route<'info>(
     // (3) Platform fee (output mint) — ALWAYS to the passed `platform_fee_account`
     // (WRDF-0033); the "wrong fee account" case is a caller-side substitution the
     // mock does not model, because warden's pre-CPI meta check owns it.
-    // Honest: floor(quoted × 85 / 10_000). (misbehave 5) 1 base unit only.
-    let fee = if misbehave == 5 {
-        1
-    } else {
-        quoted_out_amount.saturating_mul(PLATFORM_FEE_BPS) / 10_000
+    // Honest: floor(gross × 85 / 10_000) = `honest_fee`.
+    // (misbehave 5) 1 base unit only — GROK-EXP-01 existence-only fee.
+    // (misbehave 7) the WRDF-0106 net-basis UNDER-charge: floor(net × 85 /
+    // 10_000), which is strictly below the honest gross-basis floor — the exact
+    // denominator defect the corrected out-mint check must now reject.
+    let fee = match misbehave {
+        5 => 1,
+        7 => honest_net.saturating_mul(PLATFORM_FEE_BPS) / 10_000,
+        _ => honest_fee,
     };
     spl_transfer(c.token_program, pool_out, c.platform_fee_account, c.pool_authority, fee, Some(pool_seeds))?;
 

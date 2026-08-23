@@ -501,23 +501,31 @@ pub(crate) fn handler<'info>(
     // …and GROK-EXP-01 (2026-08-22): paid at the 85 bps RATE, not merely
     // "some". "Balance increased" accepted 1 base unit as proof of an 85 bps
     // fee, so a route front-parsed at `platform_fee_bps = 0` under a suffixed
-    // tail claiming 85 (WRDF-0059) kept the protocol's fee. The realised floor
-    // is `floor(base × 85 / 10_000)` over the realised leg the fee account is
-    // denominated in: the ACTUAL input when the fee is in `in_mint`, the NET
-    // out-mint gain otherwise. Floor, not ceil, because Jupiter computes its
-    // fee by integer division of the gross leg and (for an out-mint fee) the
-    // net gain the vault sees is already gross minus fee — so this floor is
-    // strictly ≤ what an honest 85 bps route pays and never rejects one,
-    // while a 0-bps route can clear it only by gifting the treasury the fee
-    // from somewhere else, which is the fee paid. This does NOT replace the
-    // byte-exact `route_plan` parse still owed before mainnet (WRDF-0031/
-    // 0059); it is the realised-fee bound those findings assumed was here.
-    let fee_base: u64 = if fee_mint == args.in_mint {
-        actual_in
+    // tail claiming 85 (WRDF-0059) kept the protocol's fee. Jupiter computes its
+    // fee by integer division of the GROSS leg: `fee = floor(gross × 85 /
+    // 10_000)`. The realised floor must therefore be taken over that gross leg.
+    //
+    // WRDF-0106 (2026-08-23): the out-mint branch previously used the NET
+    // out-gain as the basis, on the mistaken reasoning that "net = gross − fee
+    // so a floor over net is strictly ≤ the honest fee and never rejects one".
+    // That is wrong: Jupiter's quoted `outAmount` — which becomes the vault's
+    // net gain — is ALREADY net of the platform fee, so the gross leg the fee
+    // was taken on is `net + fee`, not `net`. Basing the floor on net undercharges
+    // (accepts `floor(net × 85 / 10_000) < floor(gross × 85 / 10_000)`). Rebuild
+    // the gross leg as `net_out_gain + fee_delta` and take the floor over THAT.
+    // The in-mint branch is unaffected: `actual_in` is the gross input leg
+    // already (the fee there is taken from the input the vault paid in full).
+    // This does NOT replace the byte-exact `route_plan` parse still owed before
+    // mainnet (WRDF-0031/0059); it is the realised-fee bound those findings
+    // assumed was here.
+    let fee_floor = if fee_mint == args.in_mint {
+        platform_fee_floor(actual_in)?
     } else {
-        u64::try_from(net_out_gain).map_err(|_| WardenError::SwapUnexpectedOutflow)?
+        let net_u64 = u64::try_from(net_out_gain).map_err(|_| WardenError::SwapUnexpectedOutflow)?;
+        let gross = net_u64.checked_add(fee_delta).ok_or(WardenError::Overflow)?;
+        platform_fee_floor(gross)?
     };
-    require!(fee_delta >= platform_fee_floor(fee_base)?, WardenError::SwapFeeNotTaken);
+    require!(fee_delta >= fee_floor, WardenError::SwapFeeNotTaken);
 
     // The ONLY net vault outflow may be `in_mint` (≤ max_in). Any other mint
     // leaving — or any raw SOL (native is rejected up front) — is value the

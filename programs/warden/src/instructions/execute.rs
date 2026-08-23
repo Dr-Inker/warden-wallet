@@ -394,6 +394,31 @@ pub(crate) fn handler<'info>(
     // AFTER deny_scan, so "the ix is such a close" is a proven licence.
     enforce_pda_writable(&resolved, &account_key)?;
 
+    // WRDF-0105 (SWIG-ACC-C2): `deny_scan` only classifies MintTo/Freeze/Thaw
+    // when the DIRECT payload program is SPL Token / Token-2022. On the ROOT path
+    // there is no registry gate, so a payload may CPI an arbitrary FORWARDING
+    // program and the PDA's signer privilege propagates down the nested CPIs —
+    // letting that forwarder issue `FreezeAccount`/`ThawAccount` on a third-party
+    // token account of a mint the PDA is freeze-authority of (conservation skips
+    // non-vault token accounts), or run a nested MintTo→use→Burn that restores
+    // the final supply so the vault-controlled-mint identity check still passes.
+    // Generic `execute` has NO typed decoder for those nested authority ops, so
+    // it refuses to sign for a vault-controlled mint AT ALL: reject if ANY BEFORE
+    // account is a mint whose mint/freeze authority is this PDA (regardless of
+    // writability — a freeze needs only a read-only mint). Every nested attack in
+    // the finding requires the controlled mint to be present in the list, so this
+    // closes both routes. Placed AFTER `deny_scan` so the direct-MintTo tests
+    // still return DENY_LISTED. Typed mint operations are a later-phase adapter
+    // concern; `swap` (a typed, program-pinned adapter) is deliberately exempt.
+    for s in &before {
+        if let Some(m) = s.mint.as_ref() {
+            require!(
+                m.mint_authority != Some(account_key) && m.freeze_authority != Some(account_key),
+                WardenError::VaultControlledMintInPayload
+            );
+        }
+    }
+
     // ---- the adapter registry (session path only) -------------------------
     // (`resolved` is non-empty here — the empty payload was refused above —
     // so a session always meets the list-id / registry gate.)

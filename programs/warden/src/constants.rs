@@ -193,17 +193,32 @@ pub const COMPUTE_BUDGET_ID: Pubkey =
 /// `Stake::Withdraw` / `Vote::Withdraw` / BPF `SetAuthority` under the PDA's
 /// read-only signer with no cap debit. Any WRITABLE remaining account owned by
 /// one of these programs is refused BEFORE any CPI and again in
-/// `compare_and_account` (`UnsupportedAccountKind`). Nonce accounts are
-/// System-owned and are not covered by an owner rule (1B does not support
-/// durable nonces either way); Address-Lookup-Table and Config accounts hold
-/// no lamport value the PDA can withdraw and are left alone.
+/// `compare_and_account` (`UnsupportedAccountKind`). Durable-nonce accounts are
+/// System-owned, so an owner-id rule cannot key on them; WRDF-0104 closes that
+/// gap in `reject_unsupported_writable_owners` with a data-length rule (a
+/// writable System-owned account carrying data is refused, a plain zero-data
+/// wallet is not). Address-Lookup-Table and Config accounts hold no lamport
+/// value the PDA can withdraw and are left alone.
 pub const STAKE_PROGRAM_ID: Pubkey = Pubkey::from_str_const("Stake11111111111111111111111111111111111111");
 pub const VOTE_PROGRAM_ID: Pubkey = Pubkey::from_str_const("Vote111111111111111111111111111111111111111");
 pub const BPF_LOADER_UPGRADEABLE_ID: Pubkey =
     Pubkey::from_str_const("BPFLoaderUpgradeab1e11111111111111111111111");
+/// The upgradeable BPF loader v4 (WRDF-0104 / LZR-ACC-C2). Loader-v4's
+/// `SetProgramLength` closes / shrinks a program account under a signer
+/// `authority`, transferring surplus lamports to a writable recipient — the
+/// same unmetered-value shape as a Stake/Vote withdrawal, which a root
+/// `execute` (or a swap's Jupiter hop) could drive under the PDA's forwarded
+/// signer with no vault delta and no bucket debit. The id is `LoaderV4111…`,
+/// confirmed against the pinned `solana-sdk-ids` source
+/// (`loader_v4::declare_id!("LoaderV411111111111111111111111111111111111")`,
+/// `~/.cargo/registry/src/index.crates.io-*/solana-sdk-ids-3.1.0/src/lib.rs:45`
+/// — the version this build resolves per Cargo.lock;
+/// `unsupported_writable_owner_ids_are_the_canonical_programs` re-pins it).
+pub const LOADER_V4_ID: Pubkey =
+    Pubkey::from_str_const("LoaderV411111111111111111111111111111111111");
 /// The owner set `conservation::reject_unsupported_writable_owners` refuses.
-pub const UNSUPPORTED_WRITABLE_OWNERS: [Pubkey; 3] =
-    [STAKE_PROGRAM_ID, VOTE_PROGRAM_ID, BPF_LOADER_UPGRADEABLE_ID];
+pub const UNSUPPORTED_WRITABLE_OWNERS: [Pubkey; 4] =
+    [STAKE_PROGRAM_ID, VOTE_PROGRAM_ID, BPF_LOADER_UPGRADEABLE_ID, LOADER_V4_ID];
 /// Test-only program ids (mirrored from `programs/test-mutator` and
 /// `programs/test-jup-mock`), used only by the registry's test list.
 pub const TEST_MUTATOR_ID: Pubkey = Pubkey::from_str_const("An3yCfK4dXet5wEHRYT23gyS1CJbeGD5E2enchQLo49W");
