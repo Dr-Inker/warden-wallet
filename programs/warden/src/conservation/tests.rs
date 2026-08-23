@@ -1925,5 +1925,47 @@ fn unsupported_writable_owner_ids_are_the_canonical_programs() {
     assert_eq!(BPF_LOADER_UPGRADEABLE_ID, anchor_lang::solana_program::bpf_loader_upgradeable::ID);
     assert_eq!(STAKE_PROGRAM_ID.to_string(), "Stake11111111111111111111111111111111111111");
     assert_eq!(VOTE_PROGRAM_ID.to_string(), "Vote111111111111111111111111111111111111111");
-    assert_eq!(UNSUPPORTED_WRITABLE_OWNERS.len(), 3);
+    // WRDF-0104: Loader-v4, confirmed against `solana-sdk-ids 3.1.0`'s
+    // `loader_v4::declare_id!` — see `constants::LOADER_V4_ID`.
+    assert_eq!(LOADER_V4_ID.to_string(), "LoaderV411111111111111111111111111111111111");
+    assert_eq!(UNSUPPORTED_WRITABLE_OWNERS.len(), 4);
+    assert!(UNSUPPORTED_WRITABLE_OWNERS.contains(&LOADER_V4_ID));
+}
+
+/// WRDF-0104 (LZR-ACC-C2): the durable-nonce / Loader-v4 unmetered-value gap.
+/// The pre-CPI entry point the handlers use must refuse (i) a writable
+/// Loader-v4-owned account and (ii) a writable System-owned account that carries
+/// data (an 80-byte durable nonce), while leaving (iii) a writable zero-data
+/// System wallet and (iv) a read-only System-owned data-bearing account alone —
+/// so the rule stays narrow.
+#[test]
+fn wrdf0104_loader_v4_and_data_bearing_system_writable_rejected() {
+    let acct = pk(6);
+    // (i) writable Loader-v4-owned program account — refused on owner id.
+    let loader_v4 = vec![snapshot_one(&acct, &LOADER_V4_ID, RENT, &[0u8; 64], true)];
+    assert_eq!(
+        reject_unsupported_writable_owners(&loader_v4).unwrap_err(),
+        err(WardenError::UnsupportedAccountKind)
+    );
+    // …and positionally in the comparison (an account that BECAME Loader-v4's).
+    assert_eq!(cmp(&loader_v4, &loader_v4, &[]).unwrap_err(), err(WardenError::UnsupportedAccountKind));
+
+    // (ii) writable System-owned account holding a durable nonce (80 B) — refused
+    // on the data-length rule (System has no owner-id entry).
+    let nonce = vec![snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[0u8; 80], true)];
+    assert_eq!(
+        reject_unsupported_writable_owners(&nonce).unwrap_err(),
+        err(WardenError::UnsupportedAccountKind)
+    );
+
+    // (iii) writable System-owned account with NO data (a plain wallet / a
+    // to-be-allocated destination) — still allowed, so the rule cannot break the
+    // common case.
+    let wallet = vec![snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[], true)];
+    assert!(reject_unsupported_writable_owners(&wallet).is_ok());
+
+    // (iv) READ-ONLY System-owned data-bearing account — allowed: a CPI cannot
+    // debit a read-only account, so a read-only nonce is inert.
+    let ro_nonce = vec![snapshot_one(&acct, &SYSTEM_PROGRAM_ID, RENT, &[0u8; 80], false)];
+    assert!(reject_unsupported_writable_owners(&ro_nonce).is_ok());
 }

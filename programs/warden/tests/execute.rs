@@ -1942,9 +1942,105 @@ fn set_mint_with_authority(svm: &mut LiteSVM, mint: &Pubkey, authority: &Pubkey,
     .expect("set_account (mint with authority)");
 }
 
+/// Plant a mint whose `freeze_authority` is `authority` (mint authority left
+/// unset) — the PDA-controlled-mint shape WRDF-0105's freeze route needs.
+fn set_mint_with_freeze_authority(svm: &mut LiteSVM, mint: &Pubkey, authority: &Pubkey, decimals: u8, supply: u64) {
+    use solana_sdk::program_option::COption;
+    use spl_token::state::Mint;
+    let m = Mint {
+        mint_authority: COption::None,
+        supply,
+        decimals,
+        is_initialized: true,
+        freeze_authority: COption::Some(*authority),
+    };
+    let mut data = vec![0u8; Mint::LEN];
+    m.pack_into_slice(&mut data);
+    svm.set_account(
+        *mint,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Mint::LEN),
+            data,
+            owner: SPL_TOKEN_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (mint with freeze authority)");
+}
+
+/// WRDF-0105 (SWIG-ACC-C2), the forwarding-CPI route: a ROOT `execute` whose
+/// account list carries a mint the PDA is FREEZE authority of is refused
+/// (`VaultControlledMintInPayload`) even when the payload's direct instruction
+/// is a perfectly ordinary SPL transfer — because a forwarding program could
+/// have used the propagated PDA signer to `FreezeAccount` a third-party token
+/// account of that mint, an authority action conservation never sees. The mint
+/// rides in the list unreferenced by the payload; the pre-CPI snapshot gate
+/// still refuses it, and nothing moves.
+#[test]
+fn wrdf0105_root_execute_with_vault_freeze_authority_mint_rejected() {
+    let (mut svm, payer, pk, account, _registry, _mut, vault_ata) = live();
+    let submitter = Keypair::new();
+    let dest = dest_ata(&mut svm);
+    let evil_mint = Pubkey::new_from_array([0x55; 32]);
+    set_mint_with_freeze_authority(&mut svm, &evil_mint, &account, 6, 1_000);
+
+    // Innocuous payload: a plain SPL transfer of `tok_mint()` within caps. The
+    // vault-controlled mint is appended to the account list (logical 6) but no
+    // inner instruction references it — this is the forwarding-CPI scenario.
+    let mut remaining = spl_transfer_remaining(vault_ata, dest);
+    remaining.push(AccountMeta::new_readonly(evil_mint, false)); // logical 6
+    let payload = spl_transfer_payload(400_000);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args);
+
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::VAULT_CONTROLLED_MINT_IN_PAYLOAD);
+    // Nothing moved: the reject is pre-CPI.
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "the transfer never ran");
+    assert_eq!(token_amount(&svm, &dest), 0);
+}
+
+/// WRDF-0105 stays NARROW: a mint the PDA does NOT control (mint/freeze
+/// authority is a stranger) riding in the same account list does not trip the
+/// gate — the identical innocuous SPL transfer succeeds. Identical to the test
+/// above except for who holds the mint's authorities, so that is demonstrably
+/// the only thing the gate keys on.
+#[test]
+fn wrdf0105_root_execute_with_stranger_controlled_mint_allowed() {
+    let (mut svm, payer, pk, account, _registry, _mut, vault_ata) = live();
+    let submitter = Keypair::new();
+    let dest = dest_ata(&mut svm);
+    let stranger = Pubkey::new_unique();
+    let stranger_mint = Pubkey::new_from_array([0x56; 32]);
+    // mint_authority = a stranger, not the PDA.
+    set_mint_with_authority(&mut svm, &stranger_mint, &stranger, 6, 1_000);
+
+    let mut remaining = spl_transfer_remaining(vault_ata, dest);
+    remaining.push(AccountMeta::new_readonly(stranger_mint, false)); // logical 6
+    let payload = spl_transfer_payload(400_000);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args);
+
+    expect_ok(&mut svm, &[&payer, &submitter], &[precompile, ix]);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS - 400_000, "the transfer ran normally");
+    assert_eq!(token_amount(&svm, &dest), 400_000);
+}
+
 /// GROK-EXP-02: a root `execute` MintTo of a mint the PDA controls, to a
 /// stranger ATA, is now on the fixed deny-list — refused before any supply
-/// change, on the root path that skips the registry.
+/// change, on the root path that skips the registry. WRDF-0105 ORDERING PROOF:
+/// this list also carries the vault-controlled mint (`mint_authority == PDA`),
+/// so if the WRDF-0105 gate ran before `deny_scan` the verdict would flip to
+/// `VaultControlledMintInPayload`; it stays `DenyListed`, proving `deny_scan`
+/// runs first and the existing direct-MintTo assertions are undisturbed.
 #[test]
 fn grok_exp02_root_mint_to_stranger_is_deny_listed() {
     let (mut svm, payer, pk, account, _registry, _mut, _vault_ata) = live();
@@ -2116,4 +2212,5 @@ mod err {
     pub const JUPITER_VIA_SWAP_ONLY: u32 = 6058;
     pub const DUPLICATE_LOGICAL_ACCOUNT: u32 = 6059;
     pub const UNSUPPORTED_ACCOUNT_KIND: u32 = 6040;
+    pub const VAULT_CONTROLLED_MINT_IN_PAYLOAD: u32 = 6076;
 }

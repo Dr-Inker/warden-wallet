@@ -105,7 +105,9 @@ fn honest_route_moves_in_credits_out_and_fees_treasury() {
     s.send(jup::route(&a, 400, 380, 0)).expect("honest route");
 
     assert_eq!(token_amount(&s.svm, &s.source), 600, "400 in taken");
-    assert_eq!(token_amount(&s.svm, &s.destination), 380, "min_out credited");
+    // WRDF-0106: 380 is the GROSS out; fee floor(380*85/10_000)=3 comes off the
+    // top, so the destination is credited the net 377.
+    assert_eq!(token_amount(&s.svm, &s.destination), 377, "net (gross - fee) credited");
     assert!(token_amount(&s.svm, &s.treasury) >= 1, "fee reached treasury");
 }
 
@@ -115,7 +117,8 @@ fn shared_accounts_route_also_routes() {
     let a = s.accounts(None);
     s.send(jup::shared_accounts_route(&a, 250, 200, 0)).expect("shared route");
     assert_eq!(token_amount(&s.svm, &s.source), 750);
-    assert_eq!(token_amount(&s.svm, &s.destination), 200);
+    // WRDF-0106: 200 gross − floor(200*85/10_000)=1 fee = 199 net credited.
+    assert_eq!(token_amount(&s.svm, &s.destination), 199);
 }
 
 #[test]
@@ -123,7 +126,8 @@ fn misbehave_1_credits_less_than_min_out() {
     let mut s = scene(1_000);
     let a = s.accounts(None);
     s.send(jup::route(&a, 400, 380, 1)).expect("route runs");
-    assert_eq!(token_amount(&s.svm, &s.destination), 379, "credited min_out - 1");
+    // WRDF-0106: honest net is 377 (gross 380 − fee 3); misbehave 1 credits net − 1.
+    assert_eq!(token_amount(&s.svm, &s.destination), 376, "credited honest net - 1");
 }
 
 #[test]
@@ -152,7 +156,8 @@ fn fee_goes_to_the_passed_account_so_a_substituted_one_is_observable() {
     a.platform_fee_account = wrong_fee; // substitute a non-treasury account
     s.send(jup::route(&a, 400, 380, 0)).expect("route runs");
     assert_eq!(token_amount(&s.svm, &s.source), 600, "in_amount taken");
-    assert_eq!(token_amount(&s.svm, &s.destination), 380, "min_out credited");
+    // WRDF-0106: net (gross 380 − fee 3) credited.
+    assert_eq!(token_amount(&s.svm, &s.destination), 377, "net credited");
     assert_eq!(token_amount(&s.svm, &s.treasury), 0, "treasury got no fee");
     assert!(token_amount(&s.svm, &wrong_fee) >= 1, "fee went to the substituted account");
 }

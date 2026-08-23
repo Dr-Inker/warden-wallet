@@ -200,4 +200,9 @@ pub enum WardenError {
     // ---------------------------------------------------------------------
     #[msg("session swaps must use shared_accounts_route; the route variant forwards the vault PDA signer into every AMM hop and is root-only")]
     SwapRouteVariantSessionDenied,
+    // ---------------------------------------------------------------------
+    // WRDF-0105 remediation (2026-08-23). APPEND ONLY — see above. Code 6076.
+    // ---------------------------------------------------------------------
+    #[msg("generic execute refuses to sign for a payload whose account list contains a mint the vault controls (mint/freeze authority is the PDA); typed mint operations are a later-phase adapter concern")]
+    VaultControlledMintInPayload,
 }

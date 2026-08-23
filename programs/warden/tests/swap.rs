@@ -359,24 +359,59 @@ fn session_swap_args(_l: &Live, variant: u8, in_amount: u64, quoted_out: u64, ma
 /// rejected `SwapFeeNotTaken`.
 #[test]
 fn grok_exp01_honest_pays_85_bps_and_one_unit_fee_is_rejected() {
-    // Honest: fee == floor(900_000 * 85 / 10_000) == 7_650, accepted.
+    // Honest: gross out 900_000 → fee floor(900_000 * 85 / 10_000) == 7_650,
+    // credited net == 892_350. min_out is below the net so the fee floor — not
+    // min_out — is the check under test. (WRDF-0106: `quoted_out` is now GROSS.)
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
     let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 0);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 890_000, 0);
     let (ix, _) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_ok(&mut l.svm, &[&l.payer, &kp], &[ix]);
-    assert_eq!(token_amount(&l.svm, &l.treasury_ata), 7_650, "honest fee is 85 bps of the out gain");
+    assert_eq!(token_amount(&l.svm, &l.treasury_ata), 7_650, "honest fee is 85 bps of the gross out leg");
 
     // Existence-only fee (1 unit): rejected.
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
     let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 5);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 890_000, 5);
     let (ix, _) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_FEE_NOT_TAKEN);
+}
+
+/// WRDF-0106 (2026-08-23): the out-mint treasury fee floor is over the GROSS
+/// route output, not the NET vault gain. Jupiter's quoted `outAmount` (which
+/// becomes the vault's net out-gain) is already net of the 85 bps platform fee,
+/// so the gross leg the fee was taken on is `net + fee`. A route paying the OLD
+/// net-basis amount `floor(net × 85 / 10_000)` — the mock's `misbehave = 7`,
+/// which credits the honest net but pays the under-charge — is now REJECTED
+/// `SwapFeeNotTaken`; an honest gross-basis route (`misbehave = 0`) still passes
+/// and the treasury receives `floor(gross × 85 / 10_000)`.
+#[test]
+fn wrdf0106_out_mint_fee_uses_gross_basis_net_basis_route_rejected() {
+    // Net-basis under-charge (misbehave 7): gross 900_000 → honest net 892_350,
+    // fee paid floor(892_350 × 85/10_000) = 7_584 < the true gross-basis floor
+    // reconstructed from net + fee (7_649). Rejected.
+    let mut l = live();
+    let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
+    let ra = l.route_accounts(l.treasury_ata, None);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 890_000, 7);
+    let (ix, _) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
+    expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_FEE_NOT_TAKEN);
+
+    // Honest gross-basis route (misbehave 0): accepted; treasury gets 7_650.
+    let mut l = live();
+    let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
+    let ra = l.route_accounts(l.treasury_ata, None);
+    let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 890_000, 0);
+    let (ix, _) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
+    expect_ok(&mut l.svm, &[&l.payer, &kp], &[ix]);
+    assert_eq!(token_amount(&l.svm, &l.treasury_ata), 7_650, "honest gross-basis fee");
+    assert_eq!(token_amount(&l.svm, &l.vault_out), 892_350, "vault credited net of the fee");
 }
 
 /// GROK-EXP-05 (2026-08-22): the `route` variant (which forwards the vault PDA
@@ -465,11 +500,13 @@ fn session_shared_route_swap_honest() {
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
     let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 800_000, 700_000, 800_000, 700_000, 0);
+    // gross out 700_000 → honest fee floor(700_000 * 85/10_000) = 5_950, net
+    // credit 694_050 (WRDF-0106: `quoted_out` is GROSS, credit is net of fee).
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 800_000, 700_000, 800_000, 694_050, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_ok(&mut l.svm, &[&l.payer, &kp], &[ix]);
     assert_eq!(token_amount(&l.svm, &l.vault_in), VAULT_IN - 800_000);
-    assert_eq!(token_amount(&l.svm, &l.vault_out), 700_000);
+    assert_eq!(token_amount(&l.svm, &l.vault_out), 694_050);
 }
 
 /// WRD-FRZ-03: a frozen account runs NOTHING — `swap` included. Identical to
@@ -493,12 +530,12 @@ fn swap_frozen_rejected() {
 
 #[test]
 fn swap_min_out_not_met_rejected() {
-    // misbehave 1 credits quoted_out - 1 < min_out.
+    // misbehave 1 credits the honest net (892_350) minus 1 < min_out (892_350).
     let mut l = live();
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
     let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
-    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_000, 1);
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 892_350, 1);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_MIN_OUT_NOT_MET);
 }
@@ -715,15 +752,17 @@ fn root_route_swap_honest_bounded() {
     let ra = l.route_accounts(l.treasury_ata, None);
     let remaining = swap_remaining(SWAP_VARIANT_ROUTE, &ra);
     let disc = jup::instruction_discriminator("route");
-    let shape = SwapArgs { root: None, variant: SWAP_VARIANT_ROUTE, in_mint: in_mint(), out_mint: out_mint(), max_in: 1_000_000, min_out: 900_000, route_data: Some(jup::route_data(1_000_000, 900_000, 0)) };
+    // WRDF-0106: route_data's 900_000 is the GROSS out leg; the vault is
+    // credited net of the 85 bps fee (892_350), so min_out sits below that.
+    let shape = SwapArgs { root: None, variant: SWAP_VARIANT_ROUTE, in_mint: in_mint(), out_mint: out_mint(), max_in: 1_000_000, min_out: 890_000, route_data: Some(jup::route_data(1_000_000, 900_000, 0)) };
     let route_data = jup::route_data(1_000_000, 900_000, 0);
     let (_p, logical) = swap_ix(submitter.pubkey(), l.account, None, true, None, l.registry, None, &remaining, &shape);
-    let (precompile, root) = ceremony(&l.svm, &l.account, &l.pk, swap_action_hash(disc, in_mint(), out_mint(), 1_000_000, 900_000, &route_data, &logical));
+    let (precompile, root) = ceremony(&l.svm, &l.account, &l.pk, swap_action_hash(disc, in_mint(), out_mint(), 1_000_000, 890_000, &route_data, &logical));
     let args = SwapArgs { root: Some(root), ..shape };
     let (ix, _l2) = swap_ix(submitter.pubkey(), l.account, None, true, None, l.registry, None, &remaining, &args);
     expect_ok(&mut l.svm, &[&l.payer, &submitter], &[precompile, ix]);
     assert_eq!(token_amount(&l.svm, &l.vault_in), VAULT_IN - 1_000_000);
-    assert_eq!(token_amount(&l.svm, &l.vault_out), 900_000);
+    assert_eq!(token_amount(&l.svm, &l.vault_out), 892_350);
     // WRD-CAP-09: a root swap is METERED into the same account-wide buckets a
     // session debits — bucket 0 = `in_mint()` per `swap_policy`. Only the
     // in-mint is charged; the out-mint is a net GAIN, so its bucket stays at 0.
@@ -816,8 +855,9 @@ fn swap_min_out_boundary_rejected() {
     let (session, kp) = plant_session(&mut l.svm, &l.account, OP_SWAP);
     let ra = l.route_accounts(l.treasury_ata, None);
     let remaining = swap_remaining(SWAP_VARIANT_SHARED, &ra);
-    // Pool credits 900_000 to the dest; ask for min_out 900_001 (net gain is one short).
-    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 900_001, 0);
+    // Pool grosses 900_000 → credits the net 892_350 to the dest; ask for
+    // min_out 892_351 (net gain is one short). (WRDF-0106: credit is net of fee.)
+    let args = session_swap_args(&l, SWAP_VARIANT_SHARED, 1_000_000, 900_000, 1_000_000, 892_351, 0);
     let (ix, _l) = swap_ix(kp.pubkey(), l.account, Some(session), false, None, l.registry, None, &remaining, &args);
     expect_reject(&mut l.svm, &[&l.payer, &kp], &[ix], 0, err::SWAP_MIN_OUT_NOT_MET);
 }

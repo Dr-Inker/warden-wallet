@@ -63,8 +63,8 @@
 use anchor_lang::prelude::*;
 
 use crate::constants::{
-    DANGER_NEVER_ALLOWLISTABLE, DANGER_TRANSFER_FEE, NATIVE_MINT, TOKEN_STATE_INITIALIZED,
-    UNSUPPORTED_WRITABLE_OWNERS,
+    DANGER_NEVER_ALLOWLISTABLE, DANGER_TRANSFER_FEE, NATIVE_MINT, SYSTEM_PROGRAM_ID,
+    TOKEN_STATE_INITIALIZED, UNSUPPORTED_WRITABLE_OWNERS,
 };
 use crate::errors::WardenError;
 
@@ -377,9 +377,14 @@ fn prescan_vault_mints(before: &[Snap], after: &[Snap], vault: &Pubkey) -> Resul
     Ok(())
 }
 
-/// GROK-EXP-03 / -05: refuse any WRITABLE snapshot whose runtime owner is a
-/// program whose accounts carry value or authority conservation does not model
-/// (Stake, Vote, BPF Upgradeable Loader — `UNSUPPORTED_WRITABLE_OWNERS`).
+/// GROK-EXP-03 / -05 + WRDF-0104: refuse any WRITABLE snapshot whose runtime
+/// owner is a program whose accounts carry value or authority conservation does
+/// not model — Stake, Vote, BPF Upgradeable Loader, and Loader-v4
+/// (`UNSUPPORTED_WRITABLE_OWNERS`) — plus any WRITABLE System-owned account that
+/// carries data (a durable nonce and other unmodelled System state; a plain
+/// zero-data wallet is allowed). Loader-v4's `SetProgramLength` and a durable
+/// nonce's `WithdrawNonceAccount` are the LZR-ACC-C2 unmetered-value shapes the
+/// three-owner list left open.
 /// Called by the handlers on the BEFORE snapshot so the reject lands before a
 /// CPI runs (a test can then assert OUR error code without needing the foreign
 /// program's instruction to succeed), and again positionally in
@@ -391,6 +396,19 @@ pub fn reject_unsupported_writable_owners(snaps: &[Snap]) -> Result<()> {
     for s in snaps {
         require!(
             !(s.is_writable && UNSUPPORTED_WRITABLE_OWNERS.contains(&s.owner_program)),
+            WardenError::UnsupportedAccountKind
+        );
+        // WRDF-0104 (LZR-ACC-C2): a durable-nonce account is System-owned, so no
+        // owner-id rule above can name it — yet `WithdrawNonceAccount` drains its
+        // lamports under a signer nonce-authority the PDA could hold, moving value
+        // this function's caller never meters (conservation sees no vault delta).
+        // Fail closed on the shape instead: a plain System wallet or a
+        // to-be-allocated destination carries NO data, so any WRITABLE System-owned
+        // account that DOES carry data is refused. Durable nonces (80 B) and any
+        // other System-owned state 1B does not model fall inside this narrow net;
+        // the common zero-data wallet is untouched.
+        require!(
+            !(s.is_writable && s.owner_program == SYSTEM_PROGRAM_ID && s.data_len != 0),
             WardenError::UnsupportedAccountKind
         );
     }
