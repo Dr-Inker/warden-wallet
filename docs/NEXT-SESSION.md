@@ -1,5 +1,24 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-23 CODEX DIRECT ATTEMPT — BLOCKED / UNVERIFIED
+>
+> `scripts/review.sh c5a4514ab5e36faa6b4450bad7103f3f1cb5a7ca 6d714b29a24afdce97ec269404f95c34143b6c03 --kind task-diff`
+> was run against exact `HEAD` `6d714b29a24afdce97ec269404f95c34143b6c03` with the pinned
+> `gpt-5.6-sol@max` reviewer. The sandboxed attempt stopped before model startup
+> with `Read-only file system (os error 30)`; one narrowly escalated retry cleared
+> that initialization failure, reached the reviewer, and exited **1** after the
+> OpenAI cybersecurity content filter fired. **The canonical Codex round remains
+> owed; no review-green or gate-green claim is valid for this attempt.**
+>
+> Failure-state verification: `git status --porcelain=v1` and
+> `git diff --name-only` were empty at the same SHA; `REVIEW-RUNS.jsonl` remained
+> 101 lines and `REVIEW-SCORECARD.jsonl` remained 233 lines. The last recorded
+> round is still the non-equivalent Grok fallback over `c5a4514..77a8273`.
+> Only ignored expectation/schema artifacts were left; there is no result
+> `.json`/`.raw.json` for the attempted Codex round. Do not hand-write a run row.
+> Safe next action: obtain Trusted Access for Cyber or retry this exact command
+> later without weakening the model, seed set, or range.
+
 > ## 2026-08-23 CLOSE — READ THIS FIRST; it supersedes every block below.
 >
 > **Gate green @`89bfac2`:** `bash .claude/test-gate.sh` → exit **0**, Rust **674
