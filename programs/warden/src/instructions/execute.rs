@@ -79,7 +79,7 @@ use anchor_lang::AccountsClose;
 use crate::buckets::{self, find_cap};
 use crate::constants::{
     ACCOUNT_SEED, MAX_EXECUTE_ACCOUNTS_TOTAL, MAX_EXECUTE_WRITABLE, NATIVE_MINT,
-    SPL_TOKEN_2022_ID, SPL_TOKEN_ID, STAGE_SEED,
+    SPL_TOKEN_2022_ID, SPL_TOKEN_ID, STAGE_SEED, UNMODELED_AUTHORITY_DANGERS,
 };
 use crate::conservation::{self, compare_and_account, CloseIntent, Snap};
 use crate::errors::WardenError;
@@ -434,8 +434,13 @@ pub(crate) fn handler<'info>(
     // `MintSnap::holds_authority` is the complete predicate over all the modelled
     // roles, so it — never a hand-rolled subset — is what WRD-EXEC-09's
     // UNCONDITIONAL Phase-1B rejection of a vault-controlled mint requires here.
-    // (Extensions whose authority fields this snapshot does not model at all are
-    // handled on a different axis: `MintSnap::has_unrecognized_ext` / WRDF-0012.)
+    // (Extensions whose authority fields this snapshot does not model at all
+    // were claimed here to be "handled on a different axis":
+    // `MintSnap::has_unrecognized_ext` / WRDF-0012. That claim was WRONG for
+    // this gate and round 4 below fixes it — the only consumer of that flag was
+    // `prescan_vault_mints`, which fires only on a WRITABLE mint, so a
+    // read-only one fell through both. Left in place, corrected, rather than
+    // deleted: the mistaken reasoning is the reason round 4 exists.)
     //
     // WRDF-0105 ROUND 3 (2026-08-23): the predicate itself was still incomplete —
     // it modelled FOUR roles, and Token-2022 has a FIFTH. `snapshot.rs` used to
@@ -461,9 +466,76 @@ pub(crate) fn handler<'info>(
     // allowed through generic `execute`, which
     // `wrdf0105_root_execute_with_stranger_t22_all_four_authorities_allowed` and
     // `wrdf0105_root_execute_with_stranger_permanent_delegate_mint_allowed` pin.
+    //
+    // WRDF-0105 ROUND 4 (2026-08-23, Grok review + a second independent static
+    // review against spl-token-2022 10.0.0): rounds 1–3 each closed one more
+    // INSTANCE of one CLASS, and the class is structural, not enumerative.
+    // `holds_authority` above knows five roles; `scan_extensions` extracts
+    // authority pubkeys for exactly TWO extensions (`TransferFeeConfig`,
+    // `PermanentDelegate`). `TransferHook` (14) and the confidential family
+    // (4/5/16/17/24) set a danger bit and NO pubkey; every other extension type
+    // falls to `unrecognized_ext`. The "different axis" the round-2 comment
+    // above points at — `prescan_vault_mints` — refuses an unmodelable mint
+    // ONLY when it is `is_writable`. So a READ-ONLY mint whose PDA-held
+    // authority lives in an unmodelled extension was caught by NOTHING.
+    //
+    // So, in this generic gate only, ALSO refuse any mint the snapshot cannot
+    // reason about at all. What that closes, scoped honestly rather than
+    // dramatically:
+    //
+    //   * `ConfidentialTransferMint.authority` is the one CONFIRMED live
+    //     read-only bypass today. It is a genuine Solana signer role, collapsed
+    //     to `DANGER_CONFIDENTIAL` with no pubkey extracted, and Token-2022
+    //     `ApproveAccount` takes the mint READ-ONLY while letting that authority
+    //     set a THIRD PARTY's token account `approved`. That is an unmetered
+    //     third-party ACCOUNT-STATE change — NOT a demonstrated transfer or burn
+    //     primitive, and this comment must not imply otherwise.
+    //   * `TransferHook.authority` is a real unextracted role but not a live
+    //     read-only hole: exercising it mutates the mint, so the mint is
+    //     WRITABLE and `prescan_vault_mints` already refuses it. It is in the
+    //     mask as belt-and-braces for a path that forwards the PDA signer into
+    //     arbitrary nested CPIs. (`TransferHook.program_id` is an executable
+    //     target, not a signer role — correctly never extracted.)
+    //   * The ~11 catch-all roles (`MintCloseAuthority.close_authority`,
+    //     `InterestBearingConfig.rate_authority`, the pointer/metadata/group
+    //     authorities, `ScaledUiAmountConfig.authority`,
+    //     `PausableConfig.authority`, `ConfidentialTransferFeeConfig.authority`)
+    //     are predicate OMISSIONS, not present bypasses under v10: exercising
+    //     any of them mutates or closes the mint, making it writable.
+    //     `has_unrecognized_ext` covers them fail-closed anyway, which is the
+    //     point — the NEXT extension may not need a writable mint.
+    //
+    // WHY THIS SHAPE, and not either alternative:
+    //   (a) A pure known-role whitelist has now failed THREE consecutive review
+    //       rounds. Every new Token-2022 extension carrying a reassignable
+    //       authority must be added by hand to BOTH the extractor and the
+    //       predicate, and an enumeration miss is a security hole. That is a
+    //       losing structure, not a run of bad luck.
+    //   (b) WRD-EXEC-09's blanket "reject every dangerous mint" would break the
+    //       deliberate NARROWNESS property that a mint whose roles are all held
+    //       by THIRD PARTIES still works — pinned by
+    //       `wrdf0105_root_execute_with_stranger_t22_all_four_authorities_allowed`
+    //       and `wrdf0105_root_execute_with_stranger_permanent_delegate_mint_allowed`.
+    // This rule keeps stranger-held mints working for the extensions we HAVE
+    // modelled, and fails closed only on semantics the snapshot cannot
+    // represent. `UNMODELED_AUTHORITY_DANGERS` carries the membership rule: a
+    // danger bit whose authority field IS modelled does not belong in it.
+    //
+    // THE COST, stated plainly: a newly-shipped Token-2022 extension becomes a
+    // liveness blocker in generic `execute` until it is modelled. That is the
+    // same trade already accepted for vault mints via `has_unrecognized_ext`
+    // (WRDF-0012), and it is the correct direction for a signer-forwarding path.
+    //
+    // The two refusals get SEPARATE errors on purpose: this one means "the
+    // snapshot cannot tell who holds what", not "the vault holds a role".
     for s in &before {
         if let Some(m) = s.mint.as_ref() {
             require!(!m.holds_authority(&account_key), WardenError::VaultControlledMintInPayload);
+            require!(
+                !m.has_unrecognized_ext
+                    && (m.dangerous_ext & UNMODELED_AUTHORITY_DANGERS) == 0,
+                WardenError::UnmodelableMintExtensionInPayload
+            );
         }
     }
 

@@ -15,6 +15,11 @@
 //! ## Layout, re-derived from source (not from memory)
 //!
 //! `spl-token 9` `state.rs`, and `spl-token-2022 7.0.0`
+//! — **7.0.0 is the LAYOUT REFERENCE these offsets were read from; the RUNTIME
+//! is spl-token-2022 10.0.0**, which is what `litesvm 0.12.0` embeds and what
+//! the extension semantics cited elsewhere in this crate were verified against.
+//! The base and TLV layouts are unchanged between the two; re-check here first
+//! if that ever stops being true —
 //! `src/extension/mod.rs` (`type_and_tlv_indices`, `unpack_tlv_data`,
 //! `get_tlv_indices`, `check_min_len_and_not_multisig`,
 //! `src/extension/transfer_fee/mod.rs`):
