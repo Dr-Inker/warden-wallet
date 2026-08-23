@@ -1671,3 +1671,65 @@ assumed. `swap` is deliberately exempt (typed adapter with its own supply freeze
 **Still owed:** an adversarial round over THIS remediation range. Until it is
 recorded in REVIEW-RUNS.jsonl these three fixes are author-verified only — the
 same standard WRDF-0107 was raised to enforce.
+
+## Codex round 2 (`390ff37d26a3`, 2026-08-23) — three re-raises and a false promotion
+
+`scripts/review.sh 003968100ad1 390ff37d26a3 --kind task-diff`, gpt-5.6-sol @ `max`,
+49 seeded invariants, **5 findings, all ADOPTED**. This round is the clearest
+argument yet for the two-model loop: **it re-raised WRDF-0104, 0105 and 0106 as
+incompletely remediated**, which is exactly why the round-1 fixes were recorded
+as author-verified only rather than "fixed".
+
+Getting the round recorded took four attempts, logged here so the count is not
+mistaken for four reviews: (1) OpenAI cyber content-filter block, triggered after
+Codex ran a web search — the documented false-positive class, and NOT a
+convergence signal on product security code; (2) refused on a HEAD/range mismatch
+after a commit landed mid-flight — the wrapper working correctly; (3) killed
+mid-flight, no artefact; (4) recorded. The ledgers were untouched by 1–3 (the
+wrapper rolls back), so REVIEW-RUNS.jsonl went 98 → 99, not 98 → 102.
+
+**WRDF-0108 (important) — WRD-CAP-09 was promoted while certifying an unbuilt
+path. The B4 pass got this wrong.** The row's statement ends "…anything larger
+must come from `execute_pending`, whose execution also debits the buckets", and it
+was promoted on five tests covering root `execute` and root `swap` only. That is
+the *same* defect the same pass correctly refused to commit on WRD-FRZ-03, so it
+was an inconsistency, not merely optimism. **Root cause: coverage was verified
+against a truncated reading of the statement — the trailing conjunct was never
+read.** Resolved by splitting rather than reverting, per the finding's preferred
+option: WRD-CAP-09 keeps the 1B execute/swap evidence with a statement narrowed
+to that scope, and the new **WRD-CAP-10** carries the `execute_pending` conjunct
+at `unimplemented`, a sibling of WRD-FRZ-03. Ledger: 88 → 89 rows, 56
+test-covered / 32 unimplemented / 1 llm-asserted.
+
+**WRDF-0105 (important) — the authority fix covered 2 of 4 authorities.**
+`MintSnap::holds_authority` (`conservation/mod.rs:163`) already covers
+mint_authority, freeze_authority, transfer_fee_config_authority and
+withdraw_withheld_authority; the round-1 fix checked only the first two. Token-2022
+`WithdrawWithheldTokensFromAccounts` (outer tag 26, which `classify_spl_token_op`
+falls through to `Other`) needs only a READ-ONLY mint plus the withheld authority
+as signer, so it walked straight through the gap — contradicting WRD-EXEC-09's
+unconditional 1B rejection.
+
+**WRDF-0104 (minor) — the claimed post-CPI backstop did not exist, and its test
+measured the wrong thing.** The new System/`data_len` rule ran on the BEFORE
+snapshot only; `compare_and_account`'s positional check never applied it, so the
+comment's "and again in `compare_and_account`" was false. The regression also
+passed the *same* snapshot as BEFORE and AFTER while its comment described a
+transition — a wrong-attribute test that could never have failed for the stated
+reason.
+
+**WRDF-0106 (minor) — the correctness fix introduced an availability regression.**
+Reconstructing `gross = net + fee` enlarges the base, so `base * 85` overflows u64
+for values whose correct 85 bp floor still fits (Codex's vector:
+`gross = 217_020_518_514_230_020` → correct floor `1_844_674_407_370_955`), turning
+a legitimate swap into a rejection. Fix is a remainder split,
+`(b/10_000)*85 + ((b%10_000)*85)/10_000`, exact for all u64.
+
+**WRDF-0107 (minor) — the adjudication ledger contradicted the handoff.**
+Scorecard rows 224–227 still read `ruling=pending`/`ruled_by=null` while
+CLAUDE.md, NEXT-SESSION.md and this file said all four were ACCEPTED and three
+were fixed. Now corrected: every round-1 and round-2 row carries its real ruling,
+adjudicator, rationale and fixed SHA, and `remediation_verified` is **false** for
+0104/0105/0106 precisely because this round re-raised them. Zero `pending` rows
+remain. The finding's warning that a blanket "fixed" claim was unsafe is upheld by
+its own evidence.
