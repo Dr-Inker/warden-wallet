@@ -1,5 +1,46 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C2 LIVE-DEADLINE BOUNDARY — ASYNC EXPIRY CLOSED, LIFECYCLE CANCELLATION OPEN
+>
+> Commit `968a71138922087cf887d8ce437ddcf35837c8e9` replaces the stale
+> `UnlockCheck.now` sample with a live `readNow` clock authority. Exact-SHA focused
+> evidence: `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core
+> test` → **429/429**, exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/core build` → exit **0**. This is not the repository deploy gate;
+> run `.claude/test-gate.sh` on the final ledger-inclusive SHA before claiming the
+> loop boundary green.
+>
+> Deadline values and reader identity are snapshotted before suspension. AEAD now
+> reads the clock before key use and after each `importKey`, `encrypt`, and `decrypt`
+> promise settles, including rejection paths. Envelope, bundle, and record wrappers
+> re-check after their nested awaits. Record orchestration also re-checks immediately
+> after synchronous Argon2id, because blocking the event loop does not stop wall time.
+> If expiry crosses decryption, already-materialized plaintext is suppressed and its
+> exact WebCrypto buffer is overwritten before the error escapes.
+>
+> The red lane was load-bearing: the old implementation produced **7 failures / 48
+> passes** across envelope+bundle when the new contract was introduced. Final focused
+> coverage is **19 deadline + 30 envelope + 25 bundle + 17 record** tests. Boundary
+> tests advance the clock when the real WebCrypto `importKey`, `decrypt`, or `encrypt`
+> promise resolves; they do not derive an expected result from the production check.
+> The decrypt test retains the platform-returned `ArrayBuffer` and measures that every
+> byte is zero after expiry. The legacy frozen-number shape, a throwing clock reader,
+> caller mutation of deadline authority, and expiry after Argon2id are also pinned.
+>
+> Harsh review also removed a false blanket claim that every possible platform
+> exception was normalized to a keyring error. Clock failures are typed, but callers
+> must treat any unexpected WebCrypto/platform exception as fail-closed rather than
+> authorization. A callback can still be miswired to return a constant; only the C1
+> consumer can prove it supplies `Date.now`.
+>
+> **Do not promote `WRD-KEY-03`.** There is still no `apps/extension`, wake handler,
+> trusted `storage.session` owner, or code that clears in-memory keys, session storage,
+> pending ceremonies and hardware transports on expiry. A wall-clock deadline also
+> does not cancel an operation after an explicit manual lock unless C1 provides a
+> captured generation/cancellation authority. Library refusal is not lifecycle
+> clearing. Independent second-model review remains UNVERIFIED; no row or artefact was
+> fabricated.
+
 > ## 2026-08-30 C2 PERSISTENT RECORD BOUNDARY — FORMAT CLOSED, ADAPTER/LIFECYCLE OPEN
 >
 > This block supersedes the earlier 2026-08-30 “next safe C2 slice” paragraph below.
