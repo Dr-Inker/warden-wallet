@@ -20,6 +20,10 @@
     "./approval": {
       "types": "./dist/approval/index.d.ts",
       "import": "./dist/approval/index.js"
+    },
+    "./transaction": {
+      "types": "./dist/transaction/index.d.ts",
+      "import": "./dist/transaction/index.js"
     }
   },
   "files": [
