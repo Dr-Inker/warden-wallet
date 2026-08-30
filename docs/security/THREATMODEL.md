@@ -347,3 +347,41 @@ reawakened Chromium service worker. There is still no content script/provider to
 no privileged method behind it. The prior full-gated SHA `6cabc403` was executable-test green but
 architecturally wrong for MV3 wake dispatch; that is exactly why prose and unit green cannot replace
 the missing real-browser lane. Independent second-model review remains UNVERIFIED.
+
+---
+
+## Client C1 lazy page bridge — 692e550 — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** one default-isolated static content script now runs at `document_start` in
+every ordinary HTTP(S) frame. Its match patterns are broad Chrome host access and may produce a
+read/change warning even without a separate `host_permissions` key. A page can send an exact
+direction-tagged outer envelope through `window.postMessage`; the content script can open the named
+provider Port and return only the closed `WARDEN_METHOD_UNAVAILABLE` response. File, internal,
+extension, data, and opaque about/srcdoc frames remain excluded. There is no main-world injection,
+web-accessible resource, external connection, Wallet Standard registration, account/UI/RPC/key
+capability, or successful provider method.
+
+**Removed / narrowed:** the bridge requires exact outer fields, `event.source === window`, and the
+captured canonical document origin, but conveys neither check as authority. The service worker still
+derives extension/document/origin/tab/frame only from Chrome-owned `Port.sender` and reparses the
+inner request. Unexpected background shapes close rather than cross into the page. Ports open only
+for matching requests, reconnect only on a later request after disconnect, retry a stale send once,
+and share a 1,024-request lifetime ceiling per document across reconnects. The content bundle has an
+exact three-source dependency allowlist, so importing background/storage/keyring/RPC code fails the
+build. Real Chromium now covers top-level and cross-origin-frame sender acceptance, cross-context
+forgery rejection, same-tab navigation, forced worker-target removal, execution-global reset, and
+same-document wake/reconnect. The real-browser lane is mandatory in `.claude/test-gate.sh` and main
+CI provisions its exact Playwright Chromium dependency.
+
+**New invariants:** none promoted. `WRD-EXT-01` and `WRD-EXT-02` remain `unimplemented`; the only
+reachable method boundary has zero authority and no successful path.
+
+**Residual, stated honestly:** any same-page script can forge, observe, suppress, or spoof bridge
+traffic. That is caller compromise, not an authenticated sub-principal; future successful responses
+must not pretend otherwise. No provider is injected/registered, every valid request is unavailable,
+and authorized account/cluster lookup, approval ownership, privileged UI routing, success/events,
+RPC, and keys do not exist. Killing a settled worker and issuing a later request does not prove
+pending privileged-request recovery. Repeated navigation/tab-id reuse, cap compatibility, Chrome
+version/store/manual-install behavior, and opaque-frame demand remain unmeasured. The new broad host
+warning provides no user-facing wallet value until provider registration lands. Independent
+second-model review remains UNVERIFIED.

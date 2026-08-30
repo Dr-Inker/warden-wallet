@@ -1,5 +1,86 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C1 LAZY PAGE BRIDGE — REAL CHROMIUM REACHABILITY, AUTHORITY STILL ZERO
+>
+> Commit `692e5509f7b4a62a8082aaccff2b9b89b8af315e` makes the named
+> provider Port reachable from ordinary HTTP(S) frames through one static,
+> default-isolated content script. Exact-SHA focused evidence: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test`
+> → **180/180**, exit **0**; the corresponding extension `typecheck`, core
+> `build`, and extension `build` commands each exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> playwright test -c playwright.config.ts` → **1/1**, exit **0**. This is not
+> the repository deploy gate. Run `env npm_config_cache=/tmp/warden-npm-cache
+> bash .claude/test-gate.sh` on the ledger-inclusive SHA before claiming this
+> loop boundary green.
+>
+> The initial red lane was executable: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> vitest run test/content-bridge.test.ts test/manifest-storage.test.ts` failed
+> because `src/content/bridge.js` did not exist and `content_scripts` was
+> absent. The implemented outer wrapper has exactly `version`, direction-tagged
+> `type`, and opaque `payload` fields. It accepts only same-window messages whose
+> browser event origin equals the document's captured canonical HTTP(S) origin;
+> neither check is treated as background authority. The background still parses
+> the inner request and derives document/origin/tab/frame solely from
+> `Port.sender`. Only the exact `WARDEN_METHOD_UNAVAILABLE` response may return;
+> an unexpected background payload closes the bridge instead of crossing into
+> the page.
+>
+> Harsh review rejected the first unit-green bridge because it opened a Port in
+> every matching frame during `document_start`. That would wake Warden during
+> ordinary browsing, spend the 256-Port budget on unrelated/ad frames, and leave
+> a long-lived page dead after MV3 suspension. The committed bridge installs only
+> a page listener, opens a Port on the first exact request, retains no eager
+> reconnect loop, and lazily reconnects on the next request after disconnect. A
+> stale synchronous send gets one fresh-Port retry; two failures close the
+> bridge. The shared 1,024-request ceiling applies across every reconnect for one
+> document, so reconnect cannot erase the abuse budget. The emitted-content
+> dependency allowlist contains only `content/main.ts`, `content/bridge.ts`, and
+> `provider-protocol.ts`; a background/storage/keyring/RPC import now fails the
+> build.
+>
+> The mandatory Playwright lane loads `dist/` as a real unpacked MV3 extension.
+> It receives the exact unavailable response from a top document and a
+> cross-origin iframe, rejects a parent-to-child forged request using a later
+> valid Port response as a causal ordering barrier, responds after same-tab
+> navigation, closes the live service-worker CDP target, observes no remaining
+> extension worker target, then wakes it from a new request in the **same page**.
+> A CDP-injected pre-stop global is absent after wake, proving a new worker
+> execution context rather than trusting Playwright's stale Worker wrapper.
+> The first browser assertion itself was wrong: Node reports a
+> `chrome-extension:` URL's `origin` as `null`; the corrected lane derives the
+> extension id/URL prefix explicitly. A second false-green candidate—a 300 ms
+> negative iframe wait—was replaced by the causal Port-ordering barrier.
+>
+> The manifest permission really expanded. Static `content_scripts.matches` for
+> `http://*/*` and `https://*/*` is Chrome host access and can produce a broad
+> read/change warning even though no separate `host_permissions` key exists.
+> The permission and exclusions are documented in `apps/extension/README.md`.
+> `file:`, browser/extension pages, data URLs, and opaque `about:blank`/`srcdoc`
+> frames remain excluded; there is no `externally_connectable`, web-accessible
+> resource, main-world injection, or Wallet Standard registration. Current
+> Chrome references:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts>,
+> <https://developer.chrome.com/docs/extensions/reference/manifest/content-scripts>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>.
+> Wallet Standard core was inspected at `c49b56d60fbac2e68e0f3536707fa33030652f9e`
+> and Anza's extension example at `4b6a165dc8fdedc28a59af05a72a0f91cefffc0d`;
+> Warden did not copy the example's indiscriminate forwarding.
+>
+> **Do not promote `WRD-EXT-01` or `WRD-EXT-02`.** This is still not a wallet
+> provider: no page API is injected or registered, every method is unavailable,
+> and no account, cluster, approval, UI route, RPC, key, or successful response
+> exists. Same-page JavaScript can forge, observe, suppress, or spoof bridge
+> traffic; the current unavailable-only response leaks no wallet state, but the
+> successful provider design must treat the whole page as caller authority.
+> The browser lane stops an idle/settled worker, not a pending privileged request;
+> one Linux bundled-Chromium run does not establish Chrome-version/store/manual
+> compatibility; navigation churn/tab-id reuse and the 1,024 ceiling's ecosystem
+> compatibility remain unmeasured. Independent second-model review remains
+> **UNVERIFIED**.
+
 > ## 2026-08-30 C1 MV3 WAKE CORRECTION — LISTENER SYNCHRONOUS, AUTHORITY STILL ZERO
 >
 > Commit `26f3904c1d1497d81c8d3727387e62f0cc651f2a` corrects a
