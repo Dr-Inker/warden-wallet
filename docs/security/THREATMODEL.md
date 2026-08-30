@@ -324,3 +324,26 @@ state. Worker restart discards in-memory work rather than proving recovery seman
 prove local Port teardown and document-slot reuse, but actual Chromium navigation/disconnect and
 content-script sender shapes remain UNVERIFIED. TTL and cap values are local, compatibility-
 unmeasured choices. Independent second-model review remains UNVERIFIED.
+
+---
+
+## Client C1 MV3 wake-listener correction — 26f3904 — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** none beyond the existing zero-privilege provider listener. Its registration
+moves from an asynchronous storage-readiness continuation to synchronous top-level worker startup,
+as required by Chrome's MV3 event-dispatch contract. Before readiness it can still only parse the
+closed request shape and return `WARDEN_METHOD_UNAVAILABLE`; a composition test proves no session
+storage read occurs on that path.
+
+**Removed / narrowed:** a stopped service worker can no longer miss its wake connection merely
+because storage restriction/restoration promises have not settled. Readiness rejection, explicit
+disposal, and synchronous bootstrap failure each remove the listener. Privileged/storage-backed
+subsystems must still await `background.ready`; this correction does not weaken that gate.
+
+**New invariants:** none promoted. `WRD-EXT-01` and `WRD-EXT-02` remain `unimplemented`.
+
+**Residual, stated honestly:** registration timing is proven with unit event mocks, not a killed and
+reawakened Chromium service worker. There is still no content script/provider to open this Port and
+no privileged method behind it. The prior full-gated SHA `6cabc403` was executable-test green but
+architecturally wrong for MV3 wake dispatch; that is exactly why prose and unit green cannot replace
+the missing real-browser lane. Independent second-model review remains UNVERIFIED.

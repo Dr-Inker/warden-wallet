@@ -1,5 +1,45 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C1 MV3 WAKE CORRECTION — LISTENER SYNCHRONOUS, AUTHORITY STILL ZERO
+>
+> Commit `26f3904c1d1497d81c8d3727387e62f0cc651f2a` corrects a
+> load-bearing lifecycle defect in the previous provider-Port boundary. Exact-SHA
+> focused evidence: `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension test` → **165/165**, exit **0**; the corresponding
+> `typecheck` and `build` commands each exit **0**. This is not the repository
+> deploy gate; run `env npm_config_cache=/tmp/warden-npm-cache bash
+> .claude/test-gate.sh` on the ledger-inclusive SHA before claiming this
+> correction green.
+>
+> Chrome's MV3 contract requires event listeners in service workers to register
+> synchronously during top-level script evaluation. The prior implementation at
+> `6cabc403` installed `runtime.onConnect` only inside the promise that followed
+> storage restriction and session restoration. That unit suite proved the wrong
+> behavior: after worker suspension, the incoming connection that wakes the
+> worker could arrive before the asynchronous listener existed and be missed.
+> Official sources:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/events>,
+> <https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers>.
+>
+> The hostile lifecycle test first failed **3/3** new synchronous-registration
+> assertions with zero listeners observed. The corrected startup installs only
+> the already-audited zero-privilege boundary synchronously. A pre-readiness Port
+> test proves a valid request returns only `WARDEN_METHOD_UNAVAILABLE` while the
+> session storage read count remains zero. Storage restriction/session restore
+> still define `background.ready`, the mandatory gate for every future
+> storage-backed or privileged subsystem. Rejected readiness, explicit disposal,
+> and synchronous bootstrap failure remove the wake listener. Harsh review found
+> the synchronous-throw rollback gap in the first fix; its red test observed one
+> leaked listener, and the final test now observes zero.
+>
+> **Do not promote `WRD-EXT-01` or `WRD-EXT-02`.** No content script or provider
+> can open the Port, and no account, UI, approval, key, RPC, or successful method
+> is connected. Unit mocks now prove registration timing within one JS turn, not
+> Chrome's real worker-stop/wake behavior. An unpacked-extension Chromium vector
+> that opens the Port from a real top-level page and cross-origin iframe, then
+> navigates/reconnects, remains required. Independent second-model review remains
+> **UNVERIFIED**.
+
 > ## 2026-08-30 C1 PROVIDER-PORT OWNER — EMITTED, ZERO PRIVILEGE, PAGE BRIDGE ABSENT
 >
 > Commit `2975296eeff4f1096146174be41649ec399590b5` installs the first
