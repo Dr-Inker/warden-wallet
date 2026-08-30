@@ -36,6 +36,13 @@ const contentResult = await build({
   ...sharedBuildOptions,
 });
 
+const popupResult = await build({
+  entryPoints: { popup: join(appDirectory, "src/popup/main.ts") },
+  outdir: outputDirectory,
+  format: "iife",
+  ...sharedBuildOptions,
+});
+
 // Keep the page-reachable bundle structurally thin. A future import of a
 // background, storage, keyring, RPC, approval, or broad core module must fail
 // here and receive an explicit threat-model review before this allowlist grows.
@@ -56,7 +63,21 @@ if (
   );
 }
 
-for (const result of [backgroundResult, contentResult]) {
+const allowedPopupInputs = [
+  join(appDirectory, "src/popup/main.ts"),
+  join(appDirectory, "src/popup-protocol.ts"),
+].map((input) => resolve(input)).sort();
+const popupInputs = Object.keys(popupResult.metafile.inputs)
+  .map((input) => resolve(input))
+  .sort();
+if (
+  popupInputs.length !== allowedPopupInputs.length ||
+  popupInputs.some((input, index) => input !== allowedPopupInputs[index])
+) {
+  throw new Error(`popup dependency boundary changed: ${popupInputs.join(", ")}`);
+}
+
+for (const result of [backgroundResult, contentResult, popupResult]) {
   for (const output of Object.values(result.metafile.outputs)) {
     if (output.imports.some((entry) => entry.external)) {
       throw new Error("extension build contains an external runtime import");
@@ -65,9 +86,13 @@ for (const result of [backgroundResult, contentResult]) {
 }
 
 await copyFile(join(appDirectory, "manifest.json"), join(outputDirectory, "manifest.json"));
+await copyFile(join(appDirectory, "popup.html"), join(outputDirectory, "popup.html"));
 const manifest = JSON.parse(await readFile(join(outputDirectory, "manifest.json"), "utf8"));
 if (manifest.background?.service_worker !== "background.js") {
   throw new Error("extension manifest does not name the emitted background worker");
+}
+if (manifest.action?.default_popup !== "popup.html") {
+  throw new Error("extension manifest does not name the emitted popup page");
 }
 const contentScripts = Array.isArray(manifest.content_scripts)
   ? manifest.content_scripts

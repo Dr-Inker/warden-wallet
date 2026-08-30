@@ -27,7 +27,8 @@ export interface ProviderProvenance {
 export interface PrivilegedUiProvenance {
   readonly kind: "privileged-ui";
   readonly extensionId: string;
-  readonly documentId: string;
+  /** Chrome currently omits documentId for a tabless action popup. */
+  readonly documentId: string | null;
   readonly extensionOrigin: string;
   readonly path: string;
   readonly tabId: number | null;
@@ -83,9 +84,10 @@ function requireDocumentId(sender: Record<string, unknown>): string {
 function requireActiveLifecycle(sender: Record<string, unknown>): void {
   const lifecycle = sender.documentLifecycle;
   // Chrome describes this field as a creation-time snapshot which may later be
-  // stale. It is therefore only a rejection signal; documentId and Port lifetime
-  // remain the navigation binding. Older/missing values are accepted only because
-  // documentId itself is mandatory and pins the minimum browser version to 106.
+  // stale. It is therefore only a rejection signal, never proof of continued
+  // liveness. Provider and tab-hosted UI Ports require documentId; Chrome's current
+  // tabless action-popup sender omits both fields, so that lane is instead bound to
+  // the exact extension origin/path and the lifetime of the browser-owned Port.
   if (lifecycle !== undefined && lifecycle !== "active") {
     invalid("document was not active when the port opened");
   }
@@ -228,7 +230,9 @@ export function classifyPrivilegedUiSender(
   const allowedPaths = requireAllowedUiPaths(input.allowedPaths);
   requireExtensionOwner(sender, runtimeId);
   rejectAmbiguousSenderKinds(sender);
-  const documentId = requireDocumentId(sender);
+  const documentId = sender.documentId === undefined
+    ? null
+    : requireDocumentId(sender);
   requireActiveLifecycle(sender);
 
   const extensionOrigin = `chrome-extension://${runtimeId}`;
@@ -259,6 +263,9 @@ export function classifyPrivilegedUiSender(
       invalid("tabless UI sender unexpectedly has a frame id");
     }
   } else {
+    if (documentId === null) {
+      invalid("tab-hosted privileged UI is missing its document id");
+    }
     tabId = requireTabId(sender);
     frameId = requireNonNegativeInteger(sender.frameId, "frame id");
     if (frameId !== 0) {

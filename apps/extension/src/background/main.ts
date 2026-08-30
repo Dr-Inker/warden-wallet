@@ -20,8 +20,8 @@ function requireBackgroundChrome(value: unknown): ExtensionBackgroundChromeApi {
 const chromeApi = (globalThis as { readonly chrome?: unknown }).chrome;
 const background = startBackground(requireBackgroundChrome(chromeApi));
 
-// The only message surface returns METHOD_UNAVAILABLE after strict provenance
-// and schema checks. Keep initialization failure visible to extension diagnostics.
-void background.providerReady.catch((error: unknown) => {
+// Every reachable message surface returns only its closed unavailable response
+// after strict provenance and schema checks. Keep initialization failure visible.
+void background.runtimeBoundariesReady.catch((error: unknown) => {
   console.error("Warden extension background initialization failed", error);
 });

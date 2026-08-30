@@ -8,11 +8,13 @@ import {
   type UnlockSessionStorageArea,
 } from "./unlock-session.js";
 import {
-  installUnavailableProviderBoundary,
   ProviderPortStateError,
   type ProviderRuntimeApi,
-  type UnavailableProviderBoundary,
 } from "./provider-port.js";
+import {
+  installUnavailableRuntimeBoundaries,
+  type UnavailableRuntimeBoundaries,
+} from "./runtime-ports.js";
 
 export interface ExtensionBackgroundStorageApi extends ExtensionStorageAccessApi {
   readonly local: StorageAreaAccessControl;
@@ -30,7 +32,7 @@ export interface ExtensionBackgroundChromeApi {
 }
 
 export interface ExtensionBackgroundApplication extends ExtensionBackgroundRuntime {
-  readonly providerReady: Promise<UnavailableProviderBoundary>;
+  readonly runtimeBoundariesReady: Promise<UnavailableRuntimeBoundaries>;
   dispose(): void;
 }
 
@@ -52,13 +54,14 @@ export function bootstrapBackground(
  * Register the zero-privilege wake listener during top-level worker evaluation.
  * MV3 can dispatch the event that starts a worker before any promise settles, so
  * asynchronous listener registration would miss connections after suspension.
- * This boundary can only return METHOD_UNAVAILABLE; background.ready remains the
- * mandatory gate for every future storage-backed or privileged subsystem.
+ * These boundaries can only return fixed unavailable responses; background.ready
+ * remains the mandatory gate for every future storage-backed or privileged
+ * subsystem.
  */
 export function startBackground(
   chromeApi: ExtensionBackgroundChromeApi,
 ): ExtensionBackgroundApplication {
-  const boundary = installUnavailableProviderBoundary(chromeApi.runtime);
+  const boundary = installUnavailableRuntimeBoundaries(chromeApi.runtime);
   let background: ExtensionBackgroundRuntime;
   try {
     background = bootstrapBackground(chromeApi.storage);
@@ -67,10 +70,12 @@ export function startBackground(
     throw error;
   }
   let disposed = false;
-  const providerReady = background.ready.then(
+  const runtimeBoundariesReady = background.ready.then(
     () => {
       if (disposed) {
-        throw new ProviderPortStateError("background disposed before provider setup");
+        throw new ProviderPortStateError(
+          "background disposed before runtime boundaries became ready",
+        );
       }
       return boundary;
     },
@@ -82,7 +87,7 @@ export function startBackground(
 
   return {
     ...background,
-    providerReady,
+    runtimeBoundariesReady,
     dispose(): void {
       if (disposed) return;
       disposed = true;

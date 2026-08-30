@@ -133,6 +133,28 @@ describe("privileged extension UI Port.sender provenance", () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it("accepts Chrome's measured action-popup sender without inventing a document id", () => {
+    const result = classifyPrivilegedUiSender({
+      runtimeId: EXTENSION_ID,
+      sender: {
+        id: EXTENSION_ID,
+        origin: `chrome-extension://${EXTENSION_ID}`,
+        url: `chrome-extension://${EXTENSION_ID}/popup.html`,
+      },
+      allowedPaths: ["/popup.html"],
+    });
+
+    expect(result).toEqual({
+      kind: "privileged-ui",
+      extensionId: EXTENSION_ID,
+      documentId: null,
+      extensionOrigin: `chrome-extension://${EXTENSION_ID}`,
+      path: "/popup.html",
+      tabId: null,
+      frameId: null,
+    });
+  });
+
   it("accepts an allowlisted full-page UI only in the tab's top frame", () => {
     expect(
       classifyPrivilegedUiSender({
@@ -159,7 +181,10 @@ describe("privileged extension UI Port.sender provenance", () => {
 
   it.each([
     ["another extension", { id: OTHER_EXTENSION_ID }],
-    ["missing document identity", { documentId: undefined }],
+    [
+      "tab-hosted page missing document identity",
+      { documentId: undefined, frameId: 0, tab: { id: 23 } },
+    ],
     ["web origin", { origin: "https://dapp.example" }],
     ["another extension origin", { origin: `chrome-extension://${OTHER_EXTENSION_ID}` }],
     ["unallowlisted path", { url: `chrome-extension://${EXTENSION_ID}/settings.html` }],

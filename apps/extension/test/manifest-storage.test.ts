@@ -6,7 +6,7 @@ import {
   type ExtensionStorageAccessApi,
 } from "../src/background/storage-access.js";
 
-describe("MV3 manifest keeps one explicit provider reachability boundary", () => {
+describe("MV3 manifest keeps explicit, permission-minimal reachability boundaries", () => {
   it("limits the static isolated content script to HTTP(S) documents", async () => {
     const manifest = JSON.parse(
       await readFile(new URL("../manifest.json", import.meta.url), "utf8"),
@@ -17,6 +17,7 @@ describe("MV3 manifest keeps one explicit provider reachability boundary", () =>
     expect(manifest.minimum_chrome_version).toBe("106");
     expect(manifest.permissions).toEqual(["storage"]);
     expect(manifest.background).toEqual({ service_worker: "background.js", type: "module" });
+    expect(manifest.action).toEqual({ default_popup: "popup.html" });
     // With `world` omitted Chrome runs static content scripts in ISOLATED by
     // default. The explicit manifest field arrived after our Chrome 106 floor;
     // exact-object equality also prevents a later switch to MAIN from hiding.

@@ -6,6 +6,7 @@ import {
   type ExtensionBackgroundStorageApi,
 } from "../src/background/runtime.js";
 import { PROVIDER_PORT_NAME } from "../src/background/provider-port.js";
+import { POPUP_PORT_NAME } from "../src/popup-protocol.js";
 import type {
   ProviderConnectEvent,
   ProviderDisconnectEvent,
@@ -159,7 +160,7 @@ describe("MV3 background bootstrap", () => {
       runtime: { id: "a".repeat(32), onConnect },
     });
     let providerSettled = false;
-    void application.providerReady.finally(() => {
+    void application.runtimeBoundariesReady.finally(() => {
       providerSettled = true;
     });
 
@@ -174,7 +175,7 @@ describe("MV3 background bootstrap", () => {
     expect(onConnect.listeners.size).toBe(1);
     expect(providerSettled).toBe(false);
     restoreGate.release();
-    await application.providerReady;
+    await application.runtimeBoundariesReady;
     expect(providerSettled).toBe(true);
     expect(onConnect.listeners.size).toBe(1);
     application.dispose();
@@ -246,7 +247,123 @@ describe("MV3 background bootstrap", () => {
 
     localGate.release();
     sessionGate.release();
-    await application.providerReady;
+    await application.runtimeBoundariesReady;
+    application.dispose();
+  });
+
+  it("routes popup and provider schemas separately before readiness", async () => {
+    const localGate = gate();
+    const sessionGate = gate();
+    const onConnect = new RuntimeConnectEvent();
+    let reads = 0;
+    const storage: ExtensionBackgroundStorageApi = {
+      local: { setAccessLevel: async () => localGate.promise },
+      session: {
+        setAccessLevel: async () => sessionGate.promise,
+        get: async () => {
+          reads++;
+          return {};
+        },
+        set: async () => undefined,
+        remove: async () => undefined,
+      },
+    };
+    const application = startBackground({
+      storage,
+      runtime: { id: "a".repeat(32), onConnect },
+    });
+
+    const popupMessages = new RuntimeMessageEvent();
+    const popupDisconnect = new RuntimeDisconnectEvent();
+    const popupPosted: unknown[] = [];
+    const popupPort: ProviderRuntimePort = {
+      name: POPUP_PORT_NAME,
+      sender: {
+        id: "a".repeat(32),
+        documentId: "popup-document",
+        documentLifecycle: "active",
+        origin: `chrome-extension://${"a".repeat(32)}`,
+        url: `chrome-extension://${"a".repeat(32)}/popup.html`,
+      },
+      onMessage: popupMessages,
+      onDisconnect: popupDisconnect,
+      postMessage: (message) => popupPosted.push(message),
+      disconnect: () => popupDisconnect.emit(),
+    };
+    onConnect.emit(popupPort);
+    popupMessages.emit({
+      version: 1,
+      type: "request",
+      correlationId: "popup_runtime_01234567",
+      method: "popup:getBoundaryStatus",
+      params: {},
+    });
+
+    expect(reads).toBe(0);
+    expect(popupPosted).toEqual([
+      {
+        version: 1,
+        type: "response",
+        correlationId: "popup_runtime_01234567",
+        ok: false,
+        error: {
+          code: "WARDEN_POPUP_UNAVAILABLE",
+          message: "Warden popup methods are not enabled",
+        },
+      },
+    ]);
+
+    // The same extension id is not privilege: a web content-script sender on
+    // the popup channel must be disconnected by the central router's popup lane.
+    const forgedMessages = new RuntimeMessageEvent();
+    const forgedDisconnect = new RuntimeDisconnectEvent();
+    let forgedDisconnects = 0;
+    onConnect.emit({
+      name: POPUP_PORT_NAME,
+      sender: {
+        id: "a".repeat(32),
+        documentId: "content-script-document",
+        documentLifecycle: "active",
+        frameId: 0,
+        origin: "https://dapp.example",
+        url: "https://dapp.example/",
+        tab: { id: 7 },
+      },
+      onMessage: forgedMessages,
+      onDisconnect: forgedDisconnect,
+      postMessage: () => {
+        throw new Error("forged popup port must never receive a response");
+      },
+      disconnect: () => {
+        forgedDisconnects++;
+        forgedDisconnect.emit();
+      },
+    });
+    expect(forgedDisconnects).toBe(1);
+    expect(forgedMessages.listeners.size).toBe(0);
+
+    const unknownMessages = new RuntimeMessageEvent();
+    const unknownDisconnect = new RuntimeDisconnectEvent();
+    let unknownDisconnects = 0;
+    onConnect.emit({
+      name: "warden:unknown:v1",
+      sender: popupPort.sender,
+      onMessage: unknownMessages,
+      onDisconnect: unknownDisconnect,
+      postMessage: () => {
+        throw new Error("unknown channel must never receive a response");
+      },
+      disconnect: () => {
+        unknownDisconnects++;
+        unknownDisconnect.emit();
+      },
+    });
+    expect(unknownDisconnects).toBe(1);
+    expect(unknownMessages.listeners.size).toBe(0);
+
+    localGate.release();
+    sessionGate.release();
+    await application.runtimeBoundariesReady;
     application.dispose();
   });
 
@@ -266,7 +383,7 @@ describe("MV3 background bootstrap", () => {
       runtime: { id: "a".repeat(32), onConnect },
     });
     expect(onConnect.listeners.size).toBe(1);
-    await expect(application.providerReady).rejects.toThrow("access denied");
+    await expect(application.runtimeBoundariesReady).rejects.toThrow("access denied");
     expect(onConnect.listeners.size).toBe(0);
     application.dispose();
   });
@@ -294,8 +411,8 @@ describe("MV3 background bootstrap", () => {
 
     localGate.release();
     sessionGate.release();
-    await expect(application.providerReady).rejects.toThrow(
-      "background disposed before provider setup",
+    await expect(application.runtimeBoundariesReady).rejects.toThrow(
+      "background disposed before runtime boundaries became ready",
     );
   });
 

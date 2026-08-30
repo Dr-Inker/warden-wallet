@@ -25,6 +25,29 @@ successful wallet method. Same-page JavaScript can forge or suppress page
 messages; background code therefore derives provenance only from Chrome-owned
 `Port.sender` fields and treats every bridged payload as hostile.
 
+## Action popup
+
+The manifest action loads the extension-owned `popup.html`; declaring this
+popup adds no manifest permission. Its bundle is constrained to the popup entry
+and its separate protocol module. It cannot import the provider bridge, core,
+storage, session, approval, RPC, or key modules.
+
+The popup protocol has one exact request and one fixed unavailable response. It
+grants no wallet authority and shows only that wallet controls are not enabled.
+The background accepts the channel only from this extension's exact origin and
+`/popup.html` path. Tab-hosted extension pages must also provide a document id
+and top-frame identity. Current Chromium omits document and tab fields for its
+browser-owned toolbar popup, so that sender shape is instead bounded by the
+exact extension origin/path, Port lifetime, a 16-Port concurrency cap, and 16
+requests per Port. A content script has the same extension id but a web
+origin/URL and is rejected before its payload is read.
+
+The real-browser lane opens the toolbar popup with `chrome.action.openPopup()`,
+measures its browser-owned sender, reads the rendered status, and sends a direct
+popup-protocol request. That automation API requires a newer Chromium than the
+manifest's Chrome 106 floor; compatibility of the ordinary toolbar action on
+the floor still needs a separate version-matrix run before release.
+
 `externally_connectable`, `web_accessible_resources`, `host_permissions`, and
 `optional_host_permissions` stay absent. Any future expansion requires a
 manifest test, threat-model update, and real-browser evidence.
