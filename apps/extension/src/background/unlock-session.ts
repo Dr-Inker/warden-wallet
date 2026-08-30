@@ -36,6 +36,8 @@ export interface ActivateUnlockSessionParams {
 
 export interface UnlockSessionLease {
   readonly account: Uint8Array;
+  /** Public identifier copied from the authenticated persistent bundle. */
+  readonly bundleId: Uint8Array;
   readonly unwrapKey: KeyringUnwrapKey;
   readonly unlock: UnlockCheck;
 }
@@ -596,6 +598,7 @@ export class UnlockSessionOwner {
     if (active === undefined) throw new KeyringLockedError(operation);
     const unlock = await this.assertActive(active, operation);
     const account = active.account.slice();
+    const bundleId = active.bundleId.slice();
     const unwrapKey: KeyringUnwrapKey = {
       kdf: active.unwrapKey.kdf,
       bytes: active.unwrapKey.bytes.slice(),
@@ -603,12 +606,13 @@ export class UnlockSessionOwner {
     let result: Uint8Array | undefined;
     const removeAbortCleanup = registerUnlockAbortCleanup(unlock, () => {
       account.fill(0);
+      bundleId.fill(0);
       zeroizeUnwrapKey(unwrapKey);
       result?.fill(0);
     });
     try {
       try {
-        result = await use({ account, unwrapKey, unlock });
+        result = await use({ account, bundleId, unwrapKey, unlock });
       } catch (error) {
         await this.assertActive(active, operation);
         throw error;
@@ -626,6 +630,7 @@ export class UnlockSessionOwner {
     } finally {
       removeAbortCleanup();
       account.fill(0);
+      bundleId.fill(0);
       zeroizeUnwrapKey(unwrapKey);
     }
   }

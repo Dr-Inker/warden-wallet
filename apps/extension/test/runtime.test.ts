@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   KeyringFormatError,
   KeyringLockedError,
+  SESSION_SIGNER_PAYLOAD_SCHEMA_VERSION,
   encodeKeyringRecordStorageValue,
+  encodeSessionSignerPayload,
+  sealKeyringRecord,
+  type KeyringContext,
   type KeyringRecord,
 } from "@warden/core/keyring";
 import {
@@ -34,6 +38,19 @@ const fill = (length: number, value: number): Uint8Array =>
   new Uint8Array(length).fill(value);
 const SESSION_NOW = 1_700_000_000_000;
 const PERSISTENT_BUNDLE_ID = fill(16, 0x12);
+const SIGNER_PASSWORD = new TextEncoder().encode("runtime integration password");
+const SIGNER_CONTEXT: KeyringContext = {
+  account: fill(32, 0x41),
+  origin: "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  keyKind: "session-signer",
+  schemaVersion: SESSION_SIGNER_PAYLOAD_SCHEMA_VERSION,
+  genesisHash: fill(32, 0x31),
+  programId: fill(32, 0x32),
+};
+const SIGNER_POLICY = {
+  idleTimeoutMs: 60_000,
+  hardTimeoutMs: 120_000,
+};
 
 const PERSISTENT_RECORD = encodeKeyringRecordStorageValue({
   metadata: {
@@ -60,6 +77,24 @@ const PERSISTENT_RECORD = encodeKeyringRecordStorageValue({
     prfWrap: null,
   },
 } satisfies KeyringRecord);
+
+async function signerRecord(): Promise<string> {
+  return encodeKeyringRecordStorageValue(
+    await sealKeyringRecord({
+      metadata: {
+        version: 1,
+        argon2id: {
+          params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
+          salt: fill(16, 0x73),
+        },
+        prf: null,
+      },
+      plaintext: encodeSessionSignerPayload(fill(32, 0x74)),
+      passwordBytes: SIGNER_PASSWORD.slice(),
+      context: SIGNER_CONTEXT,
+    }),
+  );
+}
 
 function storedSession(bundleId: Uint8Array): Record<string, unknown> {
   return {
@@ -310,7 +345,7 @@ describe("MV3 background bootstrap", () => {
 
     const runtime = bootstrapBackground(storage, { readNow: () => SESSION_NOW });
     await expect(runtime.ready).resolves.toBe(true);
-    await expect(runtime.sessions.isUnlocked()).resolves.toBe(true);
+    await expect(runtime.keyring.isUnlocked()).resolves.toBe(true);
     expect(sessionValue).toBeDefined();
   });
 
@@ -340,7 +375,7 @@ describe("MV3 background bootstrap", () => {
 
     const runtime = bootstrapBackground(storage, { readNow: () => SESSION_NOW });
     await expect(runtime.ready).resolves.toBe(false);
-    await expect(runtime.sessions.isUnlocked()).resolves.toBe(false);
+    await expect(runtime.keyring.isUnlocked()).resolves.toBe(false);
     expect(currentSessionRemovals).toBe(1);
     expect(sessionValue).toBeUndefined();
   });
@@ -363,7 +398,7 @@ describe("MV3 background bootstrap", () => {
     const runtime = bootstrapBackground(storage);
     await expect(runtime.ready).rejects.toThrow("access denied");
     expect(reads).toBe(0);
-    await expect(runtime.sessions.isUnlocked()).resolves.toBe(false);
+    await expect(runtime.keyring.isUnlocked()).resolves.toBe(false);
   });
 
   it("registers the provider wake listener synchronously while readiness remains gated", async () => {
@@ -414,6 +449,7 @@ describe("MV3 background bootstrap", () => {
   it("synchronously revokes a live session when the persistent record changes", async () => {
     const onConnect = new RuntimeConnectEvent();
     const onStorageChanged = new RuntimeStorageChangeEvent();
+    const persistentRecord = await signerRecord();
     let sessionValue: unknown;
     let observeRemoval = false;
     let removalObserved!: () => void;
@@ -421,7 +457,9 @@ describe("MV3 background bootstrap", () => {
       removalObserved = resolve;
     });
     const storage: ExtensionBackgroundStorageApi = {
-      local: localArea(async () => undefined),
+      local: localArea(async () => undefined, {
+        get: async (key) => ({ [key]: persistentRecord }),
+      }),
       session: {
         setAccessLevel: async () => undefined,
         get: async (key) => sessionValue === undefined
@@ -448,15 +486,10 @@ describe("MV3 background bootstrap", () => {
     // evaluation so the storage change that wakes a worker cannot be missed.
     expect(onStorageChanged.listeners.size).toBe(1);
     await application.runtimeBoundariesReady;
-    const unlockNow = Date.now();
-    await application.sessions.unlock({
-      account: fill(32, 0x41),
-      bundleId: PERSISTENT_BUNDLE_ID,
-      unwrapKey: { kdf: "argon2id-password", bytes: fill(32, 0x72) },
-      deadlines: {
-        idleExpiresAt: unlockNow + 60_000,
-        hardExpiresAt: unlockNow + 120_000,
-      },
+    await application.keyring.unlockWithPassword({
+      passwordBytes: SIGNER_PASSWORD.slice(),
+      context: SIGNER_CONTEXT,
+      policy: SIGNER_POLICY,
     });
 
     // Wrong area and wrong key are not keyring mutations.
@@ -465,7 +498,7 @@ describe("MV3 background bootstrap", () => {
       "session",
     );
     onStorageChanged.emit({ "warden.unrelated": { newValue: 1 } }, "local");
-    await expect(application.sessions.isUnlocked()).resolves.toBe(true);
+    await expect(application.keyring.isUnlocked()).resolves.toBe(true);
 
     const useGate = gate();
     let leaseSignal: AbortSignal | undefined;
@@ -473,19 +506,23 @@ describe("MV3 background bootstrap", () => {
     const entered = new Promise<void>((resolve) => {
       useEntered = resolve;
     });
-    const pendingUse = application.sessions.useBytes("decrypt", async (lease) => {
-      leaseSignal = lease.unlock.signal;
-      useEntered();
-      await useGate.promise;
-      return Uint8Array.of(7);
-    });
+    const pendingUse = application.keyring.useSessionSignerBytes(
+      "decrypt",
+      SIGNER_CONTEXT,
+      async (lease) => {
+        leaseSignal = lease.unlock.signal;
+        useEntered();
+        await useGate.promise;
+        return Uint8Array.of(7);
+      },
+    );
     await entered;
     observeRemoval = true;
 
     onStorageChanged.emit(
       {
         [KEYRING_RECORD_STORAGE_KEY]: {
-          oldValue: PERSISTENT_RECORD,
+          oldValue: persistentRecord,
           newValue: "replacement",
         },
       },
@@ -495,7 +532,7 @@ describe("MV3 background bootstrap", () => {
     // The event callback must revoke memory before its asynchronous Chrome
     // cleanup settles; otherwise an in-flight key use retains authority.
     expect(leaseSignal!.aborted).toBe(true);
-    await expect(application.sessions.isUnlocked()).resolves.toBe(false);
+    await expect(application.keyring.isUnlocked()).resolves.toBe(false);
     useGate.release();
     await expect(pendingUse).rejects.toThrow(KeyringLockedError);
     await changedRecordRemoval;
@@ -510,10 +547,13 @@ describe("MV3 background bootstrap", () => {
   it("closes every runtime surface when record-change session cleanup fails", async () => {
     const onConnect = new RuntimeConnectEvent();
     const onStorageChanged = new RuntimeStorageChangeEvent();
+    const persistentRecord = await signerRecord();
     let sessionValue: unknown;
     let rejectRemove = false;
     const storage: ExtensionBackgroundStorageApi = {
-      local: localArea(async () => undefined),
+      local: localArea(async () => undefined, {
+        get: async (key) => ({ [key]: persistentRecord }),
+      }),
       session: {
         setAccessLevel: async () => undefined,
         get: async (key) => sessionValue === undefined
@@ -534,15 +574,10 @@ describe("MV3 background bootstrap", () => {
       runtime: { id: "a".repeat(32), onConnect },
     });
     await application.runtimeBoundariesReady;
-    const unlockNow = Date.now();
-    await application.sessions.unlock({
-      account: fill(32, 0x41),
-      bundleId: PERSISTENT_BUNDLE_ID,
-      unwrapKey: { kdf: "argon2id-password", bytes: fill(32, 0x72) },
-      deadlines: {
-        idleExpiresAt: unlockNow + 60_000,
-        hardExpiresAt: unlockNow + 120_000,
-      },
+    await application.keyring.unlockWithPassword({
+      passwordBytes: SIGNER_PASSWORD.slice(),
+      context: SIGNER_CONTEXT,
+      policy: SIGNER_POLICY,
     });
     expect(sessionValue).toBeDefined();
 
@@ -579,7 +614,7 @@ describe("MV3 background bootstrap", () => {
 
     // Local authority is gone even though Chrome refused to remove the stale
     // serialized copy. The worker must also stop accepting every runtime port.
-    await expect(application.sessions.isUnlocked()).resolves.toBe(false);
+    await expect(application.keyring.isUnlocked()).resolves.toBe(false);
     await expect(fatalFailure).resolves.toBeInstanceOf(UnlockSessionStorageError);
     expect(sessionValue).toBeDefined();
     expect(onConnect.listeners.size).toBe(0);

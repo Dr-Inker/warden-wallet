@@ -1,14 +1,9 @@
-import { decodeKeyringRecordStorageValue } from "@warden/core/keyring";
-
 import {
   restrictStorageToTrustedContexts,
   type ExtensionStorageAccessApi,
   type StorageAreaAccessControl,
 } from "./storage-access.js";
-import {
-  UnlockSessionOwner,
-  type UnlockSessionStorageArea,
-} from "./unlock-session.js";
+import type { UnlockSessionStorageArea } from "./unlock-session.js";
 import {
   ProviderPortStateError,
   type ProviderRuntimeApi,
@@ -19,9 +14,9 @@ import {
 } from "./runtime-ports.js";
 import {
   KEYRING_RECORD_STORAGE_KEY,
-  PersistentKeyringRecordStore,
   type KeyringRecordStorageArea,
 } from "./keyring-record-store.js";
+import { KeyringLifecycleOwner } from "./keyring-lifecycle.js";
 
 export interface ExtensionBackgroundStorageApi extends ExtensionStorageAccessApi {
   readonly local: StorageAreaAccessControl & KeyringRecordStorageArea;
@@ -50,7 +45,8 @@ export interface ObservableExtensionBackgroundStorageApi
 }
 
 export interface ExtensionBackgroundRuntime {
-  readonly sessions: UnlockSessionOwner;
+  /** The only owner of persistent records and ephemeral unlock sessions. */
+  readonly keyring: KeyringLifecycleOwner;
   readonly ready: Promise<boolean>;
 }
 
@@ -88,38 +84,9 @@ export function bootstrapBackground(
   storage: ExtensionBackgroundStorageApi,
   options: { readonly readNow?: () => number } = {},
 ): ExtensionBackgroundRuntime {
-  const keyringRecords = new PersistentKeyringRecordStore(storage.local);
-  const sessions = new UnlockSessionOwner(storage.session, options);
-  const ready = restrictStorageToTrustedContexts(storage).then(async () => {
-    let persistentBundleId: Uint8Array | null;
-    try {
-      const persistentRecord = await keyringRecords.load();
-      persistentBundleId = persistentRecord === null
-        ? null
-        : decodeKeyringRecordStorageValue(persistentRecord).bundle.bundleId;
-    } catch (error) {
-      try {
-        await sessions.lock();
-      } catch (cleanupError) {
-        throw new AggregateError(
-          [error, cleanupError],
-          "persistent keyring validation and unlock-session cleanup both failed",
-        );
-      }
-      throw error;
-    }
-    if (persistentBundleId === null) {
-      // An unwrap key without its encrypted persistent record has no legitimate
-      // consumer. Remove stale session material without ever parsing it.
-      await sessions.lock();
-      return false;
-    }
-    return sessions.restore(persistentBundleId);
-  });
-  // Do not expose the raw persistent-record owner beside the session owner.
-  // Record mutation must eventually go through one composed lifecycle owner
-  // that revokes any live session before replacing or clearing its record.
-  return { sessions, ready };
+  const keyring = new KeyringLifecycleOwner(storage.local, storage.session, options);
+  const ready = restrictStorageToTrustedContexts(storage).then(() => keyring.restore());
+  return { keyring, ready };
 }
 
 /**
@@ -197,7 +164,7 @@ export function startBackground(
     try {
       // lock() increments the transition, aborts leases, and zeroes owned key
       // bytes synchronously before its storage-removal promise is returned.
-      void background.sessions.lock().catch(failClosed);
+      void background.keyring.lock().catch(failClosed);
     } catch (error) {
       failClosed(error);
     }

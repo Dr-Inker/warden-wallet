@@ -169,17 +169,23 @@ describe("MV3 unlock session ownership", () => {
     });
     const signals: AbortSignal[] = [];
     const borrowed: Uint8Array[] = [];
+    const borrowedBundleIds: Uint8Array[] = [];
     for (let index = 0; index < 2; index++) {
       await state.owner.useBytes("sign", async (lease) => {
         signals.push(lease.unlock.signal);
         borrowed.push(lease.unwrapKey.bytes);
+        borrowedBundleIds.push(lease.bundleId);
         expect(Array.from(lease.account)).toEqual(Array.from(ACCOUNT));
+        expect(Array.from(lease.bundleId)).toEqual(Array.from(BUNDLE_ID));
         return Uint8Array.of(index + 1);
       });
     }
     expect(signals[0]).toBe(signals[1]);
     expect(borrowed[0]).not.toBe(borrowed[1]);
     for (const bytes of borrowed) expect(Array.from(bytes)).toEqual(new Array(32).fill(0));
+    for (const bytes of borrowedBundleIds) {
+      expect(Array.from(bytes)).toEqual(new Array(16).fill(0));
+    }
   });
 
   it("aborts and zeroes an in-flight lease synchronously before storage removal settles", async () => {
@@ -196,6 +202,7 @@ describe("MV3 unlock session ownership", () => {
     const removalEntered = state.storage.waitForNextRemove();
     let leaseSignal: AbortSignal | undefined;
     let leaseKey: Uint8Array | undefined;
+    let leaseBundleId: Uint8Array | undefined;
     const lateOutput = fill(64, 0x99);
     let entered!: () => void;
     const taskEntered = new Promise<void>((resolve) => {
@@ -204,6 +211,7 @@ describe("MV3 unlock session ownership", () => {
     const pending = state.owner.useBytes("sign", async (lease) => {
       leaseSignal = lease.unlock.signal;
       leaseKey = lease.unwrapKey.bytes;
+      leaseBundleId = lease.bundleId;
       entered();
       await taskGate.promise;
       return lateOutput;
@@ -213,6 +221,7 @@ describe("MV3 unlock session ownership", () => {
     const locking = state.owner.lock();
     expect(leaseSignal!.aborted).toBe(true);
     expect(Array.from(leaseKey!)).toEqual(new Array(32).fill(0));
+    expect(Array.from(leaseBundleId!)).toEqual(new Array(16).fill(0));
     expect(await state.owner.isUnlocked()).toBe(false);
     taskGate.release();
     await expect(pending).rejects.toThrow(KeyringLockedError);

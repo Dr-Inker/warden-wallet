@@ -47,17 +47,18 @@
 //!     is accepted rather than papered over. `MAX_UNLOCK_TIMEOUT_MS` bounds the blast
 //!     radius of a misconfiguration but not of a clock step.
 //!
-//! ## What is NOT here (C1)
+//! ## What is NOT in this pure module
 //!
 //! The invariant also says expiry "clears all session unlock material". This module
 //! reports {@link UnlockEvaluation.mustClearSessionMaterial} and offers
-//! {@link zeroizeUnwrapMaterial} for buffers a caller holds, but the actual clearing
-//! of `chrome.storage.session`, in-memory key references, pending ceremonies and
-//! hardware transports is **C1 and unimplemented**. Nothing here creates or owns the
-//! session controller either. C1 must create ONE controller per unlocked session,
-//! pass that same signal to every key use, and synchronously abort it before clearing
-//! the rest of the session on lock/account change. A fresh per-call signal defeats
-//! revocation completely.
+//! {@link zeroizeUnwrapMaterial} for buffers a caller holds; it deliberately has no
+//! `chrome.*` dependency. The extension's `UnlockSessionOwner` now owns one stable
+//! controller per activated session, passes that signal through every key use, and
+//! synchronously aborts and overwrites its owned buffers before removing its exact
+//! `chrome.storage.session` properties. Future approval ceremonies, hardware
+//! transports, and signing consumers must join that same revocation authority when
+//! they exist. Until those product surfaces exist and are covered, the compound
+//! invariant remains partial rather than being promoted from this helper alone.
 //!
 //! Nor does a returned `Uint8Array` become magically revocable. Each async layer
 //! re-checks before releasing its result to its caller, but the final consumer must

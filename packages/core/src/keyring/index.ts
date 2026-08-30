@@ -6,3 +6,4 @@ export * from "./derive.js";
 export * from "./envelope.js";
 export * from "./bundle.js";
 export * from "./record.js";
+export * from "./session-signer.js";
