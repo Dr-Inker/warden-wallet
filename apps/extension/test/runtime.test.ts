@@ -15,7 +15,9 @@ import {
 import {
   BackgroundNotReadyError,
   bootstrapBackground,
-  startBackground,
+  startBackground as startProductionBackground,
+  type ApprovalStartupLifecycle,
+  type ExtensionBackgroundChromeApi,
   type ExtensionBackgroundStorageApi,
 } from "../src/background/runtime.js";
 import { KeyringLifecycleOwner } from "../src/background/keyring-lifecycle.js";
@@ -223,6 +225,16 @@ function observableStorage(
   onChanged = new RuntimeStorageChangeEvent(),
 ) {
   return Object.assign(storage, { onChanged });
+}
+
+function startBackground(
+  chromeApi: ExtensionBackgroundChromeApi,
+  approvalLifecycle: ApprovalStartupLifecycle = {
+    invalidateAfterWorkerRestart: async () => 0,
+    close: () => {},
+  },
+) {
+  return startProductionBackground(chromeApi, approvalLifecycle);
 }
 
 describe("MV3 background bootstrap", () => {
@@ -486,6 +498,91 @@ describe("MV3 background bootstrap", () => {
     expect(onConnect.listeners.size).toBe(1);
     application.dispose();
     expect(onConnect.listeners.size).toBe(0);
+  });
+
+  it("keeps every privileged facade gated until shipped approval startup invalidation settles", async () => {
+    const approvalGate = gate();
+    const calls: string[] = [];
+    let approvalCloses = 0;
+    const approvalStartup = {
+      async invalidateAfterWorkerRestart(): Promise<number> {
+        calls.push("approval:invalidate");
+        await approvalGate.promise;
+        calls.push("approval:invalidated");
+        return 0;
+      },
+      close(): void {
+        approvalCloses++;
+      },
+    };
+    const onConnect = new RuntimeConnectEvent();
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined, {
+        get: async () => ({}),
+      }),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async () => ({}),
+        set: async () => undefined,
+        remove: async () => undefined,
+      },
+    };
+
+    const application = startBackground({
+      storage: observableStorage(storage),
+      runtime: { id: "a".repeat(32), onConnect },
+    }, approvalStartup);
+    expect(calls).toEqual(["approval:invalidate"]);
+    await Promise.resolve();
+    await Promise.resolve();
+    await expect(application.keyring.isUnlocked()).rejects.toThrow(
+      BackgroundNotReadyError,
+    );
+
+    approvalGate.release();
+    await expect(application.runtimeBoundariesReady).resolves.toBeDefined();
+    expect(calls).toEqual(["approval:invalidate", "approval:invalidated"]);
+    application.dispose();
+    expect(approvalCloses).toBe(1);
+  });
+
+  it("closes every runtime surface when approval startup invalidation fails", async () => {
+    const onConnect = new RuntimeConnectEvent();
+    const onStorageChanged = new RuntimeStorageChangeEvent();
+    let approvalCloses = 0;
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined, {
+        get: async () => ({}),
+      }),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async () => ({}),
+        set: async () => undefined,
+        remove: async () => undefined,
+      },
+    };
+    const application = startBackground({
+      storage: observableStorage(storage, onStorageChanged),
+      runtime: { id: "a".repeat(32), onConnect },
+    }, {
+      invalidateAfterWorkerRestart: async () => {
+        throw new Error("approval database unavailable");
+      },
+      close: () => {
+        approvalCloses++;
+      },
+    });
+
+    expect(onConnect.listeners.size).toBe(1);
+    expect(onStorageChanged.listeners.size).toBe(1);
+    await expect(application.runtimeBoundariesReady).rejects.toThrow(
+      "approval database unavailable",
+    );
+    expect(onConnect.listeners.size).toBe(0);
+    expect(onStorageChanged.listeners.size).toBe(0);
+    expect(approvalCloses).toBe(1);
+    application.dispose();
+    expect(approvalCloses).toBe(1);
   });
 
   it("synchronously revokes a live session when the persistent record changes", async () => {

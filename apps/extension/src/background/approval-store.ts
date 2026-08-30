@@ -15,11 +15,11 @@ import type {
 
 export const APPROVAL_DATABASE_VERSION = 1;
 export const APPROVAL_OBJECT_STORE_NAME = "approvals";
+export const APPROVAL_DATABASE_NAME = "warden-approvals-v1";
 export const MAX_PENDING_APPROVAL_RECORDS = 32;
 export const MAX_TOTAL_APPROVAL_RECORDS = 128;
 export const APPROVAL_TOMBSTONE_RETENTION_MS = 10 * 60 * 1_000;
 
-const DEFAULT_DATABASE_NAME = "warden-approvals-v1";
 const APPROVAL_ID_PATTERN = /^req_[0-9a-f]{32}$/;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const CLIENT_TRANSITION_STATES: ReadonlySet<string> = new Set([
@@ -232,7 +232,7 @@ implements ApprovalRecordRepository {
 
   constructor(options: RepositoryOptions = {}) {
     const databaseName = requireDatabaseName(
-      options.databaseName ?? DEFAULT_DATABASE_NAME,
+      options.databaseName ?? APPROVAL_DATABASE_NAME,
     );
     const factory = requireIndexedDb(
       options.indexedDb ?? globalThis.indexedDB,

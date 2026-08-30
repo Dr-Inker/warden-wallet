@@ -13,6 +13,12 @@ import {
   encodeKeyringRecordStorageValue,
   type KeyringRecord,
 } from "@warden/core/keyring";
+import { createPendingApprovalRecord } from "@warden/core/approval";
+import {
+  APPROVAL_DATABASE_NAME,
+  APPROVAL_DATABASE_VERSION,
+  APPROVAL_OBJECT_STORE_NAME,
+} from "../src/background/approval-store.js";
 
 const EXTENSION_DIRECTORY = resolve(import.meta.dirname, "../dist");
 const PAGE_REQUEST_TYPE = "warden:provider:request";
@@ -420,6 +426,79 @@ test("real MV3 bridge binds frames, wakes after worker death, and revokes change
         [SESSION_SURVIVAL_CANARY_KEY]: SESSION_SURVIVAL_CANARY_VALUE,
       },
     });
+    const approvalNow = Date.now();
+    const pendingApproval = createPendingApprovalRecord({
+      id: `req_${"55".repeat(16)}`,
+      origin: topServer.origin,
+      tabId: 7,
+      frameId: 0,
+      documentId: "browser-production-restart-document",
+      account: fill(32, 0x41),
+      method: "solana:signTransaction",
+      chain: "solana:devnet",
+      genesisHash: fill(32, 0x31),
+      programId: fill(32, 0x32),
+      rawMessage: new Uint8Array([0x55, 2, 3, 4]),
+      policyVersion: 1,
+      createdAt: approvalNow,
+      expiresAt: approvalNow + 60_000,
+    });
+    const seededApprovalState = await worker.evaluate(async ({
+      databaseName,
+      databaseVersion,
+      objectStoreName,
+      record,
+    }) => {
+      const database = await new Promise<IDBDatabase>((resolveOpen, rejectOpen) => {
+        const request = indexedDB.open(databaseName, databaseVersion);
+        request.onerror = () => rejectOpen(
+          request.error ?? new Error("production approval database open failed"),
+        );
+        request.onsuccess = () => resolveOpen(request.result);
+      });
+      try {
+        const stored: Record<string, unknown> = {
+          ...record,
+          account: new Uint8Array(record.account),
+          genesisHash: new Uint8Array(record.genesisHash),
+          programId: new Uint8Array(record.programId),
+          rawMessage: new Uint8Array(record.rawMessage),
+          messageDigest: new Uint8Array(record.messageDigest),
+        };
+        await new Promise<void>((resolveWrite, rejectWrite) => {
+          const transaction = database.transaction(objectStoreName, "readwrite", {
+            durability: "strict",
+          });
+          transaction.oncomplete = () => resolveWrite();
+          transaction.onabort = () => rejectWrite(
+            transaction.error ?? new Error("production approval seed aborted"),
+          );
+          transaction.onerror = () => {};
+          try {
+            transaction.objectStore(objectStoreName).add(stored);
+          } catch (error) {
+            transaction.abort();
+            rejectWrite(error);
+          }
+        });
+        return record.state;
+      } finally {
+        database.close();
+      }
+    }, {
+      databaseName: APPROVAL_DATABASE_NAME,
+      databaseVersion: APPROVAL_DATABASE_VERSION,
+      objectStoreName: APPROVAL_OBJECT_STORE_NAME,
+      record: {
+        ...pendingApproval,
+        account: Array.from(pendingApproval.account),
+        genesisHash: Array.from(pendingApproval.genesisHash),
+        programId: Array.from(pendingApproval.programId),
+        rawMessage: Array.from(pendingApproval.rawMessage),
+        messageDigest: Array.from(pendingApproval.messageDigest),
+      },
+    });
+    expect(seededApprovalState).toBe("pending");
     const preStopMarker = "pre-stop-worker-global";
     await worker.evaluate((marker) => {
       (globalThis as unknown as { __wardenPreStopMarker?: string })
@@ -479,6 +558,52 @@ test("real MV3 bridge binds frames, wakes after worker death, and revokes change
       }
       return "no-live-extension-worker";
     }).toBe(null);
+    await expect.poll(async () => {
+      for (const candidate of [...context.serviceWorkers()].reverse()) {
+        if (!candidate.url().startsWith(extensionOrigin)) continue;
+        try {
+          return await candidate.evaluate(async ({
+            databaseName,
+            databaseVersion,
+            objectStoreName,
+            recordId,
+          }) => {
+            const database = await new Promise<IDBDatabase>(
+              (resolveOpen, rejectOpen) => {
+                const request = indexedDB.open(databaseName, databaseVersion);
+                request.onerror = () => rejectOpen(
+                  request.error ?? new Error("approval restart database open failed"),
+                );
+                request.onsuccess = () => resolveOpen(request.result);
+              },
+            );
+            try {
+              return await new Promise<string | null>((resolveRead, rejectRead) => {
+                const transaction = database.transaction(objectStoreName, "readonly");
+                const request = transaction.objectStore(objectStoreName).get(recordId);
+                request.onerror = () => rejectRead(
+                  request.error ?? new Error("approval restart read failed"),
+                );
+                request.onsuccess = () => {
+                  const result = request.result as { readonly state?: unknown } | undefined;
+                  resolveRead(typeof result?.state === "string" ? result.state : null);
+                };
+              });
+            } finally {
+              database.close();
+            }
+          }, {
+            databaseName: APPROVAL_DATABASE_NAME,
+            databaseVersion: APPROVAL_DATABASE_VERSION,
+            objectStoreName: APPROVAL_OBJECT_STORE_NAME,
+            recordId: pendingApproval.id,
+          });
+        } catch {
+          // Ignore the retained wrapper for the worker target closed above.
+        }
+      }
+      return "no-live-extension-worker";
+    }).toBe("cancelled");
     // The session was proven present before the worker died. Its bundle ID is
     // different from the canonical persistent record, so startup of the new
     // worker must remove it before any future privileged surface can be ready.

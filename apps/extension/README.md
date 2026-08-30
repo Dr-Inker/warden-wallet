@@ -98,7 +98,7 @@ registry, on-chain session-grant verification, or decrypt/sign/export consumer.
 
 ## Approval-record substrate
 
-The source tree contains an internal, currently unwired C3 approval owner and a
+The shipped background constructs an internal C3 approval owner backed by a
 native IndexedDB repository. A strict record copy owns the background-resolved
 origin, tab/frame/document identity, account, method, explicit cluster and
 genesis, program id, exact serialized bytes, SHA-256 message digest, policy
@@ -111,16 +111,20 @@ store caps retained and pending records and keeps short terminal tombstones so
 ordinary retries cannot reuse an approval during the retention window.
 
 This is a fail-closed persistence substrate, not a usable approval feature.
-`startBackground()` does not instantiate it, no Port or page can create, read,
-or resolve a record, and the shipped bundle tree-shakes it today. There is no
+`startBackground()` gates all internal readiness on startup invalidation and
+closes the repository whenever initialization, fatal cleanup, or disposal closes
+the runtime. No Port or page can create, read, or resolve a record. There is no
 authoritative account/network/policy registry, approval page, exact-byte decoder,
 signer/RPC consumer, signed-result replay, navigation cancellation, or root
-ceremony. The temporary-extension Chromium contract—not the shipped extension—
-opens two independent database connections, races decisions, mutates stored
-message bytes, and kills/wakes the MV3 worker. IndexedDB transaction serialization
-is evidence for the tested compare-and-set; `durability: "strict"` remains a
-browser hint, not proof against browser, process, or disk failure. Trusted
-same-extension contexts share this database and remain inside the trust boundary.
+ceremony. A temporary-extension Chromium contract opens two independent database
+connections, races decisions, and mutates stored message bytes. The shipped-
+extension lane separately seeds its production database, kills and wakes the MV3
+worker through the real provider Port, and observes startup cancel that pending
+record. The unit runtime contract separately proves readiness stays closed until
+the same invalidation settles. IndexedDB transaction serialization is evidence
+for the tested compare-and-set; `durability: "strict"` remains a browser hint,
+not proof against browser, process, or disk failure. Trusted same-extension
+contexts share this database and remain inside the trust boundary.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during

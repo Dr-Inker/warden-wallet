@@ -67,6 +67,12 @@ export interface ExtensionBackgroundApplication extends ExtensionBackgroundRunti
   dispose(): void;
 }
 
+/** Shipped startup owns this lifecycle, but exposes none of its record methods. */
+export interface ApprovalStartupLifecycle {
+  invalidateAfterWorkerRestart(): Promise<number>;
+  close(): void;
+}
+
 function requireStorageChangeEvent(value: unknown): ExtensionStorageChangeEvent {
   if (typeof value !== "object" || value === null) {
     throw new TypeError("extension background: storage.onChanged must be an event");
@@ -78,6 +84,22 @@ function requireStorageChangeEvent(value: unknown): ExtensionStorageChangeEvent 
     );
   }
   return event as ExtensionStorageChangeEvent;
+}
+
+function requireApprovalStartupLifecycle(value: unknown): ApprovalStartupLifecycle {
+  if (typeof value !== "object" || value === null) {
+    throw new TypeError("extension background: approval lifecycle must be an object");
+  }
+  const lifecycle = value as Partial<ApprovalStartupLifecycle>;
+  if (
+    typeof lifecycle.invalidateAfterWorkerRestart !== "function" ||
+    typeof lifecycle.close !== "function"
+  ) {
+    throw new TypeError(
+      "extension background: approval lifecycle must support invalidation and close",
+    );
+  }
+  return value as ApprovalStartupLifecycle;
 }
 
 export class BackgroundNotReadyError extends Error {
@@ -184,6 +206,7 @@ function initializeBackground(
   storage: ExtensionBackgroundStorageApi,
   runtimeId: string,
   options: { readonly readNow?: () => number } = {},
+  approvalInitialization?: Promise<unknown>,
 ): InitializedBackground {
   const owner = new KeyringLifecycleOwner(
     storage.local,
@@ -191,8 +214,12 @@ function initializeBackground(
     runtimeId,
     options,
   );
-  const initialization = restrictStorageToTrustedContexts(storage)
+  const keyringInitialization = restrictStorageToTrustedContexts(storage)
     .then(() => owner.restore());
+  const initialization = approvalInitialization === undefined
+    ? keyringInitialization
+    : Promise.all([keyringInitialization, approvalInitialization])
+      .then(([restored]) => restored);
   const gate = new BackgroundReadinessGate(initialization);
   return {
     owner,
@@ -226,19 +253,69 @@ export function bootstrapBackground(
  */
 export function startBackground(
   chromeApi: ExtensionBackgroundChromeApi,
+  approvalLifecycleValue: ApprovalStartupLifecycle,
 ): ExtensionBackgroundApplication {
-  const boundary = installUnavailableRuntimeBoundaries(chromeApi.runtime);
+  const approvalLifecycle = requireApprovalStartupLifecycle(
+    approvalLifecycleValue,
+  );
+  let approvalClosed = false;
+  const closeApproval = (): void => {
+    if (approvalClosed) return;
+    approvalClosed = true;
+    approvalLifecycle.close();
+  };
+  let boundary: UnavailableRuntimeBoundaries;
+  try {
+    boundary = installUnavailableRuntimeBoundaries(chromeApi.runtime);
+  } catch (error) {
+    try {
+      closeApproval();
+    } catch (closeError) {
+      throw new AggregateError(
+        [error, closeError],
+        "runtime registration and approval cleanup both failed",
+      );
+    }
+    throw error;
+  }
   let background: ExtensionBackgroundRuntime;
   let keyringOwner: KeyringLifecycleOwner;
   try {
+    const approvalInitialization = Promise.resolve(
+      approvalLifecycle.invalidateAfterWorkerRestart(),
+    ).then((invalidated) => {
+      if (!Number.isSafeInteger(invalidated) || invalidated < 0) {
+        throw new TypeError(
+          "extension background: approval invalidation count is malformed",
+        );
+      }
+    });
     const initialized = initializeBackground(
       chromeApi.storage,
       chromeApi.runtime.id,
+      {},
+      approvalInitialization,
     );
     background = initialized.runtime;
     keyringOwner = initialized.owner;
   } catch (error) {
-    boundary.dispose();
+    const cleanupErrors: unknown[] = [];
+    try {
+      boundary.dispose();
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+    try {
+      closeApproval();
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupErrors],
+        "background initialization and approval cleanup both failed",
+      );
+    }
     throw error;
   }
   let disposed = false;
@@ -261,6 +338,11 @@ export function startBackground(
     }
     try {
       boundary.dispose();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      closeApproval();
     } catch (error) {
       cleanupErrors.push(error);
     }
