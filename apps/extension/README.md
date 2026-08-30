@@ -93,9 +93,34 @@ proves the same event synchronously aborts an active in-memory lease; storage
 bytes alone cannot measure heap revocation. Focused lifecycle tests use a real
 sealed signer record and password derivation, but the browser lane still does
 not type a password or produce a signature. There is still no record-creation
-UI, Argon2 benchmark and production floor, PRF ceremony/device matrix, account
-and cluster registry, on-chain session-grant verification, approval owner, or
-decrypt/sign/export consumer.
+UI, Argon2 production floor, PRF ceremony/device matrix, account and cluster
+registry, on-chain session-grant verification, or decrypt/sign/export consumer.
+
+## Approval-record substrate
+
+The source tree contains an internal, currently unwired C3 approval owner and a
+native IndexedDB repository. A strict record copy owns the background-resolved
+origin, tab/frame/document identity, account, method, explicit cluster and
+genesis, program id, exact serialized bytes, SHA-256 message digest, policy
+version, and bounded lifetime. One object store and one `readwrite` transaction
+own each pending-to-terminal transition. Competing IndexedDB connections
+therefore have one winner; a digest mismatch burns the record as `invalidated`,
+expiry wins at the exact deadline, malformed stored bytes are deleted, and a
+worker startup pass cancels rather than resumes every live pending record. The
+store caps retained and pending records and keeps short terminal tombstones so
+ordinary retries cannot reuse an approval during the retention window.
+
+This is a fail-closed persistence substrate, not a usable approval feature.
+`startBackground()` does not instantiate it, no Port or page can create, read,
+or resolve a record, and the shipped bundle tree-shakes it today. There is no
+authoritative account/network/policy registry, approval page, exact-byte decoder,
+signer/RPC consumer, signed-result replay, navigation cancellation, or root
+ceremony. The temporary-extension Chromium contract—not the shipped extension—
+opens two independent database connections, races decisions, mutates stored
+message bytes, and kills/wakes the MV3 worker. IndexedDB transaction serialization
+is evidence for the tested compare-and-set; `durability: "strict"` remains a
+browser hint, not proof against browser, process, or disk failure. Trusted
+same-extension contexts share this database and remain inside the trust boundary.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during

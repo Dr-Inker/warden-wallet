@@ -16,6 +16,10 @@
     "./constants": {
       "types": "./dist/constants.d.ts",
       "import": "./dist/constants.js"
+    },
+    "./approval": {
+      "types": "./dist/approval/index.d.ts",
+      "import": "./dist/approval/index.js"
     }
   },
   "files": [

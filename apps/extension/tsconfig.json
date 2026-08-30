@@ -5,6 +5,7 @@
     "rootDir": "../..",
     "paths": {
       "@warden/core": ["../../packages/core/src/index.ts"],
+      "@warden/core/approval": ["../../packages/core/src/approval/index.ts"],
       "@warden/core/constants": ["../../packages/core/src/constants.ts"],
       "@warden/core/keyring": ["../../packages/core/src/keyring/index.ts"]
     },
