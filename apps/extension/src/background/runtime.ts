@@ -49,27 +49,36 @@ export function bootstrapBackground(
 }
 
 /**
- * Install no message listener until trusted-only storage setup and session
- * restoration have both completed. The installed provider remains deliberately
- * zero privilege and returns METHOD_UNAVAILABLE for every valid method.
+ * Register the zero-privilege wake listener during top-level worker evaluation.
+ * MV3 can dispatch the event that starts a worker before any promise settles, so
+ * asynchronous listener registration would miss connections after suspension.
+ * This boundary can only return METHOD_UNAVAILABLE; background.ready remains the
+ * mandatory gate for every future storage-backed or privileged subsystem.
  */
 export function startBackground(
   chromeApi: ExtensionBackgroundChromeApi,
 ): ExtensionBackgroundApplication {
-  const background = bootstrapBackground(chromeApi.storage);
-  let boundary: UnavailableProviderBoundary | undefined;
+  const boundary = installUnavailableProviderBoundary(chromeApi.runtime);
+  let background: ExtensionBackgroundRuntime;
+  try {
+    background = bootstrapBackground(chromeApi.storage);
+  } catch (error) {
+    boundary.dispose();
+    throw error;
+  }
   let disposed = false;
-  const providerReady = background.ready.then(() => {
-    if (disposed) {
-      throw new ProviderPortStateError("background disposed before provider setup");
-    }
-    boundary = installUnavailableProviderBoundary(chromeApi.runtime);
-    if (disposed) {
+  const providerReady = background.ready.then(
+    () => {
+      if (disposed) {
+        throw new ProviderPortStateError("background disposed before provider setup");
+      }
+      return boundary;
+    },
+    (error: unknown) => {
       boundary.dispose();
-      throw new ProviderPortStateError("background disposed during provider setup");
-    }
-    return boundary;
-  });
+      throw error;
+    },
+  );
 
   return {
     ...background,
@@ -77,7 +86,7 @@ export function startBackground(
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      boundary?.dispose();
+      boundary.dispose();
     },
   };
 }
