@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   KeyringFormatError,
+  KeyringLockedError,
   encodeKeyringRecordStorageValue,
   type KeyringRecord,
 } from "@warden/core/keyring";
@@ -11,7 +12,10 @@ import {
   type ExtensionBackgroundStorageApi,
 } from "../src/background/runtime.js";
 import { KEYRING_RECORD_STORAGE_KEY } from "../src/background/keyring-record-store.js";
-import { UNLOCK_SESSION_STORAGE_KEY } from "../src/background/unlock-session.js";
+import {
+  UNLOCK_SESSION_STORAGE_KEY,
+  UnlockSessionStorageError,
+} from "../src/background/unlock-session.js";
 import { PROVIDER_PORT_NAME } from "../src/background/provider-port.js";
 import { POPUP_PORT_NAME } from "../src/popup-protocol.js";
 import type {
@@ -138,6 +142,43 @@ class RuntimeDisconnectEvent implements ProviderDisconnectEvent {
   emit(): void {
     for (const listener of [...this.listeners]) listener();
   }
+}
+
+type RuntimeStorageChanges = Record<
+  string,
+  { readonly oldValue?: unknown; readonly newValue?: unknown }
+>;
+
+class RuntimeStorageChangeEvent {
+  readonly listeners = new Set<(
+    changes: RuntimeStorageChanges,
+    areaName: string,
+  ) => void>();
+
+  addListener(listener: (
+    changes: RuntimeStorageChanges,
+    areaName: string,
+  ) => void): void {
+    this.listeners.add(listener);
+  }
+
+  removeListener(listener: (
+    changes: RuntimeStorageChanges,
+    areaName: string,
+  ) => void): void {
+    this.listeners.delete(listener);
+  }
+
+  emit(changes: RuntimeStorageChanges, areaName: string): void {
+    for (const listener of [...this.listeners]) listener(changes, areaName);
+  }
+}
+
+function observableStorage(
+  storage: ExtensionBackgroundStorageApi,
+  onChanged = new RuntimeStorageChangeEvent(),
+) {
+  return Object.assign(storage, { onChanged });
 }
 
 describe("MV3 background bootstrap", () => {
@@ -344,7 +385,7 @@ describe("MV3 background bootstrap", () => {
     };
 
     const application = startBackground({
-      storage,
+      storage: observableStorage(storage),
       runtime: { id: "a".repeat(32), onConnect },
     });
     let providerSettled = false;
@@ -370,6 +411,183 @@ describe("MV3 background bootstrap", () => {
     expect(onConnect.listeners.size).toBe(0);
   });
 
+  it("synchronously revokes a live session when the persistent record changes", async () => {
+    const onConnect = new RuntimeConnectEvent();
+    const onStorageChanged = new RuntimeStorageChangeEvent();
+    let sessionValue: unknown;
+    let observeRemoval = false;
+    let removalObserved!: () => void;
+    const changedRecordRemoval = new Promise<void>((resolve) => {
+      removalObserved = resolve;
+    });
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async (key) => sessionValue === undefined
+          ? {}
+          : { [key]: structuredClone(sessionValue) },
+        set: async (items) => {
+          sessionValue = structuredClone(items[UNLOCK_SESSION_STORAGE_KEY]);
+        },
+        remove: async (keys) => {
+          const requested = Array.isArray(keys) ? keys : [keys];
+          if (requested.includes(UNLOCK_SESSION_STORAGE_KEY)) {
+            sessionValue = undefined;
+            if (observeRemoval) removalObserved();
+          }
+        },
+      },
+    };
+    const application = startBackground({
+      storage: observableStorage(storage, onStorageChanged),
+      runtime: { id: "a".repeat(32), onConnect },
+    });
+
+    // Like runtime.onConnect, this listener must exist during top-level worker
+    // evaluation so the storage change that wakes a worker cannot be missed.
+    expect(onStorageChanged.listeners.size).toBe(1);
+    await application.runtimeBoundariesReady;
+    const unlockNow = Date.now();
+    await application.sessions.unlock({
+      account: fill(32, 0x41),
+      bundleId: PERSISTENT_BUNDLE_ID,
+      unwrapKey: { kdf: "argon2id-password", bytes: fill(32, 0x72) },
+      deadlines: {
+        idleExpiresAt: unlockNow + 60_000,
+        hardExpiresAt: unlockNow + 120_000,
+      },
+    });
+
+    // Wrong area and wrong key are not keyring mutations.
+    onStorageChanged.emit(
+      { [KEYRING_RECORD_STORAGE_KEY]: { newValue: PERSISTENT_RECORD } },
+      "session",
+    );
+    onStorageChanged.emit({ "warden.unrelated": { newValue: 1 } }, "local");
+    await expect(application.sessions.isUnlocked()).resolves.toBe(true);
+
+    const useGate = gate();
+    let leaseSignal: AbortSignal | undefined;
+    let useEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      useEntered = resolve;
+    });
+    const pendingUse = application.sessions.useBytes("decrypt", async (lease) => {
+      leaseSignal = lease.unlock.signal;
+      useEntered();
+      await useGate.promise;
+      return Uint8Array.of(7);
+    });
+    await entered;
+    observeRemoval = true;
+
+    onStorageChanged.emit(
+      {
+        [KEYRING_RECORD_STORAGE_KEY]: {
+          oldValue: PERSISTENT_RECORD,
+          newValue: "replacement",
+        },
+      },
+      "local",
+    );
+
+    // The event callback must revoke memory before its asynchronous Chrome
+    // cleanup settles; otherwise an in-flight key use retains authority.
+    expect(leaseSignal!.aborted).toBe(true);
+    await expect(application.sessions.isUnlocked()).resolves.toBe(false);
+    useGate.release();
+    await expect(pendingUse).rejects.toThrow(KeyringLockedError);
+    await changedRecordRemoval;
+    expect(sessionValue).toBeUndefined();
+    expect(onConnect.listeners.size).toBe(1);
+    expect(onStorageChanged.listeners.size).toBe(1);
+
+    application.dispose();
+    expect(onStorageChanged.listeners.size).toBe(0);
+  });
+
+  it("closes every runtime surface when record-change session cleanup fails", async () => {
+    const onConnect = new RuntimeConnectEvent();
+    const onStorageChanged = new RuntimeStorageChangeEvent();
+    let sessionValue: unknown;
+    let rejectRemove = false;
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async (key) => sessionValue === undefined
+          ? {}
+          : { [key]: structuredClone(sessionValue) },
+        set: async (items) => {
+          sessionValue = structuredClone(items[UNLOCK_SESSION_STORAGE_KEY]);
+        },
+        remove: async (keys) => {
+          if (rejectRemove) throw new Error("session cleanup denied");
+          const requested = Array.isArray(keys) ? keys : [keys];
+          if (requested.includes(UNLOCK_SESSION_STORAGE_KEY)) sessionValue = undefined;
+        },
+      },
+    };
+    const application = startBackground({
+      storage: observableStorage(storage, onStorageChanged),
+      runtime: { id: "a".repeat(32), onConnect },
+    });
+    await application.runtimeBoundariesReady;
+    const unlockNow = Date.now();
+    await application.sessions.unlock({
+      account: fill(32, 0x41),
+      bundleId: PERSISTENT_BUNDLE_ID,
+      unwrapKey: { kdf: "argon2id-password", bytes: fill(32, 0x72) },
+      deadlines: {
+        idleExpiresAt: unlockNow + 60_000,
+        hardExpiresAt: unlockNow + 120_000,
+      },
+    });
+    expect(sessionValue).toBeDefined();
+
+    const activeMessages = new RuntimeMessageEvent();
+    const activeDisconnect = new RuntimeDisconnectEvent();
+    let activeDisconnects = 0;
+    onConnect.emit({
+      name: PROVIDER_PORT_NAME,
+      sender: {
+        id: "a".repeat(32),
+        documentId: "fatal-cleanup-document",
+        documentLifecycle: "active",
+        origin: "https://dapp.example",
+        url: "https://dapp.example/path",
+        tab: { id: 9 },
+        frameId: 0,
+      },
+      onMessage: activeMessages,
+      onDisconnect: activeDisconnect,
+      postMessage: () => undefined,
+      disconnect: () => {
+        activeDisconnects++;
+        activeDisconnect.emit();
+      },
+    });
+    expect(activeMessages.listeners.size).toBe(1);
+
+    rejectRemove = true;
+    const fatalFailure = application.fatal.catch((error: unknown) => error);
+    onStorageChanged.emit(
+      { [KEYRING_RECORD_STORAGE_KEY]: { newValue: "replacement" } },
+      "local",
+    );
+
+    // Local authority is gone even though Chrome refused to remove the stale
+    // serialized copy. The worker must also stop accepting every runtime port.
+    await expect(application.sessions.isUnlocked()).resolves.toBe(false);
+    await expect(fatalFailure).resolves.toBeInstanceOf(UnlockSessionStorageError);
+    expect(sessionValue).toBeDefined();
+    expect(onConnect.listeners.size).toBe(0);
+    expect(onStorageChanged.listeners.size).toBe(0);
+    expect(activeDisconnects).toBe(1);
+    expect(activeMessages.listeners.size).toBe(0);
+  });
+
   it("keeps the synchronous pre-ready surface at METHOD_UNAVAILABLE only", async () => {
     const localGate = gate();
     const sessionGate = gate();
@@ -391,7 +609,7 @@ describe("MV3 background bootstrap", () => {
       },
     };
     const application = startBackground({
-      storage,
+      storage: observableStorage(storage),
       runtime: { id: "a".repeat(32), onConnect },
     });
     const port: ProviderRuntimePort = {
@@ -457,7 +675,7 @@ describe("MV3 background bootstrap", () => {
       },
     };
     const application = startBackground({
-      storage,
+      storage: observableStorage(storage),
       runtime: { id: "a".repeat(32), onConnect },
     });
 
@@ -557,6 +775,7 @@ describe("MV3 background bootstrap", () => {
 
   it("removes the synchronous provider listener when trusted storage setup rejects", async () => {
     const onConnect = new RuntimeConnectEvent();
+    const onStorageChanged = new RuntimeStorageChangeEvent();
     const storage: ExtensionBackgroundStorageApi = {
       local: localArea(async () => Promise.reject(new Error("access denied"))),
       session: {
@@ -567,12 +786,14 @@ describe("MV3 background bootstrap", () => {
       },
     };
     const application = startBackground({
-      storage,
+      storage: observableStorage(storage, onStorageChanged),
       runtime: { id: "a".repeat(32), onConnect },
     });
     expect(onConnect.listeners.size).toBe(1);
+    expect(onStorageChanged.listeners.size).toBe(1);
     await expect(application.runtimeBoundariesReady).rejects.toThrow("access denied");
     expect(onConnect.listeners.size).toBe(0);
+    expect(onStorageChanged.listeners.size).toBe(0);
     application.dispose();
   });
 
@@ -580,6 +801,7 @@ describe("MV3 background bootstrap", () => {
     const localGate = gate();
     const sessionGate = gate();
     const onConnect = new RuntimeConnectEvent();
+    const onStorageChanged = new RuntimeStorageChangeEvent();
     const storage: ExtensionBackgroundStorageApi = {
       local: localArea(async () => localGate.promise),
       session: {
@@ -590,12 +812,14 @@ describe("MV3 background bootstrap", () => {
       },
     };
     const application = startBackground({
-      storage,
+      storage: observableStorage(storage, onStorageChanged),
       runtime: { id: "a".repeat(32), onConnect },
     });
     expect(onConnect.listeners.size).toBe(1);
+    expect(onStorageChanged.listeners.size).toBe(1);
     application.dispose();
     expect(onConnect.listeners.size).toBe(0);
+    expect(onStorageChanged.listeners.size).toBe(0);
 
     localGate.release();
     sessionGate.release();
@@ -606,6 +830,7 @@ describe("MV3 background bootstrap", () => {
 
   it("rolls back the wake listener if bootstrap rejects synchronously", () => {
     const onConnect = new RuntimeConnectEvent();
+    const onStorageChanged = new RuntimeStorageChangeEvent();
     const malformedStorage = {
       local: localArea(async () => undefined),
       session: { setAccessLevel: async () => undefined },
@@ -613,10 +838,47 @@ describe("MV3 background bootstrap", () => {
 
     expect(() =>
       startBackground({
-        storage: malformedStorage,
+        storage: observableStorage(malformedStorage, onStorageChanged),
         runtime: { id: "a".repeat(32), onConnect },
       }),
     ).toThrow("storage adapter must provide get()");
     expect(onConnect.listeners.size).toBe(0);
+    expect(onStorageChanged.listeners.size).toBe(0);
+  });
+
+  it("rolls back a partially registered storage-change listener", async () => {
+    const onConnect = new RuntimeConnectEvent();
+    const onStorageChanged = new RuntimeStorageChangeEvent();
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async () => ({}),
+        set: async () => undefined,
+        remove: async () => undefined,
+      },
+    };
+    const failingStorageChangeEvent = {
+      addListener(listener: Parameters<RuntimeStorageChangeEvent["addListener"]>[0]): void {
+        onStorageChanged.addListener(listener);
+        throw new Error("listener registration denied");
+      },
+      removeListener(listener: Parameters<RuntimeStorageChangeEvent["removeListener"]>[0]): void {
+        onStorageChanged.removeListener(listener);
+      },
+    };
+
+    expect(() =>
+      startBackground({
+        storage: Object.assign(storage, { onChanged: failingStorageChangeEvent }),
+        runtime: { id: "a".repeat(32), onConnect },
+      }),
+    ).toThrow("listener registration denied");
+    expect(onConnect.listeners.size).toBe(0);
+    expect(onStorageChanged.listeners.size).toBe(0);
+
+    // bootstrapBackground already started before event registration failed;
+    // let its storage-only readiness work settle to avoid leaking test work.
+    await Promise.resolve();
   });
 });

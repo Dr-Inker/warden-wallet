@@ -24,31 +24,38 @@ const SESSION_SURVIVAL_CANARY_VALUE = "survived-worker-death";
 const fill = (length: number, value: number): Uint8Array =>
   new Uint8Array(length).fill(value);
 const BROWSER_PERSISTENT_BUNDLE_ID = fill(16, 0x12);
-const BROWSER_PERSISTENT_RECORD = encodeKeyringRecordStorageValue({
-  metadata: {
-    version: 1,
-    argon2id: {
-      params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
-      salt: fill(16, 0x11),
-    },
-    prf: null,
-  },
-  bundle: {
-    version: 1,
-    bundleId: BROWSER_PERSISTENT_BUNDLE_ID,
-    payload: {
+const BROWSER_REPLACEMENT_BUNDLE_ID = fill(16, 0x34);
+
+function browserPersistentRecord(bundleId: Uint8Array): string {
+  return encodeKeyringRecordStorageValue({
+    metadata: {
       version: 1,
-      nonce: fill(12, 0x13),
-      ciphertext: fill(17, 0x14),
+      argon2id: {
+        params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
+        salt: fill(16, 0x11),
+      },
+      prf: null,
     },
-    passwordWrap: {
+    bundle: {
       version: 1,
-      nonce: fill(12, 0x15),
-      ciphertext: fill(48, 0x16),
+      bundleId,
+      payload: {
+        version: 1,
+        nonce: fill(12, 0x13),
+        ciphertext: fill(17, 0x14),
+      },
+      passwordWrap: {
+        version: 1,
+        nonce: fill(12, 0x15),
+        ciphertext: fill(48, 0x16),
+      },
+      prfWrap: null,
     },
-    prfWrap: null,
-  },
-} satisfies KeyringRecord);
+  } satisfies KeyringRecord);
+}
+
+const BROWSER_PERSISTENT_RECORD = browserPersistentRecord(BROWSER_PERSISTENT_BUNDLE_ID);
+const BROWSER_REPLACEMENT_RECORD = browserPersistentRecord(BROWSER_REPLACEMENT_BUNDLE_ID);
 
 interface TestServer {
   readonly origin: string;
@@ -231,7 +238,7 @@ async function sendAndRead(target: Page | Frame, correlationId: string) {
   });
 }
 
-test("real MV3 bridge binds each frame/document and wakes after worker termination", async () => {
+test("real MV3 bridge binds frames, wakes after worker death, and revokes changed records", async () => {
   const frameServer = await startServer(() => pageMarkup());
   const topServer = await startServer((path) =>
     path === "/top" ? pageMarkup(frameServer.origin) : pageMarkup());
@@ -303,7 +310,7 @@ test("real MV3 bridge binds each frame/document and wakes after worker terminati
       idleExpiresAt: sessionNow + 60_000,
       hardExpiresAt: sessionNow + 120_000,
     };
-    const seededStorage = await worker.evaluate(async ({
+    const recordChangeBarrier = await worker.evaluate(async ({
       keyringRecordKey,
       keyringRecord,
       unlockSessionKey,
@@ -325,18 +332,15 @@ test("real MV3 bridge binds each frame/document and wakes after worker terminati
           };
         };
       }).chrome.storage;
-      await storage.local.set({ [keyringRecordKey]: keyringRecord });
+      // Put a sacrificial session in place first. The subsequent local-record
+      // change must drive the production storage.onChanged listener, whose
+      // selective cleanup is the causal barrier before the final death seed.
       await storage.session.set({
         [unlockSessionKey]: unlockSession,
         [canaryKey]: canaryValue,
       });
-      return {
-        local: await storage.local.get(keyringRecordKey),
-        session: await storage.session.get([
-          unlockSessionKey,
-          canaryKey,
-        ]),
-      };
+      await storage.local.set({ [keyringRecordKey]: keyringRecord });
+      return storage.local.get(keyringRecordKey);
     }, {
       keyringRecordKey: KEYRING_RECORD_STORAGE_KEY,
       keyringRecord: BROWSER_PERSISTENT_RECORD,
@@ -344,6 +348,57 @@ test("real MV3 bridge binds each frame/document and wakes after worker terminati
       unlockSession: mismatchedStoredSession,
       canaryKey: SESSION_SURVIVAL_CANARY_KEY,
       canaryValue: SESSION_SURVIVAL_CANARY_VALUE,
+    });
+    expect(recordChangeBarrier).toEqual({
+      [KEYRING_RECORD_STORAGE_KEY]: BROWSER_PERSISTENT_RECORD,
+    });
+    await expect.poll(() => worker.evaluate(async (keys) => {
+      const session = (globalThis as unknown as {
+        readonly chrome: {
+          readonly storage: {
+            readonly session: {
+              get(keys: string | string[]): Promise<Record<string, unknown>>;
+            };
+          };
+        };
+      }).chrome.storage.session;
+      return session.get(keys);
+    }, [UNLOCK_SESSION_STORAGE_KEY, SESSION_SURVIVAL_CANARY_KEY])).toEqual({
+      [SESSION_SURVIVAL_CANARY_KEY]: SESSION_SURVIVAL_CANARY_VALUE,
+    });
+
+    // Seed again only after the record-change cleanup completed. Exact
+    // readback proves this is the copy present at the forced-stop boundary,
+    // rather than the sacrificial copy the live worker already removed.
+    const seededStorage = await worker.evaluate(async ({
+      keyringRecordKey,
+      unlockSessionKey,
+      unlockSession,
+      canaryKey,
+    }) => {
+      const storage = (globalThis as unknown as {
+        readonly chrome: {
+          readonly storage: {
+            readonly local: {
+              get(key: string): Promise<Record<string, unknown>>;
+            };
+            readonly session: {
+              set(items: Record<string, unknown>): Promise<void>;
+              get(keys: string | string[]): Promise<Record<string, unknown>>;
+            };
+          };
+        };
+      }).chrome.storage;
+      await storage.session.set({ [unlockSessionKey]: unlockSession });
+      return {
+        local: await storage.local.get(keyringRecordKey),
+        session: await storage.session.get([unlockSessionKey, canaryKey]),
+      };
+    }, {
+      keyringRecordKey: KEYRING_RECORD_STORAGE_KEY,
+      unlockSessionKey: UNLOCK_SESSION_STORAGE_KEY,
+      unlockSession: mismatchedStoredSession,
+      canaryKey: SESSION_SURVIVAL_CANARY_KEY,
     });
     expect(seededStorage).toEqual({
       local: { [KEYRING_RECORD_STORAGE_KEY]: BROWSER_PERSISTENT_RECORD },
@@ -436,6 +491,93 @@ test("real MV3 bridge binds each frame/document and wakes after worker terminati
       }
       return { worker: "not-live" };
     }).toEqual({
+      [SESSION_SURVIVAL_CANARY_KEY]: SESSION_SURVIVAL_CANARY_VALUE,
+    });
+
+    // Now exercise the other half of the lifecycle in Chrome itself: after
+    // wake-time mismatch cleanup has completed, put a v2 session bound to the
+    // current record back into storage, replace that record out of band, and
+    // require storage.onChanged to remove only Warden's session property.
+    // The unit lane separately measures synchronous abort of an active memory
+    // lease; serialized browser bytes cannot prove that heap-state property.
+    const matchingStoredSession = {
+      ...mismatchedStoredSession,
+      bundleId: Array.from(BROWSER_PERSISTENT_BUNDLE_ID),
+    };
+    let recordChangeWorker: ReturnType<BrowserContext["serviceWorkers"]>[number] | undefined;
+    for (const candidate of [...context.serviceWorkers()].reverse()) {
+      if (!candidate.url().startsWith(extensionOrigin)) continue;
+      try {
+        await candidate.evaluate(() => true);
+        recordChangeWorker = candidate;
+        break;
+      } catch {
+        // Ignore the retained wrapper for the worker target closed above.
+      }
+    }
+    expect(recordChangeWorker, "replacement worker is live for record change").toBeDefined();
+    const matchingReadback = await recordChangeWorker!.evaluate(async ({
+      unlockSessionKey,
+      unlockSession,
+      canaryKey,
+    }) => {
+      const session = (globalThis as unknown as {
+        readonly chrome: {
+          readonly storage: {
+            readonly session: {
+              set(items: Record<string, unknown>): Promise<void>;
+              get(keys: string | string[]): Promise<Record<string, unknown>>;
+            };
+          };
+        };
+      }).chrome.storage.session;
+      await session.set({ [unlockSessionKey]: unlockSession });
+      return session.get([unlockSessionKey, canaryKey]);
+    }, {
+      unlockSessionKey: UNLOCK_SESSION_STORAGE_KEY,
+      unlockSession: matchingStoredSession,
+      canaryKey: SESSION_SURVIVAL_CANARY_KEY,
+    });
+    expect(matchingReadback).toEqual({
+      [UNLOCK_SESSION_STORAGE_KEY]: matchingStoredSession,
+      [SESSION_SURVIVAL_CANARY_KEY]: SESSION_SURVIVAL_CANARY_VALUE,
+    });
+
+    const replacementReadback = await recordChangeWorker!.evaluate(async ({
+      keyringRecordKey,
+      keyringRecord,
+    }) => {
+      const local = (globalThis as unknown as {
+        readonly chrome: {
+          readonly storage: {
+            readonly local: {
+              set(items: Record<string, unknown>): Promise<void>;
+              get(key: string): Promise<Record<string, unknown>>;
+            };
+          };
+        };
+      }).chrome.storage.local;
+      await local.set({ [keyringRecordKey]: keyringRecord });
+      return local.get(keyringRecordKey);
+    }, {
+      keyringRecordKey: KEYRING_RECORD_STORAGE_KEY,
+      keyringRecord: BROWSER_REPLACEMENT_RECORD,
+    });
+    expect(replacementReadback).toEqual({
+      [KEYRING_RECORD_STORAGE_KEY]: BROWSER_REPLACEMENT_RECORD,
+    });
+    await expect.poll(() => recordChangeWorker!.evaluate(async (keys) => {
+      const session = (globalThis as unknown as {
+        readonly chrome: {
+          readonly storage: {
+            readonly session: {
+              get(keys: string | string[]): Promise<Record<string, unknown>>;
+            };
+          };
+        };
+      }).chrome.storage.session;
+      return session.get(keys);
+    }, [UNLOCK_SESSION_STORAGE_KEY, SESSION_SURVIVAL_CANARY_KEY])).toEqual({
       [SESSION_SURVIVAL_CANARY_KEY]: SESSION_SURVIVAL_CANARY_VALUE,
     });
 

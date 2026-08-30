@@ -18,6 +18,7 @@ import {
   type UnavailableRuntimeBoundaries,
 } from "./runtime-ports.js";
 import {
+  KEYRING_RECORD_STORAGE_KEY,
   PersistentKeyringRecordStore,
   type KeyringRecordStorageArea,
 } from "./keyring-record-store.js";
@@ -27,19 +28,55 @@ export interface ExtensionBackgroundStorageApi extends ExtensionStorageAccessApi
   readonly session: StorageAreaAccessControl & UnlockSessionStorageArea;
 }
 
+export interface ExtensionStorageChange {
+  readonly oldValue?: unknown;
+  readonly newValue?: unknown;
+}
+
+export interface ExtensionStorageChangeEvent {
+  addListener(listener: (
+    changes: Record<string, ExtensionStorageChange>,
+    areaName: string,
+  ) => void): void;
+  removeListener(listener: (
+    changes: Record<string, ExtensionStorageChange>,
+    areaName: string,
+  ) => void): void;
+}
+
+export interface ObservableExtensionBackgroundStorageApi
+  extends ExtensionBackgroundStorageApi {
+  readonly onChanged: ExtensionStorageChangeEvent;
+}
+
 export interface ExtensionBackgroundRuntime {
   readonly sessions: UnlockSessionOwner;
   readonly ready: Promise<boolean>;
 }
 
 export interface ExtensionBackgroundChromeApi {
-  readonly storage: ExtensionBackgroundStorageApi;
+  readonly storage: ObservableExtensionBackgroundStorageApi;
   readonly runtime: ProviderRuntimeApi;
 }
 
 export interface ExtensionBackgroundApplication extends ExtensionBackgroundRuntime {
   readonly runtimeBoundariesReady: Promise<UnavailableRuntimeBoundaries>;
+  /** Rejects on a post-startup record-change cleanup failure. */
+  readonly fatal: Promise<never>;
   dispose(): void;
+}
+
+function requireStorageChangeEvent(value: unknown): ExtensionStorageChangeEvent {
+  if (typeof value !== "object" || value === null) {
+    throw new TypeError("extension background: storage.onChanged must be an event");
+  }
+  const event = value as Partial<ExtensionStorageChangeEvent>;
+  if (typeof event.addListener !== "function" || typeof event.removeListener !== "function") {
+    throw new TypeError(
+      "extension background: storage.onChanged must support addListener/removeListener",
+    );
+  }
+  return event as ExtensionStorageChangeEvent;
 }
 
 /**
@@ -105,6 +142,75 @@ export function startBackground(
     throw error;
   }
   let disposed = false;
+  let fatalSettled = false;
+  let storageChanges: ExtensionStorageChangeEvent | undefined;
+  let storageListenerRegistered = false;
+  let rejectFatal!: (error: unknown) => void;
+  const fatal = new Promise<never>((_resolve, reject) => {
+    rejectFatal = reject;
+  });
+  const closeRuntimeSurface = (): unknown[] => {
+    const cleanupErrors: unknown[] = [];
+    if (storageListenerRegistered) {
+      try {
+        storageChanges!.removeListener(onStorageChanged);
+        storageListenerRegistered = false;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    try {
+      boundary.dispose();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    return cleanupErrors;
+  };
+  const closeFailure = (error: unknown, message: string): unknown => {
+    const cleanupErrors = closeRuntimeSurface();
+    return cleanupErrors.length === 0
+      ? error
+      : new AggregateError([error, ...cleanupErrors], message);
+  };
+  const failClosed = (error: unknown): void => {
+    if (fatalSettled) return;
+    fatalSettled = true;
+    disposed = true;
+    rejectFatal(closeFailure(error, "record invalidation and runtime cleanup both failed"));
+  };
+  const onStorageChanged = (
+    changes: unknown,
+    areaName: string,
+  ): void => {
+    if (disposed || areaName !== "local") return;
+    let recordChanged = false;
+    try {
+      recordChanged = typeof changes !== "object" || changes === null
+        ? true
+        : Object.hasOwn(changes, KEYRING_RECORD_STORAGE_KEY);
+    } catch {
+      // A malformed Chrome event for the local area is not a state on which
+      // session authority may safely remain live.
+      recordChanged = true;
+    }
+    if (!recordChanged) return;
+    try {
+      // lock() increments the transition, aborts leases, and zeroes owned key
+      // bytes synchronously before its storage-removal promise is returned.
+      void background.sessions.lock().catch(failClosed);
+    } catch (error) {
+      failClosed(error);
+    }
+  };
+  try {
+    storageChanges = requireStorageChangeEvent(chromeApi.storage.onChanged);
+    // Set this before calling Chrome so an adapter that registers and then
+    // throws is still rolled back by the catch path.
+    storageListenerRegistered = true;
+    storageChanges.addListener(onStorageChanged);
+  } catch (error) {
+    throw closeFailure(error, "storage-change registration and runtime cleanup both failed");
+  }
   const runtimeBoundariesReady = background.ready.then(
     () => {
       if (disposed) {
@@ -115,18 +221,23 @@ export function startBackground(
       return boundary;
     },
     (error: unknown) => {
-      boundary.dispose();
-      throw error;
+      disposed = true;
+      throw closeFailure(error, "background initialization and runtime cleanup both failed");
     },
   );
 
   return {
     ...background,
     runtimeBoundariesReady,
+    fatal,
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      boundary.dispose();
+      const cleanupErrors = closeRuntimeSurface();
+      if (cleanupErrors.length === 1) throw cleanupErrors[0];
+      if (cleanupErrors.length > 1) {
+        throw new AggregateError(cleanupErrors, "background runtime cleanup failed");
+      }
     },
   };
 }

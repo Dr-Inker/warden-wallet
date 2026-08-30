@@ -25,3 +25,6 @@ const background = startBackground(requireBackgroundChrome(chromeApi));
 void background.runtimeBoundariesReady.catch((error: unknown) => {
   console.error("Warden extension background initialization failed", error);
 });
+void background.fatal.catch((error: unknown) => {
+  console.error("Warden extension background record invalidation failed", error);
+});
