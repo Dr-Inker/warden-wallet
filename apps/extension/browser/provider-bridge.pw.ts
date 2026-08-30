@@ -387,6 +387,52 @@ test("real MV3 bridge binds each frame/document and wakes after worker terminati
       }
     }
     expect(actionWorker, "a live worker exposes chrome.action.openPopup").toBeDefined();
+
+    // Seed a non-secret canary from the trusted worker, then prove the actual
+    // isolated content-script world cannot read storage.local. An empty read
+    // would be a false green, so the canary must exist before the denied call.
+    const storageCanaryKey = "warden.browser-storage-canary";
+    const trustedStorageReadback = await actionWorker!.evaluate(async (key) => {
+      const local = (globalThis as unknown as {
+        readonly chrome: {
+          readonly storage: {
+            readonly local: {
+              set(items: Record<string, unknown>): Promise<void>;
+              get(key: string): Promise<Record<string, unknown>>;
+            };
+          };
+        };
+      }).chrome.storage.local;
+      await local.set({ [key]: "trusted-worker-only" });
+      return local.get(key);
+    }, storageCanaryKey);
+    expect(trustedStorageReadback).toEqual({
+      [storageCanaryKey]: "trusted-worker-only",
+    });
+    const contentStorageRead = await cdp.send("Runtime.evaluate", {
+      contextId: contentContextId,
+      awaitPromise: true,
+      returnByValue: true,
+      expression:
+        "(async () => { try { const value = await chrome.storage.local.get(" +
+        JSON.stringify(storageCanaryKey) +
+        "); return { kind: \"value\", value }; } catch { return { kind: \"rejected\" }; } })()",
+    });
+    expect(contentStorageRead.exceptionDetails).toBeUndefined();
+    expect(contentStorageRead.result.value).toEqual({ kind: "rejected" });
+    await actionWorker!.evaluate(async (key) => {
+      const local = (globalThis as unknown as {
+        readonly chrome: {
+          readonly storage: {
+            readonly local: {
+              remove(key: string): Promise<void>;
+            };
+          };
+        };
+      }).chrome.storage.local;
+      await local.remove(key);
+    }, storageCanaryKey);
+
     await actionWorker!.evaluate(() => {
       const workerGlobal = globalThis as unknown as {
         __wardenObservedActionPopupSender?: unknown;

@@ -14,6 +14,32 @@ This is a pre-alpha development extension. It must not be used with real funds.
   warning. This is a real permission cost, not “no host permission” merely
   because the manifest has no separate `host_permissions` key.
 
+## Persistent keyring boundary
+
+The background recognizes one canonical encrypted keyring record under
+`warden.keyring-record.v1` in `chrome.storage.local`. The adapter validates the
+strict core record before a write, serializes calls through that adapter, writes
+only that property, and requires exact readback after replace or clear. Startup
+does not restore session material until this persistent value is present and
+well formed; absence removes the session without parsing it, while corruption
+removes the session and rejects readiness.
+
+The raw record adapter is deliberately not exposed by the background runtime.
+A future mutation path must compose record replacement with session revocation;
+otherwise an old unwrap key could remain live beside a new record. Chrome does
+not document a transaction, compare-and-swap, rollback, or durable-write
+primitive for this area, so serialized same-owner calls and readback are not an
+atomicity or freshness claim. A different trusted context could still race an
+out-of-band write, and replay of an older valid record remains unsolved without
+an external freshness authority.
+
+The real-browser lane seeds and reads back a non-secret local-storage canary in
+the service worker, then causally observes the actual Warden content-script
+world being denied access. This proves the tested browser boundary, not broad
+version compatibility. There is still no record-creation UI, Argon2 benchmark,
+PRF ceremony, record-to-session activation, account registry, decrypt/sign/export
+consumer, or persistent-record/session identifier binding.
+
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during
 ordinary browsing: an exact, same-document request envelope opens one lazily,

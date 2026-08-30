@@ -15,9 +15,13 @@ import {
   installUnavailableRuntimeBoundaries,
   type UnavailableRuntimeBoundaries,
 } from "./runtime-ports.js";
+import {
+  PersistentKeyringRecordStore,
+  type KeyringRecordStorageArea,
+} from "./keyring-record-store.js";
 
 export interface ExtensionBackgroundStorageApi extends ExtensionStorageAccessApi {
-  readonly local: StorageAreaAccessControl;
+  readonly local: StorageAreaAccessControl & KeyringRecordStorageArea;
   readonly session: StorageAreaAccessControl & UnlockSessionStorageArea;
 }
 
@@ -45,8 +49,34 @@ export function bootstrapBackground(
   storage: ExtensionBackgroundStorageApi,
   options: { readonly readNow?: () => number } = {},
 ): ExtensionBackgroundRuntime {
+  const keyringRecords = new PersistentKeyringRecordStore(storage.local);
   const sessions = new UnlockSessionOwner(storage.session, options);
-  const ready = restrictStorageToTrustedContexts(storage).then(() => sessions.restore());
+  const ready = restrictStorageToTrustedContexts(storage).then(async () => {
+    let persistentRecord: string | null;
+    try {
+      persistentRecord = await keyringRecords.load();
+    } catch (error) {
+      try {
+        await sessions.lock();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "persistent keyring validation and unlock-session cleanup both failed",
+        );
+      }
+      throw error;
+    }
+    if (persistentRecord === null) {
+      // An unwrap key without its encrypted persistent record has no legitimate
+      // consumer. Remove stale session material without ever parsing it.
+      await sessions.lock();
+      return false;
+    }
+    return sessions.restore();
+  });
+  // Do not expose the raw persistent-record owner beside the session owner.
+  // Record mutation must eventually go through one composed lifecycle owner
+  // that revokes any live session before replacing or clearing its record.
   return { sessions, ready };
 }
 

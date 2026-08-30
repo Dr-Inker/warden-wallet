@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  KeyringFormatError,
+  encodeKeyringRecordStorageValue,
+  type KeyringRecord,
+} from "@warden/core/keyring";
+import {
   bootstrapBackground,
   startBackground,
   type ExtensionBackgroundStorageApi,
 } from "../src/background/runtime.js";
+import { KEYRING_RECORD_STORAGE_KEY } from "../src/background/keyring-record-store.js";
 import { PROVIDER_PORT_NAME } from "../src/background/provider-port.js";
 import { POPUP_PORT_NAME } from "../src/popup-protocol.js";
 import type {
@@ -17,6 +23,50 @@ import type {
 interface Gate {
   readonly promise: Promise<void>;
   release(): void;
+}
+
+const fill = (length: number, value: number): Uint8Array =>
+  new Uint8Array(length).fill(value);
+
+const PERSISTENT_RECORD = encodeKeyringRecordStorageValue({
+  metadata: {
+    version: 1,
+    argon2id: {
+      params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
+      salt: fill(16, 0x11),
+    },
+    prf: null,
+  },
+  bundle: {
+    version: 1,
+    bundleId: fill(16, 0x12),
+    payload: {
+      version: 1,
+      nonce: fill(12, 0x13),
+      ciphertext: fill(17, 0x14),
+    },
+    passwordWrap: {
+      version: 1,
+      nonce: fill(12, 0x15),
+      ciphertext: fill(48, 0x16),
+    },
+    prfWrap: null,
+  },
+} satisfies KeyringRecord);
+
+type LocalArea = ExtensionBackgroundStorageApi["local"];
+
+function localArea(
+  setAccessLevel: LocalArea["setAccessLevel"],
+  overrides: Partial<Omit<LocalArea, "setAccessLevel">> = {},
+): LocalArea {
+  return {
+    setAccessLevel,
+    get: async (key) => ({ [key]: PERSISTENT_RECORD }),
+    set: async () => undefined,
+    remove: async () => undefined,
+    ...overrides,
+  };
 }
 
 function gate(): Gate {
@@ -76,18 +126,24 @@ class RuntimeDisconnectEvent implements ProviderDisconnectEvent {
 }
 
 describe("MV3 background bootstrap", () => {
-  it("does not read session material until both storage areas are restricted", async () => {
+  it("does not read persistent or session material until both areas are restricted", async () => {
     const localGate = gate();
     const sessionGate = gate();
     const calls: string[] = [];
     const storage: ExtensionBackgroundStorageApi = {
-      local: {
-        setAccessLevel: async () => {
+      local: localArea(
+        async () => {
           calls.push("local:restrict");
           await localGate.promise;
           calls.push("local:restricted");
         },
-      },
+        {
+          get: async (key) => {
+            calls.push("local:get");
+            return { [key]: PERSISTENT_RECORD };
+          },
+        },
+      ),
       session: {
         setAccessLevel: async () => {
           calls.push("session:restrict");
@@ -104,6 +160,7 @@ describe("MV3 background bootstrap", () => {
     };
 
     const runtime = bootstrapBackground(storage);
+    expect(Object.hasOwn(runtime, "keyringRecords")).toBe(false);
     await Promise.resolve();
     expect(calls).toEqual(["local:restrict", "session:restrict"]);
     localGate.release();
@@ -111,13 +168,72 @@ describe("MV3 background bootstrap", () => {
     expect(calls).not.toContain("session:get");
     sessionGate.release();
     await expect(runtime.ready).resolves.toBe(false);
-    expect(calls.slice(-3)).toEqual(["local:restricted", "session:restricted", "session:get"]);
+    expect(calls.slice(-4)).toEqual([
+      "local:restricted",
+      "session:restricted",
+      "local:get",
+      "session:get",
+    ]);
+  });
+
+  it("removes stale session material without parsing it when no persistent record exists", async () => {
+    let sessionReads = 0;
+    let sessionRemovals = 0;
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined, {
+        get: async () => ({}),
+      }),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async () => {
+          sessionReads++;
+          throw new Error("stale session must not be parsed");
+        },
+        set: async () => undefined,
+        remove: async () => {
+          sessionRemovals++;
+        },
+      },
+    };
+
+    const runtime = bootstrapBackground(storage);
+    await expect(runtime.ready).resolves.toBe(false);
+    expect(sessionReads).toBe(0);
+    expect(sessionRemovals).toBe(1);
+  });
+
+  it("clears session material and fails closed on a malformed persistent record", async () => {
+    let sessionReads = 0;
+    let sessionRemovals = 0;
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined, {
+        get: async () => ({
+          [KEYRING_RECORD_STORAGE_KEY]: "forged-persistent-record",
+        }),
+      }),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async () => {
+          sessionReads++;
+          return {};
+        },
+        set: async () => undefined,
+        remove: async () => {
+          sessionRemovals++;
+        },
+      },
+    };
+
+    const runtime = bootstrapBackground(storage);
+    await expect(runtime.ready).rejects.toThrow(KeyringFormatError);
+    expect(sessionReads).toBe(0);
+    expect(sessionRemovals).toBe(1);
   });
 
   it("fails closed without reading when access restriction fails", async () => {
     let reads = 0;
     const storage: ExtensionBackgroundStorageApi = {
-      local: { setAccessLevel: async () => Promise.reject(new Error("access denied")) },
+      local: localArea(async () => Promise.reject(new Error("access denied"))),
       session: {
         setAccessLevel: async () => undefined,
         get: async () => {
@@ -141,9 +257,7 @@ describe("MV3 background bootstrap", () => {
     const restoreGate = gate();
     const onConnect = new RuntimeConnectEvent();
     const storage: ExtensionBackgroundStorageApi = {
-      local: {
-        setAccessLevel: async () => localGate.promise,
-      },
+      local: localArea(async () => localGate.promise),
       session: {
         setAccessLevel: async () => sessionGate.promise,
         get: async () => {
@@ -191,7 +305,7 @@ describe("MV3 background bootstrap", () => {
     const posted: unknown[] = [];
     let reads = 0;
     const storage: ExtensionBackgroundStorageApi = {
-      local: { setAccessLevel: async () => localGate.promise },
+      local: localArea(async () => localGate.promise),
       session: {
         setAccessLevel: async () => sessionGate.promise,
         get: async () => {
@@ -257,7 +371,7 @@ describe("MV3 background bootstrap", () => {
     const onConnect = new RuntimeConnectEvent();
     let reads = 0;
     const storage: ExtensionBackgroundStorageApi = {
-      local: { setAccessLevel: async () => localGate.promise },
+      local: localArea(async () => localGate.promise),
       session: {
         setAccessLevel: async () => sessionGate.promise,
         get: async () => {
@@ -370,7 +484,7 @@ describe("MV3 background bootstrap", () => {
   it("removes the synchronous provider listener when trusted storage setup rejects", async () => {
     const onConnect = new RuntimeConnectEvent();
     const storage: ExtensionBackgroundStorageApi = {
-      local: { setAccessLevel: async () => Promise.reject(new Error("access denied")) },
+      local: localArea(async () => Promise.reject(new Error("access denied"))),
       session: {
         setAccessLevel: async () => undefined,
         get: async () => ({}),
@@ -393,7 +507,7 @@ describe("MV3 background bootstrap", () => {
     const sessionGate = gate();
     const onConnect = new RuntimeConnectEvent();
     const storage: ExtensionBackgroundStorageApi = {
-      local: { setAccessLevel: async () => localGate.promise },
+      local: localArea(async () => localGate.promise),
       session: {
         setAccessLevel: async () => sessionGate.promise,
         get: async () => ({}),
@@ -419,7 +533,7 @@ describe("MV3 background bootstrap", () => {
   it("rolls back the wake listener if bootstrap rejects synchronously", () => {
     const onConnect = new RuntimeConnectEvent();
     const malformedStorage = {
-      local: { setAccessLevel: async () => undefined },
+      local: localArea(async () => undefined),
       session: { setAccessLevel: async () => undefined },
     } as unknown as ExtensionBackgroundStorageApi;
 
