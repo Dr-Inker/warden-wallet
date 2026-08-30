@@ -267,3 +267,27 @@ per the 2026-08-22 reassessment). The ABI grew by one error only — `SwapRouteV
   false-positive on the security diff (documented class; not a convergence signal for real product
   code). A recorded adversarial round over `9a427aa..deb16e4` is **owed** before this milestone is
   signed off. Interim assurance = author self-review + 17 red-at-BASE regressions + full gate green.
+
+---
+
+## Client C1 provider-request schema — 16663cb — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** none in the emitted extension. The pure parser is not imported by
+`main.ts`, and the built worker contains no parser symbol or provider listener.
+
+**Removed / narrowed:** the future page-controlled request language now has one closed,
+size-bounded JSON form. Page-supplied origin/tab/frame/approval/policy fields, unknown methods,
+ambiguous options, non-dense byte arrays, unsupported chains, and malformed envelopes reject.
+Only connect, disconnect, sign-transaction, and sign-and-send-transaction syntax survives; parsed
+transactions and options are copied and frozen. The design no longer advertises `signMessage` or
+`signIn`, because a session-key Ed25519 signature cannot verify as the advertised SmartAccount PDA.
+
+**New invariants:** none promoted. `WRD-EXT-01` and `WRD-EXT-02` remain `unimplemented`.
+
+**Residual, stated honestly:** there is no provider/content script, response schema, live Port,
+runtime routing, authorized-account lookup, approval owner, cancellation, or privileged method.
+The account address is only a bounded Base58 selector until a future background-owned account
+record resolves it. The page correlation id is not a security id and has no uniqueness guarantee;
+the future owner must mint an independent request id and reject duplicate in-flight correlations.
+The local 16 KiB ceiling has not been compatibility-measured. Independent second-model review is
+UNVERIFIED.

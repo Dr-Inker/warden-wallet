@@ -1,5 +1,76 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C1 PROVIDER-SCHEMA BOUNDARY — CLOSED INPUT, ROUTER STILL ABSENT
+>
+> Commit `16663cb347707fc564698a9ac76a29ee987e9bd0` adds a pure,
+> closed provider-request parser without making a provider or wallet method
+> reachable. Exact-SHA focused evidence: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test`
+> → **130/130**, exit **0**; the corresponding `typecheck` and `build` commands
+> each exit **0**. This is not the repository deploy gate. Run `env
+> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh` on the final
+> ledger-inclusive SHA before claiming this loop boundary green.
+>
+> The initial hostile lane failed for the intended reason: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> vitest run test/provider-message.test.ts` had **1 failed suite / 0 collected
+> tests** because `provider-message.js` did not exist. The final 68-test lane
+> accepts only exact version-1 JSON envelopes for `standard:connect`,
+> `standard:disconnect`, `solana:signTransaction`, and
+> `solana:signAndSendTransaction`. It rejects `signMessage`, `signIn`, the
+> non-request `standard:events` feature, unknown methods, page-supplied
+> origin/tab/frame/approval/policy context, extra or missing fields, malformed
+> correlation ids, ambiguous options, sparse/non-byte/oversized transactions,
+> unsupported chains, unsafe integers, cycles, and inputs over the local 16 KiB
+> cap. Accepted byte arrays and normalized nested records are copied and frozen.
+> The account address remains explicitly an untrusted lexical selector; a future
+> handler must resolve it against its own authorized-account record.
+>
+> Harsh review caught and repaired one false-green test: the first oversized
+> vector also carried an illegal `padding` field and only asserted an error type,
+> so closed-field rejection could have passed even with a broken size gate. It
+> now requires the exact size-limit error, proving global rejection happens
+> before schema dispatch. TypeScript also rejected union-specific test accesses
+> until the tests proved the method discriminator; the production union was not
+> weakened to accommodate the tests.
+>
+> Current Wallet Standard declarations were re-read at Anza commit
+> `4b6a165dc8fdedc28a59af05a72a0f91cefffc0d` and core commit
+> `c49b56d60fbac2e68e0f3536707fa33030652f9e`. Transaction methods are variadic,
+> take raw `Uint8Array` bytes and a `WalletAccount`, and define the exact
+> commitment/send option fields; the eventual provider wrapper may split a batch
+> into separately owned internal requests, while this privileged boundary accepts
+> one transaction only. Chrome uses JSON serialization for extension messages,
+> so the internal wire form deliberately uses dense number arrays rather than
+> trusting typed-array or page-owned `WalletAccount` objects. Sources:
+> <https://github.com/anza-xyz/wallet-standard>,
+> <https://github.com/wallet-standard/wallet-standard>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>.
+>
+> The binding design contradiction is corrected in the specification: v1 no
+> longer advertises `solana:signMessage` or `solana:signIn`. Wallet Standard
+> provides only an optional `ed25519` signature type for those flows; a session
+> signature cannot verify as Warden's advertised SmartAccount PDA, and Solana has
+> no standard smart-account validation contract analogous to ERC-1271. Quietly
+> returning a doomed signature would be compatibility theater, not support.
+>
+> **Do not promote `WRD-EXT-01` or `WRD-EXT-02`.** `main.ts` imports neither the
+> sender classifier nor this parser. After the exact-SHA passing build, `rg -n
+> "parseProviderRequest|invalid provider request"
+> apps/extension/dist/background.js` exited **1** with no match. There is still no
+> provider, content script, response/event schema, named port, runtime listener,
+> per-port request owner, duplicate-correlation rule, browser-minted security id,
+> disconnect/navigation cancellation, authorized-account binding, approval
+> record, or privileged method. The 16 KiB cap is a local protocol choice, not a
+> measured compatibility ceiling, and the parser does not decode a Base58 selector
+> into a 32-byte public key because authorization must compare it with a
+> background-owned account anyway. The next safe slice is a zero-privilege port
+> owner that binds the browser-owned tuple, parses every inbound value, mints its
+> own request identity, and atomically cancels on disconnect—still returning a
+> deterministic unavailable result instead of signing, decrypting, exporting, or
+> approving anything. Independent second-model review remains **UNVERIFIED**; no
+> result or review artefact was fabricated.
+
 > ## 2026-08-30 C1 SENDER-CLASSIFIER BOUNDARY — PURE TUPLE, ROUTER STILL CLOSED
 >
 > Commit `fcf4a255e0809a41f6b8033db12b0fb4762ff40e` adds a pure
