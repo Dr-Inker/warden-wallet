@@ -1,4 +1,6 @@
 import {
+  KEYRING_RECORD_VERSION_2,
+  KeyringAuthError,
   KeyringFormatError,
   KeyringLockedError,
   SESSION_SIGNER_PAYLOAD_SCHEMA_VERSION,
@@ -14,6 +16,7 @@ import {
   startUnlockSession,
   zeroizeUnwrapKey,
   type KeyringContext,
+  type KeyringRecord,
   type KeyringUnwrapKey,
   type UnlockCheck,
   type UnlockPolicy,
@@ -31,7 +34,6 @@ import {
 export interface UnlockKeyringWithPasswordParams {
   /** Caller-owned and synchronously overwritten before the first suspension. */
   readonly passwordBytes: Uint8Array;
-  readonly context: KeyringContext;
   readonly policy: UnlockPolicy;
 }
 
@@ -41,6 +43,19 @@ export interface SessionSignerLease {
   /** Isolated plaintext Ed25519 seed; overwritten when the callback settles. */
   readonly seed: Uint8Array;
   readonly unlock: UnlockCheck;
+}
+
+/** Privileged lifecycle surface; production exposes it only through readiness gating. */
+export interface KeyringLifecycle {
+  isUnlocked(): Promise<boolean>;
+  lock(): Promise<void>;
+  replacePersistentRecord(value: unknown): Promise<void>;
+  clearPersistentRecord(): Promise<void>;
+  unlockWithPassword(params: UnlockKeyringWithPasswordParams): Promise<void>;
+  useSessionSignerBytes(
+    operation: string,
+    use: (lease: SessionSignerLease) => Promise<Uint8Array>,
+  ): Promise<Uint8Array>;
 }
 
 export class KeyringLifecycleConsistencyError extends Error {
@@ -96,8 +111,22 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 function canonicalStoredRecord(value: unknown): string {
-  decodeKeyringRecordStorageValue(value);
+  const record = decodeKeyringRecordStorageValue(value);
+  if (record.metadata.version !== KEYRING_RECORD_VERSION_2) {
+    throw new KeyringFormatError(
+      "extension keyring requires a self-contained record v2",
+    );
+  }
   return value as string;
+}
+
+const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
+
+function extensionOrigin(runtimeId: unknown): string {
+  if (typeof runtimeId !== "string" || !EXTENSION_ID_PATTERN.test(runtimeId)) {
+    throw new KeyringFormatError("keyring lifecycle runtime extension id is malformed");
+  }
+  return `chrome-extension://${runtimeId}`;
 }
 
 /**
@@ -114,11 +143,13 @@ export class KeyringLifecycleOwner {
   private readonly records: PersistentKeyringRecordStore;
   private readonly sessions: UnlockSessionOwner;
   private readonly readNow: () => number;
+  private readonly expectedOrigin: string;
   private transition = 0;
 
   constructor(
     localStorage: KeyringRecordStorageArea,
     sessionStorage: UnlockSessionStorageArea,
+    runtimeId: string,
     options: { readonly readNow?: () => number } = {},
   ) {
     if (options.readNow !== undefined && typeof options.readNow !== "function") {
@@ -127,6 +158,24 @@ export class KeyringLifecycleOwner {
     this.records = new PersistentKeyringRecordStore(localStorage);
     this.sessions = new UnlockSessionOwner(sessionStorage, options);
     this.readNow = options.readNow ?? Date.now;
+    this.expectedOrigin = extensionOrigin(runtimeId);
+  }
+
+  private contextForRecord(recordValue: KeyringRecord | string): SnapshotContext {
+    const record = typeof recordValue === "string"
+      ? decodeKeyringRecordStorageValue(recordValue)
+      : recordValue;
+    if (record.metadata.version !== KEYRING_RECORD_VERSION_2) {
+      throw new KeyringFormatError(
+        "extension keyring requires a self-contained record v2",
+      );
+    }
+    const context = snapshotSessionSignerContext(record.metadata.context);
+    if (context.origin !== this.expectedOrigin) {
+      clearContext(context);
+      throw new KeyringAuthError();
+    }
+    return context;
   }
 
   private assertTransition(generation: number, operation: string): void {
@@ -160,9 +209,15 @@ export class KeyringLifecycleOwner {
     return this.sessions.isUnlocked();
   }
 
-  /** Startup-only restore, bound to an exact persistent bundle id. */
+  /**
+   * Startup-only restore. A public bundle-id match is only a routing check:
+   * readiness stays pending until the restored KEK authenticates and decodes
+   * the exact current record under its browser-owned context.
+   */
   async restore(): Promise<boolean> {
     const generation = ++this.transition;
+    let context: SnapshotContext | undefined;
+    let proof: Uint8Array | undefined;
     try {
       const stored = await this.records.load();
       this.assertTransition(generation, "restore keyring lifecycle");
@@ -172,19 +227,59 @@ export class KeyringLifecycleOwner {
         return false;
       }
       const record = decodeKeyringRecordStorageValue(stored);
+      context = this.contextForRecord(record);
       const restored = await this.sessions.restore(record.bundle.bundleId);
       this.assertTransition(generation, "restore keyring lifecycle");
       if (!restored) return false;
-      const readback = await this.records.load();
-      this.assertTransition(generation, "restore keyring lifecycle");
-      if (readback !== stored) {
-        throw new KeyringLifecycleConsistencyError(
-          "persistent record changed while restoring its unlock session",
-        );
-      }
+
+      proof = await this.sessions.useBytes(
+        "authenticate restored keyring session",
+        async (session) => {
+          let plaintext: Uint8Array | undefined;
+          let decodedSeed: Uint8Array | undefined;
+          try {
+            this.assertTransition(generation, "restore keyring lifecycle");
+            if (!equalBytes(session.account, context!.account)) {
+              throw new KeyringLifecycleConsistencyError(
+                "restored session account does not match the persistent keyring context",
+              );
+            }
+            if (!equalBytes(session.bundleId, record.bundle.bundleId)) {
+              throw new KeyringLifecycleConsistencyError(
+                "restored session bundle does not match the persistent keyring bundle",
+              );
+            }
+            plaintext = await openKeyringBundle({
+              bundle: record.bundle,
+              unwrapKey: session.unwrapKey,
+              context: context!,
+              recordBinding: encodeKeyringRecordMetadata(record.metadata),
+              unlock: session.unlock,
+            });
+            this.assertTransition(generation, "restore keyring lifecycle");
+            decodedSeed = decodeSessionSignerPayload(plaintext);
+            const readback = await this.records.load();
+            this.assertTransition(generation, "restore keyring lifecycle");
+            if (readback !== stored) {
+              throw new KeyringLifecycleConsistencyError(
+                "persistent record changed while authenticating its restored session",
+              );
+            }
+            return new Uint8Array(0);
+          } finally {
+            plaintext?.fill(0);
+            decodedSeed?.fill(0);
+          }
+        },
+      );
+      proof.fill(0);
+      proof = undefined;
       return true;
     } catch (error) {
       return this.lockAfterFailure(error, generation);
+    } finally {
+      proof?.fill(0);
+      clearContext(context);
     }
   }
 
@@ -197,6 +292,8 @@ export class KeyringLifecycleOwner {
   async replacePersistentRecord(value: unknown): Promise<void> {
     // Reject malformed input before revoking a legitimate active session.
     const canonical = canonicalStoredRecord(value);
+    const context = this.contextForRecord(canonical);
+    clearContext(context);
     this.transition++;
     const locked = this.sessions.lock();
     await locked;
@@ -224,7 +321,6 @@ export class KeyringLifecycleOwner {
         throw new KeyringFormatError("passwordBytes must be a Uint8Array");
       }
       password = params.passwordBytes.slice();
-      context = snapshotSessionSignerContext(params.context);
       assertValidUnlockPolicy(params.policy);
       policy = Object.freeze({
         idleTimeoutMs: params.policy.idleTimeoutMs,
@@ -257,6 +353,7 @@ export class KeyringLifecycleOwner {
         );
       }
       const record = decodeKeyringRecordStorageValue(stored);
+      context = this.contextForRecord(record);
       const recordBinding = encodeKeyringRecordMetadata(record.metadata);
       unwrapKey = deriveUnwrapKeyFromPasswordBytes(
         password!,
@@ -321,12 +418,9 @@ export class KeyringLifecycleOwner {
 
   async useSessionSignerBytes(
     operation: string,
-    contextValue: KeyringContext,
     use: (lease: SessionSignerLease) => Promise<Uint8Array>,
   ): Promise<Uint8Array> {
-    const context = snapshotSessionSignerContext(contextValue);
     if (typeof use !== "function") {
-      clearContext(context);
       throw new KeyringFormatError("session-signer use callback must be a function");
     }
     const generation = this.transition;
@@ -334,6 +428,7 @@ export class KeyringLifecycleOwner {
     try {
       return await this.sessions.useBytes(operation, async (session) => {
         let stored: string | null = null;
+        let context: SnapshotContext | undefined;
         let plaintext: Uint8Array | undefined;
         let seed: Uint8Array | undefined;
         let result: Uint8Array | undefined;
@@ -342,11 +437,6 @@ export class KeyringLifecycleOwner {
         try {
           try {
             assertUnlockCheck(session.unlock, operation);
-            if (!equalBytes(session.account, context.account)) {
-              throw new KeyringLifecycleConsistencyError(
-                "active session account does not match the requested keyring context",
-              );
-            }
             stored = await this.records.load();
             assertUnlockCheck(session.unlock, operation);
             if (stored === null) {
@@ -355,6 +445,12 @@ export class KeyringLifecycleOwner {
               );
             }
             const record = decodeKeyringRecordStorageValue(stored);
+            context = this.contextForRecord(record);
+            if (!equalBytes(session.account, context.account)) {
+              throw new KeyringLifecycleConsistencyError(
+                "active session account does not match the persistent keyring context",
+              );
+            }
             if (!equalBytes(record.bundle.bundleId, session.bundleId)) {
               throw new KeyringLifecycleConsistencyError(
                 "persistent bundle does not match the active unlock session",
@@ -363,7 +459,7 @@ export class KeyringLifecycleOwner {
             plaintext = await openKeyringBundle({
               bundle: record.bundle,
               unwrapKey: session.unwrapKey,
-              context,
+              context: context,
               recordBinding: encodeKeyringRecordMetadata(record.metadata),
               unlock: session.unlock,
             });
@@ -405,6 +501,7 @@ export class KeyringLifecycleOwner {
           plaintext?.fill(0);
           seed?.fill(0);
           if (!releaseResult && result instanceof Uint8Array) result.fill(0);
+          clearContext(context);
         }
       });
     } catch (error) {
@@ -412,8 +509,6 @@ export class KeyringLifecycleOwner {
         return this.lockAfterFailure(error, generation);
       }
       throw error;
-    } finally {
-      clearContext(context);
     }
   }
 }

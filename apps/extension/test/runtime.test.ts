@@ -4,6 +4,8 @@ import {
   KeyringFormatError,
   KeyringLockedError,
   SESSION_SIGNER_PAYLOAD_SCHEMA_VERSION,
+  decodeKeyringRecordStorageValue,
+  deriveUnwrapKeyFromPasswordBytes,
   encodeKeyringRecordStorageValue,
   encodeSessionSignerPayload,
   sealKeyringRecord,
@@ -11,10 +13,12 @@ import {
   type KeyringRecord,
 } from "@warden/core/keyring";
 import {
+  BackgroundNotReadyError,
   bootstrapBackground,
   startBackground,
   type ExtensionBackgroundStorageApi,
 } from "../src/background/runtime.js";
+import { KeyringLifecycleOwner } from "../src/background/keyring-lifecycle.js";
 import { KEYRING_RECORD_STORAGE_KEY } from "../src/background/keyring-record-store.js";
 import {
   UNLOCK_SESSION_STORAGE_KEY,
@@ -36,12 +40,13 @@ interface Gate {
 
 const fill = (length: number, value: number): Uint8Array =>
   new Uint8Array(length).fill(value);
+const EXTENSION_ID = "a".repeat(32);
 const SESSION_NOW = 1_700_000_000_000;
 const PERSISTENT_BUNDLE_ID = fill(16, 0x12);
 const SIGNER_PASSWORD = new TextEncoder().encode("runtime integration password");
 const SIGNER_CONTEXT: KeyringContext = {
   account: fill(32, 0x41),
-  origin: "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  origin: `chrome-extension://${EXTENSION_ID}`,
   keyKind: "session-signer",
   schemaVersion: SESSION_SIGNER_PAYLOAD_SCHEMA_VERSION,
   genesisHash: fill(32, 0x31),
@@ -54,12 +59,13 @@ const SIGNER_POLICY = {
 
 const PERSISTENT_RECORD = encodeKeyringRecordStorageValue({
   metadata: {
-    version: 1,
+    version: 2,
     argon2id: {
       params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
       salt: fill(16, 0x11),
     },
     prf: null,
+    context: SIGNER_CONTEXT,
   },
   bundle: {
     version: 1,
@@ -82,27 +88,30 @@ async function signerRecord(): Promise<string> {
   return encodeKeyringRecordStorageValue(
     await sealKeyringRecord({
       metadata: {
-        version: 1,
+        version: 2,
         argon2id: {
           params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
           salt: fill(16, 0x73),
         },
         prf: null,
+        context: SIGNER_CONTEXT,
       },
       plaintext: encodeSessionSignerPayload(fill(32, 0x74)),
       passwordBytes: SIGNER_PASSWORD.slice(),
-      context: SIGNER_CONTEXT,
     }),
   );
 }
 
-function storedSession(bundleId: Uint8Array): Record<string, unknown> {
+function storedSession(
+  bundleId: Uint8Array,
+  unwrapKey: Uint8Array = fill(32, 0x72),
+): Record<string, unknown> {
   return {
     version: 2,
     account: Array.from(fill(32, 0x41)),
     bundleId: Array.from(bundleId),
     kdf: "argon2id-password",
-    unwrapKey: Array.from(fill(32, 0x72)),
+    unwrapKey: Array.from(unwrapKey),
     idleExpiresAt: SESSION_NOW + 60_000,
     hardExpiresAt: SESSION_NOW + 120_000,
   };
@@ -250,15 +259,30 @@ describe("MV3 background bootstrap", () => {
       },
     };
 
-    const runtime = bootstrapBackground(storage);
+    const runtime = bootstrapBackground(storage, EXTENSION_ID);
     expect(Object.hasOwn(runtime, "keyringRecords")).toBe(false);
+    expect(runtime.keyring).not.toBeInstanceOf(KeyringLifecycleOwner);
+    expect(Object.getOwnPropertyNames(runtime.keyring)).toEqual([]);
     await Promise.resolve();
+    expect(calls).toEqual(["local:restrict", "session:restrict"]);
+
+    const preReadyPassword = SIGNER_PASSWORD.slice();
+    const preReadyUnlock = runtime.keyring.unlockWithPassword({
+      passwordBytes: preReadyPassword,
+      policy: SIGNER_POLICY,
+    });
+    expect(preReadyPassword).toEqual(new Uint8Array(preReadyPassword.length));
+    await expect(preReadyUnlock).rejects.toThrow(BackgroundNotReadyError);
+    await expect(runtime.keyring.isUnlocked()).rejects.toThrow(
+      BackgroundNotReadyError,
+    );
     expect(calls).toEqual(["local:restrict", "session:restrict"]);
     localGate.release();
     await Promise.resolve();
     expect(calls).not.toContain("session:get");
     sessionGate.release();
     await expect(runtime.ready).resolves.toBe(false);
+    await expect(runtime.keyring.isUnlocked()).resolves.toBe(false);
     expect(calls.slice(-4)).toEqual([
       "local:restricted",
       "session:restricted",
@@ -287,7 +311,7 @@ describe("MV3 background bootstrap", () => {
       },
     };
 
-    const runtime = bootstrapBackground(storage);
+    const runtime = bootstrapBackground(storage, EXTENSION_ID);
     await expect(runtime.ready).resolves.toBe(false);
     expect(sessionReads).toBe(0);
     expect(sessionRemovals).toBe(1);
@@ -315,18 +339,30 @@ describe("MV3 background bootstrap", () => {
       },
     };
 
-    const runtime = bootstrapBackground(storage);
+    const runtime = bootstrapBackground(storage, EXTENSION_ID);
     await expect(runtime.ready).rejects.toThrow(KeyringFormatError);
     expect(sessionReads).toBe(0);
     expect(sessionRemovals).toBe(1);
   });
 
   it("restores only a session bound to the current persistent bundle", async () => {
-    let sessionValue: Record<string, unknown> | undefined = storedSession(
-      PERSISTENT_BUNDLE_ID,
+    const persistentRecord = await signerRecord();
+    const decoded = decodeKeyringRecordStorageValue(persistentRecord);
+    if (decoded.metadata.version !== 2) throw new Error("test requires record v2");
+    const unwrapKey = deriveUnwrapKeyFromPasswordBytes(
+      SIGNER_PASSWORD.slice(),
+      decoded.metadata.argon2id.salt,
+      decoded.metadata.argon2id.params,
     );
+    let sessionValue: Record<string, unknown> | undefined = storedSession(
+      decoded.bundle.bundleId,
+      unwrapKey.bytes,
+    );
+    unwrapKey.bytes.fill(0);
     const storage: ExtensionBackgroundStorageApi = {
-      local: localArea(async () => undefined),
+      local: localArea(async () => undefined, {
+        get: async (key) => ({ [key]: persistentRecord }),
+      }),
       session: {
         setAccessLevel: async () => undefined,
         get: async (key) =>
@@ -343,7 +379,9 @@ describe("MV3 background bootstrap", () => {
       },
     };
 
-    const runtime = bootstrapBackground(storage, { readNow: () => SESSION_NOW });
+    const runtime = bootstrapBackground(storage, EXTENSION_ID, {
+      readNow: () => SESSION_NOW,
+    });
     await expect(runtime.ready).resolves.toBe(true);
     await expect(runtime.keyring.isUnlocked()).resolves.toBe(true);
     expect(sessionValue).toBeDefined();
@@ -373,7 +411,9 @@ describe("MV3 background bootstrap", () => {
       },
     };
 
-    const runtime = bootstrapBackground(storage, { readNow: () => SESSION_NOW });
+    const runtime = bootstrapBackground(storage, EXTENSION_ID, {
+      readNow: () => SESSION_NOW,
+    });
     await expect(runtime.ready).resolves.toBe(false);
     await expect(runtime.keyring.isUnlocked()).resolves.toBe(false);
     expect(currentSessionRemovals).toBe(1);
@@ -395,10 +435,12 @@ describe("MV3 background bootstrap", () => {
       },
     };
 
-    const runtime = bootstrapBackground(storage);
+    const runtime = bootstrapBackground(storage, EXTENSION_ID);
     await expect(runtime.ready).rejects.toThrow("access denied");
     expect(reads).toBe(0);
-    await expect(runtime.keyring.isUnlocked()).resolves.toBe(false);
+    await expect(runtime.keyring.isUnlocked()).rejects.toThrow(
+      BackgroundNotReadyError,
+    );
   });
 
   it("registers the provider wake listener synchronously while readiness remains gated", async () => {
@@ -488,7 +530,6 @@ describe("MV3 background bootstrap", () => {
     await application.runtimeBoundariesReady;
     await application.keyring.unlockWithPassword({
       passwordBytes: SIGNER_PASSWORD.slice(),
-      context: SIGNER_CONTEXT,
       policy: SIGNER_POLICY,
     });
 
@@ -508,7 +549,6 @@ describe("MV3 background bootstrap", () => {
     });
     const pendingUse = application.keyring.useSessionSignerBytes(
       "decrypt",
-      SIGNER_CONTEXT,
       async (lease) => {
         leaseSignal = lease.unlock.signal;
         useEntered();
@@ -576,7 +616,6 @@ describe("MV3 background bootstrap", () => {
     await application.runtimeBoundariesReady;
     await application.keyring.unlockWithPassword({
       passwordBytes: SIGNER_PASSWORD.slice(),
-      context: SIGNER_CONTEXT,
       policy: SIGNER_POLICY,
     });
     expect(sessionValue).toBeDefined();

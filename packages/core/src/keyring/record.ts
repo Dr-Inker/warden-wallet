@@ -13,10 +13,10 @@
 //! errors/readback. It must never put this record in `storage.sync` or place plaintext
 //! unlock material in persistent storage.
 //!
-//! ## Wire format (v1)
+//! ## Wire formats
 //!
 //! ```text
-//! record := u16be(version=1)
+//! record-v1 := u16be(version=1)
 //!           || u8(flags)                         // bit 0: PRF metadata/wrap present
 //!           || u32be(argonMemoryKiB)
 //!           || u32be(argonTimeCost)
@@ -24,9 +24,19 @@
 //!           || passwordSalt[16]
 //!           || if flags&1: prfInput[32] || prfHkdfSalt[16]
 //!           || LP32(bundle)
+//! record-v2 := u16be(version=2)
+//!           || the same flags/KDF metadata as v1
+//!           || LP32(canonicalContext)
+//!           || LP32(bundle)
 //! ```
 //!
-//! The bytes before `LP32(bundle)` are also supplied to `bundle.ts` as an external
+//! `canonicalContext` is the complete six-field keyring AAD context encoded for
+//! bundle v1. Persisting it makes account/cluster/program selection self-contained;
+//! a consuming extension must still compare its stored origin with the browser-owned
+//! runtime origin. V1 remains decodable for explicit migration tooling, but has no
+//! self-contained context and must not be activated by a normal extension runtime.
+//!
+//! The bytes before the final `LP32(bundle)` are also supplied to `bundle.ts` as an external
 //! authenticated binding. Therefore a PRF unlock rejects tampered password salt/cost
 //! metadata, and password unlock rejects tampered PRF metadata. An unused fallback
 //! cannot be silently poisoned.
@@ -36,7 +46,12 @@
 //! `prf.input` is the value the extension supplies as WebAuthn `prf.eval.first`;
 //! `prf.hkdfSalt` is independently random and feeds the HKDF extraction step.
 
-import type { KeyringContext } from "./aad.js";
+import {
+  assertValidKeyringContext,
+  decodeKeyringAad,
+  encodeKeyringAad,
+  type KeyringContext,
+} from "./aad.js";
 import { randomKeyringBytes } from "./aead.js";
 import {
   KEYRING_BUNDLE_VERSION_1,
@@ -64,7 +79,11 @@ import {
 import { KeyringAuthError, KeyringFormatError } from "./errors.js";
 
 export const KEYRING_RECORD_VERSION_1 = 1;
-export const SUPPORTED_KEYRING_RECORD_VERSIONS: readonly number[] = [KEYRING_RECORD_VERSION_1];
+export const KEYRING_RECORD_VERSION_2 = 2;
+export const SUPPORTED_KEYRING_RECORD_VERSIONS: readonly number[] = [
+  KEYRING_RECORD_VERSION_1,
+  KEYRING_RECORD_VERSION_2,
+];
 export const KEYRING_PASSWORD_SALT_BYTES = 16;
 export const KEYRING_PRF_INPUT_BYTES = 32;
 export const KEYRING_PRF_HKDF_SALT_BYTES = 16;
@@ -74,8 +93,14 @@ const KEYRING_RECORD_FLAG_PRF = 1;
 const KEYRING_RECORD_KNOWN_FLAGS = KEYRING_RECORD_FLAG_PRF;
 const RECORD_BASE_METADATA_BYTES = 2 + 1 + 3 * 4 + KEYRING_PASSWORD_SALT_BYTES;
 const RECORD_PRF_METADATA_BYTES = KEYRING_PRF_INPUT_BYTES + KEYRING_PRF_HKDF_SALT_BYTES;
-const RECORD_MAX_METADATA_BYTES = RECORD_BASE_METADATA_BYTES + RECORD_PRF_METADATA_BYTES;
 const LENGTH_BYTES = 4;
+/** Strict cap for the canonical six-field context embedded by record v2. */
+export const MAX_KEYRING_RECORD_CONTEXT_BYTES = 1024;
+const RECORD_MAX_METADATA_BYTES =
+  RECORD_BASE_METADATA_BYTES +
+  RECORD_PRF_METADATA_BYTES +
+  LENGTH_BYTES +
+  MAX_KEYRING_RECORD_CONTEXT_BYTES;
 /** Bound checked before allocating or decoding an attacker-controlled storage value. */
 export const MAX_KEYRING_RECORD_BYTES = RECORD_MAX_METADATA_BYTES + LENGTH_BYTES + MAX_KEYRING_BUNDLE_BYTES;
 export const MAX_KEYRING_RECORD_STORAGE_CHARS = Math.ceil((MAX_KEYRING_RECORD_BYTES * 4) / 3);
@@ -87,8 +112,7 @@ export interface KeyringRecordPrfMetadata {
   readonly hkdfSalt: Uint8Array;
 }
 
-export interface KeyringRecordMetadata {
-  readonly version: number;
+interface KeyringRecordMetadataBase {
   readonly argon2id: {
     readonly params: Argon2idParams;
     readonly salt: Uint8Array;
@@ -96,6 +120,22 @@ export interface KeyringRecordMetadata {
   /** Null when PRF has not been enrolled for this record. */
   readonly prf: KeyringRecordPrfMetadata | null;
 }
+
+export interface KeyringRecordMetadataV1 extends KeyringRecordMetadataBase {
+  readonly version: typeof KEYRING_RECORD_VERSION_1;
+  /** V1 callers must supply context out of band. */
+  readonly context?: never;
+}
+
+export interface KeyringRecordMetadataV2 extends KeyringRecordMetadataBase {
+  readonly version: typeof KEYRING_RECORD_VERSION_2;
+  /** Public, copy-owned, and authenticated by every bundle component. */
+  readonly context: KeyringContext;
+}
+
+export type KeyringRecordMetadata =
+  | KeyringRecordMetadataV1
+  | KeyringRecordMetadataV2;
 
 export interface KeyringRecord {
   readonly metadata: KeyringRecordMetadata;
@@ -115,20 +155,45 @@ function assertExactBytes(value: unknown, length: number, name: string): asserts
   }
 }
 
+function snapshotContext(value: unknown): KeyringContext {
+  if (typeof value !== "object" || value === null || value instanceof Uint8Array) {
+    throw new KeyringFormatError("record context must be an object");
+  }
+  const context = value as KeyringContext;
+  assertValidKeyringContext(context);
+  return Object.freeze({
+    account: context.account.slice(),
+    origin: context.origin,
+    keyKind: context.keyKind,
+    schemaVersion: context.schemaVersion,
+    genesisHash: context.genesisHash.slice(),
+    programId: context.programId.slice(),
+  });
+}
+
 function canonicalMetadata(value: unknown): KeyringRecordMetadata {
   if (typeof value !== "object" || value === null || value instanceof Uint8Array) {
     throw new KeyringFormatError("record metadata must be an object");
   }
-  const metadata = value as Partial<KeyringRecordMetadata>;
+  const metadata = value as {
+    readonly version?: unknown;
+    readonly argon2id?: {
+      readonly params?: unknown;
+      readonly salt?: unknown;
+    } | null;
+    readonly prf?: Partial<KeyringRecordPrfMetadata> | null;
+    readonly context?: unknown;
+  };
   if (typeof metadata.version !== "number") throw new KeyringFormatError("record version must be a number");
   assertRecordVersion(metadata.version);
   if (typeof metadata.argon2id !== "object" || metadata.argon2id === null) {
     throw new KeyringFormatError("argon2id metadata must be an object");
   }
-  const params = metadata.argon2id.params;
-  if (typeof params !== "object" || params === null) {
+  const rawParams = metadata.argon2id.params;
+  if (typeof rawParams !== "object" || rawParams === null) {
     throw new KeyringFormatError("argon2id params must be an object");
   }
+  const params = rawParams as Argon2idParams;
   assertValidArgon2idParams(params);
   assertExactBytes(metadata.argon2id.salt, KEYRING_PASSWORD_SALT_BYTES, "password salt");
 
@@ -144,8 +209,7 @@ function canonicalMetadata(value: unknown): KeyringRecordMetadata {
     prf = { input: metadata.prf.input.slice(), hkdfSalt: metadata.prf.hkdfSalt.slice() };
   }
 
-  return {
-    version: metadata.version,
+  const common = {
     argon2id: {
       params: {
         memoryKiB: params.memoryKiB,
@@ -155,6 +219,17 @@ function canonicalMetadata(value: unknown): KeyringRecordMetadata {
       salt: metadata.argon2id.salt.slice(),
     },
     prf,
+  };
+  if (metadata.version === KEYRING_RECORD_VERSION_1) {
+    if (Object.hasOwn(metadata, "context")) {
+      throw new KeyringFormatError("record v1 must not contain embedded context");
+    }
+    return { version: KEYRING_RECORD_VERSION_1, ...common };
+  }
+  return {
+    version: KEYRING_RECORD_VERSION_2,
+    ...common,
+    context: snapshotContext(metadata.context),
   };
 }
 
@@ -168,7 +243,22 @@ function writeU32(out: Uint8Array, offset: number, value: number): void {
 function metadataBytes(value: KeyringRecordMetadata): Uint8Array {
   const metadata = canonicalMetadata(value);
   const hasPrf = metadata.prf !== null;
-  const out = new Uint8Array(RECORD_BASE_METADATA_BYTES + (hasPrf ? RECORD_PRF_METADATA_BYTES : 0));
+  const contextBytes = metadata.version === KEYRING_RECORD_VERSION_2
+    ? encodeKeyringAad(metadata.context, KEYRING_BUNDLE_VERSION_1)
+    : undefined;
+  if (
+    contextBytes !== undefined &&
+    (contextBytes.length === 0 || contextBytes.length > MAX_KEYRING_RECORD_CONTEXT_BYTES)
+  ) {
+    throw new KeyringFormatError(
+      `record context of ${contextBytes.length} bytes exceeds the cap`,
+    );
+  }
+  const out = new Uint8Array(
+    RECORD_BASE_METADATA_BYTES +
+      (hasPrf ? RECORD_PRF_METADATA_BYTES : 0) +
+      (contextBytes === undefined ? 0 : LENGTH_BYTES + contextBytes.length),
+  );
   let offset = 0;
   out[offset++] = (metadata.version >>> 8) & 0xff;
   out[offset++] = metadata.version & 0xff;
@@ -185,6 +275,12 @@ function metadataBytes(value: KeyringRecordMetadata): Uint8Array {
     out.set(metadata.prf.input, offset);
     offset += KEYRING_PRF_INPUT_BYTES;
     out.set(metadata.prf.hkdfSalt, offset);
+    offset += KEYRING_PRF_HKDF_SALT_BYTES;
+  }
+  if (contextBytes !== undefined) {
+    writeU32(out, offset, contextBytes.length);
+    offset += LENGTH_BYTES;
+    out.set(contextBytes, offset);
   }
   return out;
 }
@@ -244,8 +340,8 @@ export function decodeKeyringRecord(bytes: Uint8Array): KeyringRecord {
     throw new KeyringFormatError(`unknown record flags 0x${flags.toString(16)}`);
   }
   const hasPrf = (flags & KEYRING_RECORD_FLAG_PRF) !== 0;
-  const metadataLength = RECORD_BASE_METADATA_BYTES + (hasPrf ? RECORD_PRF_METADATA_BYTES : 0);
-  if (bytes.length < metadataLength + LENGTH_BYTES) {
+  const commonMetadataLength = RECORD_BASE_METADATA_BYTES + (hasPrf ? RECORD_PRF_METADATA_BYTES : 0);
+  if (bytes.length < commonMetadataLength + LENGTH_BYTES) {
     throw new KeyringFormatError("record truncated in KDF metadata or bundle length");
   }
   const params: Argon2idParams = {
@@ -266,6 +362,42 @@ export function decodeKeyringRecord(bytes: Uint8Array): KeyringRecord {
     offset += KEYRING_PRF_HKDF_SALT_BYTES;
     prf = { input, hkdfSalt };
   }
+  let context: KeyringContext | undefined;
+  if (version === KEYRING_RECORD_VERSION_2) {
+    if (bytes.length < offset + LENGTH_BYTES) {
+      throw new KeyringFormatError("record truncated before embedded context length");
+    }
+    const contextLength = readU32(bytes, offset);
+    offset += LENGTH_BYTES;
+    if (contextLength === 0) throw new KeyringFormatError("record context is empty");
+    if (contextLength > MAX_KEYRING_RECORD_CONTEXT_BYTES) {
+      throw new KeyringFormatError(
+        `record context length ${contextLength} exceeds the cap`,
+      );
+    }
+    if (bytes.length < offset + contextLength + LENGTH_BYTES) {
+      throw new KeyringFormatError("record context or bundle length is truncated");
+    }
+    const encodedContext = bytes.slice(offset, offset + contextLength);
+    offset += contextLength;
+    const decodedContext = decodeKeyringAad(encodedContext);
+    if (decodedContext.envelopeVersion !== KEYRING_BUNDLE_VERSION_1) {
+      throw new KeyringFormatError(
+        `record v2 context requires bundle v${KEYRING_BUNDLE_VERSION_1}`,
+      );
+    }
+    const canonicalContext = encodeKeyringAad(
+      decodedContext.context,
+      decodedContext.envelopeVersion,
+    );
+    if (
+      canonicalContext.length !== encodedContext.length ||
+      canonicalContext.some((byte, index) => byte !== encodedContext[index])
+    ) {
+      throw new KeyringFormatError("record context is not canonically encoded");
+    }
+    context = snapshotContext(decodedContext.context);
+  }
   const bundleLength = readU32(bytes, offset);
   offset += LENGTH_BYTES;
   if (bundleLength === 0) throw new KeyringFormatError("record bundle is empty");
@@ -278,7 +410,14 @@ export function decodeKeyringRecord(bytes: Uint8Array): KeyringRecord {
   if (bundle.version !== KEYRING_BUNDLE_VERSION_1) {
     throw new KeyringFormatError(`record v${version} requires bundle v${KEYRING_BUNDLE_VERSION_1}`);
   }
-  const metadata: KeyringRecordMetadata = { version, argon2id: { params, salt }, prf };
+  const metadata: KeyringRecordMetadata = version === KEYRING_RECORD_VERSION_1
+    ? { version: KEYRING_RECORD_VERSION_1, argon2id: { params, salt }, prf }
+    : {
+        version: KEYRING_RECORD_VERSION_2,
+        argon2id: { params, salt },
+        prf,
+        context: context!,
+      };
   assertPrfShape(metadata, bundle);
   return { metadata, bundle };
 }
@@ -371,6 +510,8 @@ export function decodeKeyringRecordStorageValue(value: unknown): KeyringRecord {
 export interface PrepareKeyringRecordMetadataParams {
   readonly argon2idParams: Argon2idParams;
   readonly enablePrf: boolean;
+  /** Public context snapshotted into authenticated record v2 metadata. */
+  readonly context: KeyringContext;
 }
 
 /**
@@ -380,14 +521,14 @@ export interface PrepareKeyringRecordMetadataParams {
  */
 export function prepareKeyringRecordMetadata(
   params: PrepareKeyringRecordMetadataParams,
-): KeyringRecordMetadata {
+): KeyringRecordMetadataV2 {
   if (typeof params !== "object" || params === null) {
     throw new KeyringFormatError("record setup params must be an object");
   }
   assertValidArgon2idParams(params.argon2idParams);
   if (typeof params.enablePrf !== "boolean") throw new KeyringFormatError("enablePrf must be a boolean");
   return {
-    version: KEYRING_RECORD_VERSION_1,
+    version: KEYRING_RECORD_VERSION_2,
     argon2id: {
       params: { ...params.argon2idParams },
       salt: randomKeyringBytes(KEYRING_PASSWORD_SALT_BYTES, "an Argon2id salt"),
@@ -398,6 +539,7 @@ export function prepareKeyringRecordMetadata(
           hkdfSalt: randomKeyringBytes(KEYRING_PRF_HKDF_SALT_BYTES, "a PRF HKDF salt"),
         }
       : null,
+    context: snapshotContext(params.context),
   };
 }
 
@@ -409,8 +551,27 @@ export interface SealKeyringRecordParams {
   readonly passwordBytes: Uint8Array;
   /** Required iff metadata enrolled PRF; caller-owned and overwritten in `finally`. */
   readonly prfOutput?: Uint8Array;
-  readonly context: KeyringContext;
+  /** Required only for legacy v1 records; v2 rejects caller context selection. */
+  readonly context?: KeyringContext;
   readonly unlock?: UnlockCheck;
+}
+
+function resolveRecordContext(
+  metadata: KeyringRecordMetadata,
+  callerContext: KeyringContext | undefined,
+): KeyringContext {
+  if (metadata.version === KEYRING_RECORD_VERSION_2) {
+    if (callerContext !== undefined) {
+      throw new KeyringFormatError(
+        "record v2 derives context from authenticated metadata; caller context is forbidden",
+      );
+    }
+    return snapshotContext(metadata.context);
+  }
+  if (callerContext === undefined) {
+    throw new KeyringFormatError("record v1 requires an explicit legacy context");
+  }
+  return snapshotContext(callerContext);
 }
 
 /** Derive enrolled KEKs, seal one bundle, and return a canonical persistent record. */
@@ -438,6 +599,7 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
     });
     assertUnlockCheck(unlock, "seal record");
     const metadata = canonicalMetadata(params.metadata);
+    const context = resolveRecordContext(metadata, params.context);
     if (metadata.prf === null && prfOutput !== undefined) {
       throw new KeyringFormatError("PRF output supplied for a password-only record");
     }
@@ -452,14 +614,14 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
     );
     assertUnlockCheck(unlock, "seal record");
     if (metadata.prf !== null) {
-      prfKey = deriveUnwrapKeyFromPrfForContext(prfOutput!, metadata.prf.hkdfSalt, params.context);
+      prfKey = deriveUnwrapKeyFromPrfForContext(prfOutput!, metadata.prf.hkdfSalt, context);
       assertUnlockCheck(unlock, "seal record");
     }
     const bundle = await sealKeyringBundle({
       plaintext,
       passwordKey,
       prfKey,
-      context: params.context,
+      context,
       recordBinding,
       unlock,
     });
@@ -484,11 +646,24 @@ function canonicalRecord(input: KeyringRecordInput): KeyringRecord {
   return decodeKeyringRecord(encodeKeyringRecord(input));
 }
 
+/**
+ * Return a copy-owned authenticated public context from record v2.
+ * Legacy v1 is deliberately rejected because it cannot identify its own context.
+ */
+export function getKeyringRecordContext(input: KeyringRecordInput): KeyringContext {
+  const record = canonicalRecord(input);
+  if (record.metadata.version !== KEYRING_RECORD_VERSION_2) {
+    throw new KeyringFormatError("record v1 has no self-contained context");
+  }
+  return snapshotContext(record.metadata.context);
+}
+
 export interface OpenKeyringRecordWithPasswordParams {
   readonly record: KeyringRecordInput;
   /** Caller-owned; overwritten on every exit path. */
   readonly passwordBytes: Uint8Array;
-  readonly context: KeyringContext;
+  /** Required only for explicitly migrated legacy v1 records. */
+  readonly context?: KeyringContext;
   readonly unlock?: UnlockCheck;
 }
 
@@ -512,6 +687,7 @@ export async function openKeyringRecordWithPasswordBytes(
     });
     assertUnlockCheck(unlock, "open record with password");
     const record = canonicalRecord(params.record);
+    const context = resolveRecordContext(record.metadata, params.context);
     const recordBinding = metadataBytes(record.metadata);
     passwordKey = deriveUnwrapKeyFromPasswordBytes(
       passwordBytes,
@@ -522,7 +698,7 @@ export async function openKeyringRecordWithPasswordBytes(
     plaintext = await openKeyringBundle({
       bundle: record.bundle,
       unwrapKey: passwordKey,
-      context: params.context,
+      context,
       recordBinding,
       unlock,
     });
@@ -546,7 +722,8 @@ export interface OpenKeyringRecordWithPrfParams {
   readonly record: KeyringRecordInput;
   /** Exact 32-byte WebAuthn result; caller-owned and overwritten on every exit. */
   readonly prfOutput: Uint8Array;
-  readonly context: KeyringContext;
+  /** Required only for explicitly migrated legacy v1 records. */
+  readonly context?: KeyringContext;
   readonly unlock?: UnlockCheck;
 }
 
@@ -570,18 +747,19 @@ export async function openKeyringRecordWithPrfBytes(
     });
     assertUnlockCheck(unlock, "open record with PRF");
     const record = canonicalRecord(params.record);
+    const context = resolveRecordContext(record.metadata, params.context);
     if (record.metadata.prf === null) throw new KeyringAuthError();
     const recordBinding = metadataBytes(record.metadata);
     prfKey = deriveUnwrapKeyFromPrfForContext(
       prfOutput,
       record.metadata.prf.hkdfSalt,
-      params.context,
+      context,
     );
     assertUnlockCheck(unlock, "open record with PRF");
     plaintext = await openKeyringBundle({
       bundle: record.bundle,
       unwrapKey: prfKey,
-      context: params.context,
+      context,
       recordBinding,
       unlock,
     });

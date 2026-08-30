@@ -5,6 +5,7 @@ import {
   KeyringFormatError,
   KeyringLockedError,
   SESSION_SIGNER_PAYLOAD_SCHEMA_VERSION,
+  decodeKeyringRecordStorageValue,
   encodeKeyringRecordStorageValue,
   encodeSessionSignerPayload,
   sealKeyringRecord,
@@ -28,6 +29,7 @@ import {
 const fill = (length: number, value: number): Uint8Array =>
   new Uint8Array(length).fill(value);
 const NOW = 1_700_000_000_000;
+const EXTENSION_ID = "a".repeat(32);
 const POLICY: UnlockPolicy = {
   idleTimeoutMs: 15 * 60_000,
   hardTimeoutMs: 8 * 60 * 60_000,
@@ -112,23 +114,25 @@ async function record(
 ): Promise<string> {
   const sealed = await sealKeyringRecord({
     metadata: {
-      version: 1,
+      version: 2,
       argon2id: {
         params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
         salt: fill(16, 0x71),
       },
       prf: null,
+      context,
     },
     plaintext: encodeSessionSignerPayload(seed),
     passwordBytes: password.slice(),
-    context,
   });
   return encodeKeyringRecordStorageValue(sealed);
 }
 
 function owner(local: LocalStorage, session = new SessionStorage()) {
   return {
-    lifecycle: new KeyringLifecycleOwner(local, session, { readNow: () => NOW }),
+    lifecycle: new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      readNow: () => NOW,
+    }),
     session,
   };
 }
@@ -141,7 +145,6 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
 
     const unlocking = lifecycle.unlockWithPassword({
       passwordBytes: password,
-      context: CONTEXT,
       policy: POLICY,
     });
     expect(Array.from(password)).toEqual(new Array(password.length).fill(0));
@@ -155,7 +158,6 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     let borrowed: SessionSignerLease | undefined;
     const result = await lifecycle.useSessionSignerBytes(
       "sign transaction",
-      CONTEXT,
       async (lease) => {
         borrowed = lease;
         expect(Array.from(lease.account)).toEqual(Array.from(CONTEXT.account));
@@ -175,25 +177,24 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     const password = new TextEncoder().encode("wrong password");
 
     await expect(
-      lifecycle.unlockWithPassword({ passwordBytes: password, context: CONTEXT, policy: POLICY }),
+      lifecycle.unlockWithPassword({ passwordBytes: password, policy: POLICY }),
     ).rejects.toThrow(KeyringAuthError);
     expect(Array.from(password)).toEqual(new Array(password.length).fill(0));
     expect(await lifecycle.isUnlocked()).toBe(false);
     expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
   });
 
-  it("refuses the wrong plaintext schema before touching a live session", async () => {
+  it("refuses a replacement with the wrong key kind before touching a live session", async () => {
     const local = new LocalStorage(await record());
     const { lifecycle } = owner(local);
     await lifecycle.unlockWithPassword({
       passwordBytes: PASSWORD.slice(),
-      context: CONTEXT,
       policy: POLICY,
     });
     const wrongKind = { ...CONTEXT, keyKind: "recovery-secret" as const };
 
     await expect(
-      lifecycle.useSessionSignerBytes("sign", wrongKind, async () => Uint8Array.of(1)),
+      lifecycle.replacePersistentRecord(await record(SEED, PASSWORD, wrongKind)),
     ).rejects.toThrow(KeyringFormatError);
     expect(await lifecycle.isUnlocked()).toBe(true);
   });
@@ -203,7 +204,6 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     const { lifecycle } = owner(local);
     await lifecycle.unlockWithPassword({
       passwordBytes: PASSWORD.slice(),
-      context: CONTEXT,
       policy: POLICY,
     });
 
@@ -220,14 +220,13 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     const { lifecycle } = owner(local);
     await lifecycle.unlockWithPassword({
       passwordBytes: PASSWORD.slice(),
-      context: CONTEXT,
       policy: POLICY,
     });
     const callbackGate = gate();
     const callbackEntered = gate();
     const lateOutput = Uint8Array.of(1, 2, 3);
     let borrowed: SessionSignerLease | undefined;
-    const pending = lifecycle.useSessionSignerBytes("sign", CONTEXT, async (lease) => {
+    const pending = lifecycle.useSessionSignerBytes("sign", async (lease) => {
       borrowed = lease;
       callbackEntered.release();
       await callbackGate.promise;
@@ -261,14 +260,13 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     const { lifecycle, session } = owner(local);
     await lifecycle.unlockWithPassword({
       passwordBytes: PASSWORD.slice(),
-      context: CONTEXT,
       policy: POLICY,
     });
     const output = Uint8Array.of(4, 5, 6);
     let borrowed: SessionSignerLease | undefined;
 
     await expect(
-      lifecycle.useSessionSignerBytes("sign", CONTEXT, async (lease) => {
+      lifecycle.useSessionSignerBytes("sign", async (lease) => {
         borrowed = lease;
         // Model a trusted-context write for which the storage.onChanged event
         // has not arrived yet. The final exact readback must still suppress
@@ -290,14 +288,13 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     const { lifecycle, session } = owner(local);
     await lifecycle.unlockWithPassword({
       passwordBytes: PASSWORD.slice(),
-      context: CONTEXT,
       policy: POLICY,
     });
     local.value = undefined;
     let callbackCalled = false;
 
     await expect(
-      lifecycle.useSessionSignerBytes("sign", CONTEXT, async () => {
+      lifecycle.useSessionSignerBytes("sign", async () => {
         callbackCalled = true;
         return Uint8Array.of(1);
       }),
@@ -313,13 +310,12 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     const { lifecycle } = owner(local);
     await lifecycle.unlockWithPassword({
       passwordBytes: PASSWORD.slice(),
-      context: CONTEXT,
       policy: POLICY,
     });
     let borrowed: SessionSignerLease | undefined;
 
     await expect(
-      lifecycle.useSessionSignerBytes("sign", CONTEXT, async (lease) => {
+      lifecycle.useSessionSignerBytes("sign", async (lease) => {
         borrowed = lease;
         throw new Error("local signer consumer failed");
       }),
@@ -349,7 +345,6 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
 
     const staleUnlock = lifecycle.unlockWithPassword({
       passwordBytes: PASSWORD.slice(),
-      context: CONTEXT,
       policy: POLICY,
     });
     await firstReadStarted.promise;
@@ -365,36 +360,77 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
   it("clears serialized session material when wake-time record validation fails", async () => {
     const local = new LocalStorage(await record());
     const session = new SessionStorage();
-    const first = new KeyringLifecycleOwner(local, session, { readNow: () => NOW });
+    const first = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      readNow: () => NOW,
+    });
     await first.unlockWithPassword({
       passwordBytes: PASSWORD.slice(),
-      context: CONTEXT,
       policy: POLICY,
     });
     expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeDefined();
 
     local.value = "malformed-persistent-record";
-    const waking = new KeyringLifecycleOwner(local, session, { readNow: () => NOW });
+    const waking = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      readNow: () => NOW,
+    });
     await expect(waking.restore()).rejects.toThrow(KeyringFormatError);
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it("authenticates the exact persistent record before reporting a restored session", async () => {
+    const local = new LocalStorage(await record());
+    const session = new SessionStorage();
+    const first = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      readNow: () => NOW,
+    });
+    await first.unlockWithPassword({
+      passwordBytes: PASSWORD.slice(),
+      policy: POLICY,
+    });
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeDefined();
+
+    const decoded = decodeKeyringRecordStorageValue(local.value);
+    if (decoded.metadata.version !== 2) throw new Error("test requires record v2");
+    local.value = encodeKeyringRecordStorageValue({
+      ...decoded,
+      metadata: {
+        ...decoded.metadata,
+        context: {
+          ...decoded.metadata.context,
+          genesisHash: fill(32, 0x93),
+        },
+      },
+    });
+
+    const waking = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      readNow: () => NOW,
+    });
+    await expect(waking.restore()).rejects.toThrow(KeyringAuthError);
+    await expect(waking.isUnlocked()).resolves.toBe(false);
     expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
   });
 
   it("restores only a session bound to the current persistent bundle", async () => {
     const local = new LocalStorage(await record());
     const session = new SessionStorage();
-    const first = new KeyringLifecycleOwner(local, session, { readNow: () => NOW });
+    const first = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      readNow: () => NOW,
+    });
     await first.unlockWithPassword({
       passwordBytes: PASSWORD.slice(),
-      context: CONTEXT,
       policy: POLICY,
     });
 
-    const waking = new KeyringLifecycleOwner(local, session, { readNow: () => NOW });
+    const waking = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      readNow: () => NOW,
+    });
     await expect(waking.restore()).resolves.toBe(true);
     await expect(waking.isUnlocked()).resolves.toBe(true);
 
     local.value = await record(fill(32, 0xaa));
-    const mismatched = new KeyringLifecycleOwner(local, session, { readNow: () => NOW });
+    const mismatched = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      readNow: () => NOW,
+    });
     await expect(mismatched.restore()).resolves.toBe(false);
     expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
   });

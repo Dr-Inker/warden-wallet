@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   KeyringFormatError,
+  decodeKeyringRecordStorageValue,
   encodeKeyringRecordStorageValue,
   type KeyringRecord,
 } from "@warden/core/keyring";
@@ -28,12 +29,20 @@ function record(seed: number): string {
   });
   const value: KeyringRecord = {
     metadata: {
-      version: 1,
+      version: 2,
       argon2id: {
         params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
         salt: fill(16, seed),
       },
       prf: null,
+      context: {
+        account: fill(32, 0x51),
+        origin: `chrome-extension://${"a".repeat(32)}`,
+        keyKind: "session-signer",
+        schemaVersion: 1,
+        genesisHash: fill(32, 0x52),
+        programId: fill(32, 0x53),
+      },
     },
     bundle: {
       version: 1,
@@ -44,6 +53,18 @@ function record(seed: number): string {
     },
   };
   return encodeKeyringRecordStorageValue(value);
+}
+
+function legacyRecord(): string {
+  const current = decodeKeyringRecordStorageValue(FIRST_RECORD);
+  return encodeKeyringRecordStorageValue({
+    ...current,
+    metadata: {
+      version: 1,
+      argon2id: current.metadata.argon2id,
+      prf: current.metadata.prf,
+    },
+  });
 }
 
 const FIRST_RECORD = record(0x11);
@@ -106,6 +127,14 @@ describe("persistent encrypted keyring record store", () => {
     storage.value = value;
     const store = new PersistentKeyringRecordStore(storage);
     await expect(store.load()).rejects.toThrow(KeyringFormatError);
+  });
+
+  it("refuses legacy record v1 instead of activating context supplied out of band", async () => {
+    const storage = new MockLocalStorage();
+    storage.value = legacyRecord();
+    const store = new PersistentKeyringRecordStore(storage);
+
+    await expect(store.load()).rejects.toThrow(/requires a self-contained record v2/);
   });
 
   it("rejects malformed replacement before touching persistent storage", async () => {

@@ -1,4 +1,8 @@
-import { decodeKeyringRecordStorageValue } from "@warden/core/keyring";
+import {
+  KEYRING_RECORD_VERSION_2,
+  KeyringFormatError,
+  decodeKeyringRecordStorageValue,
+} from "@warden/core/keyring";
 
 export const KEYRING_RECORD_STORAGE_KEY = "warden.keyring-record.v1";
 
@@ -37,7 +41,12 @@ function requireCanonicalRecord(value: unknown): string {
   // The core decoder rejects non-strings, wrong prefixes, non-canonical
   // base64url, unknown versions/flags, hostile KDF costs, malformed lengths,
   // trailing bytes, and malformed encrypted bundle components.
-  decodeKeyringRecordStorageValue(value);
+  const record = decodeKeyringRecordStorageValue(value);
+  if (record.metadata.version !== KEYRING_RECORD_VERSION_2) {
+    throw new KeyringFormatError(
+      "extension keyring requires a self-contained record v2",
+    );
+  }
   return value as string;
 }
 

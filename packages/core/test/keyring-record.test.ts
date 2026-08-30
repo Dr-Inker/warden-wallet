@@ -16,6 +16,7 @@ import {
   KEYRING_PRF_INPUT_BYTES,
   KEYRING_RECORD_STORAGE_PREFIX,
   KEYRING_RECORD_VERSION_1,
+  KEYRING_RECORD_VERSION_2,
   MAX_KEYRING_RECORD_STORAGE_CHARS,
   decodeKeyringRecord,
   decodeKeyringRecordStorageValue,
@@ -50,7 +51,7 @@ const SECRET = new TextEncoder().encode("persistent keyring payload");
 const PRF_OUTPUT = fill(32, 0x7a);
 
 function cloneMetadata(metadata: KeyringRecordMetadata): KeyringRecordMetadata {
-  return {
+  const common = {
     version: metadata.version,
     argon2id: {
       params: { ...metadata.argon2id.params },
@@ -64,15 +65,34 @@ function cloneMetadata(metadata: KeyringRecordMetadata): KeyringRecordMetadata {
             hkdfSalt: metadata.prf.hkdfSalt.slice(),
           },
   };
+  return metadata.version === KEYRING_RECORD_VERSION_1
+    ? { ...common, version: KEYRING_RECORD_VERSION_1 }
+    : {
+        ...common,
+        version: KEYRING_RECORD_VERSION_2,
+        context: {
+          ...metadata.context,
+          account: metadata.context.account.slice(),
+          genesisHash: metadata.context.genesisHash.slice(),
+          programId: metadata.context.programId.slice(),
+        },
+      };
+}
+
+function prepared(enablePrf: boolean) {
+  return prepareKeyringRecordMetadata({
+    argon2idParams: FAST,
+    enablePrf,
+    context: CONTEXT,
+  });
 }
 
 async function dualRecord(): Promise<KeyringRecord> {
   return sealKeyringRecord({
-    metadata: prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: true }),
+    metadata: prepared(true),
     plaintext: SECRET.slice(),
     passwordBytes: password(),
     prfOutput: PRF_OUTPUT.slice(),
-    context: CONTEXT,
   });
 }
 
@@ -131,12 +151,13 @@ function fixtureRecord(withPrf: boolean): KeyringRecord {
 describe("C2 persistent record metadata and storage representation", () => {
   it("generates fresh fixed-width salts/PRF inputs without an injectable RNG", () => {
     expect(KEYRING_RECORD_VERSION_1).toBe(1);
+    expect(KEYRING_RECORD_VERSION_2).toBe(2);
     expect(KEYRING_PASSWORD_SALT_BYTES).toBe(16);
     expect(KEYRING_PRF_INPUT_BYTES).toBe(32);
     expect(KEYRING_PRF_HKDF_SALT_BYTES).toBe(16);
 
-    const first = prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: true });
-    const second = prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: true });
+    const first = prepared(true);
+    const second = prepared(true);
     expect(first.argon2id.salt.length).toBe(KEYRING_PASSWORD_SALT_BYTES);
     expect(first.prf?.input.length).toBe(KEYRING_PRF_INPUT_BYTES);
     expect(first.prf?.hkdfSalt.length).toBe(KEYRING_PRF_HKDF_SALT_BYTES);
@@ -155,7 +176,7 @@ describe("C2 persistent record metadata and storage representation", () => {
     const decoded = decodeKeyringRecordStorageValue(value);
     expect(hex(encodeKeyringRecord(decoded))).toBe(hex(encodeKeyringRecord(record)));
     const passwordBytes = password();
-    expect(hex(await openKeyringRecordWithPasswordBytes({ record: value, passwordBytes, context: CONTEXT }))).toBe(
+    expect(hex(await openKeyringRecordWithPasswordBytes({ record: value, passwordBytes }))).toBe(
       hex(SECRET),
     );
     expect(Array.from(passwordBytes)).toEqual(new Array(passwordBytes.length).fill(0));
@@ -165,7 +186,6 @@ describe("C2 persistent record metadata and storage representation", () => {
         await openKeyringRecordWithPrfBytes({
           record: value,
           prfOutput,
-          context: CONTEXT,
         }),
       ),
     ).toBe(hex(SECRET));
@@ -200,21 +220,50 @@ describe("C2 persistent record metadata and storage representation", () => {
   });
 
   it("supports a password-only record when WebAuthn PRF is unavailable", async () => {
-    const metadata = prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: false });
+    const metadata = prepared(false);
     const record = await sealKeyringRecord({
       metadata,
       plaintext: SECRET.slice(),
       passwordBytes: password(),
-      context: CONTEXT,
     });
     expect(record.metadata.prf).toBeNull();
     expect(record.bundle.prfWrap).toBeNull();
     expect(
-      hex(await openKeyringRecordWithPasswordBytes({ record, passwordBytes: password(), context: CONTEXT })),
+      hex(await openKeyringRecordWithPasswordBytes({ record, passwordBytes: password() })),
     ).toBe(hex(SECRET));
     await expect(
-      openKeyringRecordWithPrfBytes({ record, prfOutput: PRF_OUTPUT.slice(), context: CONTEXT }),
+      openKeyringRecordWithPrfBytes({ record, prfOutput: PRF_OUTPUT.slice() }),
     ).rejects.toThrow(KeyringAuthError);
+  });
+
+  it("keeps record v1 available only through an explicit legacy context", async () => {
+    const record = await sealKeyringRecord({
+      metadata: {
+        version: KEYRING_RECORD_VERSION_1,
+        argon2id: {
+          params: FAST,
+          salt: fill(KEYRING_PASSWORD_SALT_BYTES, 0x81),
+        },
+        prf: null,
+      },
+      plaintext: SECRET.slice(),
+      passwordBytes: password(),
+      context: CONTEXT,
+    });
+
+    await expect(
+      openKeyringRecordWithPasswordBytes({
+        record,
+        passwordBytes: password(),
+      }),
+    ).rejects.toThrow(/record v1 requires an explicit legacy context/);
+    await expect(
+      openKeyringRecordWithPasswordBytes({
+        record,
+        passwordBytes: password(),
+        context: CONTEXT,
+      }),
+    ).resolves.toEqual(SECRET);
   });
 
   it("zeroes caller-owned password, PRF output, and plaintext buffers on success", async () => {
@@ -222,11 +271,10 @@ describe("C2 persistent record metadata and storage representation", () => {
     const prfOutput = PRF_OUTPUT.slice();
     const plaintext = SECRET.slice();
     await sealKeyringRecord({
-      metadata: prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: true }),
+      metadata: prepared(true),
       plaintext,
       passwordBytes,
       prfOutput,
-      context: CONTEXT,
     });
     expect(Array.from(passwordBytes)).toEqual(new Array(passwordBytes.length).fill(0));
     expect(Array.from(prfOutput)).toEqual(new Array(prfOutput.length).fill(0));
@@ -247,7 +295,6 @@ describe("outer metadata is authenticated, including an unused fallback", () => 
         openKeyringRecordWithPrfBytes({
           record: { metadata, bundle: record.bundle },
           prfOutput: PRF_OUTPUT.slice(),
-          context: CONTEXT,
         }),
       ).rejects.toThrow(KeyringAuthError);
     }
@@ -265,7 +312,6 @@ describe("outer metadata is authenticated, including an unused fallback", () => 
         openKeyringRecordWithPasswordBytes({
           record: { metadata, bundle: record.bundle },
           passwordBytes: password(),
-          context: CONTEXT,
         }),
       ).rejects.toThrow(KeyringAuthError);
     }
@@ -277,26 +323,24 @@ describe("outer metadata is authenticated, including an unused fallback", () => 
     const spliced: KeyringRecord = { metadata: first.metadata, bundle: second.bundle };
 
     await expect(
-      openKeyringRecordWithPasswordBytes({ record: spliced, passwordBytes: password(), context: CONTEXT }),
+      openKeyringRecordWithPasswordBytes({ record: spliced, passwordBytes: password() }),
     ).rejects.toThrow(KeyringAuthError);
     await expect(
       openKeyringRecordWithPrfBytes({
         record: spliced,
         prfOutput: PRF_OUTPUT.slice(),
-        context: CONTEXT,
       }),
     ).rejects.toThrow(KeyringAuthError);
   });
 
   it("snapshots prepared metadata before the async seal can observe caller mutation", async () => {
-    const metadata = prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: true });
+    const metadata = prepared(true);
     const expected = cloneMetadata(metadata);
     const pending = sealKeyringRecord({
       metadata,
       plaintext: SECRET.slice(),
       passwordBytes: password(),
       prfOutput: PRF_OUTPUT.slice(),
-      context: CONTEXT,
     });
     metadata.argon2id.salt.fill(0);
     metadata.prf!.input.fill(0);
@@ -305,7 +349,7 @@ describe("outer metadata is authenticated, including an unused fallback", () => 
     expect(hex(record.metadata.argon2id.salt)).toBe(hex(expected.argon2id.salt));
     expect(hex(record.metadata.prf!.input)).toBe(hex(expected.prf!.input));
     expect(
-      hex(await openKeyringRecordWithPasswordBytes({ record, passwordBytes: password(), context: CONTEXT })),
+      hex(await openKeyringRecordWithPasswordBytes({ record, passwordBytes: password() })),
     ).toBe(hex(SECRET));
   });
 });
@@ -323,10 +367,9 @@ describe("record orchestration cannot carry a stale clock sample across derivati
     const plaintext = SECRET.slice();
     await expect(
       sealKeyringRecord({
-        metadata: prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: false }),
+        metadata: prepared(false),
         plaintext,
         passwordBytes,
-        context: CONTEXT,
         unlock,
       }),
     ).rejects.toThrow(KeyringExpiredError);
@@ -335,10 +378,9 @@ describe("record orchestration cannot carry a stale clock sample across derivati
     expect(Array.from(plaintext)).toEqual(new Array(plaintext.length).fill(0));
 
     const record = await sealKeyringRecord({
-      metadata: prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: false }),
+      metadata: prepared(false),
       plaintext: SECRET.slice(),
       passwordBytes: password(),
-      context: CONTEXT,
     });
     reads = 0;
     const unlockPassword = password();
@@ -346,7 +388,6 @@ describe("record orchestration cannot carry a stale clock sample across derivati
       openKeyringRecordWithPasswordBytes({
         record,
         passwordBytes: unlockPassword,
-        context: CONTEXT,
         unlock,
       }),
     ).rejects.toThrow(KeyringExpiredError);
@@ -388,10 +429,9 @@ describe("record orchestration cannot carry a stale clock sample across derivati
     let settled = false;
     try {
       pending = sealKeyringRecord({
-        metadata: prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: false }),
+        metadata: prepared(false),
         plaintext,
         passwordBytes,
-        context: CONTEXT,
         unlock: {
           deadlines,
           readNow: () => 1_001,
@@ -429,7 +469,7 @@ describe("record orchestration cannot carry a stale clock sample across derivati
 
 describe("strict persistent parser and storage codec", () => {
   it("rejects unknown versions and flags before trusting the bundle length", () => {
-    expect(() => decodeKeyringRecord(Uint8Array.of(0, 2, 0xff, 0xff, 0xff, 0xff))).toThrow(/unknown record version/);
+    expect(() => decodeKeyringRecord(Uint8Array.of(0, 3, 0xff, 0xff, 0xff, 0xff))).toThrow(/unknown record version/);
     const bytes = encodeKeyringRecord(fixtureRecord(true));
     bytes[2] = 0x80;
     expect(() => decodeKeyringRecord(bytes)).toThrow(/unknown record flags/);
@@ -483,13 +523,13 @@ describe("strict persistent parser and storage codec", () => {
   });
 
   it("zeroes secret inputs even when record validation fails before derivation", async () => {
-    const metadata = prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: true });
+    const metadata = prepared(true);
     metadata.argon2id.salt = fill(3, 0);
     const passwordBytes = password();
     const prfOutput = PRF_OUTPUT.slice();
     const plaintext = SECRET.slice();
     await expect(
-      sealKeyringRecord({ metadata, passwordBytes, prfOutput, plaintext, context: CONTEXT }),
+      sealKeyringRecord({ metadata, passwordBytes, prfOutput, plaintext }),
     ).rejects.toThrow(KeyringFormatError);
     expect(Array.from(passwordBytes)).toEqual(new Array(passwordBytes.length).fill(0));
     expect(Array.from(prfOutput)).toEqual(new Array(prfOutput.length).fill(0));

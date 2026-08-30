@@ -26,15 +26,23 @@ const fill = (length: number, value: number): Uint8Array =>
 const BROWSER_PERSISTENT_BUNDLE_ID = fill(16, 0x12);
 const BROWSER_REPLACEMENT_BUNDLE_ID = fill(16, 0x34);
 
-function browserPersistentRecord(bundleId: Uint8Array): string {
+function browserPersistentRecord(bundleId: Uint8Array, origin: string): string {
   return encodeKeyringRecordStorageValue({
     metadata: {
-      version: 1,
+      version: 2,
       argon2id: {
         params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
         salt: fill(16, 0x11),
       },
       prf: null,
+      context: {
+        account: fill(32, 0x41),
+        origin,
+        keyKind: "session-signer",
+        schemaVersion: 1,
+        genesisHash: fill(32, 0x31),
+        programId: fill(32, 0x32),
+      },
     },
     bundle: {
       version: 1,
@@ -53,9 +61,6 @@ function browserPersistentRecord(bundleId: Uint8Array): string {
     },
   } satisfies KeyringRecord);
 }
-
-const BROWSER_PERSISTENT_RECORD = browserPersistentRecord(BROWSER_PERSISTENT_BUNDLE_ID);
-const BROWSER_REPLACEMENT_RECORD = browserPersistentRecord(BROWSER_REPLACEMENT_BUNDLE_ID);
 
 interface TestServer {
   readonly origin: string;
@@ -300,6 +305,14 @@ test("real MV3 bridge binds frames, wakes after worker death, and revokes change
     const extensionId = new URL(worker.url()).hostname;
     expect(extensionId).toMatch(/^[a-p]{32}$/);
     const extensionOrigin = `chrome-extension://${extensionId}`;
+    const BROWSER_PERSISTENT_RECORD = browserPersistentRecord(
+      BROWSER_PERSISTENT_BUNDLE_ID,
+      extensionOrigin,
+    );
+    const BROWSER_REPLACEMENT_RECORD = browserPersistentRecord(
+      BROWSER_REPLACEMENT_BUNDLE_ID,
+      extensionOrigin,
+    );
     const sessionNow = Date.now();
     const mismatchedStoredSession = {
       version: 2,

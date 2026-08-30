@@ -16,7 +16,12 @@ import {
   KEYRING_RECORD_STORAGE_KEY,
   type KeyringRecordStorageArea,
 } from "./keyring-record-store.js";
-import { KeyringLifecycleOwner } from "./keyring-lifecycle.js";
+import {
+  KeyringLifecycleOwner,
+  type KeyringLifecycle,
+  type SessionSignerLease,
+  type UnlockKeyringWithPasswordParams,
+} from "./keyring-lifecycle.js";
 
 export interface ExtensionBackgroundStorageApi extends ExtensionStorageAccessApi {
   readonly local: StorageAreaAccessControl & KeyringRecordStorageArea;
@@ -45,8 +50,8 @@ export interface ObservableExtensionBackgroundStorageApi
 }
 
 export interface ExtensionBackgroundRuntime {
-  /** The only owner of persistent records and ephemeral unlock sessions. */
-  readonly keyring: KeyringLifecycleOwner;
+  /** Readiness-gated facade; the raw lifecycle owner never escapes bootstrap. */
+  readonly keyring: KeyringLifecycle;
   readonly ready: Promise<boolean>;
 }
 
@@ -75,6 +80,129 @@ function requireStorageChangeEvent(value: unknown): ExtensionStorageChangeEvent 
   return event as ExtensionStorageChangeEvent;
 }
 
+export class BackgroundNotReadyError extends Error {
+  constructor(operation: string, state: "pending" | "failed", cause?: unknown) {
+    super(`extension background: initialization ${state}; ${operation} refused`,
+      cause === undefined ? {} : { cause });
+    this.name = "BackgroundNotReadyError";
+  }
+}
+
+class BackgroundReadinessGate {
+  #state: "pending" | "ready" | "failed" = "pending";
+  #failure: unknown;
+  readonly ready: Promise<boolean>;
+
+  constructor(initialization: Promise<boolean>) {
+    this.ready = initialization.then(
+      (restored) => {
+        this.#state = "ready";
+        return restored;
+      },
+      (error: unknown) => {
+        this.#state = "failed";
+        this.#failure = error;
+        throw error;
+      },
+    );
+  }
+
+  error(operation: string): BackgroundNotReadyError | null {
+    if (this.#state === "ready") return null;
+    return new BackgroundNotReadyError(
+      operation,
+      this.#state,
+      this.#state === "failed" ? this.#failure : undefined,
+    );
+  }
+}
+
+class ReadyKeyringLifecycle implements KeyringLifecycle {
+  readonly #owner: KeyringLifecycleOwner;
+  readonly #gate: BackgroundReadinessGate;
+
+  constructor(
+    owner: KeyringLifecycleOwner,
+    gate: BackgroundReadinessGate,
+  ) {
+    this.#owner = owner;
+    this.#gate = gate;
+  }
+
+  private run<T>(operation: string, use: () => Promise<T>): Promise<T> {
+    const unavailable = this.#gate.error(operation);
+    return unavailable === null ? use() : Promise.reject(unavailable);
+  }
+
+  isUnlocked(): Promise<boolean> {
+    return this.run("read unlock state", () => this.#owner.isUnlocked());
+  }
+
+  lock(): Promise<void> {
+    return this.run("lock keyring", () => this.#owner.lock());
+  }
+
+  replacePersistentRecord(value: unknown): Promise<void> {
+    return this.run("replace persistent record", () =>
+      this.#owner.replacePersistentRecord(value));
+  }
+
+  clearPersistentRecord(): Promise<void> {
+    return this.run("clear persistent record", () =>
+      this.#owner.clearPersistentRecord());
+  }
+
+  unlockWithPassword(params: UnlockKeyringWithPasswordParams): Promise<void> {
+    const unavailable = this.#gate.error("unlock keyring with password");
+    if (unavailable !== null) {
+      if (
+        typeof params === "object" &&
+        params !== null &&
+        params.passwordBytes instanceof Uint8Array
+      ) {
+        params.passwordBytes.fill(0);
+      }
+      return Promise.reject(unavailable);
+    }
+    return this.#owner.unlockWithPassword(params);
+  }
+
+  useSessionSignerBytes(
+    operation: string,
+    use: (lease: SessionSignerLease) => Promise<Uint8Array>,
+  ): Promise<Uint8Array> {
+    return this.run(operation, () => this.#owner.useSessionSignerBytes(operation, use));
+  }
+}
+
+interface InitializedBackground {
+  readonly owner: KeyringLifecycleOwner;
+  readonly runtime: ExtensionBackgroundRuntime;
+}
+
+function initializeBackground(
+  storage: ExtensionBackgroundStorageApi,
+  runtimeId: string,
+  options: { readonly readNow?: () => number } = {},
+): InitializedBackground {
+  const owner = new KeyringLifecycleOwner(
+    storage.local,
+    storage.session,
+    runtimeId,
+    options,
+  );
+  const initialization = restrictStorageToTrustedContexts(storage)
+    .then(() => owner.restore());
+  const gate = new BackgroundReadinessGate(initialization);
+  return {
+    owner,
+    runtime: {
+      keyring: Object.freeze(new ReadyKeyringLifecycle(owner, gate)),
+      ready: gate.ready,
+    },
+  };
+}
+
 /**
  * Establish the storage trust boundary before reading even the ephemeral unlock
  * record. The returned promise is the only readiness signal future handlers may
@@ -82,11 +210,10 @@ function requireStorageChangeEvent(value: unknown): ExtensionStorageChangeEvent 
  */
 export function bootstrapBackground(
   storage: ExtensionBackgroundStorageApi,
+  runtimeId: string,
   options: { readonly readNow?: () => number } = {},
 ): ExtensionBackgroundRuntime {
-  const keyring = new KeyringLifecycleOwner(storage.local, storage.session, options);
-  const ready = restrictStorageToTrustedContexts(storage).then(() => keyring.restore());
-  return { keyring, ready };
+  return initializeBackground(storage, runtimeId, options).runtime;
 }
 
 /**
@@ -102,8 +229,14 @@ export function startBackground(
 ): ExtensionBackgroundApplication {
   const boundary = installUnavailableRuntimeBoundaries(chromeApi.runtime);
   let background: ExtensionBackgroundRuntime;
+  let keyringOwner: KeyringLifecycleOwner;
   try {
-    background = bootstrapBackground(chromeApi.storage);
+    const initialized = initializeBackground(
+      chromeApi.storage,
+      chromeApi.runtime.id,
+    );
+    background = initialized.runtime;
+    keyringOwner = initialized.owner;
   } catch (error) {
     boundary.dispose();
     throw error;
@@ -164,7 +297,7 @@ export function startBackground(
     try {
       // lock() increments the transition, aborts leases, and zeroes owned key
       // bytes synchronously before its storage-removal promise is returned.
-      void background.keyring.lock().catch(failClosed);
+      void keyringOwner.lock().catch(failClosed);
     } catch (error) {
       failClosed(error);
     }
