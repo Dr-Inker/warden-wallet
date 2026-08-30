@@ -1,3 +1,5 @@
+import { decodeKeyringRecordStorageValue } from "@warden/core/keyring";
+
 import {
   restrictStorageToTrustedContexts,
   type ExtensionStorageAccessApi,
@@ -52,9 +54,12 @@ export function bootstrapBackground(
   const keyringRecords = new PersistentKeyringRecordStore(storage.local);
   const sessions = new UnlockSessionOwner(storage.session, options);
   const ready = restrictStorageToTrustedContexts(storage).then(async () => {
-    let persistentRecord: string | null;
+    let persistentBundleId: Uint8Array | null;
     try {
-      persistentRecord = await keyringRecords.load();
+      const persistentRecord = await keyringRecords.load();
+      persistentBundleId = persistentRecord === null
+        ? null
+        : decodeKeyringRecordStorageValue(persistentRecord).bundle.bundleId;
     } catch (error) {
       try {
         await sessions.lock();
@@ -66,13 +71,13 @@ export function bootstrapBackground(
       }
       throw error;
     }
-    if (persistentRecord === null) {
+    if (persistentBundleId === null) {
       // An unwrap key without its encrypted persistent record has no legitimate
       // consumer. Remove stale session material without ever parsing it.
       await sessions.lock();
       return false;
     }
-    return sessions.restore();
+    return sessions.restore(persistentBundleId);
   });
   // Do not expose the raw persistent-record owner beside the session owner.
   // Record mutation must eventually go through one composed lifecycle owner

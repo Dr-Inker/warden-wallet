@@ -9,10 +9,46 @@ import {
 } from "@playwright/test";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
+import {
+  encodeKeyringRecordStorageValue,
+  type KeyringRecord,
+} from "@warden/core/keyring";
 
 const EXTENSION_DIRECTORY = resolve(import.meta.dirname, "../dist");
 const PAGE_REQUEST_TYPE = "warden:provider:request";
 const PAGE_RESPONSE_TYPE = "warden:provider:response";
+const KEYRING_RECORD_STORAGE_KEY = "warden.keyring-record.v1";
+const UNLOCK_SESSION_STORAGE_KEY = "warden.unlock-session.v2";
+const SESSION_SURVIVAL_CANARY_KEY = "warden.browser-session-survival-canary";
+const SESSION_SURVIVAL_CANARY_VALUE = "survived-worker-death";
+const fill = (length: number, value: number): Uint8Array =>
+  new Uint8Array(length).fill(value);
+const BROWSER_PERSISTENT_BUNDLE_ID = fill(16, 0x12);
+const BROWSER_PERSISTENT_RECORD = encodeKeyringRecordStorageValue({
+  metadata: {
+    version: 1,
+    argon2id: {
+      params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
+      salt: fill(16, 0x11),
+    },
+    prf: null,
+  },
+  bundle: {
+    version: 1,
+    bundleId: BROWSER_PERSISTENT_BUNDLE_ID,
+    payload: {
+      version: 1,
+      nonce: fill(12, 0x13),
+      ciphertext: fill(17, 0x14),
+    },
+    passwordWrap: {
+      version: 1,
+      nonce: fill(12, 0x15),
+      ciphertext: fill(48, 0x16),
+    },
+    prfWrap: null,
+  },
+} satisfies KeyringRecord);
 
 interface TestServer {
   readonly origin: string;
@@ -257,6 +293,65 @@ test("real MV3 bridge binds each frame/document and wakes after worker terminati
     const extensionId = new URL(worker.url()).hostname;
     expect(extensionId).toMatch(/^[a-p]{32}$/);
     const extensionOrigin = `chrome-extension://${extensionId}`;
+    const sessionNow = Date.now();
+    const mismatchedStoredSession = {
+      version: 2,
+      account: Array.from(fill(32, 0x41)),
+      bundleId: Array.from(fill(16, 0x99)),
+      kdf: "argon2id-password",
+      unwrapKey: Array.from(fill(32, 0x72)),
+      idleExpiresAt: sessionNow + 60_000,
+      hardExpiresAt: sessionNow + 120_000,
+    };
+    const seededStorage = await worker.evaluate(async ({
+      keyringRecordKey,
+      keyringRecord,
+      unlockSessionKey,
+      unlockSession,
+      canaryKey,
+      canaryValue,
+    }) => {
+      const storage = (globalThis as unknown as {
+        readonly chrome: {
+          readonly storage: {
+            readonly local: {
+              set(items: Record<string, unknown>): Promise<void>;
+              get(key: string): Promise<Record<string, unknown>>;
+            };
+            readonly session: {
+              set(items: Record<string, unknown>): Promise<void>;
+              get(keys: string | string[]): Promise<Record<string, unknown>>;
+            };
+          };
+        };
+      }).chrome.storage;
+      await storage.local.set({ [keyringRecordKey]: keyringRecord });
+      await storage.session.set({
+        [unlockSessionKey]: unlockSession,
+        [canaryKey]: canaryValue,
+      });
+      return {
+        local: await storage.local.get(keyringRecordKey),
+        session: await storage.session.get([
+          unlockSessionKey,
+          canaryKey,
+        ]),
+      };
+    }, {
+      keyringRecordKey: KEYRING_RECORD_STORAGE_KEY,
+      keyringRecord: BROWSER_PERSISTENT_RECORD,
+      unlockSessionKey: UNLOCK_SESSION_STORAGE_KEY,
+      unlockSession: mismatchedStoredSession,
+      canaryKey: SESSION_SURVIVAL_CANARY_KEY,
+      canaryValue: SESSION_SURVIVAL_CANARY_VALUE,
+    });
+    expect(seededStorage).toEqual({
+      local: { [KEYRING_RECORD_STORAGE_KEY]: BROWSER_PERSISTENT_RECORD },
+      session: {
+        [UNLOCK_SESSION_STORAGE_KEY]: mismatchedStoredSession,
+        [SESSION_SURVIVAL_CANARY_KEY]: SESSION_SURVIVAL_CANARY_VALUE,
+      },
+    });
     const preStopMarker = "pre-stop-worker-global";
     await worker.evaluate((marker) => {
       (globalThis as unknown as { __wardenPreStopMarker?: string })
@@ -316,6 +411,33 @@ test("real MV3 bridge binds each frame/document and wakes after worker terminati
       }
       return "no-live-extension-worker";
     }).toBe(null);
+    // The session was proven present before the worker died. Its bundle ID is
+    // different from the canonical persistent record, so startup of the new
+    // worker must remove it before any future privileged surface can be ready.
+    await expect.poll(async () => {
+      for (const candidate of [...context.serviceWorkers()].reverse()) {
+        if (!candidate.url().startsWith(extensionOrigin)) continue;
+        try {
+          return await candidate.evaluate(async (keys) => {
+            const session = (globalThis as unknown as {
+              readonly chrome: {
+                readonly storage: {
+                  readonly session: {
+                    get(keys: string | string[]): Promise<Record<string, unknown>>;
+                  };
+                };
+              };
+            }).chrome.storage.session;
+            return session.get(keys);
+          }, [UNLOCK_SESSION_STORAGE_KEY, SESSION_SURVIVAL_CANARY_KEY]);
+        } catch {
+          // Ignore Playwright wrappers whose worker target is no longer live.
+        }
+      }
+      return { worker: "not-live" };
+    }).toEqual({
+      [SESSION_SURVIVAL_CANARY_KEY]: SESSION_SURVIVAL_CANARY_VALUE,
+    });
 
     // Exercise WRD-EXT-02 in the browser-owned content-script execution world,
     // not through a page mock. That world shares sender.id with the extension,

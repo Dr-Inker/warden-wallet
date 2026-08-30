@@ -24,6 +24,15 @@ does not restore session material until this persistent value is present and
 well formed; absence removes the session without parsing it, while corruption
 removes the session and rejects readiness.
 
+The ephemeral session schema is v2 and stores the public 16-byte bundle id next
+to the account, unwrap key, and deadlines. Wake-time restoration snapshots the
+id decoded from the current persistent record and removes a live, well-formed
+session if its id differs. The obsolete v1 session-storage slot is removed
+before restore, so a format bump does not strand old unwrap-key bytes. This
+binds ordinary record replacement to session revocation; it is not a hash of
+every persistent ciphertext byte and does not authenticate browser storage by
+itself.
+
 The raw record adapter is deliberately not exposed by the background runtime.
 A future mutation path must compose record replacement with session revocation;
 otherwise an old unwrap key could remain live beside a new record. Chrome does
@@ -38,7 +47,8 @@ the service worker, then causally observes the actual Warden content-script
 world being denied access. This proves the tested browser boundary, not broad
 version compatibility. There is still no record-creation UI, Argon2 benchmark,
 PRF ceremony, record-to-session activation, account registry, decrypt/sign/export
-consumer, or persistent-record/session identifier binding.
+consumer, or revalidation of an already-active session after an out-of-band
+trusted-context write.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during

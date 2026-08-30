@@ -18,6 +18,9 @@ const fill = (length: number, value: number): Uint8Array => new Uint8Array(lengt
 const T0 = 1_700_000_000_000;
 const POLICY = { idleTimeoutMs: 15 * 60_000, hardTimeoutMs: 8 * 60 * 60_000 };
 const ACCOUNT = fill(32, 0x41);
+const BUNDLE_ID = fill(16, 0x62);
+const OTHER_BUNDLE_ID = fill(16, 0x63);
+const LEGACY_UNLOCK_SESSION_STORAGE_KEY = "warden.unlock-session.v1";
 const key = (): KeyringUnwrapKey => ({ kdf: "argon2id-password", bytes: fill(32, 0x72) });
 
 interface Gate {
@@ -35,16 +38,20 @@ function gate(): Gate {
 
 class MemorySessionStorage implements UnlockSessionStorageArea {
   value: unknown;
+  legacyValue: unknown;
   readonly log: string[] = [];
   setCalls = 0;
   removeCalls = 0;
+  getGate: Gate | undefined;
   setGate: Gate | undefined;
   removeGate: Gate | undefined;
   rejectSet = false;
   rejectRemove = false;
   corruptSet = false;
+  corruptBundleIdSet = false;
   private setEnteredResolve: (() => void) | undefined;
   private removeEnteredResolve: (() => void) | undefined;
+  private getEnteredResolve: (() => void) | undefined;
   private readonly setWaiters: Array<{ target: number; resolve: () => void }> = [];
   private readonly removeWaiters: Array<{ target: number; resolve: () => void }> = [];
   setEntered = new Promise<void>((resolve) => {
@@ -52,6 +59,9 @@ class MemorySessionStorage implements UnlockSessionStorageArea {
   });
   removeEntered = new Promise<void>((resolve) => {
     this.removeEnteredResolve = resolve;
+  });
+  getEntered = new Promise<void>((resolve) => {
+    this.getEnteredResolve = resolve;
   });
 
   waitForNextSet(): Promise<void> {
@@ -70,6 +80,8 @@ class MemorySessionStorage implements UnlockSessionStorageArea {
 
   async get(keyName: string): Promise<Record<string, unknown>> {
     this.log.push("get");
+    this.getEnteredResolve?.();
+    await this.getGate?.promise;
     return this.value === undefined ? {} : { [keyName]: structuredClone(this.value) };
   }
 
@@ -91,10 +103,14 @@ class MemorySessionStorage implements UnlockSessionStorageArea {
       const record = this.value as { unwrapKey: number[] };
       record.unwrapKey[0] = record.unwrapKey[0]! ^ 0xff;
     }
+    if (this.corruptBundleIdSet) {
+      const record = this.value as { bundleId: number[] };
+      record.bundleId[0] = record.bundleId[0]! ^ 0xff;
+    }
     this.log.push("set:end");
   }
 
-  async remove(_keyName: string): Promise<void> {
+  async remove(keyNames: string | string[]): Promise<void> {
     this.log.push("remove:start");
     this.removeCalls++;
     this.removeEnteredResolve?.();
@@ -107,7 +123,11 @@ class MemorySessionStorage implements UnlockSessionStorageArea {
     }
     await this.removeGate?.promise;
     if (this.rejectRemove) throw new Error("remove failed");
-    this.value = undefined;
+    const keys = Array.isArray(keyNames) ? keyNames : [keyNames];
+    if (keys.includes(UNLOCK_SESSION_STORAGE_KEY)) this.value = undefined;
+    if (keys.includes(LEGACY_UNLOCK_SESSION_STORAGE_KEY)) {
+      this.legacyValue = undefined;
+    }
     this.log.push("remove:end");
   }
 }
@@ -122,14 +142,16 @@ describe("MV3 unlock session ownership", () => {
     const unwrapKey = key();
     await state.owner.unlock({
       account: ACCOUNT,
+      bundleId: BUNDLE_ID,
       unwrapKey,
       deadlines: startUnlockSession(T0, POLICY),
     });
     expect(await state.owner.isUnlocked()).toBe(true);
     expect(Array.from(unwrapKey.bytes)).toEqual(new Array(32).fill(0));
     expect(state.storage.value).toEqual({
-      version: 1,
+      version: 2,
       account: Array.from(ACCOUNT),
+      bundleId: Array.from(BUNDLE_ID),
       kdf: "argon2id-password",
       unwrapKey: new Array(32).fill(0x72),
       idleExpiresAt: T0 + POLICY.idleTimeoutMs,
@@ -141,6 +163,7 @@ describe("MV3 unlock session ownership", () => {
     const state = owner();
     await state.owner.unlock({
       account: ACCOUNT,
+      bundleId: BUNDLE_ID,
       unwrapKey: key(),
       deadlines: startUnlockSession(T0, POLICY),
     });
@@ -163,6 +186,7 @@ describe("MV3 unlock session ownership", () => {
     const state = owner();
     await state.owner.unlock({
       account: ACCOUNT,
+      bundleId: BUNDLE_ID,
       unwrapKey: key(),
       deadlines: startUnlockSession(T0, POLICY),
     });
@@ -205,6 +229,7 @@ describe("MV3 unlock session ownership", () => {
     state.storage.setGate = setGate;
     const activating = state.owner.unlock({
       account: ACCOUNT,
+      bundleId: BUNDLE_ID,
       unwrapKey: key(),
       deadlines: startUnlockSession(T0, POLICY),
     });
@@ -224,6 +249,7 @@ describe("MV3 unlock session ownership", () => {
     state.storage.setGate = setGate;
     const activating = state.owner.unlock({
       account: ACCOUNT,
+      bundleId: BUNDLE_ID,
       unwrapKey: key(),
       deadlines: startUnlockSession(T0, POLICY),
     });
@@ -244,7 +270,12 @@ describe("MV3 unlock session ownership", () => {
     const setGate = gate();
     state.storage.setGate = setGate;
     const deadlines = startUnlockSession(T0, POLICY);
-    const activating = state.owner.unlock({ account: ACCOUNT, unwrapKey: key(), deadlines });
+    const activating = state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
     await state.storage.setEntered;
     const removalEntered = state.storage.waitForNextRemove();
     now = deadlines.idleExpiresAt;
@@ -261,10 +292,18 @@ describe("MV3 unlock session ownership", () => {
     const storage = new MemorySessionStorage();
     const first = new UnlockSessionOwner(storage, { readNow: () => now });
     const deadlines = startUnlockSession(T0, POLICY);
-    await first.unlock({ account: ACCOUNT, unwrapKey: key(), deadlines });
+    await first.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
 
     const afterWorkerDeath = new UnlockSessionOwner(storage, { readNow: () => now });
-    expect(await afterWorkerDeath.restore()).toBe(true);
+    const expectedBundleId = BUNDLE_ID.slice();
+    const restoring = afterWorkerDeath.restore(expectedBundleId);
+    expectedBundleId.fill(0xff);
+    expect(await restoring).toBe(true);
     expect(await afterWorkerDeath.useBytes("decrypt", async () => Uint8Array.of(7))).toEqual(
       Uint8Array.of(7),
     );
@@ -275,18 +314,87 @@ describe("MV3 unlock session ownership", () => {
     expect(storage.value).toBeUndefined();
   });
 
+  it("removes a live session that belongs to a different persistent bundle", async () => {
+    const storage = new MemorySessionStorage();
+    const first = new UnlockSessionOwner(storage, { readNow: () => T0 + 1 });
+    await first.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines: startUnlockSession(T0, POLICY),
+    });
+
+    const afterRecordReplacement = new UnlockSessionOwner(storage, {
+      readNow: () => T0 + 1,
+    });
+    await expect(afterRecordReplacement.restore(OTHER_BUNDLE_ID)).resolves.toBe(false);
+    expect(storage.value).toBeUndefined();
+    expect(await afterRecordReplacement.isUnlocked()).toBe(false);
+    await expect(
+      afterRecordReplacement.useBytes("decrypt", async () => Uint8Array.of(1)),
+    ).rejects.toThrow(KeyringLockedError);
+  });
+
+  it("does not let stale restore cleanup erase a newer activation", async () => {
+    const storage = new MemorySessionStorage();
+    storage.value = {
+      version: 2,
+      account: Array.from(ACCOUNT),
+      bundleId: Array.from(BUNDLE_ID),
+      kdf: "argon2id-password",
+      unwrapKey: new Array(32).fill(0x72),
+      idleExpiresAt: T0 + POLICY.idleTimeoutMs,
+      hardExpiresAt: T0 + POLICY.hardTimeoutMs,
+    };
+    const getGate = gate();
+    storage.getGate = getGate;
+    const sessionOwner = new UnlockSessionOwner(storage, { readNow: () => T0 + 1 });
+
+    const restoring = sessionOwner.restore(OTHER_BUNDLE_ID);
+    await storage.getEntered;
+    const activating = sessionOwner.unlock({
+      account: ACCOUNT,
+      bundleId: OTHER_BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines: startUnlockSession(T0, POLICY),
+    });
+    getGate.release();
+
+    await expect(restoring).rejects.toThrow(KeyringLockedError);
+    await activating;
+    expect(storage.value).toMatchObject({
+      version: 2,
+      bundleId: Array.from(OTHER_BUNDLE_ID),
+      unwrapKey: new Array(32).fill(0x72),
+    });
+    expect(await sessionOwner.isUnlocked()).toBe(true);
+  });
+
+  it("removes the obsolete v1 storage slot before considering a restore", async () => {
+    const state = owner();
+    state.storage.legacyValue = {
+      version: 1,
+      unwrapKey: new Array(32).fill(0x72),
+    };
+
+    await expect(state.owner.restore(BUNDLE_ID)).resolves.toBe(false);
+    expect(state.storage.legacyValue).toBeUndefined();
+    expect(state.storage.value).toBeUndefined();
+  });
+
   it("refuses and removes malformed or ambiguous stored records", async () => {
     const state = owner();
     state.storage.value = {
-      version: 1,
+      version: 2,
       account: new Array(32).fill(1),
+      bundleId: new Array(16).fill(3),
       kdf: "argon2id-password",
       unwrapKey: new Array(32).fill(2),
       idleExpiresAt: T0 + 100,
       hardExpiresAt: T0 + 200,
       approved: true,
     };
-    await expect(state.owner.restore()).rejects.toThrow(UnlockSessionFormatError);
+    await expect(state.owner.restore(BUNDLE_ID)).rejects.toThrow(UnlockSessionFormatError);
     expect(await state.owner.isUnlocked()).toBe(false);
     expect(state.storage.value).toBeUndefined();
   });
@@ -295,7 +403,12 @@ describe("MV3 unlock session ownership", () => {
     let now = T0 + 1;
     const state = owner(undefined, () => now);
     const deadlines = startUnlockSession(T0, POLICY);
-    await state.owner.unlock({ account: ACCOUNT, unwrapKey: key(), deadlines });
+    await state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
     now = T0 + 60_000;
     await state.owner.touch(POLICY);
     expect(state.storage.value).toMatchObject({
@@ -308,7 +421,12 @@ describe("MV3 unlock session ownership", () => {
     let now = T0 + 1;
     const state = owner(undefined, () => now);
     const deadlines = startUnlockSession(T0, POLICY);
-    await state.owner.unlock({ account: ACCOUNT, unwrapKey: key(), deadlines });
+    await state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
     const setGate = gate();
     state.storage.setGate = setGate;
     const setEntered = state.storage.waitForNextSet();
@@ -329,7 +447,12 @@ describe("MV3 unlock session ownership", () => {
     let now = T0 + 1;
     const state = owner(undefined, () => now);
     const deadlines = startUnlockSession(T0, POLICY);
-    await state.owner.unlock({ account: ACCOUNT, unwrapKey: key(), deadlines });
+    await state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
     now = deadlines.idleExpiresAt;
 
     expect(await state.owner.isUnlocked()).toBe(false);
@@ -343,7 +466,12 @@ describe("MV3 unlock session ownership", () => {
     let now = T0 + 1;
     const state = owner(undefined, () => now);
     const deadlines = startUnlockSession(T0, POLICY);
-    await state.owner.unlock({ account: ACCOUNT, unwrapKey: key(), deadlines });
+    await state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
     const removeGate = gate();
     state.storage.removeGate = removeGate;
     const removalEntered = state.storage.waitForNextRemove();
@@ -363,6 +491,7 @@ describe("MV3 unlock session ownership", () => {
     const state = owner();
     await state.owner.unlock({
       account: ACCOUNT,
+      bundleId: BUNDLE_ID,
       unwrapKey: key(),
       deadlines: startUnlockSession(T0, POLICY),
     });
@@ -381,11 +510,43 @@ describe("MV3 unlock session ownership", () => {
     await expect(
       state.owner.unlock({
         account: ACCOUNT,
+        bundleId: BUNDLE_ID,
         unwrapKey,
         deadlines: startUnlockSession(T0, POLICY),
       }),
     ).rejects.toThrow(UnlockSessionStorageError);
     expect(Array.from(unwrapKey.bytes)).toEqual(new Array(32).fill(0));
+    expect(await state.owner.isUnlocked()).toBe(false);
+  });
+
+  it("rejects an invalid bundle id before storage and still consumes the caller key", async () => {
+    const state = owner();
+    const unwrapKey = key();
+    await expect(
+      state.owner.unlock({
+        account: ACCOUNT,
+        bundleId: fill(15, 0x62),
+        unwrapKey,
+        deadlines: startUnlockSession(T0, POLICY),
+      }),
+    ).rejects.toThrow("bundleId must be exactly 16 bytes");
+    expect(Array.from(unwrapKey.bytes)).toEqual(new Array(32).fill(0));
+    expect(state.storage.log).toEqual([]);
+    expect(await state.owner.isUnlocked()).toBe(false);
+  });
+
+  it("rejects and removes an activation whose bundle-id readback changed", async () => {
+    const state = owner();
+    state.storage.corruptBundleIdSet = true;
+    await expect(
+      state.owner.unlock({
+        account: ACCOUNT,
+        bundleId: BUNDLE_ID,
+        unwrapKey: key(),
+        deadlines: startUnlockSession(T0, POLICY),
+      }),
+    ).rejects.toThrow(UnlockSessionStorageError);
+    expect(state.storage.value).toBeUndefined();
     expect(await state.owner.isUnlocked()).toBe(false);
   });
 
@@ -395,6 +556,7 @@ describe("MV3 unlock session ownership", () => {
     await expect(
       state.owner.unlock({
         account: ACCOUNT,
+        bundleId: BUNDLE_ID,
         unwrapKey: key(),
         deadlines: startUnlockSession(T0, POLICY),
       }),

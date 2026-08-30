@@ -11,6 +11,7 @@ import {
   type ExtensionBackgroundStorageApi,
 } from "../src/background/runtime.js";
 import { KEYRING_RECORD_STORAGE_KEY } from "../src/background/keyring-record-store.js";
+import { UNLOCK_SESSION_STORAGE_KEY } from "../src/background/unlock-session.js";
 import { PROVIDER_PORT_NAME } from "../src/background/provider-port.js";
 import { POPUP_PORT_NAME } from "../src/popup-protocol.js";
 import type {
@@ -27,6 +28,8 @@ interface Gate {
 
 const fill = (length: number, value: number): Uint8Array =>
   new Uint8Array(length).fill(value);
+const SESSION_NOW = 1_700_000_000_000;
+const PERSISTENT_BUNDLE_ID = fill(16, 0x12);
 
 const PERSISTENT_RECORD = encodeKeyringRecordStorageValue({
   metadata: {
@@ -39,7 +42,7 @@ const PERSISTENT_RECORD = encodeKeyringRecordStorageValue({
   },
   bundle: {
     version: 1,
-    bundleId: fill(16, 0x12),
+    bundleId: PERSISTENT_BUNDLE_ID,
     payload: {
       version: 1,
       nonce: fill(12, 0x13),
@@ -53,6 +56,18 @@ const PERSISTENT_RECORD = encodeKeyringRecordStorageValue({
     prfWrap: null,
   },
 } satisfies KeyringRecord);
+
+function storedSession(bundleId: Uint8Array): Record<string, unknown> {
+  return {
+    version: 2,
+    account: Array.from(fill(32, 0x41)),
+    bundleId: Array.from(bundleId),
+    kdf: "argon2id-password",
+    unwrapKey: Array.from(fill(32, 0x72)),
+    idleExpiresAt: SESSION_NOW + 60_000,
+    hardExpiresAt: SESSION_NOW + 120_000,
+  };
+}
 
 type LocalArea = ExtensionBackgroundStorageApi["local"];
 
@@ -228,6 +243,65 @@ describe("MV3 background bootstrap", () => {
     await expect(runtime.ready).rejects.toThrow(KeyringFormatError);
     expect(sessionReads).toBe(0);
     expect(sessionRemovals).toBe(1);
+  });
+
+  it("restores only a session bound to the current persistent bundle", async () => {
+    let sessionValue: Record<string, unknown> | undefined = storedSession(
+      PERSISTENT_BUNDLE_ID,
+    );
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async (key) =>
+          sessionValue === undefined
+            ? {}
+            : { [key]: structuredClone(sessionValue) },
+        set: async () => undefined,
+        remove: async (keys) => {
+          const requested = Array.isArray(keys) ? keys : [keys];
+          if (requested.includes(UNLOCK_SESSION_STORAGE_KEY)) {
+            sessionValue = undefined;
+          }
+        },
+      },
+    };
+
+    const runtime = bootstrapBackground(storage, { readNow: () => SESSION_NOW });
+    await expect(runtime.ready).resolves.toBe(true);
+    await expect(runtime.sessions.isUnlocked()).resolves.toBe(true);
+    expect(sessionValue).toBeDefined();
+  });
+
+  it("removes a structurally valid session bound to another persistent bundle", async () => {
+    let sessionValue: Record<string, unknown> | undefined = storedSession(
+      fill(16, 0x99),
+    );
+    let currentSessionRemovals = 0;
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async (key) =>
+          sessionValue === undefined
+            ? {}
+            : { [key]: structuredClone(sessionValue) },
+        set: async () => undefined,
+        remove: async (keys) => {
+          const requested = Array.isArray(keys) ? keys : [keys];
+          if (requested.includes(UNLOCK_SESSION_STORAGE_KEY)) {
+            currentSessionRemovals++;
+            sessionValue = undefined;
+          }
+        },
+      },
+    };
+
+    const runtime = bootstrapBackground(storage, { readNow: () => SESSION_NOW });
+    await expect(runtime.ready).resolves.toBe(false);
+    await expect(runtime.sessions.isUnlocked()).resolves.toBe(false);
+    expect(currentSessionRemovals).toBe(1);
+    expect(sessionValue).toBeUndefined();
   });
 
   it("fails closed without reading when access restriction fails", async () => {

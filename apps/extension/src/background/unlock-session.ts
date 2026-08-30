@@ -1,4 +1,5 @@
 import {
+  KEYRING_BUNDLE_ID_BYTES,
   PUBKEY_BYTES,
   UNWRAP_KEY_BYTES,
   KeyringExpiredError,
@@ -16,16 +17,19 @@ import {
   type UnlockPolicy,
 } from "@warden/core/keyring";
 
-export const UNLOCK_SESSION_STORAGE_KEY = "warden.unlock-session.v1";
+export const UNLOCK_SESSION_STORAGE_KEY = "warden.unlock-session.v2";
+const LEGACY_UNLOCK_SESSION_STORAGE_KEY_V1 = "warden.unlock-session.v1";
 
 export interface UnlockSessionStorageArea {
   get(key: string): Promise<Record<string, unknown>>;
   set(items: Record<string, unknown>): Promise<void>;
-  remove(key: string): Promise<void>;
+  remove(keys: string | string[]): Promise<void>;
 }
 
 export interface ActivateUnlockSessionParams {
   readonly account: Uint8Array;
+  /** Public identifier of the exact encrypted bundle this key can unwrap. */
+  readonly bundleId: Uint8Array;
   readonly unwrapKey: KeyringUnwrapKey;
   readonly deadlines: UnlockDeadlines;
 }
@@ -50,9 +54,10 @@ export class UnlockSessionStorageError extends Error {
   }
 }
 
-interface StoredUnlockSessionV1 {
-  readonly version: 1;
+interface StoredUnlockSessionV2 {
+  readonly version: 2;
   readonly account: number[];
+  readonly bundleId: number[];
   readonly kdf: KeyringUnwrapKey["kdf"];
   readonly unwrapKey: number[];
   readonly idleExpiresAt: number;
@@ -61,6 +66,7 @@ interface StoredUnlockSessionV1 {
 
 interface ActiveUnlockSession {
   readonly account: Uint8Array;
+  readonly bundleId: Uint8Array;
   readonly unwrapKey: KeyringUnwrapKey;
   deadlines: UnlockDeadlines;
   readonly controller: AbortController;
@@ -69,6 +75,7 @@ interface ActiveUnlockSession {
 
 const STORED_FIELDS = [
   "account",
+  "bundleId",
   "hardExpiresAt",
   "idleExpiresAt",
   "kdf",
@@ -100,6 +107,7 @@ function parseByteArray(value: unknown, length: number, name: string): Uint8Arra
 
 function parseStoredSession(value: unknown): {
   account: Uint8Array;
+  bundleId: Uint8Array;
   unwrapKey: KeyringUnwrapKey;
   deadlines: UnlockDeadlines;
 } {
@@ -111,13 +119,15 @@ function parseStoredSession(value: unknown): {
   ) {
     throw new UnlockSessionFormatError("stored value has missing or unknown fields");
   }
-  if (value.version !== 1) throw new UnlockSessionFormatError("stored version must be 1");
+  if (value.version !== 2) throw new UnlockSessionFormatError("stored version must be 2");
   if (value.kdf !== "argon2id-password" && value.kdf !== "webauthn-prf-hkdf") {
     throw new UnlockSessionFormatError("stored unwrap-key KDF is unknown");
   }
   const account = parseByteArray(value.account, PUBKEY_BYTES, "account");
+  let bundleId: Uint8Array | undefined;
   let unwrapKeyBytes: Uint8Array | undefined;
   try {
+    bundleId = parseByteArray(value.bundleId, KEYRING_BUNDLE_ID_BYTES, "bundleId");
     unwrapKeyBytes = parseByteArray(value.unwrapKey, UNWRAP_KEY_BYTES, "unwrapKey");
     const deadlines = {
       idleExpiresAt: value.idleExpiresAt as number,
@@ -130,9 +140,15 @@ function parseStoredSession(value: unknown): {
         error instanceof Error ? error.message : "stored deadlines are invalid",
       );
     }
-    return { account, unwrapKey: { kdf: value.kdf, bytes: unwrapKeyBytes }, deadlines };
+    return {
+      account,
+      bundleId,
+      unwrapKey: { kdf: value.kdf, bytes: unwrapKeyBytes },
+      deadlines,
+    };
   } catch (error) {
     account.fill(0);
+    bundleId?.fill(0);
     unwrapKeyBytes?.fill(0);
     throw error;
   }
@@ -142,13 +158,15 @@ function scrubStoredArrays(value: unknown): void {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return;
   const record = value as Record<string, unknown>;
   if (Array.isArray(record.account)) record.account.fill(0);
+  if (Array.isArray(record.bundleId)) record.bundleId.fill(0);
   if (Array.isArray(record.unwrapKey)) record.unwrapKey.fill(0);
 }
 
-function encodeStoredSession(active: ActiveUnlockSession): StoredUnlockSessionV1 {
+function encodeStoredSession(active: ActiveUnlockSession): StoredUnlockSessionV2 {
   return {
-    version: 1,
+    version: 2,
     account: Array.from(active.account),
+    bundleId: Array.from(active.bundleId),
     kdf: active.unwrapKey.kdf,
     unwrapKey: Array.from(active.unwrapKey.bytes),
     idleExpiresAt: active.deadlines.idleExpiresAt,
@@ -167,6 +185,7 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
 
 function validateActivation(params: ActivateUnlockSessionParams): {
   account: Uint8Array;
+  bundleId: Uint8Array;
   unwrapKey: KeyringUnwrapKey;
   deadlines: UnlockDeadlines;
 } {
@@ -175,6 +194,14 @@ function validateActivation(params: ActivateUnlockSessionParams): {
   }
   if (!(params.account instanceof Uint8Array) || params.account.length !== PUBKEY_BYTES) {
     throw new UnlockSessionFormatError(`account must be exactly ${PUBKEY_BYTES} bytes`);
+  }
+  if (
+    !(params.bundleId instanceof Uint8Array) ||
+    params.bundleId.length !== KEYRING_BUNDLE_ID_BYTES
+  ) {
+    throw new UnlockSessionFormatError(
+      `bundleId must be exactly ${KEYRING_BUNDLE_ID_BYTES} bytes`,
+    );
   }
   if (typeof params.unwrapKey !== "object" || params.unwrapKey === null) {
     throw new UnlockSessionFormatError("unwrap key must be an object");
@@ -200,6 +227,7 @@ function validateActivation(params: ActivateUnlockSessionParams): {
   }
   return {
     account: params.account.slice(),
+    bundleId: params.bundleId.slice(),
     unwrapKey: { kdf: params.unwrapKey.kdf, bytes: params.unwrapKey.bytes.slice() },
     deadlines: {
       idleExpiresAt: params.deadlines.idleExpiresAt,
@@ -258,12 +286,18 @@ export class UnlockSessionOwner {
     if (active === undefined) return;
     active.controller.abort();
     active.account.fill(0);
+    active.bundleId.fill(0);
     zeroizeUnwrapKey(active.unwrapKey);
     if (this.active === active) this.active = undefined;
   }
 
   private removeStored(): Promise<void> {
-    return this.storageOperation("remove", () => this.storage.remove(UNLOCK_SESSION_STORAGE_KEY));
+    return this.storageOperation("remove", () =>
+      this.storage.remove([
+        UNLOCK_SESSION_STORAGE_KEY,
+        LEGACY_UNLOCK_SESSION_STORAGE_KEY_V1,
+      ]),
+    );
   }
 
   private async verifyStored(active: ActiveUnlockSession): Promise<void> {
@@ -281,6 +315,7 @@ export class UnlockSessionOwner {
       parsed = parseStoredSession(raw);
       if (
         !equalBytes(parsed.account, active.account) ||
+        !equalBytes(parsed.bundleId, active.bundleId) ||
         parsed.unwrapKey.kdf !== active.unwrapKey.kdf ||
         !equalBytes(parsed.unwrapKey.bytes, active.unwrapKey.bytes) ||
         parsed.deadlines.idleExpiresAt !== active.deadlines.idleExpiresAt ||
@@ -290,6 +325,7 @@ export class UnlockSessionOwner {
       }
     } finally {
       parsed?.account.fill(0);
+      parsed?.bundleId.fill(0);
       if (parsed !== undefined) zeroizeUnwrapKey(parsed.unwrapKey);
       scrubStoredArrays(raw);
     }
@@ -297,18 +333,26 @@ export class UnlockSessionOwner {
 
   private async writeAndVerify(
     active: ActiveUnlockSession,
-    stored: StoredUnlockSessionV1,
+    stored: StoredUnlockSessionV2,
     replace: boolean,
   ): Promise<void> {
     try {
-      if (replace) await this.storage.remove(UNLOCK_SESSION_STORAGE_KEY);
+      if (replace) {
+        await this.storage.remove([
+          UNLOCK_SESSION_STORAGE_KEY,
+          LEGACY_UNLOCK_SESSION_STORAGE_KEY_V1,
+        ]);
+      }
       if (active.controller.signal.aborted) return;
       await this.storage.set({ [UNLOCK_SESSION_STORAGE_KEY]: stored });
       if (active.controller.signal.aborted) return;
       await this.verifyStored(active);
     } catch (error) {
       try {
-        await this.storage.remove(UNLOCK_SESSION_STORAGE_KEY);
+        await this.storage.remove([
+          UNLOCK_SESSION_STORAGE_KEY,
+          LEGACY_UNLOCK_SESSION_STORAGE_KEY_V1,
+        ]);
       } catch (cleanupError) {
         throw new AggregateError(
           [error, cleanupError],
@@ -412,48 +456,79 @@ export class UnlockSessionOwner {
     }
   }
 
-  async restore(): Promise<boolean> {
+  async restore(expectedBundleId: Uint8Array): Promise<boolean> {
+    if (
+      !(expectedBundleId instanceof Uint8Array) ||
+      expectedBundleId.length !== KEYRING_BUNDLE_ID_BYTES
+    ) {
+      throw new UnlockSessionFormatError(
+        `expected bundleId must be exactly ${KEYRING_BUNDLE_ID_BYTES} bytes`,
+      );
+    }
+    // Snapshot before the first await so caller mutation cannot retarget a
+    // wake-time restore between persistent-record validation and comparison.
+    const expected = expectedBundleId.slice();
     const generation = ++this.transition;
     this.abortActive();
-    const values = await this.storageOperation("get", () =>
-      this.storage.get(UNLOCK_SESSION_STORAGE_KEY),
-    );
-    const raw = values[UNLOCK_SESSION_STORAGE_KEY];
-    if (raw === undefined) return false;
-
-    let parsed: ReturnType<typeof parseStoredSession> | undefined;
     try {
-      parsed = parseStoredSession(raw);
-      if (this.transition !== generation) {
-        throw new KeyringLockedError("restore unlock session");
-      }
-      const active: ActiveUnlockSession = {
-        ...parsed,
-        controller: new AbortController(),
-        committed: true,
-      };
+      // storage.session should be cleared on extension update, but do not leave
+      // a pre-v2 unwrap-key record behind if a development/profile migration
+      // violates that lifecycle assumption.
+      await this.storageOperation("remove legacy", () =>
+        this.storage.remove(LEGACY_UNLOCK_SESSION_STORAGE_KEY_V1),
+      );
+      const values = await this.storageOperation("get", () =>
+        this.storage.get(UNLOCK_SESSION_STORAGE_KEY),
+      );
+      const raw = values[UNLOCK_SESSION_STORAGE_KEY];
+      let parsed: ReturnType<typeof parseStoredSession> | undefined;
       try {
-        assertUnlockCheck(this.checkFor(active), "restore unlock session");
-      } catch (error) {
-        this.abortActive(active);
-        if (error instanceof KeyringExpiredError) {
+        // A newer lock/unlock/restore may have queued its own storage mutation
+        // while this get was pending. Never enqueue cleanup based on that stale
+        // snapshot: it would run after, and could erase, the newer generation.
+        if (this.transition !== generation) {
+          throw new KeyringLockedError("restore unlock session");
+        }
+        if (raw === undefined) return false;
+        parsed = parseStoredSession(raw);
+        if (!equalBytes(parsed.bundleId, expected)) {
           await this.removeStored();
           return false;
         }
+        if (this.transition !== generation) {
+          throw new KeyringLockedError("restore unlock session");
+        }
+        const active: ActiveUnlockSession = {
+          ...parsed,
+          controller: new AbortController(),
+          committed: true,
+        };
+        try {
+          assertUnlockCheck(this.checkFor(active), "restore unlock session");
+        } catch (error) {
+          this.abortActive(active);
+          if (error instanceof KeyringExpiredError) {
+            await this.removeStored();
+            return false;
+          }
+          throw error;
+        }
+        this.active = active;
+        parsed = undefined;
+        return true;
+      } catch (error) {
+        if (error instanceof UnlockSessionFormatError) {
+          await this.removeStored();
+        }
         throw error;
+      } finally {
+        parsed?.account.fill(0);
+        parsed?.bundleId.fill(0);
+        if (parsed !== undefined) zeroizeUnwrapKey(parsed.unwrapKey);
+        scrubStoredArrays(raw);
       }
-      this.active = active;
-      parsed = undefined;
-      return true;
-    } catch (error) {
-      parsed?.account.fill(0);
-      if (parsed !== undefined) zeroizeUnwrapKey(parsed.unwrapKey);
-      if (error instanceof UnlockSessionFormatError) {
-        await this.removeStored();
-      }
-      throw error;
     } finally {
-      scrubStoredArrays(raw);
+      expected.fill(0);
     }
   }
 
