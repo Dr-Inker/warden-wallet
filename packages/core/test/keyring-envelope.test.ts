@@ -358,3 +358,27 @@ describe("a key use past an unlock deadline is refused (WRD-KEY-03 at the key-us
     ).rejects.toThrow(KeyringExpiredError);
   });
 });
+
+describe("caller-owned byte buffers are snapshotted across WebCrypto awaits", () => {
+  it("seals the plaintext and key state present when the operation starts", async () => {
+    const plaintext = PLAINTEXT.slice();
+    const unwrapKey: KeyringUnwrapKey = { ...KEY, bytes: KEY.bytes.slice() };
+    const pending = sealKeyringEnvelope({ plaintext, unwrapKey, context: CTX });
+    plaintext.fill(0);
+    unwrapKey.bytes.fill(0);
+
+    const envelope = await pending;
+    expect(hex(await openKeyringEnvelope({ envelope, unwrapKey: KEY, context: CTX }))).toBe(hex(PLAINTEXT));
+  });
+
+  it("opens the envelope and key state present when the operation starts", async () => {
+    const envelope = decodeKeyringEnvelope(await independentEnvelope());
+    const unwrapKey: KeyringUnwrapKey = { ...KEY, bytes: KEY.bytes.slice() };
+    const pending = openKeyringEnvelope({ envelope, unwrapKey, context: CTX });
+    envelope.nonce.fill(0);
+    envelope.ciphertext.fill(0);
+    unwrapKey.bytes.fill(0);
+
+    expect(hex(await pending)).toBe(hex(PLAINTEXT));
+  });
+});

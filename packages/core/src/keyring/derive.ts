@@ -1,8 +1,9 @@
 //! Unwrap-key derivation — invariant `WRD-KEY-02` ("no retained password; no
 //! equality-check auth") and the derivation half of C2's two unlock paths.
 //!
-//! Two paths produce the SAME shape of key, and both must be able to open the same
-//! envelope, because the plan is explicit that PRF is an optimization only:
+//! Two paths produce the SAME shape of KEK, and both must be able to recover the
+//! same random DEK and payload ciphertext through `bundle.ts`, because the plan is
+//! explicit that PRF is an optimization only:
 //!
 //!   1. **Argon2id over a password** — always available, the fallback that must never
 //!      stop working.
@@ -12,9 +13,9 @@
 //! ## What "no equality check" means here
 //!
 //! There is no `verifyPassword()` in this module and there must never be one. A
-//! re-authentication is performed by DERIVING a key and letting the AEAD accept or
-//! reject the envelope (`envelope.ts`). Comparing a stored password, a stored hash,
-//! or a stored derived key against a candidate would replace a cryptographic
+//! re-authentication is performed by DERIVING a KEK and letting the authenticated
+//! DEK wrap accept or reject it (`bundle.ts`). Comparing a stored password, a stored
+//! hash, or a stored derived key against a candidate would replace a cryptographic
 //! authentication with a branch — the exact substitution `WRD-KEY-02` forbids, and
 //! the exact branch a fault-injection or a tampered-storage attacker aims at.
 //!
@@ -88,7 +89,7 @@ export interface Argon2idParams {
 /**
  * **PROVISIONAL — UNVERIFIED, pending the C2 benchmark.**
  *
- * 64 MiB / t=3 / p=1 is the RFC 9106 "second recommended option" shape, chosen here
+ * 64 MiB / t=3 / p=4 is the RFC 9106 "second recommended option" shape, chosen here
  * only so that tests and callers have something concrete to pass. It is **not** a
  * measured floor: C2 requires running Argon2id on the slowest supported desktop
  * class, recording memory/time/parallelism plus observed latency, choosing the floor
@@ -98,7 +99,7 @@ export interface Argon2idParams {
 export const PROVISIONAL_ARGON2ID_PARAMS: Argon2idParams = {
   memoryKiB: 64 * 1024,
   timeCost: 3,
-  parallelism: 1,
+  parallelism: 4,
 };
 
 /** Validate Argon2id parameters explicitly. No coercion, no rounding, no defaults. */

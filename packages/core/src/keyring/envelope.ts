@@ -1,8 +1,8 @@
-//! The versioned AES-256-GCM keyring envelope — the storage-side half of invariant
-//! `WRD-KEY-04`. Persistent extension storage holds ONLY the bytes
-//! {@link encodeKeyringEnvelope} produces; never a key, never a password, never a
-//! derived key (that clause of the invariant is enforced by C1's storage layer, not
-//! here — see the C1 note below).
+//! The versioned AES-256-GCM envelope component used by the C2 keyring core.
+//! `bundle.ts` is the intended persistent record: it stores one payload envelope
+//! plus password and PRF wraps of the same random DEK. This module remains public
+//! for strict component encoding and independent interoperability tests; C1 must not
+//! revive the obsolete design of persisting two separately encrypted payloads.
 //!
 //! ## Wire format (v1)
 //!
@@ -44,10 +44,14 @@
 //! its output is stored. Nothing here should be read as enforcing those clauses.
 
 import {
-  KeyringAuthError,
-  KeyringCryptoUnavailableError,
-  KeyringFormatError,
-} from "./errors.js";
+  KEYRING_AES_KEY_BYTES,
+  KEYRING_NONCE_BYTES,
+  KEYRING_TAG_BYTES,
+  MAX_KEYRING_CIPHERTEXT_BYTES,
+  openAead,
+  sealAead,
+} from "./aead.js";
+import { KeyringFormatError } from "./errors.js";
 import { encodeKeyringAad, type KeyringContext } from "./aad.js";
 import { assertUnlocked, type UnlockDeadlines } from "./deadlines.js";
 import type { KeyringUnwrapKey } from "./derive.js";
@@ -56,14 +60,9 @@ import type { KeyringUnwrapKey } from "./derive.js";
 export const KEYRING_ENVELOPE_VERSION_1 = 1;
 /** Every version this build can open. An envelope outside this set is rejected outright. */
 export const SUPPORTED_KEYRING_ENVELOPE_VERSIONS: readonly number[] = [KEYRING_ENVELOPE_VERSION_1];
-/** GCM nonce length in bytes. 12 is mandatory here, not a default. */
-export const KEYRING_NONCE_BYTES = 12;
-/** GCM tag length in bytes (128 bits). Passed explicitly to WebCrypto, never inferred. */
-export const KEYRING_TAG_BYTES = 16;
 /** Unwrap-key length in bytes. AES-256 only; a 128-bit key is refused. */
-export const KEYRING_UNWRAP_KEY_BYTES = 32;
-/** Sanity cap on a sealed record. A keyring is small; anything larger is a bug or an attack. */
-export const MAX_KEYRING_CIPHERTEXT_BYTES = 64 * 1024;
+export const KEYRING_UNWRAP_KEY_BYTES = KEYRING_AES_KEY_BYTES;
+export { KEYRING_NONCE_BYTES, KEYRING_TAG_BYTES, MAX_KEYRING_CIPHERTEXT_BYTES } from "./aead.js";
 
 /** A parsed keyring envelope. `ciphertext` is the GCM output, i.e. `ct ‖ tag`. */
 export interface KeyringEnvelope {
@@ -82,35 +81,7 @@ export interface UnlockCheck {
   readonly now: number;
 }
 
-function subtle(): SubtleCrypto {
-  const c = globalThis.crypto;
-  if (c === undefined || c.subtle === undefined) {
-    throw new KeyringCryptoUnavailableError("WebCrypto (crypto.subtle) is unavailable; refusing to continue");
-  }
-  return c.subtle;
-}
-
-function randomBytes(n: number): Uint8Array {
-  const c = globalThis.crypto;
-  if (c === undefined || typeof c.getRandomValues !== "function") {
-    throw new KeyringCryptoUnavailableError("crypto.getRandomValues is unavailable; refusing to generate a nonce");
-  }
-  return c.getRandomValues(new Uint8Array(n));
-}
-
-/** Import raw unwrap-key bytes as a NON-EXTRACTABLE AES-GCM `CryptoKey`. */
-async function importUnwrapKey(key: KeyringUnwrapKey, usage: "encrypt" | "decrypt"): Promise<CryptoKey> {
-  if (!(key.bytes instanceof Uint8Array)) throw new KeyringFormatError("unwrap key bytes must be a Uint8Array");
-  if (key.bytes.length !== KEYRING_UNWRAP_KEY_BYTES) {
-    throw new KeyringFormatError(
-      `unwrap key must be exactly ${KEYRING_UNWRAP_KEY_BYTES} bytes (AES-256), got ${key.bytes.length}`,
-    );
-  }
-  // `extractable: false` — once imported, the browser will not hand the bytes back.
-  return subtle().importKey("raw", key.bytes as unknown as BufferSource, { name: "AES-GCM" }, false, [usage]);
-}
-
-/** Serialize an envelope to the exact bytes persistent storage holds. */
+/** Serialize one envelope component to its canonical bytes. */
 export function encodeKeyringEnvelope(envelope: KeyringEnvelope): Uint8Array {
   const { version, nonce, ciphertext } = envelope;
   if (!Number.isInteger(version) || version < 0 || version > 0xffff) {
@@ -214,21 +185,13 @@ export async function sealKeyringEnvelope(params: SealParams): Promise<KeyringEn
     throw new KeyringFormatError(`plaintext of ${params.plaintext.length} bytes exceeds the envelope cap`);
   }
   const aad = encodeKeyringAad(params.context, version);
-  const key = await importUnwrapKey(params.unwrapKey, "encrypt");
-  const nonce = randomBytes(KEYRING_NONCE_BYTES);
-  const ct = new Uint8Array(
-    await subtle().encrypt(
-      {
-        name: "AES-GCM",
-        iv: nonce as unknown as BufferSource,
-        additionalData: aad as unknown as BufferSource,
-        tagLength: KEYRING_TAG_BYTES * 8,
-      },
-      key,
-      params.plaintext as unknown as BufferSource,
-    ),
-  );
-  return { version, nonce, ciphertext: ct };
+  const sealed = await sealAead({
+    plaintext: params.plaintext,
+    keyBytes: params.unwrapKey.bytes,
+    keyName: "unwrap key",
+    aad,
+  });
+  return { version, ...sealed };
 }
 
 /** Arguments to {@link openKeyringEnvelope}. */
@@ -277,22 +240,11 @@ export async function openKeyringEnvelope(params: OpenParams): Promise<Uint8Arra
   // never read out of the envelope. That is what makes a transplanted envelope fail:
   // the attacker controls the stored bytes, but not the context we rebuild from.
   const aad = encodeKeyringAad(params.context, envelope.version);
-  const key = await importUnwrapKey(params.unwrapKey, "decrypt");
-  try {
-    const pt = await subtle().decrypt(
-      {
-        name: "AES-GCM",
-        iv: envelope.nonce as unknown as BufferSource,
-        additionalData: aad as unknown as BufferSource,
-        tagLength: KEYRING_TAG_BYTES * 8,
-      },
-      key,
-      envelope.ciphertext as unknown as BufferSource,
-    );
-    return new Uint8Array(pt);
-  } catch {
-    // Collapse every WebCrypto failure into one indistinguishable error: the reason
-    // an AEAD rejected is exactly the thing an attacker wants an oracle for.
-    throw new KeyringAuthError();
-  }
+  return openAead({
+    nonce: envelope.nonce,
+    ciphertext: envelope.ciphertext,
+    keyBytes: params.unwrapKey.bytes,
+    keyName: "unwrap key",
+    aad,
+  });
 }

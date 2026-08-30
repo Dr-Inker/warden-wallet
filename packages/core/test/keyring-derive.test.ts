@@ -17,9 +17,10 @@ import {
 import { keyringPrfInfo, type KeyringContext } from "../src/keyring/aad.js";
 import { KeyringAuthError, KeyringFormatError } from "../src/keyring/errors.js";
 import { openKeyringEnvelope, sealKeyringEnvelope } from "../src/keyring/envelope.js";
+import { openKeyringBundle, sealKeyringBundle } from "../src/keyring/bundle.js";
 
-// Unwrap-key derivation (WRD-KEY-02) — both unlock paths must open the SAME envelope,
-// because the plan makes PRF an optimization and Argon2id the path that must always work.
+// Unwrap-key derivation (WRD-KEY-02) — both unlock paths must recover the SAME DEK
+// and payload ciphertext, because PRF is only an optimization and Argon2id must work.
 //
 // Cost parameters here are deliberately tiny: these tests pin the PLUMBING (that our
 // wrapper passes exactly the parameters it was handed, with no silent substitution),
@@ -85,6 +86,8 @@ describe("Argon2id, pinned against the library rather than against ourselves", (
     // measured floor and nothing in this suite treats it as one.
     expect(() => assertValidArgon2idParams(PROVISIONAL_ARGON2ID_PARAMS)).not.toThrow();
     expect(PROVISIONAL_ARGON2ID_PARAMS.memoryKiB).toBe(64 * 1024);
+    expect(PROVISIONAL_ARGON2ID_PARAMS.timeCost).toBe(3);
+    expect(PROVISIONAL_ARGON2ID_PARAMS.parallelism).toBe(4);
   });
 
   it("rejects invalid parameters and short salts rather than clamping them", () => {
@@ -185,21 +188,16 @@ describe("PRF path (interface level; acquiring the PRF secret is C1 and unimplem
   });
 });
 
-describe("both unlock paths open the SAME envelope (PRF is an optimization, never the only way)", () => {
-  it("a PRF-derived key opens what a PRF-derived key sealed, and the password path still exists for the same context", async () => {
+describe("both unlock paths recover the SAME bundle payload (PRF is never the only way)", () => {
+  it("independently derived password and PRF KEKs unwrap one payload ciphertext", async () => {
     const prfKey = deriveUnwrapKeyFromPrfForContext(fill(32, 0x6d), fill(16, 0x44), CTX);
     const pwKey = deriveUnwrapKeyFromPassword("pw", SALT, FAST);
     const secret = fill(64, 0xc3);
 
-    const sealedWithPrf = await sealKeyringEnvelope({ plaintext: secret, unwrapKey: prfKey, context: CTX });
-    expect(hex(await openKeyringEnvelope({ envelope: sealedWithPrf, unwrapKey: prfKey, context: CTX }))).toBe(hex(secret));
-    // Distinct unwrap keys, so cross-opening must fail — the two paths are two wrappings
-    // of the same secret (C1 stores both), NOT one key derived two ways.
-    await expect(openKeyringEnvelope({ envelope: sealedWithPrf, unwrapKey: pwKey, context: CTX })).rejects.toThrow(
-      KeyringAuthError,
-    );
-
-    const sealedWithPw = await sealKeyringEnvelope({ plaintext: secret, unwrapKey: pwKey, context: CTX });
-    expect(hex(await openKeyringEnvelope({ envelope: sealedWithPw, unwrapKey: pwKey, context: CTX }))).toBe(hex(secret));
+    const bundle = await sealKeyringBundle({ plaintext: secret, passwordKey: pwKey, prfKey, context: CTX });
+    const payloadCiphertext = hex(bundle.payload.ciphertext);
+    expect(hex(await openKeyringBundle({ bundle, unwrapKey: pwKey, context: CTX }))).toBe(hex(secret));
+    expect(hex(await openKeyringBundle({ bundle, unwrapKey: prfKey, context: CTX }))).toBe(hex(secret));
+    expect(hex(bundle.payload.ciphertext)).toBe(payloadCiphertext);
   });
 });
