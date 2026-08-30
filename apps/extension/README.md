@@ -18,20 +18,26 @@ This is a pre-alpha development extension. It must not be used with real funds.
 
 The background recognizes one canonical encrypted keyring record under
 `warden.keyring-record.v1` in `chrome.storage.local`. The adapter validates the
-strict core record before a write, serializes calls through that adapter, writes
-only that property, and requires exact readback after replace or clear. Startup
-does not restore session material until this persistent value is present and
-well formed; absence removes the session without parsing it, while corruption
-removes the session and rejects readiness.
+strict self-contained binary record v2 before a write, serializes calls through
+that adapter, writes only that property, and requires exact readback after replace
+or clear. The stable property name is not the binary format version. Record v2
+stores the complete public account/origin/key-kind/schema/genesis/program context
+in canonical bounded bytes. Core record v1 remains available to explicit
+migration tooling, but this extension refuses it and currently has no migration
+workflow. Startup does not restore session material until the persistent value is
+present and well formed; absence removes the session without parsing it, while
+corruption removes the session and rejects readiness.
 
 The ephemeral session schema is v2 and stores the public 16-byte bundle id next
 to the account, unwrap key, and deadlines. Wake-time restoration snapshots the
 id decoded from the current persistent record and removes a live, well-formed
-session if its id differs. The obsolete v1 session-storage slot is removed
-before restore, so a format bump does not strand old unwrap-key bytes. This
-binds ordinary record replacement to session revocation; it is not a hash of
-every persistent ciphertext byte and does not authenticate browser storage by
-itself.
+session if its id differs. An id match is only routing: the restored KEK must
+open the exact current record, the plaintext must pass the strict signer schema,
+the account/bundle must match, and exact persistent readback must remain stable
+before readiness reports a restored session. The obsolete v1 session-storage
+slot is removed before restore, so a format bump does not strand old unwrap-key
+bytes. This does not authenticate locked browser storage or provide freshness by
+itself; context becomes authenticated only through successful record opening.
 
 The worker registers `chrome.storage.onChanged` synchronously during top-level
 startup, before any readiness promise settles. Any `local`-area change that
@@ -49,14 +55,18 @@ The background exposes one composed lifecycle owner rather than the raw record
 adapter or raw session owner. Its replace and clear operations synchronously
 revoke live and pending leases before changing the persistent record. Internal
 password activation consumes the caller's byte buffer, derives a KEK from the
-record's bounded Argon2 metadata, authenticates that exact record and context,
-and rejects unless its plaintext is exactly the v1 32-byte Ed25519 seed. Only
+record's bounded Argon2 metadata, authenticates that exact record and its stored
+context, and rejects unless its plaintext is exactly the v1 32-byte Ed25519
+seed. The acceptable origin is derived from `chrome.runtime.id`; callers cannot
+resupply account/origin/genesis/program context. Only
 the account, public bundle id, KEK, and absolute deadlines enter the ephemeral
 session; the seed does not. A local-only signer use reloads the exact record,
-authenticates it with the session KEK and supplied account/origin/genesis/program
-context, lends isolated account/seed buffers to one callback, rechecks the
-record and deadline after the callback, and overwrites the lease and any
-suppressed result on lock, expiry, inconsistency, or failure.
+authenticates it with the session KEK and record-owned context, lends isolated
+account/seed buffers to one callback, rechecks the record and deadline after the
+callback, and overwrites the lease and any suppressed result on lock, expiry,
+inconsistency, or failure. A frozen readiness facade exposes no raw owner/gate
+properties and refuses every lifecycle operation until trusted-storage setup and
+wake restoration settle.
 
 This is an internal trust boundary, not a wallet method. The callback is
 explicitly forbidden from sending or committing an irreversible side effect

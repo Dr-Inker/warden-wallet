@@ -1,5 +1,84 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C2 SELF-CONTAINED CONTEXT + AUTHENTICATED WAKE — INTERNAL BOUNDARY HARDENED, WALLET STILL OPEN
+>
+> Implementation commit `8653fed0b922e37a3998e96ca3f33f686daeeba7`
+> removes caller-selected account/cluster/program context from normal extension
+> unlock and signer use. The first contracts were genuinely red before
+> implementation. `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/core exec vitest run test/keyring-record-v2.test.ts` exited **1** with
+> **3 failures / 0 passes** because the record did not own a context. `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> vitest run test/keyring-context-ownership.test.ts` exited **1** with **2
+> failures / 0 passes** because the lifecycle still required caller context.
+> A later harsh-review contract, `env npm_config_cache=/tmp/warden-npm-cache
+> pnpm --filter @warden/extension exec vitest run
+> test/keyring-lifecycle.test.ts test/runtime.test.ts`, exited **1** with **2
+> failures / 25 passes**: wake restore accepted a context-tampered record on a
+> public bundle-id match, and the supposedly hidden readiness facade exposed
+> own `owner` and `gate` properties at JavaScript runtime.
+>
+> Core record v2 now embeds a strict canonical copy of all six public AAD fields
+> beside the bounded KDF metadata. Those bytes participate in both outer-record
+> binding and bundle AEAD, so a successful open authenticates the context; merely
+> parsing locked storage does not. Record v2 rejects a caller-supplied context.
+> The parser bounds the length before decoding, requires canonical keyring AAD
+> for bundle v1, rejects truncation/version lies, and returns copy-owned fields.
+> Record v1 remains core-decodable/openable only when explicit migration tooling
+> supplies its legacy context; the extension refuses v1. There is no migration
+> UI or shipped-record population, which is acceptable only while this remains a
+> pre-alpha development extension.
+>
+> The extension derives the one acceptable origin from browser-owned
+> `chrome.runtime.id` and requires its exact `chrome-extension://<id>` spelling;
+> account, genesis hash, program id, key kind, and schema come only from record
+> v2. Startup treats bundle-id equality as routing, not authentication: after
+> restoring the KEK it opens the exact current record, validates the strict
+> 32-byte session-signer payload, verifies account/bundle identity and exact
+> persistent readback, and only then resolves readiness as restored. Any failure
+> locks and removes session material. The public lifecycle is frozen and stores
+> its owner/readiness gate in ECMAScript private fields; pre-ready calls reject,
+> and pre-ready password bytes are overwritten synchronously.
+>
+> This follows Chrome's current primary documentation that runtime IDs are
+> extension identifiers and extension resources use
+> `chrome-extension://<extension-id>` origins, while storage access restriction
+> and change notification remain browser storage controls rather than a CAS or
+> authenticity primitive:
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/network-requests>,
+> <https://developer.chrome.com/docs/extensions/reference/api/storage/>.
+>
+> Exact-SHA focused evidence at
+> `8653fed0b922e37a3998e96ca3f33f686daeeba7`: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test` →
+> **444/444**, exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension test` → **239/239**, exit **0**; both package
+> `typecheck` commands exited **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build`
+> exited **0** with background/content/popup bundles of **147,880 / 8,269 /
+> 3,229 bytes**; and `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension test:browser` → **1/1**, exit **0**. The browser lane proves
+> real runtime-origin-compatible records, worker wake mismatch cleanup, and live
+> record-change cleanup; authenticated wake-open remains a deterministic unit
+> measurement, not a real-browser password ceremony. These are implementation
+> lanes, not the repository deploy gate. Run `env
+> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh` on the final
+> ledger-inclusive SHA before claiming this loop boundary green.
+>
+> **Do not promote `WRD-KEY-02`, `WRD-KEY-03`, or `WRD-KEY-04`.** There is still
+> no browser-reachable creation/unlock/sign flow, authoritative account registry,
+> on-chain proof that the seed matches a current session grant, approval owner,
+> transaction/RPC consumer, production Argon2 benchmark/floor or attempt policy,
+> PRF real-device matrix, v1 migration, or real-key browser vector. A callback
+> can copy a seed or perform an irreversible side effect contrary to its contract;
+> JavaScript overwrite is best effort. Chrome supplies no transaction/CAS,
+> authenticated freshness, rollback, or durability guarantee; whole valid
+> same-context records remain replayable, and cleanup rejection can retain KEK
+> bytes. Production build-ID freeze versus authenticated origin migration remains
+> the unresolved `WRD-ORG-01` owner decision. Independent second-model review
+> remains **UNVERIFIED**.
+
 > ## 2026-08-30 C2 AUTHENTICATED SESSION-SIGNER ACTIVATION — INTERNAL PATH LIVE, WALLET STILL OPEN
 >
 > Implementation commit `bddb0ccbab2aa55780b132fd1528b03a297e2124`

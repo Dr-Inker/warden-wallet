@@ -604,3 +604,60 @@ self-write change event can conservatively revoke a later unlock, and future
 privileged handlers must await the runtime readiness/fatal health gates. Cleanup
 rejection can retain browser-owned KEK bytes. Independent second-model review
 remains UNVERIFIED.
+
+---
+
+## Client C2 self-contained context and authenticated wake restore — 8653fed — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** canonical keyring record v2 stores the complete public
+account/origin/key-kind/schema/genesis/program context in its one bounded binary
+record. The extension accepts only that record version and derives the permitted
+origin from browser-owned `chrome.runtime.id`; normal unlock and use callers no
+longer select context. The public background lifecycle is a frozen readiness
+facade whose owner and gate are ECMAScript-private. These changes add no page,
+popup, provider method, account registry, signature, approval, RPC, permission,
+or network request. The existing local property name remains
+`warden.keyring-record.v1`; that stable slot name is not the binary record
+version.
+
+**Removed / narrowed:** record-v2 context bytes are canonical, length-bounded,
+copy-owned, and authenticated both by the outer record binding and bundle AEAD.
+A locked parse exposes public routing metadata but does not claim it is authentic;
+successful password/PRF/retained-KEK open supplies that proof. Record v2 rejects
+caller context, while core record v1 is available only to explicit legacy
+migration calls and the extension refuses it. Wake restore no longer treats the
+public bundle id as sufficient: before readiness resolves true, the retained KEK
+must open the exact current record under its runtime-origin-checked context, the
+plaintext must decode as the strict session-signer schema, session account/bundle
+copies must match, deadlines must remain live, and exact persistent readback must
+still match. Failure revokes memory and removes serialized session material.
+Pre-ready lifecycle calls reject without reading keyring storage, and a pre-ready
+password buffer is overwritten synchronously. Unit regressions measure metadata
+tamper, wrong runtime origin, v1 refusal, parser length/version/truncation, valid
+authenticated wake, readiness isolation, and cleanup. Chromium measures an actual
+extension-id-compatible record plus wake mismatch and live change cleanup; it does
+not perform password authentication.
+
+Chrome primary references for the platform facts are
+<https://developer.chrome.com/docs/extensions/reference/api/runtime>,
+<https://developer.chrome.com/docs/extensions/develop/concepts/network-requests>,
+and <https://developer.chrome.com/docs/extensions/reference/api/storage/>.
+
+**New invariants:** none promoted. `WRD-KEY-02`, `WRD-KEY-03`, and
+`WRD-KEY-04` remain `unimplemented`; this hardens internal ownership and wake
+authentication but does not satisfy their browser-reachable compound product
+requirements.
+
+**Residual, stated honestly:** there is no creation/onboarding, v1 migration,
+browser password/passkey ceremony, production Argon2 benchmark/floor or attempt
+policy, PRF device matrix, authoritative account registry, on-chain session-grant
+match, approval owner, signer/send/RPC consumer, or real-key browser vector.
+Record metadata is public and untrusted until a successful open. Core migration
+support has no safe product workflow. Runtime-origin checking does not decide the
+production extension-ID freeze versus authenticated migration required by
+`WRD-ORG-01`. A local callback can copy a seed or create an irreversible side
+effect before post-use checks; JavaScript clearing is best effort. Chrome storage
+still provides no transaction/CAS, authenticated freshness/event, rollback, or
+durability proof; valid same-context record replay and cleanup-retained KEK bytes
+remain possible. A delayed self-write event may conservatively revoke a later
+unlock. Independent second-model review remains UNVERIFIED.
