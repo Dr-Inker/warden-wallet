@@ -712,3 +712,58 @@ There is still no browser creation/unlock/re-prompt flow, PRF real-device matrix
 authoritative account registry, on-chain session-grant match, approval/RPC/signer
 consumer, or real-key browser vector. Independent second-model review remains
 UNVERIFIED.
+
+---
+
+## Client C3 transactional approval-record substrate — c3be2c1 — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** core now exports a browser-safe strict approval-record
+domain, and the extension source contains an internal approval owner plus a native
+IndexedDB repository. One dedicated version-1 database has one `approvals` object
+store keyed by a background-minted 128-bit id. Records retain public provenance,
+authority, exact serialized message bytes, a recomputed SHA-256 digest, policy
+version, bounded timestamps, and terminal state. Live pending records are capped
+at 32, total retained records at 128, lifetimes at ten minutes, and terminal
+tombstones at ten minutes. The module is not instantiated by the shipped
+background, is tree-shaken from its bundle, and adds no manifest permission,
+host access, network request, CSP relaxation, page, or message method. Trusted
+same-extension contexts share its IndexedDB origin.
+
+**Removed / narrowed:** every create, expiry read, terminal transition, and
+startup invalidation is one `readwrite` transaction over that one object store.
+Overlapping transactions serialize, so independent extension contexts cannot
+both change one pending record to different terminal states. Creation uses
+`add`, preventing overwrite. Every persistence boundary strictly validates and
+copy-owns the record and recomputes the message digest. A wrong expected digest
+atomically invalidates the record; malformed stored data is deleted; the exact
+deadline expires; a backwards clock deletes pending authority; and worker
+startup cancels, never restores, unexpired pending records whose Port died. A
+temporary real MV3 extension measures two independent database connections,
+approve/reject and double-approve races, returned-buffer mutation, identical
+payload independence, direct raw-byte tamper, wrong-digest retry, exact expiry,
+and forced service-worker stop/wake. Primary platform bases are Chrome's service
+worker lifecycle and storage documentation and the IndexedDB atomicity and
+transaction-scheduling specification:
+<https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+<https://developer.chrome.com/docs/extensions/reference/api/storage/>, and
+<https://www.w3.org/TR/IndexedDB/>.
+
+**New invariants:** none promoted. `WRD-APR-01`, `WRD-APR-02`, and
+`WRD-APR-03` remain `unimplemented`. This is a tested persistence and record
+primitive, not a browser-reachable approval-to-signature product.
+
+**Residual, stated honestly:** `startBackground()` does not construct this owner,
+and no provider, popup, or approval page can reach it. There is no authoritative
+account/network/policy registry, exact-byte intent decoder, UI, current-state
+comparison, signer, RPC, navigation cancellation, root ceremony, nonce consumer,
+or signed-result replay. The SHA-256 binds only the raw message; it is not a MAC
+over origin/account/network/policy metadata, which remains trusted-background
+state and must be rechecked against current authority immediately before future
+signing. Transitioning to `approved` before a future signature prevents a second
+claim but makes a crash lose availability. Short tombstones and random ids bound
+ordinary replay rather than proving indefinite non-reuse. IndexedDB strict
+durability is only a browser hint; browser, process, host, disk, rollback, and
+malicious-trusted-context failure remain outside the measurement. The browser
+lane kills one MV3 worker on one Chrome build, not the browser or host, and no
+Chrome-floor/Brave/disk-corruption matrix exists. Independent second-model review
+remains UNVERIFIED.

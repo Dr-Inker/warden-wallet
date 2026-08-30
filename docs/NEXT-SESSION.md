@@ -1,5 +1,87 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C3 TRANSACTIONAL APPROVAL-RECORD SUBSTRATE — REAL IDB RACE GREEN, WALLET STILL CLOSED
+>
+> Implementation commit `c3be2c1b248cee4bc1e99a2e0701207031a1487b`
+> adds a strict core approval-record domain plus an internal extension owner and
+> native IndexedDB repository. The first contracts were genuinely red. `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest
+> run test/approval-record.test.ts` exited **1** before collection because
+> `../src/approval/index.js` did not exist; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> vitest run test/approval-owner.test.ts` exited **1** because
+> `@warden/core/approval` did not exist; and, after building core, `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> playwright test -c playwright.config.ts browser/approval-idb.pw.ts` exited
+> **1** because `approval-store.js` did not exist.
+>
+> The closed record schema owns a background-minted 128-bit request id;
+> canonical browser-owned HTTP(S) origin; tab, frame, and document identity;
+> authoritative 32-byte account; exact method; explicit cluster, genesis hash,
+> and program id; 1–1232 exact message bytes and their recomputed SHA-256;
+> policy version; creation/expiry; and pending or one terminal state. Every byte
+> field is copied at every domain/repository boundary. Lifetimes are positive
+> and at most ten minutes. Pending records have no resolution time; non-expiry
+> terminal states must precede expiry; expiry can occur only at or after it.
+> Unknown fields, aliases, ambiguous origins, digest tamper, and inconsistent
+> state/time combinations fail closed.
+>
+> One IndexedDB database/version/object store owns create, read-with-expiry,
+> decision, and worker-start invalidation. Each check-and-set is one strict-
+> durability `readwrite` transaction over the same store; overlapping scopes
+> serialize. `add`, never `put`, creates ids. Exactly one pending-to-terminal
+> decision wins. A wrong signing digest atomically changes the record to
+> `invalidated`; a later correct retry cannot revive it. The exact deadline
+> changes pending to `expired`. Malformed records are deleted. A clock moving
+> before pending creation deletes rather than extends authority. Startup expires
+> elapsed records and cancels every other pending record because its originating
+> Port died. The store caps live pending records at 32 and all retained records
+> at 128, and prunes ten-minute terminal tombstones.
+>
+> The real-Chromium contract bundles this same repository into a temporary MV3
+> extension. It opens two independent database connections and proves one winner
+> for approve/reject and approve/approve races; mutation of both caller input and
+> returned typed arrays cannot change storage; two byte-identical dApp payloads
+> under distinct ids remain independent; raw-message tamper is rejected and
+> deleted; wrong-digest and exact-expiry paths are terminal; and killing the
+> worker through CDP, waking it from an extension page, and observing a fresh
+> execution global cancels the sole pending record. This follows Chrome's MV3
+> requirement to persist important state across worker termination, Chrome's
+> documentation that IndexedDB is available in extension workers, and the
+> IndexedDB specification's atomic commit/rollback and serialization of
+> overlapping read/write scopes:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+> <https://developer.chrome.com/docs/extensions/reference/api/storage/>, and
+> <https://www.w3.org/TR/IndexedDB/>.
+>
+> Exact-SHA focused evidence at `c3be2c1b248cee4bc1e99a2e0701207031a1487b`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test`
+> → **451/451**, exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension test` → **244/244**, exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core build` and
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> typecheck` both exited **0**; and `env npm_config_cache=/tmp/warden-npm-cache
+> pnpm --filter @warden/extension exec playwright test -c playwright.config.ts
+> browser/approval-idb.pw.ts` → **1/1**, exit **0**.
+>
+> **Do not promote `WRD-APR-01`, `WRD-APR-02`, or `WRD-APR-03`.** This substrate
+> is deliberately not instantiated by `startBackground()` and is tree-shaken
+> from the shipped bundle. No provider or popup route can create, view, or decide
+> an approval. There is no authoritative account/network/policy registry,
+> approval page, exact-byte decoder, signer, RPC, navigation cancellation, root
+> ceremony, or durable signed-result replay. The raw-message digest does not MAC
+> the other public record fields; those remain trusted-background data and a
+> future signer must compare account, network, policy, and exact bytes against
+> current authority immediately before use. Marking `approved` consumes the
+> request before any future signature, so a crash is fail-closed but currently
+> loses availability. IndexedDB `durability: "strict"` is a hint, not proof
+> against browser/process/disk failure; terminal tombstones are bounded, and all
+> trusted same-extension contexts share the database. The browser lane kills a
+> worker, not the entire browser or host, and it is not a Chrome/Brave/version or
+> disk-corruption matrix. Independent second-model review remains **UNVERIFIED**.
+> Run `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh` on
+> the final ledger-inclusive SHA before calling this loop boundary green.
+
 > ## 2026-08-30 C2 ARGON2 HOST RESPONSIVENESS + REVOCATION — BROWSER GATE LIVE, PRODUCT FLOOR OPEN
 >
 > Implementation commit `125ad761b3af1879f42fa13135e5a07d57721223`
