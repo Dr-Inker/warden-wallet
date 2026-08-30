@@ -60,7 +60,7 @@ export function sha256File(absPath) {
 // reviewed edit here; the drift guard asserts this set matches the closure's real externals.
 export const PERMITTED_EXTERNAL = new Set([
   "@solana/web3.js",
-  "@noble/hashes/sha2",
+  "@noble/hashes/sha2.js",
   "node:fs",
   "node:url", // fileURLToPath, to resolve the committed hash-pinned Jupiter IDL (WRDF-0095)
 ]);

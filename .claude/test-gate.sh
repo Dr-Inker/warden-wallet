@@ -24,6 +24,14 @@ fi
 pnpm --filter @warden/core build
 pnpm --filter @warden/extension typecheck
 pnpm --filter @warden/extension build
+# A Node event-loop check is insufficient here: Chromium's scheduler.yield()
+# continuations outrank ordinary queued tasks unless the KDF originates in a
+# background postTask. Exercise the exact provisional RFC-profile Argon2 path in
+# a real MV3 worker, verify a delayed host task runs before completion, and prove
+# signal revocation rejects and wipes the caller-owned password buffer. This is a
+# responsiveness/cancellation gate, not evidence that the provisional cost is a
+# measured product floor on the slowest supported device.
+pnpm --filter @warden/extension bench:argon2
 # Unit mocks cannot establish Chrome-owned MessageSender provenance, frame
 # isolation, navigation teardown, or MV3 stop/wake behavior. This shipped-code
 # lane rebuilds the unpacked extension, runs it in Chromium, closes the live

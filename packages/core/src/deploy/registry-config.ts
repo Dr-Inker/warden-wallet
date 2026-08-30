@@ -12,7 +12,7 @@
 //! deploy verifier's attested source closure (WRD-DEP-01).
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { sha256 } from "@noble/hashes/sha2";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { anchorInstructionSighash, type DecodedRegistry } from "./accounts.js";
 
 // The committed, hash-pinned Jupiter v6 IDL (fetched from jup-ag/jupiter-cpi). The deploy

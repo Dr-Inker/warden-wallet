@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { sha256 } from "@noble/hashes/sha2";
-import { randomBytes } from "@noble/hashes/utils";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { randomBytes } from "@noble/hashes/utils.js";
 import { p256 } from "@noble/curves/nist";
 import {
   assertionToCompact,

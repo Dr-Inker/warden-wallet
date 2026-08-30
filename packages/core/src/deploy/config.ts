@@ -13,7 +13,7 @@
 //! (DEPLOY-GATE.md). Editing these is a governance change and must be reviewed.
 
 import { PublicKey } from "@solana/web3.js";
-import { sha256 } from "@noble/hashes/sha2";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 /** Squads v4 member permission bits (Squads Protocol v4 `Permissions`). */
 export const PERMISSION_INITIATE = 1 << 0; // propose

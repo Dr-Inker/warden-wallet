@@ -7,7 +7,7 @@
 //! bytes throw, they never return a partial or guessed value.
 
 import { PublicKey } from "@solana/web3.js";
-import { sha256 } from "@noble/hashes/sha2";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 /** A minimal on-chain account, as an RPC readback yields it. */
 export interface RpcAccount {

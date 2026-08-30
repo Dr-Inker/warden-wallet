@@ -63,8 +63,12 @@
 //! Nor does a returned `Uint8Array` become magically revocable. Each async layer
 //! re-checks before releasing its result to its caller, but the final consumer must
 //! re-check this same authority immediately before sign/decrypt/export and must own
-//! clearing any material it retains. WebCrypto has no `AbortSignal` parameter, and a
-//! synchronous Argon2 call cannot process an event-loop abort until it returns.
+//! clearing any material it retains. WebCrypto has no `AbortSignal` parameter. The
+//! production password-record paths run the host-yielding Argon2 driver inside a
+//! cancellable background `scheduler.postTask` where that browser API exists. Its
+//! continuations inherit the signal and cleanly unwind on lock. On timer-fallback
+//! hosts, lock still promptly wipes the JS-owned password copy and suppresses the
+//! result, but the initialized matrix may run to normal completion and cleanup.
 
 import {
   KeyringExpiredError,

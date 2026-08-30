@@ -9,6 +9,7 @@ import {
   encodeKeyringRecordStorageValue,
   encodeSessionSignerPayload,
   sealKeyringRecord,
+  type Argon2idParams,
   type KeyringContext,
   type UnlockPolicy,
 } from "@warden/core/keyring";
@@ -111,12 +112,17 @@ async function record(
   seed: Uint8Array = SEED,
   password: Uint8Array = PASSWORD,
   context: KeyringContext = CONTEXT,
+  argon2idParams: Argon2idParams = {
+    memoryKiB: 64,
+    timeCost: 1,
+    parallelism: 1,
+  },
 ): Promise<string> {
   const sealed = await sealKeyringRecord({
     metadata: {
       version: 2,
       argon2id: {
-        params: { memoryKiB: 64, timeCost: 1, parallelism: 1 },
+        params: argon2idParams,
         salt: fill(16, 0x71),
       },
       prf: null,
@@ -354,6 +360,74 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     await expect(staleUnlock).rejects.toThrow(KeyringLockedError);
     await replacing;
     expect(local.value).toBe(second);
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it("lets an explicit lock host task revoke an Argon2 derivation before activation", async () => {
+    const slowEnoughToYield = {
+      memoryKiB: 4 * 1024,
+      timeCost: 1,
+      parallelism: 1,
+    } as const;
+    const local = new LocalStorage(
+      await record(SEED, PASSWORD, CONTEXT, slowEnoughToYield),
+    );
+    const { lifecycle, session } = owner(local);
+    const lockFinished = gate();
+    let lockTaskRan = false;
+    let scheduled = false;
+    local.getHook = async (key) => {
+      if (!scheduled) {
+        scheduled = true;
+        setTimeout(() => {
+          lockTaskRan = true;
+          void lifecycle.lock().then(lockFinished.release);
+        }, 0);
+      }
+      return { [key]: local.value };
+    };
+    const password = PASSWORD.slice();
+
+    const unlocking = lifecycle.unlockWithPassword({
+      passwordBytes: password,
+      policy: POLICY,
+    });
+    expect(Array.from(password)).toEqual(new Array(password.length).fill(0));
+
+    await expect(unlocking).rejects.toThrow(KeyringLockedError);
+    await lockFinished.promise;
+    expect(lockTaskRan).toBe(true);
+    expect(await lifecycle.isUnlocked()).toBe(false);
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it("fails closed when startup restore races an unlock that already serialized a session", async () => {
+    const local = new LocalStorage(await record());
+    const { lifecycle, session } = owner(local);
+    const finalUnlockRead = gate();
+    const finalUnlockReadStarted = gate();
+    let reads = 0;
+    local.getHook = async (key) => {
+      reads++;
+      if (reads === 3) {
+        finalUnlockReadStarted.release();
+        await finalUnlockRead.promise;
+      }
+      return { [key]: local.value };
+    };
+    const unlocking = lifecycle.unlockWithPassword({
+      passwordBytes: PASSWORD.slice(),
+      policy: POLICY,
+    });
+    await finalUnlockReadStarted.promise;
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeDefined();
+
+    const restoring = lifecycle.restore();
+    finalUnlockRead.release();
+
+    await expect(unlocking).rejects.toThrow(KeyringLockedError);
+    await expect(restoring).resolves.toBe(false);
+    expect(await lifecycle.isUnlocked()).toBe(false);
     expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
   });
 

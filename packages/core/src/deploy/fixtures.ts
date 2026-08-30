@@ -6,7 +6,7 @@
 //! written only by the `gen-deploy-fixtures` maintenance script.
 
 import { PublicKey } from "@solana/web3.js";
-import { sha256 } from "@noble/hashes/sha2";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { type RpcAccount } from "./accounts.js";
 import { BPF_UPGRADEABLE_LOADER, DEFAULT_PUBKEY, MAINNET_GENESIS_HASH, PERMISSION_ALL, SYNTHETIC_PIN, type DeployPinConfig, type PinnedMember } from "./config.js";
 import { deriveRegistryPda, type RpcSource } from "./gate.js";

@@ -24,7 +24,7 @@
 //! remaining_accounts[k]`. The client builds and hashes the SAME list; it never
 //! indexes a physical account slice.
 
-import { keccak_256 } from "@noble/hashes/sha3";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 
 /** `flags` bit 0 — the account signs the inner instruction. */
 export const FLAG_SIGNER = 1 << 0;

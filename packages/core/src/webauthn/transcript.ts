@@ -50,7 +50,7 @@
  * domain separator, not a verified genesis binding.
  */
 
-import { keccak_256 } from "@noble/hashes/sha3";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 
 /** Domain separator. Bumping the `/v1` suffix invalidates every outstanding assertion. */
 export const TRANSCRIPT_DOMAIN: Uint8Array = new TextEncoder().encode("WARDEN/root/v1");

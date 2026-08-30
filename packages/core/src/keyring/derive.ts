@@ -22,9 +22,10 @@
 //! ## What "no retained password" means here
 //!
 //! This module holds no module-level state of any kind: no cache, no memo, no last
-//! salt. It returns a derived key and keeps nothing. {@link deriveUnwrapKeyFromPasswordBytes}
-//! additionally zeroes the caller's password buffer before returning, which is the
-//! API a careful caller should use.
+//! salt. It returns a derived key and keeps nothing. Both byte-oriented password
+//! APIs zero the caller's password buffer before returning. Production async paths
+//! should use {@link deriveUnwrapKeyFromPasswordBytesAsync}; the synchronous form is
+//! retained for vectors and low-level compatibility only.
 //!
 //! The string overload cannot do that. **JS strings are immutable and may be interned
 //! or copied by the engine, so a password that ever existed as a `string` cannot be
@@ -49,11 +50,11 @@
 //! an extension context. That is C1 and UNIMPLEMENTED; this module takes the PRF
 //! output as an argument and does the derivation half only.
 
-import { argon2id } from "@noble/hashes/argon2";
-import { hkdf } from "@noble/hashes/hkdf";
-import { sha256 } from "@noble/hashes/sha2";
+import { argon2id, argon2idAsync } from "@noble/hashes/argon2.js";
+import { hkdf } from "@noble/hashes/hkdf.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 
-import { KeyringFormatError } from "./errors.js";
+import { KeyringFormatError, KeyringLockedError } from "./errors.js";
 import { keyringPrfInfo, type KeyringContext } from "./aad.js";
 import { zeroizeUnwrapMaterial } from "./deadlines.js";
 
@@ -74,6 +75,8 @@ export const MAX_ARGON2ID_TIME_COST = 10;
 export const MAX_ARGON2ID_PARALLELISM = 16;
 /** Length of the WebAuthn PRF secret the CTAP2 `hmac-secret` construction yields. */
 export const WEBAUTHN_PRF_OUTPUT_BYTES = 32;
+/** Maximum synchronous work budget before the async Argon2 driver yields to the host. */
+export const ARGON2ID_ASYNC_TICK_MS = 10;
 
 /** A derived key that can unwrap a keyring envelope. Always exactly 32 bytes. */
 export interface KeyringUnwrapKey {
@@ -92,6 +95,21 @@ export interface Argon2idParams {
   readonly timeCost: number;
   /** Parallelism / lanes (`p`). */
   readonly parallelism: number;
+}
+
+/** Optional revocation authority for a host-responsive password derivation. */
+export interface Argon2idDerivationControl {
+  readonly signal?: AbortSignal;
+}
+
+interface PrioritizedHostScheduler {
+  postTask<T>(
+    callback: () => T | PromiseLike<T>,
+    options: {
+      readonly priority: "background";
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<Awaited<T>>;
 }
 
 /**
@@ -139,6 +157,39 @@ function assertSalt(salt: Uint8Array): void {
   }
 }
 
+function snapshotDerivationSignal(
+  control: Argon2idDerivationControl | undefined,
+): AbortSignal | undefined {
+  if (control === undefined) return undefined;
+  if (typeof control !== "object" || control === null) {
+    throw new KeyringFormatError("argon2id derivation control must be an object");
+  }
+  const signal = control.signal;
+  if (signal === undefined) return undefined;
+  if (
+    typeof signal !== "object" ||
+    signal === null ||
+    typeof signal.aborted !== "boolean" ||
+    typeof signal.addEventListener !== "function" ||
+    typeof signal.removeEventListener !== "function"
+  ) {
+    throw new KeyringFormatError("argon2id derivation signal must be an AbortSignal");
+  }
+  return signal;
+}
+
+function prioritizedHostScheduler(): PrioritizedHostScheduler | undefined {
+  const candidate = (globalThis as { readonly scheduler?: unknown }).scheduler;
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    typeof (candidate as { readonly postTask?: unknown }).postTask !== "function"
+  ) {
+    return undefined;
+  }
+  return candidate as PrioritizedHostScheduler;
+}
+
 /**
  * Derive an unwrap key from password BYTES. **Zeroes `passwordBytes` before
  * returning** — pass a buffer you own and do not reuse it afterwards. Best effort,
@@ -173,6 +224,95 @@ export function deriveUnwrapKeyFromPasswordBytes(
   } finally {
     // Runs on the success path AND on any throw: a failed derivation must not leave
     // the password sitting in the caller's buffer either.
+    zeroizeUnwrapMaterial(passwordBytes);
+  }
+}
+
+/**
+ * Host-responsive Argon2id derivation for production password paths.
+ *
+ * `@noble/hashes` 2.4 yields at least once per
+ * {@link ARGON2ID_ASYNC_TICK_MS} synchronous-work window. In browsers with the
+ * Prioritized Task Scheduling API, this wrapper starts the KDF as a `background`
+ * task and passes the revocation signal to that task. Noble's internal
+ * `scheduler.yield()` calls then inherit both properties: ordinary extension work
+ * can run ahead of the continuation, and abort rejection invokes Noble's matrix
+ * cleanup before unwinding. Without `scheduler.postTask`, Noble's timer fallback
+ * still yields to host tasks, but its already-initialized computation is not
+ * signal-cancellable; this wrapper wipes the caller-owned password promptly and
+ * suppresses the eventual output instead. An already-aborted signal is rejected
+ * before Argon2 allocates in either case.
+ */
+export async function deriveUnwrapKeyFromPasswordBytesAsync(
+  passwordBytes: Uint8Array,
+  salt: Uint8Array,
+  params: Argon2idParams,
+  control?: Argon2idDerivationControl,
+): Promise<KeyringUnwrapKey> {
+  if (!(passwordBytes instanceof Uint8Array)) {
+    throw new KeyringFormatError("passwordBytes must be a Uint8Array");
+  }
+  let derivedBytes: Uint8Array | undefined;
+  let removeAbortCleanup = (): void => undefined;
+  try {
+    if (passwordBytes.length === 0) {
+      throw new KeyringFormatError("refusing to derive from an empty password");
+    }
+    assertSalt(salt);
+    assertValidArgon2idParams(params);
+    const signal = snapshotDerivationSignal(control);
+    if (signal?.aborted) throw new KeyringLockedError("derive password unwrap key");
+
+    if (signal !== undefined) {
+      let active = true;
+      const onAbort = (): void => {
+        if (active) zeroizeUnwrapMaterial(passwordBytes);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      // AbortSignal is sticky but does not replay an abort to a late listener.
+      if (signal.aborted) onAbort();
+      removeAbortCleanup = () => {
+        if (!active) return;
+        active = false;
+        signal.removeEventListener("abort", onAbort);
+      };
+      if (signal.aborted) throw new KeyringLockedError("derive password unwrap key");
+    }
+
+    const derive = () => argon2idAsync(passwordBytes, salt, {
+      m: params.memoryKiB,
+      t: params.timeCost,
+      p: params.parallelism,
+      dkLen: UNWRAP_KEY_BYTES,
+      asyncTick: ARGON2ID_ASYNC_TICK_MS,
+    });
+    const scheduler = prioritizedHostScheduler();
+    try {
+      derivedBytes = scheduler === undefined
+        ? await derive()
+        : await scheduler.postTask(derive, {
+            priority: "background",
+            ...(signal === undefined ? {} : { signal }),
+          });
+    } catch (error) {
+      if (signal?.aborted) throw new KeyringLockedError("derive password unwrap key");
+      throw error;
+    }
+    if (signal?.aborted) {
+      zeroizeUnwrapMaterial(derivedBytes);
+      derivedBytes = undefined;
+      throw new KeyringLockedError("derive password unwrap key");
+    }
+    if (derivedBytes.length !== UNWRAP_KEY_BYTES) {
+      zeroizeUnwrapMaterial(derivedBytes);
+      derivedBytes = undefined;
+      throw new KeyringFormatError(
+        `argon2id returned an unexpected output length; expected ${UNWRAP_KEY_BYTES}`,
+      );
+    }
+    return { kdf: "argon2id-password", bytes: derivedBytes };
+  } finally {
+    removeAbortCleanup();
     zeroizeUnwrapMaterial(passwordBytes);
   }
 }

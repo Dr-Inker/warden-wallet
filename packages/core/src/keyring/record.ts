@@ -64,7 +64,7 @@ import {
 } from "./bundle.js";
 import {
   assertValidArgon2idParams,
-  deriveUnwrapKeyFromPasswordBytes,
+  deriveUnwrapKeyFromPasswordBytesAsync,
   deriveUnwrapKeyFromPrfForContext,
   zeroizeUnwrapKey,
   type Argon2idParams,
@@ -607,10 +607,11 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
       throw new KeyringFormatError("PRF output is required by enrolled PRF metadata");
     }
     const recordBinding = metadataBytes(metadata);
-    passwordKey = deriveUnwrapKeyFromPasswordBytes(
+    passwordKey = await deriveUnwrapKeyFromPasswordBytesAsync(
       passwordBytes,
       metadata.argon2id.salt,
       metadata.argon2id.params,
+      { signal: unlock?.signal },
     );
     assertUnlockCheck(unlock, "seal record");
     if (metadata.prf !== null) {
@@ -689,10 +690,11 @@ export async function openKeyringRecordWithPasswordBytes(
     const record = canonicalRecord(params.record);
     const context = resolveRecordContext(record.metadata, params.context);
     const recordBinding = metadataBytes(record.metadata);
-    passwordKey = deriveUnwrapKeyFromPasswordBytes(
+    passwordKey = await deriveUnwrapKeyFromPasswordBytesAsync(
       passwordBytes,
       record.metadata.argon2id.salt,
       record.metadata.argon2id.params,
+      { signal: unlock?.signal },
     );
     assertUnlockCheck(unlock, "open record with password");
     plaintext = await openKeyringBundle({

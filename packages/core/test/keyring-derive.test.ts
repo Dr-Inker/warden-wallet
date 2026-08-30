@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { argon2id } from "@noble/hashes/argon2";
-import { hkdf } from "@noble/hashes/hkdf";
-import { sha256 } from "@noble/hashes/sha2";
+import { argon2id } from "@noble/hashes/argon2.js";
+import { hkdf } from "@noble/hashes/hkdf.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
   MIN_ARGON2ID_SALT_BYTES,
   MAX_ARGON2ID_MEMORY_KIB,

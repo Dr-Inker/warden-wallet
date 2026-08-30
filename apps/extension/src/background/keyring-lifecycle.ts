@@ -9,7 +9,7 @@ import {
   assertValidUnlockPolicy,
   decodeKeyringRecordStorageValue,
   decodeSessionSignerPayload,
-  deriveUnwrapKeyFromPasswordBytes,
+  deriveUnwrapKeyFromPasswordBytesAsync,
   encodeKeyringRecordMetadata,
   openKeyringBundle,
   registerUnlockAbortCleanup,
@@ -133,11 +133,13 @@ function extensionOrigin(runtimeId: unknown): string {
  * One authority for the persistent encrypted record and its ephemeral MV3
  * unlock material. Raw record/session owners never escape this class.
  *
- * Every state-changing method increments `transition` and calls `lock()` on
- * the underlying session owner before its first `await`. That synchronously
- * aborts leases and clears the in-memory unwrap key. A password unlock checks
- * the same transition and exact persistent record before and after activation,
- * so an unlock started against record A cannot commit after record B wins.
+ * Every state-changing method increments `transition` and revokes a pending
+ * password derivation before its first `await`. Lock and record mutations also
+ * synchronously abort leases and clear the in-memory unwrap key. A password
+ * unlock checks the same transition and exact persistent record before and
+ * after activation, so an unlock started against record A cannot commit after
+ * record B wins. Startup restore refuses and clears a same-owner pending unlock;
+ * it never adopts a session that the superseded operation had just serialized.
  */
 export class KeyringLifecycleOwner {
   private readonly records: PersistentKeyringRecordStore;
@@ -145,6 +147,7 @@ export class KeyringLifecycleOwner {
   private readonly readNow: () => number;
   private readonly expectedOrigin: string;
   private transition = 0;
+  private pendingPasswordUnlock: AbortController | undefined;
 
   constructor(
     localStorage: KeyringRecordStorageArea,
@@ -182,6 +185,14 @@ export class KeyringLifecycleOwner {
     if (this.transition !== generation) throw new KeyringLockedError(operation);
   }
 
+  private revokePendingPasswordUnlock(): boolean {
+    const pending = this.pendingPasswordUnlock;
+    this.pendingPasswordUnlock = undefined;
+    if (pending === undefined) return false;
+    pending.abort();
+    return true;
+  }
+
   private readCurrentTime(): number {
     try {
       return this.readNow();
@@ -216,9 +227,15 @@ export class KeyringLifecycleOwner {
    */
   async restore(): Promise<boolean> {
     const generation = ++this.transition;
+    const revokedPendingUnlock = this.revokePendingPasswordUnlock();
     let context: SnapshotContext | undefined;
     let proof: Uint8Array | undefined;
     try {
+      if (revokedPendingUnlock) {
+        await this.sessions.lock();
+        this.assertTransition(generation, "restore keyring lifecycle");
+        return false;
+      }
       const stored = await this.records.load();
       this.assertTransition(generation, "restore keyring lifecycle");
       if (stored === null) {
@@ -286,6 +303,7 @@ export class KeyringLifecycleOwner {
   /** Revoke memory synchronously, then remove serialized session material. */
   lock(): Promise<void> {
     this.transition++;
+    this.revokePendingPasswordUnlock();
     return this.sessions.lock();
   }
 
@@ -295,6 +313,7 @@ export class KeyringLifecycleOwner {
     const context = this.contextForRecord(canonical);
     clearContext(context);
     this.transition++;
+    this.revokePendingPasswordUnlock();
     const locked = this.sessions.lock();
     await locked;
     await this.records.replace(canonical);
@@ -302,6 +321,7 @@ export class KeyringLifecycleOwner {
 
   async clearPersistentRecord(): Promise<void> {
     this.transition++;
+    this.revokePendingPasswordUnlock();
     const locked = this.sessions.lock();
     await locked;
     await this.records.clear();
@@ -335,15 +355,24 @@ export class KeyringLifecycleOwner {
     }
 
     const generation = ++this.transition;
-    // `lock()` itself would advance our transition a second time, so call the
-    // hidden owner directly after this generation has been claimed.
-    const priorLocked = this.sessions.lock();
+    this.revokePendingPasswordUnlock();
+    const pendingUnlock = new AbortController();
+    this.pendingPasswordUnlock = pendingUnlock;
     let unwrapKey: KeyringUnwrapKey | undefined;
     let plaintext: Uint8Array | undefined;
     let decodedSeed: Uint8Array | undefined;
     let sessionCommitted = false;
+    const clearPendingSecrets = (): void => {
+      password?.fill(0);
+      if (unwrapKey !== undefined) zeroizeUnwrapKey(unwrapKey);
+      plaintext?.fill(0);
+      decodedSeed?.fill(0);
+    };
+    pendingUnlock.signal.addEventListener("abort", clearPendingSecrets, { once: true });
     try {
-      await priorLocked;
+      // `lock()` itself would advance our transition a second time, so call the
+      // hidden owner directly after this generation has been claimed.
+      await this.sessions.lock();
       this.assertTransition(generation, "unlock keyring with password");
       const stored = await this.records.load();
       this.assertTransition(generation, "unlock keyring with password");
@@ -355,10 +384,11 @@ export class KeyringLifecycleOwner {
       const record = decodeKeyringRecordStorageValue(stored);
       context = this.contextForRecord(record);
       const recordBinding = encodeKeyringRecordMetadata(record.metadata);
-      unwrapKey = deriveUnwrapKeyFromPasswordBytes(
+      unwrapKey = await deriveUnwrapKeyFromPasswordBytesAsync(
         password!,
         record.metadata.argon2id.salt,
         record.metadata.argon2id.params,
+        { signal: pendingUnlock.signal },
       );
       password!.fill(0);
       password = undefined;
@@ -403,11 +433,18 @@ export class KeyringLifecycleOwner {
         );
       }
     } catch (error) {
+      if (pendingUnlock.signal.aborted) {
+        throw new KeyringLockedError("unlock keyring with password");
+      }
       if (sessionCommitted && this.transition === generation) {
         return this.lockAfterFailure(error, generation);
       }
       throw error;
     } finally {
+      pendingUnlock.signal.removeEventListener("abort", clearPendingSecrets);
+      if (this.pendingPasswordUnlock === pendingUnlock) {
+        this.pendingPasswordUnlock = undefined;
+      }
       password?.fill(0);
       if (unwrapKey !== undefined) zeroizeUnwrapKey(unwrapKey);
       plaintext?.fill(0);
