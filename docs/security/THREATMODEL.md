@@ -433,3 +433,38 @@ document-level identity, so the concurrency cap and Port lifetime contain
 resource use but cannot prove one Port per popup document. The page is a plain
 pre-alpha boundary indicator, not release UX. Independent second-model review
 remains UNVERIFIED.
+
+---
+
+## Client C2 persistent Chrome record owner — 7e18f27 — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** the emitted background now reads one encrypted keyring
+record from `chrome.storage.local` after both local and session areas have been
+restricted to `TRUSTED_CONTEXTS`. The store can replace or clear that one key,
+but the raw owner is not exported by the background runtime and no reachable
+Port, popup, content script, or provider method can invoke mutation or key use.
+The existing `storage` permission does not expand.
+
+**Removed / narrowed:** only the strict canonical core record is accepted.
+Calls through this owner are serialized; replace validates before touching
+storage, writes one property, and exact-readback checks; clear exact-readback
+checks absence. Chrome failures retain their cause. Ambiguous mismatched
+readback does not trigger destructive cleanup. Startup never parses a session
+when the persistent record is absent, removes session state on absence or
+corruption, and rejects readiness on corruption. A real Chromium canary is
+written and read by the worker before the actual isolated content-script world
+is causally denied `storage.local` access.
+
+**New invariants:** none promoted. `WRD-KEY-03` and `WRD-KEY-04` remain
+`unimplemented`; this closes only part of their extension-storage conjuncts.
+
+**Residual, stated honestly:** Chrome exposes no documented transaction, CAS,
+rollback, or durability guarantee for this owner. Serialization excludes
+out-of-band writes from a different trusted context, and a whole older valid
+same-context record can still replay without external freshness. A restored
+session is not yet bound to the stored record's public bundle id. No creation,
+Argon2 benchmark/floor, PRF ceremony/device matrix, derivation, account/context
+registry, record mutation lifecycle, privileged consumer, or seeded
+worker-death/wake vector exists. A cleanup rejection can leave stale session
+bytes in browser-managed storage even though readiness fails locally.
+Independent second-model review remains UNVERIFIED.

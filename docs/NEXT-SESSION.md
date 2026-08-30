@@ -1,5 +1,80 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C2 PERSISTENT CHROME RECORD OWNER — STORAGE BOUNDARY PARTIAL, UNLOCK PATH OPEN
+>
+> Commit `7e18f275a839c2d88427a104b5814bb266fe445d` adds the first
+> production `chrome.storage.local` owner for the core's encrypted keyring
+> record. The initial focused lane was genuinely red: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> vitest run test/keyring-record-store.test.ts` exited **1** because
+> `src/background/keyring-record-store.js` did not exist. Exact-SHA focused
+> evidence after implementation: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> vitest run test/keyring-record-store.test.ts test/runtime.test.ts` →
+> **23/23**, exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension typecheck`, `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core build`, and
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> build` each exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension exec playwright test -c playwright.config.ts
+> --repeat-each=3` → **3/3**, exit **0**. These are focused lanes, not the
+> repository deploy gate. Run `env npm_config_cache=/tmp/warden-npm-cache bash
+> .claude/test-gate.sh` on the final ledger-inclusive SHA before claiming this
+> loop boundary green.
+>
+> `PersistentKeyringRecordStore` owns exactly
+> `warden.keyring-record.v1`. It accepts only the core's bounded, strict,
+> canonical base64url encrypted record, validates before any storage call,
+> serializes all operations through one owner, writes one property, and requires
+> exact readback after replace or clear. Chrome operation rejection is preserved
+> as a typed error with its cause. An acknowledged-but-mismatched replace is not
+> “cleaned up” by deletion because storage is then ambiguous and deletion could
+> erase the only valid prior record. The 13 adapter tests cover absence, malformed
+> values, pre-write rejection, exact property/readback, competing replacements,
+> rejected set/get, ambiguous replace, verified clear, ineffective clear, and a
+> malformed adapter. Core independently owns the hand-built wire and canonical
+> base64url vectors; this lane measures the storage owner rather than re-deriving
+> that format.
+>
+> Startup still restricts both storage areas to `TRUSTED_CONTEXTS` before any
+> read, but now validates the persistent record before examining a session.
+> Missing persistent state removes stale session material without parsing it;
+> malformed persistent state removes session material and rejects readiness.
+> If validation and cleanup both fail, both causes survive in an `AggregateError`.
+> The raw record store is deliberately **not** returned beside
+> `UnlockSessionOwner`: exposing independent mutation would create an obvious
+> old-session/new-record coherence bug. A future composed lifecycle owner must
+> revoke the session before record replacement or removal.
+>
+> The real-browser lane now seeds a non-secret `storage.local` canary in the live
+> service worker, reads it back there, then observes the actual Warden isolated
+> content-script context receive a causal rejection from
+> `chrome.storage.local.get`. This cannot green merely because the area was empty.
+> The emitted bundles are background **79,103 bytes**, content **8,269 bytes**, and
+> popup **3,229 bytes**. A precise scan of the background for `node:fs`,
+> `node:url`, `storage.sync`, `localStorage`, `privateKey`, `secretKey`, and
+> `mnemonic` has no match. Current Chrome documentation confirms that local
+> storage is content-script-visible by default, `setAccessLevel()` can restrict
+> it to trusted contexts, storage promises reject on failure, MV3 globals vanish
+> on worker shutdown, and no transaction/CAS primitive is documented here:
+> <https://developer.chrome.com/docs/extensions/reference/api/storage>,
+> <https://developer.chrome.com/docs/extensions/reference/api/storage/StorageArea/>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>.
+>
+> **Do not promote `WRD-KEY-03` or `WRD-KEY-04`.** This is encrypted-record
+> persistence and startup validation, not a usable keyring. There is no record
+> creation UI, slow-device Argon2 benchmark/floor, PRF ceremony or compatibility
+> matrix, account registry, context-supplying decrypt, record-to-session
+> derivation/activation, signing/decrypt/export consumer, or worker-kill/wake
+> vector with a seeded live record. The session does not yet carry the public
+> bundle id, so startup can distinguish absent/corrupt state but cannot prove
+> that a structurally valid session belongs to the currently stored record.
+> Chrome documents neither transactional durability nor compare-and-swap;
+> serialization covers only this owner, a future trusted page could race an
+> out-of-band write, and replay of an older valid same-context record still needs
+> an external freshness authority. Independent second-model review remains
+> **UNVERIFIED**.
+
 > ## 2026-08-30 C1 ZERO-AUTHORITY ACTION POPUP — REAL TOOLBAR SENDER, NO WALLET CAPABILITY
 >
 > Commit `14205821687cf3da51abfa12866985e2a545b15a` adds the first
