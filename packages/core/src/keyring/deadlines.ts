@@ -25,11 +25,13 @@
 //! Nothing in this module reads the clock implicitly. Pure policy functions take
 //! `now` as a number. Async key-use APIs instead take an {@link UnlockCheck} whose
 //! `readNow` callback is invoked before key use and again after every suspension
-//! boundary. A service worker supplies `Date.now`; a test supplies a controlled
-//! reader. They execute the identical code path, so "what happens after a four-hour
-//! suspension" is a deterministic assertion rather than a hope. A captured number
-//! is deliberately not accepted by the async API: it would go stale at the first
-//! `await`.
+//! boundary. The same check carries an `AbortSignal` owned by the unlocked session,
+//! so an explicit lock can revoke work that began while the deadline was still live.
+//! A service worker supplies `Date.now` plus its session signal; a test supplies a
+//! controlled reader/controller. They execute the identical code path, so "what
+//! happens after a four-hour suspension" and "what if lock wins the race" are
+//! deterministic assertions rather than hopes. A captured number is deliberately
+//! not accepted by the async API: it would go stale at the first `await`.
 //!
 //! ## Boundary and clock semantics, stated rather than implied
 //!
@@ -51,9 +53,24 @@
 //! reports {@link UnlockEvaluation.mustClearSessionMaterial} and offers
 //! {@link zeroizeUnwrapMaterial} for buffers a caller holds, but the actual clearing
 //! of `chrome.storage.session`, in-memory key references, pending ceremonies and
-//! hardware transports is **C1 and unimplemented**. Nothing here enforces it.
+//! hardware transports is **C1 and unimplemented**. Nothing here creates or owns the
+//! session controller either. C1 must create ONE controller per unlocked session,
+//! pass that same signal to every key use, and synchronously abort it before clearing
+//! the rest of the session on lock/account change. A fresh per-call signal defeats
+//! revocation completely.
+//!
+//! Nor does a returned `Uint8Array` become magically revocable. Each async layer
+//! re-checks before releasing its result to its caller, but the final consumer must
+//! re-check this same authority immediately before sign/decrypt/export and must own
+//! clearing any material it retains. WebCrypto has no `AbortSignal` parameter, and a
+//! synchronous Argon2 call cannot process an event-loop abort until it returns.
 
-import { KeyringExpiredError, KeyringFormatError, type UnlockExpiryReason } from "./errors.js";
+import {
+  KeyringExpiredError,
+  KeyringFormatError,
+  KeyringLockedError,
+  type UnlockExpiryReason,
+} from "./errors.js";
 
 /**
  * Upper bound on any configured timeout: 30 days. A sanity rail, not a policy —
@@ -80,11 +97,16 @@ export interface UnlockDeadlines {
  * Live deadline authority for an asynchronous key use. `readNow` MUST read the
  * current epoch-millisecond clock on every call; it is a callback, rather than a
  * sampled number, so an operation cannot carry one preflight instant across an
- * `await` and accidentally return secret material after expiry.
+ * `await` and accidentally return secret material after expiry. `signal` is the
+ * stable, session-owned in-process revocation authority for explicit
+ * lock/account-change races. It MUST NOT be a fresh per-call signal. WebCrypto itself
+ * is not abortable; each caller suppresses a result if the signal fired before its
+ * final check.
  */
 export interface UnlockCheck {
   readonly deadlines: UnlockDeadlines;
   readonly readNow: () => number;
+  readonly signal: AbortSignal;
 }
 
 /** The result of checking a session against an instant. */
@@ -140,6 +162,18 @@ export function assertValidUnlockDeadlines(deadlines: UnlockDeadlines): void {
   assertDeadline(deadlines.hardExpiresAt, "hardExpiresAt");
 }
 
+function assertAbortSignal(signal: AbortSignal): void {
+  if (
+    typeof signal !== "object" ||
+    signal === null ||
+    typeof signal.aborted !== "boolean" ||
+    typeof signal.addEventListener !== "function" ||
+    typeof signal.removeEventListener !== "function"
+  ) {
+    throw new KeyringFormatError("unlock check signal must be an AbortSignal");
+  }
+}
+
 /**
  * Validate and snapshot caller-owned deadline authority before an async operation.
  * Numeric deadlines and the reader function identity are captured once so a caller
@@ -151,16 +185,20 @@ export function snapshotUnlockCheck(unlock: UnlockCheck | undefined): UnlockChec
   if (typeof unlock !== "object" || unlock === null) {
     throw new KeyringFormatError("unlock check must be an object");
   }
-  assertValidUnlockDeadlines(unlock.deadlines);
-  if (typeof unlock.readNow !== "function") {
+  const sourceDeadlines = unlock.deadlines;
+  const sourceReadNow = unlock.readNow;
+  const signal = unlock.signal;
+  assertValidUnlockDeadlines(sourceDeadlines);
+  if (typeof sourceReadNow !== "function") {
     throw new KeyringFormatError("unlock check readNow must be a function");
   }
+  assertAbortSignal(signal);
   const deadlines = Object.freeze({
-    idleExpiresAt: unlock.deadlines.idleExpiresAt,
-    hardExpiresAt: unlock.deadlines.hardExpiresAt,
+    idleExpiresAt: sourceDeadlines.idleExpiresAt,
+    hardExpiresAt: sourceDeadlines.hardExpiresAt,
   });
-  const readNow = unlock.readNow.bind(unlock);
-  return Object.freeze({ deadlines, readNow });
+  const readNow = sourceReadNow.bind(unlock);
+  return Object.freeze({ deadlines, readNow, signal });
 }
 
 /**
@@ -224,13 +262,53 @@ export function assertUnlockCheck(unlock: UnlockCheck | undefined, operation: st
   if (typeof unlock !== "object" || unlock === null || typeof unlock.readNow !== "function") {
     throw new KeyringFormatError("unlock check must contain a readNow function");
   }
+  const signal = unlock.signal;
+  assertAbortSignal(signal);
+  if (signal.aborted) throw new KeyringLockedError(operation);
   let now: number;
   try {
     now = unlock.readNow();
   } catch {
     throw new KeyringFormatError("unlock check readNow failed");
   }
+  // A clock provider is ordinary caller code. If it synchronously triggered lock,
+  // the revocation wins rather than allowing the stale pre-read signal state.
+  if (signal.aborted) throw new KeyringLockedError(operation);
   assertUnlocked(unlock.deadlines, now, operation);
+}
+
+/**
+ * Register best-effort cleanup for JS-owned secret copies when the owning unlocked
+ * session is aborted. The callback runs at most once. This cannot cancel WebCrypto
+ * or erase bytes the browser already copied internally; it only shortens the lifetime
+ * of buffers this process still owns. The returned function MUST run in `finally`.
+ */
+export function registerUnlockAbortCleanup(
+  unlock: UnlockCheck | undefined,
+  cleanup: () => void,
+): () => void {
+  if (unlock === undefined) return () => undefined;
+  const signal = unlock.signal;
+  assertAbortSignal(signal);
+  if (typeof cleanup !== "function") {
+    throw new KeyringFormatError("unlock abort cleanup must be a function");
+  }
+  let active = true;
+  let cleaned = false;
+  const onAbort = (): void => {
+    if (!active || cleaned) return;
+    cleaned = true;
+    cleanup();
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  // Adding a listener after abort does not replay the event. Close that race by
+  // checking the sticky state immediately after registration.
+  if (signal.aborted) onAbort();
+  return () => {
+    if (!active) return;
+    active = false;
+    signal.removeEventListener("abort", onAbort);
+  };
 }
 
 /**

@@ -1,9 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { KeyringContext } from "../src/keyring/aad.js";
 import type { Argon2idParams } from "../src/keyring/derive.js";
 import { startUnlockSession } from "../src/keyring/deadlines.js";
-import { KeyringAuthError, KeyringExpiredError, KeyringFormatError } from "../src/keyring/errors.js";
+import {
+  KeyringAuthError,
+  KeyringExpiredError,
+  KeyringFormatError,
+  KeyringLockedError,
+} from "../src/keyring/errors.js";
 import type { KeyringBundle } from "../src/keyring/bundle.js";
 import {
   KEYRING_PASSWORD_SALT_BYTES,
@@ -312,6 +317,7 @@ describe("record orchestration cannot carry a stale clock sample across derivati
     const unlock = {
       deadlines,
       readNow: () => (reads++ === 0 ? 1_001 : deadlines.idleExpiresAt),
+      signal: new AbortController().signal,
     };
     const passwordBytes = password();
     const plaintext = SECRET.slice();
@@ -346,6 +352,78 @@ describe("record orchestration cannot carry a stale clock sample across derivati
     ).rejects.toThrow(KeyringExpiredError);
     expect(reads).toBe(2);
     expect(Array.from(unlockPassword)).toEqual(new Array(unlockPassword.length).fill(0));
+  });
+
+  it("lock zeroes JS-owned secrets before a stalled WebCrypto operation settles", async () => {
+    const deadlines = startUnlockSession(1_000, { idleTimeoutMs: 100, hardTimeoutMs: 500 });
+    const controller = new AbortController();
+    const passwordBytes = password();
+    const plaintext = SECRET.slice();
+    const subtle = globalThis.crypto.subtle;
+    const originalEncrypt = subtle.encrypt;
+    let capturedAeadPlaintext: Uint8Array | undefined;
+    let enterEncrypt!: () => void;
+    const encryptEntered = new Promise<void>((resolve) => {
+      enterEncrypt = resolve;
+    });
+    let releaseEncrypt!: () => void;
+    const encryptGate = new Promise<void>((resolve) => {
+      releaseEncrypt = resolve;
+    });
+    const encryptSpy = vi.spyOn(subtle, "encrypt").mockImplementation(
+      (async (...args: unknown[]) => {
+        const input = args[2] as BufferSource;
+        capturedAeadPlaintext = ArrayBuffer.isView(input)
+          ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+          : new Uint8Array(input);
+        // Start the real operation first. WebCrypto has copied its input before its
+        // Promise is returned; the artificial gate stalls only our observable result.
+        const platformResult = Reflect.apply(originalEncrypt, subtle, args) as Promise<ArrayBuffer>;
+        enterEncrypt();
+        await encryptGate;
+        return platformResult;
+      }) as typeof subtle.encrypt,
+    );
+    let pending: Promise<KeyringRecord> | undefined;
+    let settled = false;
+    try {
+      pending = sealKeyringRecord({
+        metadata: prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: false }),
+        plaintext,
+        passwordBytes,
+        context: CONTEXT,
+        unlock: {
+          deadlines,
+          readNow: () => 1_001,
+          signal: controller.signal,
+        },
+      });
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await encryptEntered;
+      controller.abort();
+
+      expect(settled).toBe(false);
+      expect(Array.from(passwordBytes)).toEqual(new Array(passwordBytes.length).fill(0));
+      expect(Array.from(plaintext)).toEqual(new Array(plaintext.length).fill(0));
+      expect(capturedAeadPlaintext).toBeDefined();
+      expect(Array.from(capturedAeadPlaintext!)).toEqual(
+        new Array(capturedAeadPlaintext!.length).fill(0),
+      );
+
+      releaseEncrypt();
+      await expect(pending).rejects.toThrow(KeyringLockedError);
+    } finally {
+      releaseEncrypt();
+      await pending?.catch(() => undefined);
+      encryptSpy.mockRestore();
+    }
   });
 });
 

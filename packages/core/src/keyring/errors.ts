@@ -15,6 +15,10 @@
 //!     differed — that would turn the envelope into a context oracle.
 //!   * `KeyringExpiredError` — an unlock deadline had passed at a live clock reading
 //!     (WRD-KEY-03). Carries which deadline, because that is a UX fact, not a secret.
+//!   * `KeyringLockedError` — the owning unlock session was explicitly revoked while
+//!     work was pending. The browser may finish WebCrypto internally; its result is
+//!     suppressed when revocation precedes the operation's final check, and
+//!     JS-owned secret copies are cleared best effort.
 //!   * `KeyringCryptoUnavailableError` — no WebCrypto. Fail closed; never fall back
 //!     to a JS AES implementation.
 
@@ -48,6 +52,14 @@ export class KeyringExpiredError extends Error {
     super(`keyring: ${reason} unlock deadline has passed; ${operation} refused`);
     this.name = "KeyringExpiredError";
     this.reason = reason;
+  }
+}
+
+/** The owning unlock session was explicitly aborted before this operation released its result. */
+export class KeyringLockedError extends Error {
+  constructor(operation: string) {
+    super(`keyring: unlock session was locked or revoked; ${operation} refused`);
+    this.name = "KeyringLockedError";
   }
 }
 

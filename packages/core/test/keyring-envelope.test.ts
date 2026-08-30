@@ -10,7 +10,12 @@ import {
 } from "../src/keyring/envelope.js";
 import type { KeyringContext } from "../src/keyring/aad.js";
 import { encodeKeyringAad } from "../src/keyring/aad.js";
-import { KeyringAuthError, KeyringExpiredError, KeyringFormatError } from "../src/keyring/errors.js";
+import {
+  KeyringAuthError,
+  KeyringExpiredError,
+  KeyringFormatError,
+  KeyringLockedError,
+} from "../src/keyring/errors.js";
 import { startUnlockSession } from "../src/keyring/deadlines.js";
 import type { KeyringUnwrapKey } from "../src/keyring/derive.js";
 
@@ -340,7 +345,7 @@ describe("a key use past an unlock deadline is refused (WRD-KEY-03 at the key-us
           envelope: bytes,
           unwrapKey: KEY,
           context: CTX,
-          unlock: { deadlines, readNow: () => t0 + 1 },
+          unlock: { deadlines, readNow: () => t0 + 1, signal: new AbortController().signal },
         }),
       ),
     ).toBe(hex(PLAINTEXT));
@@ -352,7 +357,7 @@ describe("a key use past an unlock deadline is refused (WRD-KEY-03 at the key-us
         envelope: bytes,
         unwrapKey: KEY,
         context: CTX,
-        unlock: { deadlines, readNow: () => t0 + 60_000 },
+        unlock: { deadlines, readNow: () => t0 + 60_000, signal: new AbortController().signal },
       }),
     ).rejects.toThrow(KeyringExpiredError);
   });
@@ -365,7 +370,11 @@ describe("a key use past an unlock deadline is refused (WRD-KEY-03 at the key-us
         plaintext: PLAINTEXT,
         unwrapKey: KEY,
         context: CTX,
-        unlock: { deadlines, readNow: () => t0 + 3_600_000 },
+        unlock: {
+          deadlines,
+          readNow: () => t0 + 3_600_000,
+          signal: new AbortController().signal,
+        },
       }),
     ).rejects.toThrow(KeyringExpiredError);
   });
@@ -391,7 +400,7 @@ describe("a key use past an unlock deadline is refused (WRD-KEY-03 at the key-us
           envelope: bytes,
           unwrapKey: KEY,
           context: CTX,
-          unlock: { deadlines, readNow: () => now },
+          unlock: { deadlines, readNow: () => now, signal: new AbortController().signal },
         }),
       ).rejects.toThrow(KeyringExpiredError);
       expect(importSpy).toHaveBeenCalledTimes(1);
@@ -423,7 +432,7 @@ describe("a key use past an unlock deadline is refused (WRD-KEY-03 at the key-us
           envelope: bytes,
           unwrapKey: KEY,
           context: CTX,
-          unlock: { deadlines, readNow: () => now },
+          unlock: { deadlines, readNow: () => now, signal: new AbortController().signal },
         }),
       ).rejects.toThrow(KeyringExpiredError);
       expect(decryptSpy).toHaveBeenCalledTimes(1);
@@ -453,12 +462,48 @@ describe("a key use past an unlock deadline is refused (WRD-KEY-03 at the key-us
           plaintext: PLAINTEXT,
           unwrapKey: KEY,
           context: CTX,
-          unlock: { deadlines, readNow: () => now },
+          unlock: { deadlines, readNow: () => now, signal: new AbortController().signal },
         }),
       ).rejects.toThrow(KeyringExpiredError);
       expect(encryptSpy).toHaveBeenCalledTimes(1);
     } finally {
       encryptSpy.mockRestore();
+    }
+  });
+
+  it("suppresses and zeroes plaintext when manual lock aborts during decrypt", async () => {
+    const bytes = await independentEnvelope();
+    const t0 = 1_700_000_000_000;
+    const deadlines = startUnlockSession(t0, { idleTimeoutMs: 100, hardTimeoutMs: 500 });
+    const controller = new AbortController();
+    let decryptedBuffer: ArrayBuffer | undefined;
+    const subtle = globalThis.crypto.subtle;
+    const originalDecrypt = subtle.decrypt;
+    const decryptSpy = vi.spyOn(subtle, "decrypt").mockImplementation(
+      (async (...args: unknown[]) => {
+        decryptedBuffer = (await Reflect.apply(originalDecrypt, subtle, args)) as ArrayBuffer;
+        controller.abort();
+        return decryptedBuffer;
+      }) as typeof subtle.decrypt,
+    );
+    try {
+      await expect(
+        openKeyringEnvelope({
+          envelope: bytes,
+          unwrapKey: KEY,
+          context: CTX,
+          unlock: {
+            deadlines,
+            readNow: () => t0 + 1,
+            signal: controller.signal,
+          },
+        }),
+      ).rejects.toThrow(KeyringLockedError);
+      expect(decryptSpy).toHaveBeenCalledTimes(1);
+      expect(decryptedBuffer).toBeDefined();
+      expect(Array.from(new Uint8Array(decryptedBuffer!))).toEqual(new Array(PLAINTEXT.length).fill(0));
+    } finally {
+      decryptSpy.mockRestore();
     }
   });
 });

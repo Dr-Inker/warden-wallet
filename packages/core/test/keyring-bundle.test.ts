@@ -534,7 +534,7 @@ describe("C2 KEK/DEK bundle: one payload ciphertext, two unlock paths", () => {
         passwordKey: PASSWORD_KEY,
         prfKey: PRF_KEY,
         context: CONTEXT,
-        unlock: { deadlines, readNow: () => 1_100 },
+        unlock: { deadlines, readNow: () => 1_100, signal: new AbortController().signal },
       }),
     ).rejects.toThrow(KeyringExpiredError);
     await expect(
@@ -542,7 +542,7 @@ describe("C2 KEK/DEK bundle: one payload ciphertext, two unlock paths", () => {
         bundle,
         unwrapKey: PASSWORD_KEY,
         context: CONTEXT,
-        unlock: { deadlines, readNow: () => 1_100 },
+        unlock: { deadlines, readNow: () => 1_100, signal: new AbortController().signal },
       }),
     ).rejects.toThrow(KeyringExpiredError);
   });
@@ -553,6 +553,7 @@ describe("C2 KEK/DEK bundle: one payload ciphertext, two unlock paths", () => {
     const unlock = {
       deadlines,
       readNow: () => (reads++ === 0 ? 1_001 : deadlines.idleExpiresAt),
+      signal: new AbortController().signal,
     };
     await expect(
       sealKeyringBundle({

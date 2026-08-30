@@ -10,6 +10,7 @@ import {
 } from "./errors.js";
 import {
   assertUnlockCheck,
+  registerUnlockAbortCleanup,
   snapshotUnlockCheck,
   type UnlockCheck,
 } from "./deadlines.js";
@@ -96,7 +97,13 @@ export async function sealAead(params: SealAeadParams): Promise<AeadEnvelopeBody
   const plaintext = params.plaintext.slice();
   const keyBytes = params.keyBytes.slice();
   const aad = params.aad.slice();
+  const removeAbortCleanup = registerUnlockAbortCleanup(unlock, () => {
+    plaintext.fill(0);
+    keyBytes.fill(0);
+  });
   try {
+    // Close the small gap between the preflight check and listener registration.
+    assertUnlockCheck(unlock, params.unlockOperation);
     let key: CryptoKey;
     try {
       key = await importAesKey(keyBytes, params.keyName, "encrypt");
@@ -128,6 +135,7 @@ export async function sealAead(params: SealAeadParams): Promise<AeadEnvelopeBody
     assertUnlockCheck(unlock, params.unlockOperation);
     return { nonce, ciphertext };
   } finally {
+    removeAbortCleanup();
     plaintext.fill(0);
     keyBytes.fill(0);
   }
@@ -164,7 +172,13 @@ export async function openAead(params: OpenAeadParams): Promise<Uint8Array> {
   const ciphertext = params.ciphertext.slice();
   const keyBytes = params.keyBytes.slice();
   const aad = params.aad.slice();
+  let plaintext: Uint8Array | undefined;
+  const removeAbortCleanup = registerUnlockAbortCleanup(unlock, () => {
+    keyBytes.fill(0);
+    plaintext?.fill(0);
+  });
   try {
+    assertUnlockCheck(unlock, params.unlockOperation);
     let key: CryptoKey;
     try {
       key = await importAesKey(keyBytes, params.keyName, "decrypt");
@@ -173,7 +187,6 @@ export async function openAead(params: OpenAeadParams): Promise<Uint8Array> {
       throw error;
     }
     assertUnlockCheck(unlock, params.unlockOperation);
-    let plaintext: Uint8Array;
     try {
       plaintext = new Uint8Array(await subtle().decrypt(
         {
@@ -200,6 +213,7 @@ export async function openAead(params: OpenAeadParams): Promise<Uint8Array> {
       throw error;
     }
   } finally {
+    removeAbortCleanup();
     keyBytes.fill(0);
   }
 }

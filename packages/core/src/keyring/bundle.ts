@@ -54,6 +54,7 @@ import {
 } from "./aad.js";
 import {
   assertUnlockCheck,
+  registerUnlockAbortCleanup,
   snapshotUnlockCheck,
   type UnlockCheck,
 } from "./deadlines.js";
@@ -356,7 +357,16 @@ export async function sealKeyringBundle(params: SealKeyringBundleParams): Promis
     programId: params.context.programId.slice(),
   };
   let dek: Uint8Array | undefined;
+  const removeAbortCleanup = registerUnlockAbortCleanup(unlock, () => {
+    passwordKeyBytes.fill(0);
+    prfKeyBytes?.fill(0);
+    plaintext.fill(0);
+    dek?.fill(0);
+  });
   try {
+    // AbortSignal is sticky, but its event is not replayed to late listeners.
+    // Re-check after registration so lock wins the preflight/listener race.
+    assertUnlockCheck(unlock, "seal bundle");
     const bundleId = randomKeyringBytes(KEYRING_BUNDLE_ID_BYTES, "a bundle id");
     dek = randomKeyringBytes(KEYRING_DEK_BYTES, "a data-encryption key");
     const passwordBody = await sealAead({
@@ -426,6 +436,7 @@ export async function sealKeyringBundle(params: SealKeyringBundleParams): Promis
       prfWrap,
     };
   } finally {
+    removeAbortCleanup();
     passwordKeyBytes.fill(0);
     prfKeyBytes?.fill(0);
     plaintext.fill(0);
@@ -465,7 +476,15 @@ export async function openKeyringBundle(params: OpenKeyringBundleParams): Promis
     programId: params.context.programId.slice(),
   };
   let dek: Uint8Array | undefined;
+  let plaintext: Uint8Array | undefined;
+  let releasePlaintext = false;
+  const removeAbortCleanup = registerUnlockAbortCleanup(unlock, () => {
+    unwrapKeyBytes.fill(0);
+    dek?.fill(0);
+    plaintext?.fill(0);
+  });
   try {
+    assertUnlockCheck(unlock, "open bundle");
     const selected = kdf === "argon2id-password" ? bundle.passwordWrap : bundle.prfWrap;
     if (selected === null) throw new KeyringAuthError();
     dek = await openAead({
@@ -481,7 +500,7 @@ export async function openKeyringBundle(params: OpenKeyringBundleParams): Promis
     if (dek.length !== KEYRING_DEK_BYTES) {
       throw new KeyringFormatError(`wrapped data-encryption key must be ${KEYRING_DEK_BYTES} bytes`);
     }
-    const plaintext = await openAead({
+    plaintext = await openAead({
       nonce: bundle.payload.nonce,
       ciphertext: bundle.payload.ciphertext,
       keyBytes: dek,
@@ -500,13 +519,16 @@ export async function openKeyringBundle(params: OpenKeyringBundleParams): Promis
     });
     try {
       assertUnlockCheck(unlock, "open bundle");
+      releasePlaintext = true;
       return plaintext;
     } catch (error) {
       plaintext.fill(0);
       throw error;
     }
   } finally {
+    removeAbortCleanup();
     unwrapKeyBytes.fill(0);
     dek?.fill(0);
+    if (!releasePlaintext) plaintext?.fill(0);
   }
 }

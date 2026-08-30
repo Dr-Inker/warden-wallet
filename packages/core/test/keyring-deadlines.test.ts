@@ -10,9 +10,10 @@ import {
   startUnlockSession,
   touchUnlockSession,
   zeroizeUnwrapMaterial,
+  type UnlockCheck,
   type UnlockPolicy,
 } from "../src/keyring/deadlines.js";
-import { KeyringExpiredError, KeyringFormatError } from "../src/keyring/errors.js";
+import { KeyringExpiredError, KeyringFormatError, KeyringLockedError } from "../src/keyring/errors.js";
 
 // Absolute wall-clock unlock deadlines (WRD-KEY-03).
 //
@@ -151,7 +152,11 @@ describe("async key uses receive a live clock authority, never a sampled instant
   it("re-reads the clock on every check and closes exactly at the boundary", () => {
     const deadlines = startUnlockSession(T0, POLICY);
     let now = T0 + 1;
-    const unlock = snapshotUnlockCheck({ deadlines, readNow: () => now });
+    const unlock = snapshotUnlockCheck({
+      deadlines,
+      readNow: () => now,
+      signal: new AbortController().signal,
+    });
     expect(() => assertUnlockCheck(unlock, "decrypt")).not.toThrow();
     now = deadlines.idleExpiresAt;
     expect(() => assertUnlockCheck(unlock, "decrypt")).toThrow(KeyringExpiredError);
@@ -163,8 +168,21 @@ describe("async key uses receive a live clock authority, never a sampled instant
       snapshotUnlockCheck({
         deadlines,
         readNow: (T0 + 1) as unknown as () => number,
+        signal: new AbortController().signal,
       }),
     ).toThrow(KeyringFormatError);
+  });
+
+  it("rejects a missing or malformed revocation signal", () => {
+    const deadlines = startUnlockSession(T0, POLICY);
+    const withoutSignal = { deadlines, readNow: () => T0 + 1 } as unknown as UnlockCheck;
+    const malformedSignal = {
+      deadlines,
+      readNow: () => T0 + 1,
+      signal: {},
+    } as unknown as UnlockCheck;
+    expect(() => snapshotUnlockCheck(withoutSignal)).toThrow(KeyringFormatError);
+    expect(() => snapshotUnlockCheck(malformedSignal)).toThrow(KeyringFormatError);
   });
 
   it("fails closed with a typed error when the clock reader itself throws", () => {
@@ -174,6 +192,7 @@ describe("async key uses receive a live clock authority, never a sampled instant
       readNow: () => {
         throw new Error("clock transport failed");
       },
+      signal: new AbortController().signal,
     });
     expect(() => assertUnlockCheck(unlock, "decrypt")).toThrow(KeyringFormatError);
   });
@@ -184,13 +203,47 @@ describe("async key uses receive a live clock authority, never a sampled instant
       hardExpiresAt: number;
     };
     let now = T0 + 1;
-    const source = { deadlines, readNow: () => now };
+    const source = {
+      deadlines,
+      readNow: () => now,
+      signal: new AbortController().signal,
+    };
     const unlock = snapshotUnlockCheck(source)!;
     deadlines.idleExpiresAt = T0 + 1;
     source.readNow = () => T0 + POLICY.hardTimeoutMs;
     expect(() => assertUnlockCheck(unlock, "decrypt")).not.toThrow();
     now = unlock.deadlines.idleExpiresAt;
     expect(() => assertUnlockCheck(unlock, "decrypt")).toThrow(KeyringExpiredError);
+  });
+
+  it("snapshots signal identity instead of accepting a post-start replacement", () => {
+    const deadlines = startUnlockSession(T0, POLICY);
+    const original = new AbortController();
+    const replacement = new AbortController();
+    const source = {
+      deadlines,
+      readNow: () => T0 + 1,
+      signal: original.signal,
+    };
+    const unlock = snapshotUnlockCheck(source)!;
+    source.signal = replacement.signal;
+    replacement.abort();
+    expect(() => assertUnlockCheck(unlock, "decrypt")).not.toThrow();
+    original.abort();
+    expect(() => assertUnlockCheck(unlock, "decrypt")).toThrow(KeyringLockedError);
+  });
+
+  it("rejects synchronously after the owning session aborts", () => {
+    const deadlines = startUnlockSession(T0, POLICY);
+    const controller = new AbortController();
+    const unlock = snapshotUnlockCheck({
+      deadlines,
+      readNow: () => T0 + 1,
+      signal: controller.signal,
+    });
+    expect(() => assertUnlockCheck(unlock, "decrypt")).not.toThrow();
+    controller.abort();
+    expect(() => assertUnlockCheck(unlock, "decrypt")).toThrow(KeyringLockedError);
   });
 });
 

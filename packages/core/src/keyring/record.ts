@@ -57,6 +57,7 @@ import {
 } from "./derive.js";
 import {
   assertUnlockCheck,
+  registerUnlockAbortCleanup,
   snapshotUnlockCheck,
   type UnlockCheck,
 } from "./deadlines.js";
@@ -419,6 +420,7 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
   const plaintext = params.plaintext;
   let passwordKey: KeyringUnwrapKey | undefined;
   let prfKey: KeyringUnwrapKey | undefined;
+  let removeAbortCleanup = (): void => undefined;
   try {
     if (!(passwordBytes instanceof Uint8Array)) throw new KeyringFormatError("passwordBytes must be a Uint8Array");
     if (!(plaintext instanceof Uint8Array)) throw new KeyringFormatError("plaintext must be a Uint8Array");
@@ -426,6 +428,14 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
       throw new KeyringFormatError("prfOutput must be a Uint8Array");
     }
     const unlock = snapshotUnlockCheck(params.unlock);
+    assertUnlockCheck(unlock, "seal record");
+    removeAbortCleanup = registerUnlockAbortCleanup(unlock, () => {
+      passwordBytes.fill(0);
+      prfOutput?.fill(0);
+      plaintext.fill(0);
+      if (passwordKey !== undefined) zeroizeUnwrapKey(passwordKey);
+      if (prfKey !== undefined) zeroizeUnwrapKey(prfKey);
+    });
     assertUnlockCheck(unlock, "seal record");
     const metadata = canonicalMetadata(params.metadata);
     if (metadata.prf === null && prfOutput !== undefined) {
@@ -457,6 +467,7 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
     assertPrfShape(metadata, bundle);
     return { metadata, bundle };
   } finally {
+    removeAbortCleanup();
     if (passwordBytes instanceof Uint8Array) passwordBytes.fill(0);
     if (prfOutput instanceof Uint8Array) prfOutput.fill(0);
     if (plaintext instanceof Uint8Array) plaintext.fill(0);
@@ -487,9 +498,18 @@ export async function openKeyringRecordWithPasswordBytes(
 ): Promise<Uint8Array> {
   const passwordBytes = params.passwordBytes;
   let passwordKey: KeyringUnwrapKey | undefined;
+  let plaintext: Uint8Array | undefined;
+  let releasePlaintext = false;
+  let removeAbortCleanup = (): void => undefined;
   try {
     if (!(passwordBytes instanceof Uint8Array)) throw new KeyringFormatError("passwordBytes must be a Uint8Array");
     const unlock = snapshotUnlockCheck(params.unlock);
+    assertUnlockCheck(unlock, "open record with password");
+    removeAbortCleanup = registerUnlockAbortCleanup(unlock, () => {
+      passwordBytes.fill(0);
+      if (passwordKey !== undefined) zeroizeUnwrapKey(passwordKey);
+      plaintext?.fill(0);
+    });
     assertUnlockCheck(unlock, "open record with password");
     const record = canonicalRecord(params.record);
     const recordBinding = metadataBytes(record.metadata);
@@ -499,7 +519,7 @@ export async function openKeyringRecordWithPasswordBytes(
       record.metadata.argon2id.params,
     );
     assertUnlockCheck(unlock, "open record with password");
-    const plaintext = await openKeyringBundle({
+    plaintext = await openKeyringBundle({
       bundle: record.bundle,
       unwrapKey: passwordKey,
       context: params.context,
@@ -508,14 +528,17 @@ export async function openKeyringRecordWithPasswordBytes(
     });
     try {
       assertUnlockCheck(unlock, "open record with password");
+      releasePlaintext = true;
       return plaintext;
     } catch (error) {
       plaintext.fill(0);
       throw error;
     }
   } finally {
+    removeAbortCleanup();
     if (passwordBytes instanceof Uint8Array) passwordBytes.fill(0);
     if (passwordKey !== undefined) zeroizeUnwrapKey(passwordKey);
+    if (!releasePlaintext) plaintext?.fill(0);
   }
 }
 
@@ -533,9 +556,18 @@ export async function openKeyringRecordWithPrfBytes(
 ): Promise<Uint8Array> {
   const prfOutput = params.prfOutput;
   let prfKey: KeyringUnwrapKey | undefined;
+  let plaintext: Uint8Array | undefined;
+  let releasePlaintext = false;
+  let removeAbortCleanup = (): void => undefined;
   try {
     if (!(prfOutput instanceof Uint8Array)) throw new KeyringFormatError("prfOutput must be a Uint8Array");
     const unlock = snapshotUnlockCheck(params.unlock);
+    assertUnlockCheck(unlock, "open record with PRF");
+    removeAbortCleanup = registerUnlockAbortCleanup(unlock, () => {
+      prfOutput.fill(0);
+      if (prfKey !== undefined) zeroizeUnwrapKey(prfKey);
+      plaintext?.fill(0);
+    });
     assertUnlockCheck(unlock, "open record with PRF");
     const record = canonicalRecord(params.record);
     if (record.metadata.prf === null) throw new KeyringAuthError();
@@ -546,7 +578,7 @@ export async function openKeyringRecordWithPrfBytes(
       params.context,
     );
     assertUnlockCheck(unlock, "open record with PRF");
-    const plaintext = await openKeyringBundle({
+    plaintext = await openKeyringBundle({
       bundle: record.bundle,
       unwrapKey: prfKey,
       context: params.context,
@@ -555,13 +587,16 @@ export async function openKeyringRecordWithPrfBytes(
     });
     try {
       assertUnlockCheck(unlock, "open record with PRF");
+      releasePlaintext = true;
       return plaintext;
     } catch (error) {
       plaintext.fill(0);
       throw error;
     }
   } finally {
+    removeAbortCleanup();
     if (prfOutput instanceof Uint8Array) prfOutput.fill(0);
     if (prfKey !== undefined) zeroizeUnwrapKey(prfKey);
+    if (!releasePlaintext) plaintext?.fill(0);
   }
 }
