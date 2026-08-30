@@ -1,5 +1,61 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C1 SENDER-CLASSIFIER BOUNDARY — PURE TUPLE, ROUTER STILL CLOSED
+>
+> Commit `fcf4a255e0809a41f6b8033db12b0fb4762ff40e` adds a pure
+> `Port.sender` classifier without making a wallet method reachable. Exact-SHA
+> focused evidence: `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension test` → **62/62**, exit **0**; the corresponding `typecheck`
+> and `build` commands each exit **0**. This is not the repository deploy gate.
+> Run `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh` on
+> the final ledger-inclusive SHA before claiming this loop boundary green.
+>
+> The initial hostile lane failed for both intended reasons: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> vitest run test/manifest-storage.test.ts test/sender-provenance.test.ts` had
+> **2 failed files**—the manifest still advertised Chrome 102 instead of 106,
+> and the classifier module did not exist. The provider classifier now requires
+> this extension's browser-owned sender id, a bounded document id, safe tab/frame
+> ids, one canonical HTTP(S) frame origin, and a matching frame URL. It ignores
+> the top-level `tab.url`, so a cross-origin child keeps its own origin, and its
+> frozen tuple includes `documentId` so a reused tab/frame cannot silently look
+> like the prior document. The privileged-UI classifier additionally requires
+> the exact `chrome-extension://<runtime-id>` origin, an exact literal allowlisted
+> path with no query/fragment/normalization ambiguity, and a top-level frame when
+> hosted in a tab. A same-extension-id content-script mock with a web origin is
+> rejected. Native, opaque, missing, mismatched, oversized, and non-active-at-open
+> sender shapes fail closed.
+>
+> The manifest minimum moved from Chrome 102 to **106** because the classifier
+> refuses senders without `MessageSender.documentId`; Chrome introduced that
+> browser-owned document UUID in 106. Chrome also documents that `origin` may
+> differ from `url` for `about:blank` and may be opaque for sandboxed frames, that
+> an iframe sender URL is the iframe URL rather than its host page, and that
+> `documentLifecycle` is only a port-creation snapshot which may already be stale.
+> Chrome's messaging guidance says content scripts are less trustworthy and their
+> messages should be treated as attacker-crafted; it also says ports disconnect
+> when their tab/frame unloads. Sources:
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>.
+>
+> **Do not promote `WRD-EXT-01` or `WRD-EXT-02`.** These are unit mocks, not an
+> actual-browser content-script/popup/full-page vector. No UI page, provider,
+> content script, port name, closed message schema, runtime listener, request
+> owner, payload-context stripper, disconnect/navigation cancellation, account
+> binding, or privileged method exists. The built worker intentionally does not
+> import this unused source: after the passing build, `rg -n
+> "classifyProviderSender|invalid sender provenance"
+> apps/extension/dist/background.js` exited **1** with no match. That keeps the
+> current artifact closed but means the classifier is not yet an exercised
+> runtime control. Carrying `documentId` distinguishes two tuples; it does not by
+> itself cancel the first request. `documentLifecycle` can go stale after open.
+> HTTP origins are identified, not thereby trusted or authorized. The future
+> router still controls the UI allowlist and could misconfigure it. The next safe
+> slice is closed, per-channel message schemas and a zero-privilege port owner
+> that binds this tuple and disconnects on every rejected shape—still before any
+> signing, decrypt, export, approval, or account method. Independent second-model
+> review remains **UNVERIFIED**; no result or review artefact was fabricated.
+
 > ## 2026-08-30 C1 MV3 SESSION-OWNER BOUNDARY — LOADABLE SCAFFOLD, WALLET SURFACE OPEN
 >
 > Commit `36c7e4bee57dba4b2b7efce498d25818bcba4fb3` creates the first
