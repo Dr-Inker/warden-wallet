@@ -1,5 +1,69 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C2 PERSISTENT RECORD BOUNDARY — FORMAT CLOSED, ADAPTER/LIFECYCLE OPEN
+>
+> This block supersedes the earlier 2026-08-30 “next safe C2 slice” paragraph below.
+> Commit `6ac4624b7eeb9e8bc434687f52b18d291edc5714` adds the record layer. Exact-SHA
+> executable evidence: `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/core test` → **420/420**, exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core build` → exit **0**.
+> This is a focused package gate, not the repository deploy gate. Run the full gate on
+> the final ledger-inclusive SHA; do not inherit the earlier SHA's result by prose.
+>
+> The persistent v1 value is now one strict binary record encoded as one canonical
+> unpadded-base64url string: bounded Argon2id parameters + 16-byte salt, optional
+> random 32-byte WebAuthn PRF input + independent 16-byte HKDF salt, and one KEK/DEK
+> bundle. The exact metadata header is authenticated by every enrolled DEK wrap and
+> by the payload, so PRF unlock rejects tampered password metadata and password unlock
+> rejects tampered PRF metadata. PRF is truly optional: a credential/device without
+> PRF now produces a password-only record instead of being blocked by a supposedly
+> optional optimization. Argon metadata is rejected above 128 MiB / `t=10` / `p=16`
+> before allocation; those are resource-exhaustion **ceilings**, never a measured
+> password-hardening floor.
+>
+> `keyring-record.test.ts` has **16** tests: a hand-built binary vector, independent
+> platform base64url comparison, every-prefix truncation sweep, strict flags/lengths,
+> storage-value type/alphabet/canonical-tail checks, password-only + dual-route opens,
+> outer-metadata tamper, cross-record splice, caller-mutation snapshot, and secret
+> buffer cleanup on success/throw. `keyring-bundle.test.ts` is **24** tests and now has
+> raw-WebCrypto vectors for record-bound AAD and the authenticated empty PRF slot.
+> Derivation is **16** tests; envelope/AAD remain **27/21**.
+>
+> Hostile findings pinned red before fixes:
+>
+> 1. The prior dual-wrap API required PRF and therefore rejected valid non-PRF
+>    credentials, contradicting the plan's mandatory password fallback.
+> 2. Storing salts/parameters outside bundle AAD would let an attacker poison the
+>    unused fallback while the other route continued to open successfully.
+> 3. The first resource-ceiling test falsely passed because missing imported constants
+>    became `undefined`, then `NaN`; exact constant pins exposed that wrong-attribute
+>    green before implementation.
+> 4. Malformed non-object Argon parameters escaped as raw `TypeError` rather than the
+>    keyring's typed fail-closed error. The validator now rejects them explicitly.
+>
+> Primary-source platform findings: Chrome documents storage values as JSON
+> serializable, `storage.local` as exposed to content scripts by default unless
+> `setAccessLevel()` restricts it, and `storage.session` as trusted-context-only by
+> default. It documents asynchronous `set()` success/failure but no transactional,
+> CAS, or durable-write guarantee used here; this commit therefore claims only a
+> one-value format, not atomic persistence. WebAuthn L3 defines PRFs over inputs of any
+> length with 32-byte outputs and notes the security benefit of unpredictable inputs;
+> v1 chooses a CSPRNG 32-byte input. Sources:
+> <https://developer.chrome.com/docs/extensions/reference/api/storage/>,
+> <https://developer.chrome.com/docs/extensions/reference/api/storage/StorageArea/>,
+> <https://www.w3.org/TR/webauthn-3/#sctn-prf-extension>.
+>
+> **Do not promote `WRD-KEY-*`.** `apps/extension` and the Chrome adapter still do not
+> exist. No code calls `storage.local.setAccessLevel(TRUSTED_CONTEXTS)`, serializes
+> competing writers, verifies write/readback, puts minimum live material in trusted
+> `storage.session`, or clears it on wake/lock/expiry. `UnlockCheck.now` remains one
+> fixed preflight instant, so it does not re-read wall clock after each `await`. AEAD
+> rejects partial/context splices but cannot reject replay of an entire older valid
+> same-context record without an external freshness authority. Real-device PRF and
+> slowest-desktop Argon2 remain UNVERIFIED; C1a's production-origin/migration decision
+> remains owner-blocking. Independent second-model review remains UNVERIFIED for the
+> host-policy reasons in the block below; no review row or artefact was fabricated.
+
 > ## 2026-08-30 C2 KEK/DEK BOUNDARY — PRIMITIVE CLOSED, PRODUCT INVARIANT OPEN
 >
 > **Full gate green @`2b19883c8acedbd97633d3df24b9ea5556a6422f`:**
