@@ -6,18 +6,26 @@ import {
   classifyProviderSender,
   type ProviderProvenance,
 } from "./sender-provenance.js";
+import {
+  MAX_PROVIDER_REQUESTS_PER_DOCUMENT,
+  PROVIDER_PORT_NAME,
+  createUnavailableProviderResponse,
+} from "../provider-protocol.js";
 
-export const PROVIDER_PORT_NAME = "warden:provider:v1";
+export {
+  PROVIDER_PORT_NAME,
+  createUnavailableProviderResponse,
+} from "../provider-protocol.js";
+export type { ProviderUnavailableResponse } from "../provider-protocol.js";
 export const DEFAULT_PROVIDER_REQUEST_TTL_MS = 2 * 60 * 1_000;
 export const MAX_PROVIDER_REQUEST_TTL_MS = 10 * 60 * 1_000;
 export const MAX_PENDING_PROVIDER_REQUESTS = 32;
-export const MAX_PROVIDER_REQUESTS_PER_PORT = 1_024;
+export const MAX_PROVIDER_REQUESTS_PER_PORT = MAX_PROVIDER_REQUESTS_PER_DOCUMENT;
 export const MAX_ACTIVE_PROVIDER_PORTS = 256;
 
 const REQUEST_ID_BYTES = 16;
 const REQUEST_ID_ATTEMPTS = 8;
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
-const CORRELATION_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 
 export type ProviderCancellationReason =
   | "expired"
@@ -377,35 +385,6 @@ export class ProviderPortSession {
     this.isClosed = true;
     this.abortAll(reason);
   }
-}
-
-export interface ProviderUnavailableResponse {
-  readonly version: 1;
-  readonly type: "response";
-  readonly correlationId: string;
-  readonly ok: false;
-  readonly error: Readonly<{
-    code: "WARDEN_METHOD_UNAVAILABLE";
-    message: "Warden provider methods are not enabled";
-  }>;
-}
-
-export function createUnavailableProviderResponse(
-  correlationId: string,
-): ProviderUnavailableResponse {
-  if (!CORRELATION_ID_PATTERN.test(correlationId)) {
-    stateError("cannot create a response for a malformed correlation id");
-  }
-  return Object.freeze({
-    version: 1,
-    type: "response",
-    correlationId,
-    ok: false,
-    error: Object.freeze({
-      code: "WARDEN_METHOD_UNAVAILABLE",
-      message: "Warden provider methods are not enabled",
-    }),
-  });
 }
 
 export interface ProviderMessageEvent {

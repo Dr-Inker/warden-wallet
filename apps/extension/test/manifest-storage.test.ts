@@ -6,8 +6,8 @@ import {
   type ExtensionStorageAccessApi,
 } from "../src/background/storage-access.js";
 
-describe("MV3 manifest starts from the closed permission boundary", () => {
-  it("requests storage only and exposes no page, host, script, or external connection surface", async () => {
+describe("MV3 manifest keeps one explicit provider reachability boundary", () => {
+  it("limits the static isolated content script to HTTP(S) documents", async () => {
     const manifest = JSON.parse(
       await readFile(new URL("../manifest.json", import.meta.url), "utf8"),
     ) as Record<string, unknown>;
@@ -17,10 +17,20 @@ describe("MV3 manifest starts from the closed permission boundary", () => {
     expect(manifest.minimum_chrome_version).toBe("106");
     expect(manifest.permissions).toEqual(["storage"]);
     expect(manifest.background).toEqual({ service_worker: "background.js", type: "module" });
+    // With `world` omitted Chrome runs static content scripts in ISOLATED by
+    // default. The explicit manifest field arrived after our Chrome 106 floor;
+    // exact-object equality also prevents a later switch to MAIN from hiding.
+    expect(manifest.content_scripts).toEqual([
+      {
+        matches: ["http://*/*", "https://*/*"],
+        js: ["content.js"],
+        run_at: "document_start",
+        all_frames: true,
+      },
+    ]);
     for (const forbidden of [
       "host_permissions",
       "optional_host_permissions",
-      "content_scripts",
       "externally_connectable",
       "web_accessible_resources",
     ]) {

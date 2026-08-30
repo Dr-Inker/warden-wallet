@@ -3,12 +3,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # WARDEN_SKIP_SPIKES=1 (spec §17 L9, plan Task 11 fix round 1): CI's main
 # gate job sets this to skip `spikes/*/ts` — those packages include a
-# Playwright suite (spikes/02-webauthn or similar) that needs a Chromium
-# install CI's main job does not provision; spikes are throwaway evidence
-# (CLAUDE.md), not shipped, so skipping them here is not a coverage loss for
-# anything that ships. A separate, non-blocking CI job installs Chromium and
-# audits spikes on their own schedule — see .github/workflows/ci.yml. Local
-# runs (this var unset) still exercise everything, unchanged.
+# Playwright suite (spikes/02-webauthn or similar); spikes are throwaway
+# evidence (CLAUDE.md), not shipped, so CI audits them in a separate
+# non-blocking job. The shipped extension's Chromium lane is different: it is
+# mandatory below, and the main CI job provisions its pinned browser. Local
+# runs (this var unset) still exercise the spikes too, unchanged.
 #
 # Cargo already excludes spikes from the root workspace (see Cargo.toml) —
 # this only needs to filter the pnpm side.
@@ -25,6 +24,12 @@ fi
 pnpm --filter @warden/core build
 pnpm --filter @warden/extension typecheck
 pnpm --filter @warden/extension build
+# Unit mocks cannot establish Chrome-owned MessageSender provenance, frame
+# isolation, navigation teardown, or MV3 stop/wake behavior. This shipped-code
+# lane rebuilds the unpacked extension, runs it in Chromium, closes the live
+# worker target, proves its execution global was discarded, and wakes it from a
+# new document Port. A missing Playwright browser is a gate failure, not a skip.
+pnpm --filter @warden/extension test:browser
 # WRDF-0081: the cross-language fixtures under programs/warden/tests/fixtures are
 # READ-ONLY golden vectors, written only by `pnpm --filter @warden/core
 # gen:fixtures`. The suite asserts wrapForExecute/encode reproduce them; this

@@ -3,6 +3,8 @@ dist
 target
 .anchor
 test-ledger
+/apps/extension/test-results/
+/apps/extension/playwright-report/
 *.log
 .env
 .env.*

@@ -1,0 +1,255 @@
+import { expect, chromium, test, type BrowserContext, type Frame, type Page } from "@playwright/test";
+import { createServer, type Server } from "node:http";
+import { resolve } from "node:path";
+
+const EXTENSION_DIRECTORY = resolve(import.meta.dirname, "../dist");
+const PAGE_REQUEST_TYPE = "warden:provider:request";
+const PAGE_RESPONSE_TYPE = "warden:provider:response";
+
+interface TestServer {
+  readonly origin: string;
+  close(): Promise<void>;
+}
+
+function pageMarkup(frameOrigin?: string): string {
+  const frame = frameOrigin === undefined
+    ? ""
+    : `<iframe id="cross-origin-frame" src="${frameOrigin}/frame"></iframe>`;
+  return `<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Warden bridge fixture</title></head>
+  <body>
+    ${frame}
+    <script>
+      globalThis.__wardenResponses = [];
+      globalThis.__wardenWindowRequests = [];
+      addEventListener("message", (event) => {
+        const data = event.data;
+        if (
+          data !== null &&
+          typeof data === "object" &&
+          data.version === 1 &&
+          data.type === ${JSON.stringify(PAGE_REQUEST_TYPE)}
+        ) {
+          globalThis.__wardenWindowRequests.push(data.payload?.correlationId);
+        }
+        if (
+          event.source === window &&
+          event.origin === location.origin &&
+          data !== null &&
+          typeof data === "object" &&
+          data.version === 1 &&
+          data.type === ${JSON.stringify(PAGE_RESPONSE_TYPE)}
+        ) {
+          globalThis.__wardenResponses.push(data.payload);
+        }
+      });
+      globalThis.__sendWardenRequest = (correlationId) => {
+        postMessage({
+          version: 1,
+          type: ${JSON.stringify(PAGE_REQUEST_TYPE)},
+          payload: {
+            version: 1,
+            type: "request",
+            correlationId,
+            method: "standard:connect",
+            params: {},
+          },
+        }, location.origin);
+      };
+    </script>
+  </body>
+</html>`;
+}
+
+async function startServer(render: (path: string) => string): Promise<TestServer> {
+  const server: Server = createServer((request, response) => {
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(render(request.url ?? "/"));
+  });
+  await new Promise<void>((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", rejectListen);
+      resolveListen();
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("HTTP fixture server did not expose a TCP address");
+  }
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    close: async () => {
+      await new Promise<void>((resolveClose, rejectClose) => {
+        server.close((error) => error === undefined ? resolveClose() : rejectClose(error));
+      });
+    },
+  };
+}
+
+async function extensionWorker(context: BrowserContext) {
+  const current = context.serviceWorkers().find((worker) =>
+    worker.url().startsWith("chrome-extension://"));
+  if (current !== undefined) return current;
+  return context.waitForEvent("serviceworker", {
+    predicate: (worker) => worker.url().startsWith("chrome-extension://"),
+  });
+}
+
+async function sendAndRead(target: Page | Frame, correlationId: string) {
+  await target.evaluate((id) => {
+    const send = (globalThis as unknown as {
+      __sendWardenRequest?: (requestId: string) => void;
+    }).__sendWardenRequest;
+    if (typeof send !== "function") throw new Error("fixture sender is unavailable");
+    send(id);
+  }, correlationId);
+
+  await expect.poll(async () => target.evaluate((id) => {
+    const responses = (globalThis as unknown as {
+      __wardenResponses?: Array<{ correlationId?: unknown }>;
+    }).__wardenResponses ?? [];
+    return responses.find((response) => response.correlationId === id) ?? null;
+  }, correlationId)).toEqual({
+    version: 1,
+    type: "response",
+    correlationId,
+    ok: false,
+    error: {
+      code: "WARDEN_METHOD_UNAVAILABLE",
+      message: "Warden provider methods are not enabled",
+    },
+  });
+}
+
+test("real MV3 bridge binds each frame/document and wakes after worker termination", async () => {
+  const frameServer = await startServer(() => pageMarkup());
+  const topServer = await startServer((path) =>
+    path === "/top" ? pageMarkup(frameServer.origin) : pageMarkup());
+  const context = await chromium.launchPersistentContext("", {
+    headless: false,
+    args: [
+      `--disable-extensions-except=${EXTENSION_DIRECTORY}`,
+      `--load-extension=${EXTENSION_DIRECTORY}`,
+      "--headless=new",
+    ],
+  });
+
+  try {
+    const page = await context.newPage();
+    await page.goto(`${topServer.origin}/top`);
+    await sendAndRead(page, "browser_top_0123456789");
+
+    const crossOriginFrame = page.frames().find((frame) =>
+      frame.url() === `${frameServer.origin}/frame`);
+    expect(crossOriginFrame, "cross-origin iframe loaded").toBeDefined();
+    await sendAndRead(crossOriginFrame!, "browser_frame_01234567");
+
+    await page.evaluate(({ frameOrigin, correlationId, requestType }) => {
+      const iframe = document.querySelector<HTMLIFrameElement>("#cross-origin-frame");
+      iframe?.contentWindow?.postMessage({
+        version: 1,
+        type: requestType,
+        payload: {
+          version: 1,
+          type: "request",
+          correlationId,
+          method: "standard:connect",
+          params: {},
+        },
+      }, frameOrigin);
+    }, {
+      frameOrigin: frameServer.origin,
+      correlationId: "browser_parent_forgery_01",
+      requestType: PAGE_REQUEST_TYPE,
+    });
+    await expect.poll(async () => crossOriginFrame!.evaluate(() =>
+      (globalThis as unknown as { __wardenWindowRequests?: unknown[] })
+        .__wardenWindowRequests ?? [])).toContain("browser_parent_forgery_01");
+    // A valid same-frame request is the causal barrier. Port ordering means a
+    // wrongly forwarded parent request would have produced its response before
+    // this later valid response; no arbitrary negative timeout is involved.
+    await sendAndRead(crossOriginFrame!, "browser_frame_barrier_01");
+    expect(await crossOriginFrame!.evaluate(() =>
+      (globalThis as unknown as {
+        __wardenResponses?: Array<{ correlationId?: unknown }>;
+      }).__wardenResponses?.some(
+        (response) => response.correlationId === "browser_parent_forgery_01",
+      ) ?? false)).toBe(false);
+
+    await page.goto(`${topServer.origin}/same-tab-navigation`);
+    await sendAndRead(page, "browser_navigate_0123456");
+
+    const worker = await extensionWorker(context);
+    const extensionId = new URL(worker.url()).hostname;
+    expect(extensionId).toMatch(/^[a-p]{32}$/);
+    const extensionOrigin = `chrome-extension://${extensionId}`;
+    const preStopMarker = "pre-stop-worker-global";
+    await worker.evaluate((marker) => {
+      (globalThis as unknown as { __wardenPreStopMarker?: string })
+        .__wardenPreStopMarker = marker;
+    }, preStopMarker);
+    const cdp = await context.newCDPSession(page);
+    const { targetInfos } = await cdp.send("Target.getTargets");
+    const workerTarget = targetInfos.find((target) =>
+      target.type === "service_worker" && target.url.startsWith(extensionOrigin));
+    expect(workerTarget, "extension service-worker target exists before forced stop").toBeDefined();
+    const closed = await cdp.send("Target.closeTarget", {
+      targetId: workerTarget!.targetId,
+    });
+    expect(closed.success).toBe(true);
+    // Playwright retains a Worker wrapper after CDP closes its target, so the
+    // context.serviceWorkers() array is not a liveness oracle. Measure the CDP
+    // target itself: the exact pre-stop target must disappear and no extension
+    // worker target may remain before the next document opens a Port.
+    await expect.poll(async () => {
+      const currentTargets = await cdp.send("Target.getTargets");
+      return currentTargets.targetInfos
+        .filter((target) =>
+          target.type === "service_worker" && target.url.startsWith(extensionOrigin))
+        .map((target) => target.targetId);
+    }).toEqual([]);
+
+    // The content document does not navigate here. Its prior Port was severed
+    // by worker termination; this next request must lazily open a new Port and
+    // wake the worker without an eager reconnect loop.
+    await sendAndRead(page, "browser_worker_wake_0123");
+    await expect.poll(async () => {
+      const currentTargets = await cdp.send("Target.getTargets");
+      return currentTargets.targetInfos
+        .filter((target) =>
+          target.type === "service_worker" && target.url.startsWith(extensionOrigin))
+        .map((target) => target.targetId);
+    }).not.toEqual([]);
+    const replacementTargets = await cdp.send("Target.getTargets");
+    const replacementTargetIds = replacementTargets.targetInfos
+      .filter((target) =>
+        target.type === "service_worker" && target.url.startsWith(extensionOrigin))
+      .map((target) => target.targetId);
+    expect(replacementTargetIds).not.toEqual([]);
+    // Chromium can reuse the extension service-worker Target id across a stop.
+    // A CDP-injected global is an execution-context probe: it must be gone in
+    // the worker that handled the post-navigation wake request.
+    await expect.poll(async () => {
+      for (const candidate of [...context.serviceWorkers()].reverse()) {
+        if (!candidate.url().startsWith(extensionOrigin)) continue;
+        try {
+          return await candidate.evaluate(() =>
+            (globalThis as unknown as { __wardenPreStopMarker?: string })
+              .__wardenPreStopMarker ?? null);
+        } catch {
+          // A retained Playwright wrapper for the closed target is not live.
+        }
+      }
+      return "no-live-extension-worker";
+    }).toBe(null);
+  } finally {
+    await context.close();
+    await topServer.close();
+    await frameServer.close();
+  }
+});
