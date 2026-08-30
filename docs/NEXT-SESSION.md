@@ -1,5 +1,94 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C1 ZERO-AUTHORITY ACTION POPUP — REAL TOOLBAR SENDER, NO WALLET CAPABILITY
+>
+> Commit `14205821687cf3da51abfa12866985e2a545b15a` adds the first
+> extension-owned popup route without connecting account, approval, storage,
+> RPC, signing, decrypt, export, provider-success, or key authority. Exact-SHA
+> focused evidence: `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension test` → **199/199**, exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> typecheck`, `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/core build`, and `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension build` each exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> playwright test -c playwright.config.ts --repeat-each=3` → **3/3**, exit
+> **0**. These are focused lanes, not the repository deploy gate. Run `env
+> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh` on the
+> final ledger-inclusive SHA before calling this loop boundary green.
+>
+> The initial red lane was executable: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> vitest run test/popup-port.test.ts test/runtime.test.ts
+> test/manifest-storage.test.ts` exited **1** because the popup modules were
+> absent and the manifest had no action. The implemented manifest action points
+> only to local `popup.html` and adds no permission. Its IIFE bundle has an
+> exact two-source dependency allowlist (`popup/main.ts` and
+> `popup-protocol.ts`) and is **3,229 bytes**. `rg -n
+> 'chrome\.storage|privateKey|secretKey|approval|accounts|@warden/core|signTransaction|decrypt|export'
+> apps/extension/dist/popup.js` exits **1** with no match. The separate
+> `warden:popup:v1` language accepts one exact status request and can return
+> only `WARDEN_POPUP_UNAVAILABLE`; it has no dispatch hook. One synchronous
+> top-level `runtime.onConnect` owner now routes the exact provider and popup
+> names, disconnects unknown names, and prevents independent child listeners
+> from rejecting each other's Ports. Popup work is bounded to 16 active Ports,
+> 16 requests per Port, unique correlations, and one live Port per supplied
+> document id.
+>
+> Harsh browser review rejected the first “popup works” result: it navigated a
+> normal tab directly to `popup.html`, so it measured a tab-hosted extension
+> page rather than the browser action. Replacing it with
+> `chrome.action.openPopup()` made the lane red: the real toolbar popup showed
+> `data-boundary=closed`. A test-side worker observer then measured the
+> browser-owned `Port.sender` on bundled Chromium **151.0.7922.34** as exactly
+> `{id, origin: chrome-extension://<id>, url:
+> chrome-extension://<id>/popup.html}`—no `documentId`,
+> `documentLifecycle`, `tab`, or `frameId`. The prior unit fixture's
+> mandatory document id was fiction. The corrected classifier accepts that
+> exact tabless action shape and binds it to the extension origin/path plus
+> browser Port lifetime. A tab-hosted privileged page still requires a document
+> id and top frame. A same-id content script still has a web origin/URL and
+> rejects before its payload is accepted.
+>
+> The Playwright lane now attaches to the actual action-popup target, reads the
+> rendered unavailable state, and sends a second direct popup request so a
+> hard-coded DOM label cannot pass the route. It separately tests direct
+> extension-page navigation as the tab-hosted sender shape. It evaluates a
+> popup-channel forgery inside Warden's real isolated content-script execution
+> context and observes the causal disconnect, not an arbitrary negative wait.
+> The toolbar vector is repeat-green **3/3**, but
+> `chrome.action.openPopup()` itself is only an automation mechanism available
+> in newer Chrome; this does not prove ordinary action-popup compatibility at
+> the manifest's Chrome 106 floor. Chrome version/store/manual-install matrix
+> evidence remains **UNVERIFIED**. References:
+> <https://developer.chrome.com/docs/extensions/reference/api/action#method-openPopup>,
+> <https://developer.chrome.com/docs/extensions/develop/ui/add-popup>,
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime#type-MessageSender>.
+>
+> A current discovery adapter was researched and deliberately not added.
+> Wallet Standard core remains pinned for this review at
+> `c49b56d60fbac2e68e0f3536707fa33030652f9e`, Anza wallet-standard at
+> `4b6a165dc8fdedc28a59af05a72a0f91cefffc0d`, and the current Anza
+> wallet-adapter at `ca731858affa36fa91b593cc670747b671c4589f`. Its
+> `packages/core/base/src/standard.ts` compatibility predicate requires
+> `standard:connect`, `standard:events`, and either
+> `solana:signAndSendTransaction` or `solana:signTransaction`. An empty
+> discovery wallet is filtered out; advertising those features before Warden
+> has an authorized account, events, approvals, and an honest transaction path
+> would lie about capability. Source:
+> <https://github.com/anza-xyz/wallet-adapter/blob/ca731858affa36fa91b593cc670747b671c4589f/packages/core/base/src/standard.ts>.
+>
+> **Do not promote `WRD-EXT-01` or `WRD-EXT-02`.** This closes a measured
+> piece of the UI provenance boundary, but C1 still lacks the separate full-page
+> approval route and every privileged method remains absent. There is no
+> provider injection/registration, account or cluster authorization, approval
+> record/digest/atomic winner, successful response/event schema, RPC, signer,
+> pending-request recovery, or key use. The popup is an intentionally plain
+> pre-alpha boundary status, not deployable wallet UX. Tabless action popups
+> cannot be de-duplicated by document id because Chrome supplied none; the
+> active-Port cap and lifetime are containment, not document identity.
+> Independent second-model review remains **UNVERIFIED**.
+
 > ## 2026-08-30 C1 LAZY PAGE BRIDGE — REAL CHROMIUM REACHABILITY, AUTHORITY STILL ZERO
 >
 > Commit `692e5509f7b4a62a8082aaccff2b9b89b8af315e` makes the named

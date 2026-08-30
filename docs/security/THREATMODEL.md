@@ -385,3 +385,51 @@ pending privileged-request recovery. Repeated navigation/tab-id reuse, cap compa
 version/store/manual-install behavior, and opaque-frame demand remain unmeasured. The new broad host
 warning provides no user-facing wallet value until provider registration lands. Independent
 second-model review remains UNVERIFIED.
+
+---
+
+## Client C1 zero-authority action popup — 1420582 — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** the manifest now exposes an extension action whose local
+`popup.html` opens the distinct `warden:popup:v1` runtime channel. One
+synchronous top-level router owns `runtime.onConnect` and directs only the exact
+provider and popup names to their separate parsers; unknown names disconnect.
+The popup has one status request and one fixed unavailable response. It imports
+no core, provider, storage, session, approval, RPC, signing, decrypt, export, or
+key module and has no dispatch hook, so the new privileged-origin route carries
+zero wallet authority.
+
+**Removed / narrowed:** popup privilege requires this extension's id, exact
+`chrome-extension://<id>` origin, and exact `/popup.html` URL. Tab-hosted
+extension pages additionally require a browser document id and top-frame
+identity. Bundled Chromium 151's real toolbar popup was measured with
+`chrome.action.openPopup()`; its browser-owned sender contained only id,
+extension origin, and exact popup URL. Because Chrome omitted document, tab,
+frame, and lifecycle fields for that tabless shape, its binding is the exact
+extension origin/path plus the lifetime of the browser-owned Port—not an
+invented document id. A real isolated content script with the same extension id
+was rejected causally because its sender origin/URL belonged to the web page.
+Per-Port requests/correlations, total active Ports, optional document ownership,
+and bundle dependencies are bounded and tested. The real action-popup route,
+direct response, rendered state, tab-hosted route, and content-script rejection
+passed three consecutive Playwright runs at implementation commit
+`14205821687cf3da51abfa12866985e2a545b15a`.
+
+**New invariants:** none promoted. `WRD-EXT-01` and `WRD-EXT-02` remain
+`unimplemented`: only an unavailable status is reachable, and the required
+full-page approval lane does not exist.
+
+**Residual, stated honestly:** there is still no injected/registered Wallet
+Standard provider, authorized account/cluster record, approval owner/digest,
+atomic approval winner, success/event protocol, RPC, signing, key use, or
+pending-request recovery. A discovery-only Wallet Standard registration was
+rejected after reading Anza wallet-adapter commit
+`ca731858affa36fa91b593cc670747b671c4589f`: its compatibility predicate
+requires connect, events, and a transaction feature, so registering now would
+advertise capabilities Warden does not have. Chrome 106 ordinary-action
+compatibility is not established by the newer `action.openPopup` automation
+API or by one Linux Chromium build. A tabless action sender supplies no
+document-level identity, so the concurrency cap and Port lifetime contain
+resource use but cannot prove one Port per popup document. The page is a plain
+pre-alpha boundary indicator, not release UX. Independent second-model review
+remains UNVERIFIED.
