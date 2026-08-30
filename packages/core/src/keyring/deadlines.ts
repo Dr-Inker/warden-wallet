@@ -22,10 +22,14 @@
 //!
 //! ## Pure by construction
 //!
-//! Nothing in this module reads the clock. `now` is always a parameter. A service
-//! worker's wake handler passes `Date.now()`; a test passes whatever instant it wants.
-//! They execute the identical code path, so "what happens after a four-hour
-//! suspension" is a deterministic assertion rather than a hope.
+//! Nothing in this module reads the clock implicitly. Pure policy functions take
+//! `now` as a number. Async key-use APIs instead take an {@link UnlockCheck} whose
+//! `readNow` callback is invoked before key use and again after every suspension
+//! boundary. A service worker supplies `Date.now`; a test supplies a controlled
+//! reader. They execute the identical code path, so "what happens after a four-hour
+//! suspension" is a deterministic assertion rather than a hope. A captured number
+//! is deliberately not accepted by the async API: it would go stale at the first
+//! `await`.
 //!
 //! ## Boundary and clock semantics, stated rather than implied
 //!
@@ -70,6 +74,17 @@ export interface UnlockPolicy {
 export interface UnlockDeadlines {
   readonly idleExpiresAt: number;
   readonly hardExpiresAt: number;
+}
+
+/**
+ * Live deadline authority for an asynchronous key use. `readNow` MUST read the
+ * current epoch-millisecond clock on every call; it is a callback, rather than a
+ * sampled number, so an operation cannot carry one preflight instant across an
+ * `await` and accidentally return secret material after expiry.
+ */
+export interface UnlockCheck {
+  readonly deadlines: UnlockDeadlines;
+  readonly readNow: () => number;
 }
 
 /** The result of checking a session against an instant. */
@@ -118,8 +133,34 @@ export function assertValidUnlockPolicy(policy: UnlockPolicy): void {
 
 /** Validate a deadline pair. */
 export function assertValidUnlockDeadlines(deadlines: UnlockDeadlines): void {
+  if (typeof deadlines !== "object" || deadlines === null) {
+    throw new KeyringFormatError("unlock deadlines must be an object");
+  }
   assertDeadline(deadlines.idleExpiresAt, "idleExpiresAt");
   assertDeadline(deadlines.hardExpiresAt, "hardExpiresAt");
+}
+
+/**
+ * Validate and snapshot caller-owned deadline authority before an async operation.
+ * Numeric deadlines and the reader function identity are captured once so a caller
+ * cannot swap either while WebCrypto is pending. The reader's own live clock state
+ * intentionally remains dynamic.
+ */
+export function snapshotUnlockCheck(unlock: UnlockCheck | undefined): UnlockCheck | undefined {
+  if (unlock === undefined) return undefined;
+  if (typeof unlock !== "object" || unlock === null) {
+    throw new KeyringFormatError("unlock check must be an object");
+  }
+  assertValidUnlockDeadlines(unlock.deadlines);
+  if (typeof unlock.readNow !== "function") {
+    throw new KeyringFormatError("unlock check readNow must be a function");
+  }
+  const deadlines = Object.freeze({
+    idleExpiresAt: unlock.deadlines.idleExpiresAt,
+    hardExpiresAt: unlock.deadlines.hardExpiresAt,
+  });
+  const readNow = unlock.readNow.bind(unlock);
+  return Object.freeze({ deadlines, readNow });
 }
 
 /**
@@ -175,6 +216,21 @@ export function isUnlocked(deadlines: UnlockDeadlines, now: number): boolean {
 export function assertUnlocked(deadlines: UnlockDeadlines, now: number, operation: string): void {
   const result = evaluateUnlock(deadlines, now);
   if (result.state === "expired") throw new KeyringExpiredError(result.reason, operation);
+}
+
+/** Read a captured live clock and fail closed unless the session is live now. */
+export function assertUnlockCheck(unlock: UnlockCheck | undefined, operation: string): void {
+  if (unlock === undefined) return;
+  if (typeof unlock !== "object" || unlock === null || typeof unlock.readNow !== "function") {
+    throw new KeyringFormatError("unlock check must contain a readNow function");
+  }
+  let now: number;
+  try {
+    now = unlock.readNow();
+  } catch {
+    throw new KeyringFormatError("unlock check readNow failed");
+  }
+  assertUnlocked(unlock.deadlines, now, operation);
 }
 
 /**

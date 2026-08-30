@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { KeyringContext } from "../src/keyring/aad.js";
 import type { Argon2idParams } from "../src/keyring/derive.js";
-import { KeyringAuthError, KeyringFormatError } from "../src/keyring/errors.js";
+import { startUnlockSession } from "../src/keyring/deadlines.js";
+import { KeyringAuthError, KeyringExpiredError, KeyringFormatError } from "../src/keyring/errors.js";
 import type { KeyringBundle } from "../src/keyring/bundle.js";
 import {
   KEYRING_PASSWORD_SALT_BYTES,
@@ -301,6 +302,50 @@ describe("outer metadata is authenticated, including an unused fallback", () => 
     expect(
       hex(await openKeyringRecordWithPasswordBytes({ record, passwordBytes: password(), context: CONTEXT })),
     ).toBe(hex(SECRET));
+  });
+});
+
+describe("record orchestration cannot carry a stale clock sample across derivation", () => {
+  it("re-checks after synchronous Argon2id and wipes all caller-owned secrets on expiry", async () => {
+    const deadlines = startUnlockSession(1_000, { idleTimeoutMs: 100, hardTimeoutMs: 500 });
+    let reads = 0;
+    const unlock = {
+      deadlines,
+      readNow: () => (reads++ === 0 ? 1_001 : deadlines.idleExpiresAt),
+    };
+    const passwordBytes = password();
+    const plaintext = SECRET.slice();
+    await expect(
+      sealKeyringRecord({
+        metadata: prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: false }),
+        plaintext,
+        passwordBytes,
+        context: CONTEXT,
+        unlock,
+      }),
+    ).rejects.toThrow(KeyringExpiredError);
+    expect(reads).toBe(2);
+    expect(Array.from(passwordBytes)).toEqual(new Array(passwordBytes.length).fill(0));
+    expect(Array.from(plaintext)).toEqual(new Array(plaintext.length).fill(0));
+
+    const record = await sealKeyringRecord({
+      metadata: prepareKeyringRecordMetadata({ argon2idParams: FAST, enablePrf: false }),
+      plaintext: SECRET.slice(),
+      passwordBytes: password(),
+      context: CONTEXT,
+    });
+    reads = 0;
+    const unlockPassword = password();
+    await expect(
+      openKeyringRecordWithPasswordBytes({
+        record,
+        passwordBytes: unlockPassword,
+        context: CONTEXT,
+        unlock,
+      }),
+    ).rejects.toThrow(KeyringExpiredError);
+    expect(reads).toBe(2);
+    expect(Array.from(unlockPassword)).toEqual(new Array(unlockPassword.length).fill(0));
   });
 });
 

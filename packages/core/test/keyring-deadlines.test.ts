@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   MAX_UNLOCK_TIMEOUT_MS,
+  assertUnlockCheck,
   assertUnlocked,
   effectiveExpiresAt,
   evaluateUnlock,
   isUnlocked,
+  snapshotUnlockCheck,
   startUnlockSession,
   touchUnlockSession,
   zeroizeUnwrapMaterial,
@@ -142,6 +144,53 @@ describe("MV3: the clock advances while the worker is asleep", () => {
     }
     expect(threw).toBeInstanceOf(KeyringExpiredError);
     expect((threw as KeyringExpiredError).reason).toBe("hard");
+  });
+});
+
+describe("async key uses receive a live clock authority, never a sampled instant", () => {
+  it("re-reads the clock on every check and closes exactly at the boundary", () => {
+    const deadlines = startUnlockSession(T0, POLICY);
+    let now = T0 + 1;
+    const unlock = snapshotUnlockCheck({ deadlines, readNow: () => now });
+    expect(() => assertUnlockCheck(unlock, "decrypt")).not.toThrow();
+    now = deadlines.idleExpiresAt;
+    expect(() => assertUnlockCheck(unlock, "decrypt")).toThrow(KeyringExpiredError);
+  });
+
+  it("rejects the obsolete frozen-number shape instead of silently reusing it", () => {
+    const deadlines = startUnlockSession(T0, POLICY);
+    expect(() =>
+      snapshotUnlockCheck({
+        deadlines,
+        readNow: (T0 + 1) as unknown as () => number,
+      }),
+    ).toThrow(KeyringFormatError);
+  });
+
+  it("fails closed with a typed error when the clock reader itself throws", () => {
+    const deadlines = startUnlockSession(T0, POLICY);
+    const unlock = snapshotUnlockCheck({
+      deadlines,
+      readNow: () => {
+        throw new Error("clock transport failed");
+      },
+    });
+    expect(() => assertUnlockCheck(unlock, "decrypt")).toThrow(KeyringFormatError);
+  });
+
+  it("snapshots deadline values and reader identity before suspension", () => {
+    const deadlines = startUnlockSession(T0, POLICY) as {
+      idleExpiresAt: number;
+      hardExpiresAt: number;
+    };
+    let now = T0 + 1;
+    const source = { deadlines, readNow: () => now };
+    const unlock = snapshotUnlockCheck(source)!;
+    deadlines.idleExpiresAt = T0 + 1;
+    source.readNow = () => T0 + POLICY.hardTimeoutMs;
+    expect(() => assertUnlockCheck(unlock, "decrypt")).not.toThrow();
+    now = unlock.deadlines.idleExpiresAt;
+    expect(() => assertUnlockCheck(unlock, "decrypt")).toThrow(KeyringExpiredError);
   });
 });
 

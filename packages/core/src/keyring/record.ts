@@ -55,7 +55,11 @@ import {
   type Argon2idParams,
   type KeyringUnwrapKey,
 } from "./derive.js";
-import type { UnlockCheck } from "./envelope.js";
+import {
+  assertUnlockCheck,
+  snapshotUnlockCheck,
+  type UnlockCheck,
+} from "./deadlines.js";
 import { KeyringAuthError, KeyringFormatError } from "./errors.js";
 
 export const KEYRING_RECORD_VERSION_1 = 1;
@@ -421,6 +425,8 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
     if (prfOutput !== undefined && !(prfOutput instanceof Uint8Array)) {
       throw new KeyringFormatError("prfOutput must be a Uint8Array");
     }
+    const unlock = snapshotUnlockCheck(params.unlock);
+    assertUnlockCheck(unlock, "seal record");
     const metadata = canonicalMetadata(params.metadata);
     if (metadata.prf === null && prfOutput !== undefined) {
       throw new KeyringFormatError("PRF output supplied for a password-only record");
@@ -434,8 +440,10 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
       metadata.argon2id.salt,
       metadata.argon2id.params,
     );
+    assertUnlockCheck(unlock, "seal record");
     if (metadata.prf !== null) {
       prfKey = deriveUnwrapKeyFromPrfForContext(prfOutput!, metadata.prf.hkdfSalt, params.context);
+      assertUnlockCheck(unlock, "seal record");
     }
     const bundle = await sealKeyringBundle({
       plaintext,
@@ -443,8 +451,9 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
       prfKey,
       context: params.context,
       recordBinding,
-      unlock: params.unlock,
+      unlock,
     });
+    assertUnlockCheck(unlock, "seal record");
     assertPrfShape(metadata, bundle);
     return { metadata, bundle };
   } finally {
@@ -480,6 +489,8 @@ export async function openKeyringRecordWithPasswordBytes(
   let passwordKey: KeyringUnwrapKey | undefined;
   try {
     if (!(passwordBytes instanceof Uint8Array)) throw new KeyringFormatError("passwordBytes must be a Uint8Array");
+    const unlock = snapshotUnlockCheck(params.unlock);
+    assertUnlockCheck(unlock, "open record with password");
     const record = canonicalRecord(params.record);
     const recordBinding = metadataBytes(record.metadata);
     passwordKey = deriveUnwrapKeyFromPasswordBytes(
@@ -487,13 +498,21 @@ export async function openKeyringRecordWithPasswordBytes(
       record.metadata.argon2id.salt,
       record.metadata.argon2id.params,
     );
-    return await openKeyringBundle({
+    assertUnlockCheck(unlock, "open record with password");
+    const plaintext = await openKeyringBundle({
       bundle: record.bundle,
       unwrapKey: passwordKey,
       context: params.context,
       recordBinding,
-      unlock: params.unlock,
+      unlock,
     });
+    try {
+      assertUnlockCheck(unlock, "open record with password");
+      return plaintext;
+    } catch (error) {
+      plaintext.fill(0);
+      throw error;
+    }
   } finally {
     if (passwordBytes instanceof Uint8Array) passwordBytes.fill(0);
     if (passwordKey !== undefined) zeroizeUnwrapKey(passwordKey);
@@ -516,6 +535,8 @@ export async function openKeyringRecordWithPrfBytes(
   let prfKey: KeyringUnwrapKey | undefined;
   try {
     if (!(prfOutput instanceof Uint8Array)) throw new KeyringFormatError("prfOutput must be a Uint8Array");
+    const unlock = snapshotUnlockCheck(params.unlock);
+    assertUnlockCheck(unlock, "open record with PRF");
     const record = canonicalRecord(params.record);
     if (record.metadata.prf === null) throw new KeyringAuthError();
     const recordBinding = metadataBytes(record.metadata);
@@ -524,13 +545,21 @@ export async function openKeyringRecordWithPrfBytes(
       record.metadata.prf.hkdfSalt,
       params.context,
     );
-    return await openKeyringBundle({
+    assertUnlockCheck(unlock, "open record with PRF");
+    const plaintext = await openKeyringBundle({
       bundle: record.bundle,
       unwrapKey: prfKey,
       context: params.context,
       recordBinding,
-      unlock: params.unlock,
+      unlock,
     });
+    try {
+      assertUnlockCheck(unlock, "open record with PRF");
+      return plaintext;
+    } catch (error) {
+      plaintext.fill(0);
+      throw error;
+    }
   } finally {
     if (prfOutput instanceof Uint8Array) prfOutput.fill(0);
     if (prfKey !== undefined) zeroizeUnwrapKey(prfKey);

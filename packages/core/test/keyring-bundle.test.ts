@@ -534,12 +534,48 @@ describe("C2 KEK/DEK bundle: one payload ciphertext, two unlock paths", () => {
         passwordKey: PASSWORD_KEY,
         prfKey: PRF_KEY,
         context: CONTEXT,
-        unlock: { deadlines, now: 1_100 },
+        unlock: { deadlines, readNow: () => 1_100 },
       }),
     ).rejects.toThrow(KeyringExpiredError);
     await expect(
-      openKeyringBundle({ bundle, unwrapKey: PASSWORD_KEY, context: CONTEXT, unlock: { deadlines, now: 1_100 } }),
+      openKeyringBundle({
+        bundle,
+        unwrapKey: PASSWORD_KEY,
+        context: CONTEXT,
+        unlock: { deadlines, readNow: () => 1_100 },
+      }),
     ).rejects.toThrow(KeyringExpiredError);
+  });
+
+  it("propagates a live clock reader into each asynchronous AEAD boundary", async () => {
+    const deadlines = startUnlockSession(1_000, { idleTimeoutMs: 100, hardTimeoutMs: 500 });
+    let reads = 0;
+    const unlock = {
+      deadlines,
+      readNow: () => (reads++ === 0 ? 1_001 : deadlines.idleExpiresAt),
+    };
+    await expect(
+      sealKeyringBundle({
+        plaintext: SECRET,
+        passwordKey: PASSWORD_KEY,
+        prfKey: PRF_KEY,
+        context: CONTEXT,
+        unlock,
+      }),
+    ).rejects.toThrow(KeyringExpiredError);
+    expect(reads).toBeGreaterThan(1);
+
+    const bundle = await sealKeyringBundle({
+      plaintext: SECRET,
+      passwordKey: PASSWORD_KEY,
+      prfKey: PRF_KEY,
+      context: CONTEXT,
+    });
+    reads = 0;
+    await expect(
+      openKeyringBundle({ bundle, unwrapKey: PASSWORD_KEY, context: CONTEXT, unlock }),
+    ).rejects.toThrow(KeyringExpiredError);
+    expect(reads).toBeGreaterThan(1);
   });
 });
 

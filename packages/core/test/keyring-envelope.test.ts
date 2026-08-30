@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   KEYRING_ENVELOPE_VERSION_1,
   KEYRING_NONCE_BYTES,
@@ -335,13 +335,25 @@ describe("a key use past an unlock deadline is refused (WRD-KEY-03 at the key-us
 
     // Live: the same envelope opens fine.
     expect(
-      hex(await openKeyringEnvelope({ envelope: bytes, unwrapKey: KEY, context: CTX, unlock: { deadlines, now: t0 + 1 } })),
+      hex(
+        await openKeyringEnvelope({
+          envelope: bytes,
+          unwrapKey: KEY,
+          context: CTX,
+          unlock: { deadlines, readNow: () => t0 + 1 },
+        }),
+      ),
     ).toBe(hex(PLAINTEXT));
 
     // Expired: refused. Nothing scheduled a timer, nothing fired an alarm, and no
     // cleanup ran — the deadline check alone is the authority.
     await expect(
-      openKeyringEnvelope({ envelope: bytes, unwrapKey: KEY, context: CTX, unlock: { deadlines, now: t0 + 60_000 } }),
+      openKeyringEnvelope({
+        envelope: bytes,
+        unwrapKey: KEY,
+        context: CTX,
+        unlock: { deadlines, readNow: () => t0 + 60_000 },
+      }),
     ).rejects.toThrow(KeyringExpiredError);
   });
 
@@ -353,9 +365,101 @@ describe("a key use past an unlock deadline is refused (WRD-KEY-03 at the key-us
         plaintext: PLAINTEXT,
         unwrapKey: KEY,
         context: CTX,
-        unlock: { deadlines, now: t0 + 3_600_000 },
+        unlock: { deadlines, readNow: () => t0 + 3_600_000 },
       }),
     ).rejects.toThrow(KeyringExpiredError);
+  });
+
+  it("re-reads wall clock after key import and refuses to decrypt after expiry", async () => {
+    const bytes = await independentEnvelope();
+    const t0 = 1_700_000_000_000;
+    const deadlines = startUnlockSession(t0, { idleTimeoutMs: 100, hardTimeoutMs: 500 });
+    let now = t0 + 1;
+    const subtle = globalThis.crypto.subtle;
+    const originalImportKey = subtle.importKey;
+    const importSpy = vi.spyOn(subtle, "importKey").mockImplementation(
+      (async (...args: unknown[]) => {
+        const key = (await Reflect.apply(originalImportKey, subtle, args)) as CryptoKey;
+        now = deadlines.idleExpiresAt;
+        return key;
+      }) as typeof subtle.importKey,
+    );
+    const decryptSpy = vi.spyOn(subtle, "decrypt");
+    try {
+      await expect(
+        openKeyringEnvelope({
+          envelope: bytes,
+          unwrapKey: KEY,
+          context: CTX,
+          unlock: { deadlines, readNow: () => now },
+        }),
+      ).rejects.toThrow(KeyringExpiredError);
+      expect(importSpy).toHaveBeenCalledTimes(1);
+      expect(decryptSpy).not.toHaveBeenCalled();
+    } finally {
+      decryptSpy.mockRestore();
+      importSpy.mockRestore();
+    }
+  });
+
+  it("suppresses and zeroes plaintext when expiry crosses the decrypt await", async () => {
+    const bytes = await independentEnvelope();
+    const t0 = 1_700_000_000_000;
+    const deadlines = startUnlockSession(t0, { idleTimeoutMs: 100, hardTimeoutMs: 500 });
+    let now = t0 + 1;
+    let decryptedBuffer: ArrayBuffer | undefined;
+    const subtle = globalThis.crypto.subtle;
+    const originalDecrypt = subtle.decrypt;
+    const decryptSpy = vi.spyOn(subtle, "decrypt").mockImplementation(
+      (async (...args: unknown[]) => {
+        decryptedBuffer = (await Reflect.apply(originalDecrypt, subtle, args)) as ArrayBuffer;
+        now = deadlines.idleExpiresAt;
+        return decryptedBuffer;
+      }) as typeof subtle.decrypt,
+    );
+    try {
+      await expect(
+        openKeyringEnvelope({
+          envelope: bytes,
+          unwrapKey: KEY,
+          context: CTX,
+          unlock: { deadlines, readNow: () => now },
+        }),
+      ).rejects.toThrow(KeyringExpiredError);
+      expect(decryptSpy).toHaveBeenCalledTimes(1);
+      expect(decryptedBuffer).toBeDefined();
+      expect(Array.from(new Uint8Array(decryptedBuffer!))).toEqual(new Array(PLAINTEXT.length).fill(0));
+    } finally {
+      decryptSpy.mockRestore();
+    }
+  });
+
+  it("suppresses a sealed result when expiry crosses the encrypt await", async () => {
+    const t0 = 1_700_000_000_000;
+    const deadlines = startUnlockSession(t0, { idleTimeoutMs: 100, hardTimeoutMs: 500 });
+    let now = t0 + 1;
+    const subtle = globalThis.crypto.subtle;
+    const originalEncrypt = subtle.encrypt;
+    const encryptSpy = vi.spyOn(subtle, "encrypt").mockImplementation(
+      (async (...args: unknown[]) => {
+        const ciphertext = (await Reflect.apply(originalEncrypt, subtle, args)) as ArrayBuffer;
+        now = deadlines.idleExpiresAt;
+        return ciphertext;
+      }) as typeof subtle.encrypt,
+    );
+    try {
+      await expect(
+        sealKeyringEnvelope({
+          plaintext: PLAINTEXT,
+          unwrapKey: KEY,
+          context: CTX,
+          unlock: { deadlines, readNow: () => now },
+        }),
+      ).rejects.toThrow(KeyringExpiredError);
+      expect(encryptSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      encryptSpy.mockRestore();
+    }
   });
 });
 

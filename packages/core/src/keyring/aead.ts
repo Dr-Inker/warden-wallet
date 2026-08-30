@@ -8,6 +8,11 @@ import {
   KeyringCryptoUnavailableError,
   KeyringFormatError,
 } from "./errors.js";
+import {
+  assertUnlockCheck,
+  snapshotUnlockCheck,
+  type UnlockCheck,
+} from "./deadlines.js";
 
 /** GCM nonce length in bytes. 12 is mandatory here, not a default. */
 export const KEYRING_NONCE_BYTES = 12;
@@ -73,6 +78,8 @@ export interface SealAeadParams {
   readonly keyBytes: Uint8Array;
   readonly keyName: string;
   readonly aad: Uint8Array;
+  readonly unlock?: UnlockCheck;
+  readonly unlockOperation: string;
 }
 
 /** AES-256-GCM seal with a fresh, non-injectable 96-bit nonce. */
@@ -84,24 +91,41 @@ export async function sealAead(params: SealAeadParams): Promise<AeadEnvelopeBody
   }
   assertAad(params.aad);
   assertAes256KeyBytes(params.keyBytes, params.keyName);
+  const unlock = snapshotUnlockCheck(params.unlock);
+  assertUnlockCheck(unlock, params.unlockOperation);
   const plaintext = params.plaintext.slice();
   const keyBytes = params.keyBytes.slice();
   const aad = params.aad.slice();
   try {
-    const key = await importAesKey(keyBytes, params.keyName, "encrypt");
+    let key: CryptoKey;
+    try {
+      key = await importAesKey(keyBytes, params.keyName, "encrypt");
+    } catch (error) {
+      // A rejected promise suspended too. Re-read the clock before propagating it.
+      assertUnlockCheck(unlock, params.unlockOperation);
+      throw error;
+    }
+    assertUnlockCheck(unlock, params.unlockOperation);
     const nonce = randomKeyringBytes(KEYRING_NONCE_BYTES, "a nonce");
-    const ciphertext = new Uint8Array(
-      await subtle().encrypt(
-        {
-          name: "AES-GCM",
-          iv: nonce as unknown as BufferSource,
-          additionalData: aad as unknown as BufferSource,
-          tagLength: KEYRING_TAG_BYTES * 8,
-        },
-        key,
-        plaintext as unknown as BufferSource,
-      ),
-    );
+    let ciphertext: Uint8Array;
+    try {
+      ciphertext = new Uint8Array(
+        await subtle().encrypt(
+          {
+            name: "AES-GCM",
+            iv: nonce as unknown as BufferSource,
+            additionalData: aad as unknown as BufferSource,
+            tagLength: KEYRING_TAG_BYTES * 8,
+          },
+          key,
+          plaintext as unknown as BufferSource,
+        ),
+      );
+    } catch (error) {
+      assertUnlockCheck(unlock, params.unlockOperation);
+      throw error;
+    }
+    assertUnlockCheck(unlock, params.unlockOperation);
     return { nonce, ciphertext };
   } finally {
     plaintext.fill(0);
@@ -113,6 +137,8 @@ export interface OpenAeadParams extends AeadEnvelopeBody {
   readonly keyBytes: Uint8Array;
   readonly keyName: string;
   readonly aad: Uint8Array;
+  readonly unlock?: UnlockCheck;
+  readonly unlockOperation: string;
 }
 
 /** Authenticate and decrypt, collapsing every AEAD rejection to one error. */
@@ -132,14 +158,24 @@ export async function openAead(params: OpenAeadParams): Promise<Uint8Array> {
   }
   assertAad(params.aad);
   assertAes256KeyBytes(params.keyBytes, params.keyName);
+  const unlock = snapshotUnlockCheck(params.unlock);
+  assertUnlockCheck(unlock, params.unlockOperation);
   const nonce = params.nonce.slice();
   const ciphertext = params.ciphertext.slice();
   const keyBytes = params.keyBytes.slice();
   const aad = params.aad.slice();
   try {
-    const key = await importAesKey(keyBytes, params.keyName, "decrypt");
+    let key: CryptoKey;
     try {
-      const plaintext = await subtle().decrypt(
+      key = await importAesKey(keyBytes, params.keyName, "decrypt");
+    } catch (error) {
+      assertUnlockCheck(unlock, params.unlockOperation);
+      throw error;
+    }
+    assertUnlockCheck(unlock, params.unlockOperation);
+    let plaintext: Uint8Array;
+    try {
+      plaintext = new Uint8Array(await subtle().decrypt(
         {
           name: "AES-GCM",
           iv: nonce as unknown as BufferSource,
@@ -148,10 +184,20 @@ export async function openAead(params: OpenAeadParams): Promise<Uint8Array> {
         },
         key,
         ciphertext as unknown as BufferSource,
-      );
-      return new Uint8Array(plaintext);
+      ));
     } catch {
+      // Authentication failures remain uniform while the session is live. If it
+      // expired while WebCrypto was pending, expiry wins and tells C1 to clear.
+      assertUnlockCheck(unlock, params.unlockOperation);
       throw new KeyringAuthError();
+    }
+    try {
+      assertUnlockCheck(unlock, params.unlockOperation);
+      return plaintext;
+    } catch (error) {
+      // WebCrypto already materialized plaintext, but expiry forbids releasing it.
+      plaintext.fill(0);
+      throw error;
     }
   } finally {
     keyBytes.fill(0);

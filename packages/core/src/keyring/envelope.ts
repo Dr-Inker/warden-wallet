@@ -53,7 +53,11 @@ import {
 } from "./aead.js";
 import { KeyringFormatError } from "./errors.js";
 import { encodeKeyringAad, type KeyringContext } from "./aad.js";
-import { assertUnlocked, type UnlockDeadlines } from "./deadlines.js";
+import {
+  assertUnlockCheck,
+  snapshotUnlockCheck,
+  type UnlockCheck,
+} from "./deadlines.js";
 import type { KeyringUnwrapKey } from "./derive.js";
 
 /** The current envelope format version. */
@@ -69,16 +73,6 @@ export interface KeyringEnvelope {
   readonly version: number;
   readonly nonce: Uint8Array;
   readonly ciphertext: Uint8Array;
-}
-
-/**
- * An unlock-deadline check to run before touching key material (WRD-KEY-03). `now`
- * is supplied by the caller — this module never reads the clock, so a wake handler
- * and a test drive the exact same code path.
- */
-export interface UnlockCheck {
-  readonly deadlines: UnlockDeadlines;
-  readonly now: number;
 }
 
 /** Serialize one envelope component to its canonical bytes. */
@@ -156,8 +150,9 @@ export interface SealParams {
   /** Format version to write. Defaults to the current one. */
   readonly version?: number;
   /**
-   * Optional unlock-deadline check. Supply it whenever a session already exists —
-   * re-sealing is a key use, and WRD-KEY-03 requires a check on every key use.
+   * Optional live unlock-deadline check. Supply it whenever a session already
+   * exists — re-sealing is a key use, and WRD-KEY-03 requires a fresh wall-clock
+   * read before key use and after every asynchronous crypto boundary.
    */
   readonly unlock?: UnlockCheck;
 }
@@ -172,9 +167,8 @@ export async function sealKeyringEnvelope(params: SealParams): Promise<KeyringEn
   if (!SUPPORTED_KEYRING_ENVELOPE_VERSIONS.includes(version)) {
     throw new KeyringFormatError(`refusing to seal at unsupported version ${version}`);
   }
-  if (params.unlock !== undefined) {
-    assertUnlocked(params.unlock.deadlines, params.unlock.now, "seal");
-  }
+  const unlock = snapshotUnlockCheck(params.unlock);
+  assertUnlockCheck(unlock, "seal envelope");
   if (!(params.plaintext instanceof Uint8Array)) throw new KeyringFormatError("plaintext must be a Uint8Array");
   if (params.plaintext.length === 0) {
     // Fail closed: an empty plaintext here is almost always a buffer that was
@@ -190,7 +184,10 @@ export async function sealKeyringEnvelope(params: SealParams): Promise<KeyringEn
     keyBytes: params.unwrapKey.bytes,
     keyName: "unwrap key",
     aad,
+    unlock,
+    unlockOperation: "seal envelope",
   });
+  assertUnlockCheck(unlock, "seal envelope");
   return { version, ...sealed };
 }
 
@@ -203,9 +200,9 @@ export interface OpenParams {
   /** The context the caller believes it is in. A mismatch fails authentication. */
   readonly context: KeyringContext;
   /**
-   * Optional unlock-deadline check (WRD-KEY-03). Omitted ONLY for the first open of
-   * an unlock ceremony, where no session exists yet by definition; every later key
-   * use — and every use after a service-worker wake — must pass it.
+   * Optional live unlock-deadline check (WRD-KEY-03). Omitted ONLY for the first
+   * open of an unlock ceremony, where no session exists yet by definition; every
+   * later key use — and every use after a service-worker wake — must pass it.
    */
   readonly unlock?: UnlockCheck;
 }
@@ -233,18 +230,26 @@ export async function openKeyringEnvelope(params: OpenParams): Promise<Uint8Arra
   if (envelope.ciphertext.length < KEYRING_TAG_BYTES) {
     throw new KeyringFormatError("ciphertext is shorter than the authentication tag");
   }
-  if (params.unlock !== undefined) {
-    assertUnlocked(params.unlock.deadlines, params.unlock.now, "open");
-  }
+  const unlock = snapshotUnlockCheck(params.unlock);
+  assertUnlockCheck(unlock, "open envelope");
   // The AAD is REBUILT from the caller's context and the envelope's own version —
   // never read out of the envelope. That is what makes a transplanted envelope fail:
   // the attacker controls the stored bytes, but not the context we rebuild from.
   const aad = encodeKeyringAad(params.context, envelope.version);
-  return openAead({
+  const plaintext = await openAead({
     nonce: envelope.nonce,
     ciphertext: envelope.ciphertext,
     keyBytes: params.unwrapKey.bytes,
     keyName: "unwrap key",
     aad,
+    unlock,
+    unlockOperation: "open envelope",
   });
+  try {
+    assertUnlockCheck(unlock, "open envelope");
+    return plaintext;
+  } catch (error) {
+    plaintext.fill(0);
+    throw error;
+  }
 }

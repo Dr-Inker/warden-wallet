@@ -52,14 +52,17 @@ import {
   MAX_AAD_FIELD_BYTES,
   type KeyringContext,
 } from "./aad.js";
-import { assertUnlocked } from "./deadlines.js";
+import {
+  assertUnlockCheck,
+  snapshotUnlockCheck,
+  type UnlockCheck,
+} from "./deadlines.js";
 import type { KeyringKdfLabel, KeyringUnwrapKey } from "./derive.js";
 import {
   KEYRING_ENVELOPE_VERSION_1,
   decodeKeyringEnvelope,
   encodeKeyringEnvelope,
   type KeyringEnvelope,
-  type UnlockCheck,
 } from "./envelope.js";
 import { KeyringAuthError, KeyringFormatError } from "./errors.js";
 
@@ -337,7 +340,8 @@ export async function sealKeyringBundle(params: SealKeyringBundleParams): Promis
   }
   assertValidKeyringContext(params.context);
   const recordBinding = copyRecordBinding(params.recordBinding);
-  if (params.unlock !== undefined) assertUnlocked(params.unlock.deadlines, params.unlock.now, "seal bundle");
+  const unlock = snapshotUnlockCheck(params.unlock);
+  assertUnlockCheck(unlock, "seal bundle");
 
   // Snapshot every mutable caller-owned buffer before the first await. A lock
   // handler may zero the caller's session keys as soon as this async API returns;
@@ -367,7 +371,10 @@ export async function sealKeyringBundle(params: SealKeyringBundleParams): Promis
         KEYRING_ENVELOPE_VERSION_1,
         recordBinding,
       ),
+      unlock,
+      unlockOperation: "seal password wrap",
     });
+    assertUnlockCheck(unlock, "seal bundle");
     const passwordWrap: KeyringEnvelope = {
       version: KEYRING_ENVELOPE_VERSION_1,
       ...passwordBody,
@@ -387,7 +394,10 @@ export async function sealKeyringBundle(params: SealKeyringBundleParams): Promis
           KEYRING_ENVELOPE_VERSION_1,
           recordBinding,
         ),
+        unlock,
+        unlockOperation: "seal PRF wrap",
       });
+      assertUnlockCheck(unlock, "seal bundle");
       prfWrap = { version: KEYRING_ENVELOPE_VERSION_1, ...prfBody };
     }
 
@@ -404,7 +414,10 @@ export async function sealKeyringBundle(params: SealKeyringBundleParams): Promis
         prfWrap,
         recordBinding,
       ),
+      unlock,
+      unlockOperation: "seal payload",
     });
+    assertUnlockCheck(unlock, "seal bundle");
     return {
       version,
       bundleId,
@@ -436,7 +449,8 @@ export async function openKeyringBundle(params: OpenKeyringBundleParams): Promis
   assertUnwrapKey(params.unwrapKey);
   assertValidKeyringContext(params.context);
   const recordBinding = copyRecordBinding(params.recordBinding);
-  if (params.unlock !== undefined) assertUnlocked(params.unlock.deadlines, params.unlock.now, "open bundle");
+  const unlock = snapshotUnlockCheck(params.unlock);
+  assertUnlockCheck(unlock, "open bundle");
 
   // Canonicalize/copy all caller-owned mutable bytes before awaiting WebCrypto.
   // A concurrent storage refresh or lock must not make one authentication attempt
@@ -460,11 +474,14 @@ export async function openKeyringBundle(params: OpenKeyringBundleParams): Promis
       keyBytes: unwrapKeyBytes,
       keyName: "unwrap key",
       aad: wrapAad(context, bundle.version, bundle.bundleId, kdf, selected.version, recordBinding),
+      unlock,
+      unlockOperation: "open DEK wrap",
     });
+    assertUnlockCheck(unlock, "open bundle");
     if (dek.length !== KEYRING_DEK_BYTES) {
       throw new KeyringFormatError(`wrapped data-encryption key must be ${KEYRING_DEK_BYTES} bytes`);
     }
-    return await openAead({
+    const plaintext = await openAead({
       nonce: bundle.payload.nonce,
       ciphertext: bundle.payload.ciphertext,
       keyBytes: dek,
@@ -478,7 +495,16 @@ export async function openKeyringBundle(params: OpenKeyringBundleParams): Promis
         bundle.prfWrap,
         recordBinding,
       ),
+      unlock,
+      unlockOperation: "open payload",
     });
+    try {
+      assertUnlockCheck(unlock, "open bundle");
+      return plaintext;
+    } catch (error) {
+      plaintext.fill(0);
+      throw error;
+    }
   } finally {
     unwrapKeyBytes.fill(0);
     dek?.fill(0);

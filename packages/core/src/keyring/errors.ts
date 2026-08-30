@@ -1,6 +1,7 @@
-//! Typed, fail-closed errors for the keyring core. Every rejection path in
-//! `keyring/` throws one of these — never a raw exception, never a boolean the
-//! caller can forget to check (same discipline as `webauthn/assertion.ts`).
+//! Typed, fail-closed errors intentionally surfaced by the keyring core. Validation,
+//! authentication, deadline/clock, and missing-WebCrypto failures use these classes;
+//! callers must still treat an unexpected platform exception as a hard failure, never
+//! as authorization (same discipline as `webauthn/assertion.ts`).
 //!
 //! The split matters for what a caller may LEARN from a failure:
 //!
@@ -12,9 +13,8 @@
 //!     gives us that indistinguishability for free and we must not throw it away by
 //!     pre-checking context fields against a stored copy and reporting which one
 //!     differed — that would turn the envelope into a context oracle.
-//!   * `KeyringExpiredError` — an unlock deadline had already passed at the `now`
-//!     the caller supplied (WRD-KEY-03). Carries which deadline, because that is a
-//!     UX fact, not a secret.
+//!   * `KeyringExpiredError` — an unlock deadline had passed at a live clock reading
+//!     (WRD-KEY-03). Carries which deadline, because that is a UX fact, not a secret.
 //!   * `KeyringCryptoUnavailableError` — no WebCrypto. Fail closed; never fall back
 //!     to a JS AES implementation.
 
@@ -41,7 +41,7 @@ export class KeyringAuthError extends Error {
 /** Which absolute deadline had already passed. `hard` wins when both have. */
 export type UnlockExpiryReason = "idle" | "hard";
 
-/** An unlock deadline had already passed at the supplied `now` (WRD-KEY-03). */
+/** An unlock deadline had passed at the latest live clock reading (WRD-KEY-03). */
 export class KeyringExpiredError extends Error {
   readonly reason: UnlockExpiryReason;
   constructor(reason: UnlockExpiryReason, operation: string) {
