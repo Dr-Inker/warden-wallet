@@ -3,7 +3,7 @@
   "name": "Warden Wallet (Development)",
   "version": "0.0.1",
   "description": "Pre-alpha Warden smart-account wallet development build. Do not use with real funds.",
-  "minimum_chrome_version": "102",
+  "minimum_chrome_version": "106",
   "permissions": ["storage"],
   "background": {
     "service_worker": "background.js",

@@ -12,7 +12,9 @@ describe("MV3 manifest starts from the closed permission boundary", () => {
       await readFile(new URL("../manifest.json", import.meta.url), "utf8"),
     ) as Record<string, unknown>;
     expect(manifest.manifest_version).toBe(3);
-    expect(manifest.minimum_chrome_version).toBe("102");
+    // Port provenance requires MessageSender.documentId, introduced in Chrome 106.
+    // Advertising 102 while rejecting every pre-106 sender would be a false support claim.
+    expect(manifest.minimum_chrome_version).toBe("106");
     expect(manifest.permissions).toEqual(["storage"]);
     expect(manifest.background).toEqual({ service_worker: "background.js", type: "module" });
     for (const forbidden of [
