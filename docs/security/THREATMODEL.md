@@ -767,3 +767,48 @@ malicious-trusted-context failure remain outside the measurement. The browser
 lane kills one MV3 worker on one Chrome build, not the browser or host, and no
 Chrome-floor/Brave/disk-corruption matrix exists. Independent second-model review
 remains UNVERIFIED.
+
+---
+
+## Client C3 shipped approval-startup ownership — f3b4946 — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** the production background bundle now includes the internal
+approval owner, SHA-256 record domain, and native IndexedDB repository. It opens
+the dedicated `warden-approvals-v1` database during every worker evaluation and
+runs one startup invalidation before internal readiness. The emitted background
+is 194,123 bytes at the implementation SHA, up from the prior tree-shaken build;
+content and popup bundles remain 8,269 and 3,229 bytes. No manifest permission,
+host access, CSP directive, extension page, network request, successful provider
+method, or approval message route was added. The owner and repository do not
+escape the returned application.
+
+**Removed / narrowed:** runtime readiness now composes trusted Chrome-storage
+restriction, authenticated keyring restore, and approval startup invalidation.
+Keyring operations remain closed until all settle. Approval failure rejects
+readiness, removes provider/popup and storage-change listeners, disconnects live
+Ports, and closes its database connection. Initialization rollback, fatal
+record-change cleanup, and explicit disposal also close it exactly once. A unit
+contract measures pending readiness and the failure cleanup. The real shipped
+MV3 bundle initializes its production database, accepts a test-seeded pending
+record from the trusted worker context, loses its execution global under a CDP
+forced stop, wakes through the actual provider Port, and changes that record to
+`cancelled`. The independent temporary-extension lane continues to measure the
+repository's transactional races and tamper behavior.
+
+**New invariants:** none promoted. `WRD-APR-01`, `WRD-APR-02`, and
+`WRD-APR-03` remain `unimplemented`. Shipping cleanup closes one lifecycle
+conjunct; it does not create an approval-to-signature flow.
+
+**Residual, stated honestly:** every external provider and popup method remains
+fixed-unavailable. There is no authoritative account/network/policy registry,
+record-creation route, approval page, exact-byte decoder, current-state/digest
+signer recheck, RPC, root ceremony, navigation cancellation, nonce consumer, or
+signed-result replay. Worker death intentionally cancels all pending approvals,
+so availability is lost even if a future approval window survives and retries.
+The browser test seeds IndexedDB directly from a trusted worker test context; it
+does not prove a nonexistent page-to-background creation path. Same-extension
+trusted contexts remain able to access the same database, message SHA-256 is not
+a MAC over all public metadata, and strict durability remains a hint rather than
+a disk/rollback guarantee. Only one Chrome build and worker stop/wake are tested,
+not Chrome floor, Brave, full browser/host crash, disk corruption, or rollback.
+Independent second-model review remains UNVERIFIED.

@@ -1,5 +1,62 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C3 SHIPPED STARTUP OWNERSHIP — PENDING APPROVALS DIE WITH THE REAL WORKER
+>
+> Implementation commit `f3b4946468c0f4e8ad8b0a4bb093b48c43432841`
+> moves the C3 approval repository from tested-but-tree-shaken source into the
+> shipped MV3 worker without adding an approval route. The first runtime contract
+> was genuinely red: `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension exec vitest run test/runtime.test.ts` exited **1** with **1
+> failure / 15 passes** because `startBackground()` ignored the approval startup
+> lifecycle and called no invalidation method.
+>
+> `main.ts` now constructs the native IndexedDB repository and internal
+> `ApprovalOwner`; the runtime requires that lifecycle rather than silently
+> defaulting it away. Invalidation starts during the same top-level evaluation
+> turn as synchronous runtime listener registration. The one internal readiness
+> gate combines trusted Chrome-storage restriction, authenticated keyring wake
+> restore, and approval invalidation, so the keyring facade stays unavailable
+> until all three settle. Approval startup failure closes provider/popup Ports,
+> removes global listeners, rejects readiness, and closes the repository.
+> Initialization rollback, fatal record-change cleanup, and explicit disposal
+> close it exactly once. The returned application exposes no approval owner,
+> repository, record, or decision method.
+>
+> The shipped-extension Chromium lane now seeds a strict pending record directly
+> into the production `warden-approvals-v1` database only after the live worker
+> initialized it, proves the record is pending, kills that worker through CDP,
+> wakes a new execution context through the existing provider Port, and observes
+> the production startup owner change the record to `cancelled`. The separate
+> temporary-extension lane still proves two-connection compare-and-set races,
+> tamper deletion, wrong-digest invalidation, exact expiry, buffer isolation, and
+> identical-payload independence. This is composed browser evidence rather than
+> an assumption that a source module will be bundled.
+>
+> Exact-SHA focused evidence at `f3b4946468c0f4e8ad8b0a4bb093b48c43432841`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> test` → **246/246**, exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> typecheck` → exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension build` → exit **0** with background/content/popup
+> bundles of **194,123 / 8,269 / 3,229 bytes**; and `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> playwright test -c playwright.config.ts` → **2/2**, exit **0**.
+>
+> **Do not promote `WRD-APR-01`, `WRD-APR-02`, or `WRD-APR-03`.** The shipped
+> worker owns only fail-closed cleanup. No Port or page can create, read, render,
+> approve, reject, or sign a record. There is still no authoritative account,
+> network, or policy registry; exact-byte decoder; approval UI; current-state
+> signer recheck; RPC; navigation cancellation; root ceremony; nonce consumer;
+> or signed-result replay. A worker stop deliberately destroys availability for
+> every pending request instead of resuming a dead Port. Same-extension trusted
+> contexts still share IndexedDB, strict durability is a hint, and the browser
+> measurement is one Chrome build rather than a browser/host/disk matrix. No
+> manifest permission, host access, CSP directive, page, successful provider
+> method, or network path changed. Independent second-model review remains
+> **UNVERIFIED**. Run `env npm_config_cache=/tmp/warden-npm-cache bash
+> .claude/test-gate.sh` on the final ledger-inclusive SHA before calling this
+> loop boundary green.
+
 > ## 2026-08-30 C3 TRANSACTIONAL APPROVAL-RECORD SUBSTRATE — REAL IDB RACE GREEN, WALLET STILL CLOSED
 >
 > Implementation commit `c3be2c1b248cee4bc1e99a2e0701207031a1487b`
