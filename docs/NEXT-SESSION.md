@@ -1,5 +1,83 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C1 MV3 SESSION-OWNER BOUNDARY — LOADABLE SCAFFOLD, WALLET SURFACE OPEN
+>
+> Commit `36c7e4bee57dba4b2b7efce498d25818bcba4fb3` creates the first
+> `apps/extension` production package without pretending it is a wallet. Exact-SHA
+> focused evidence: `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension test` → **21/21**, exit **0**; the corresponding `typecheck`,
+> `@warden/core build`, and `@warden/extension build` commands each exit **0**.
+> This is not the repository deploy gate. Run `env
+> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh` on the final
+> ledger-inclusive SHA before claiming this loop boundary green; that gate now builds
+> core, typechecks the extension, and bundles the extension after unit tests, so a
+> browser/package failure can no longer hide behind Vitest transpilation.
+>
+> The development-only MV3 manifest requests only `storage`; it has no host or
+> optional permissions, content script, provider, UI page, externally-connectable
+> surface, or production manifest `key`. CSP permits only local scripts and objects.
+> Both `storage.local` and `storage.session` are explicitly changed to
+> `TRUSTED_CONTEXTS` before the worker reads session material. The new browser-safe
+> `@warden/core/keyring` package subpath prevents Node-only deploy-verifier imports
+> from entering the bundle; the initial build correctly failed on `node:fs` until
+> that packaging defect was fixed rather than externalized.
+>
+> `UnlockSessionOwner` owns one stable controller per committed unlock, uses live
+> `Date.now` by default, and stores one strict versioned JSON-array record in
+> `storage.session` because Chrome documents arrays as serializable but generic
+> objects such as typed arrays as typically becoming `{}`. Writes are serialized
+> within one worker and exact-readback checked. Activation is unusable until
+> remove→set→get verification commits; touch cannot revive a session that expires
+> while storage is pending. Lock aborts and overwrites JS-owned key/account/result
+> copies synchronously before a stalled removal settles. Worker construction first
+> restricts both storage areas, then restores only a structurally valid live record;
+> malformed, expired, mismatched-readback, and storage-error paths fail closed.
+>
+> The 15 owner tests are race measurements, not expected values derived from the
+> implementation: pending activation and touch, lock during pending `sign`-labelled
+> byte work, output zeroing before stalled cleanup, exact idle boundary, fresh-owner
+> restoration, unknown stored fields, storage corruption, and rejected set/remove.
+> Two bootstrap tests prove no session read occurs before *both* access restrictions
+> settle; four manifest tests pin the closed surface and CSP. A fresh-profile
+> Playwright Chromium command registered
+> `chrome-extension://dbiijdmocimnnmdikokaaffeibkdcnhi/background.js` and evaluated
+> the expected manifest plus `{}` session state at the worker. The first branded
+> `google-chrome --load-extension` attempt explicitly said the flag was ignored;
+> its exit 0 is **not** evidence. The passing smoke proves load/startup only: it did
+> not kill and revive a seeded worker. Two consecutive same-checkout builds produced
+> `background.js` SHA-256
+> `0aede20565988db7f6ae6568e5093a9ca496c74e5271aa5ecfcaf3fb0a9c0d4b`
+> and `manifest.json` SHA-256
+> `6cca662416bd013d22f5170af994d8b9dc5f4b5178c5a5184967b4b39b9c6368`.
+> That is explicitly **not** the two-isolated-builder `WRD-REL-01` invariant.
+>
+> Primary-source platform constraints were rechecked on 2026-08-30. Chrome says
+> `storage.session`/`AccessLevel` are Chrome 102+, session storage is memory-only and
+> cleared on disable/reload/update/browser restart, local storage is content-script
+> visible by default, and `set`/`get`/`remove` promises may reject. Chrome also says
+> an MV3 worker normally dies after 30 seconds idle and loses globals, so storage—not
+> global memory—is the continuity boundary. Sources:
+> <https://developer.chrome.com/docs/extensions/reference/api/storage>,
+> <https://developer.chrome.com/docs/extensions/reference/api/storage/StorageArea/>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions>.
+>
+> **Do not promote `WRD-KEY-*`, `WRD-EXT-*`, `WRD-ORG-01`, or `WRD-REL-01`.**
+> There is no persistent `storage.local` keyring consumer, Argon2/PRF UI, actual
+> signing/decrypt/export API, provider/message router, browser-owned sender
+> classifier, approval/ceremony/hardware owner, real worker-kill/wake vector,
+> production extension identity, mainnet account-creation surface, isolated-builder
+> comparison, or store artifact. A key-use callback can perform an irreversible side
+> effect before its final check unless callers obey the local-computation-only
+> contract. Most seriously, if Chrome rejects `remove`, local memory locks but a
+> stale live session record may survive and restore after a crash; Chrome exposes no
+> transaction/CAS/durability primitive that turns a failed deletion into a guarantee.
+> The next safe C1 slice is a pure, closed-schema classifier for browser-owned
+> `Port.sender` provenance with the content-script-as-UI, forged-context,
+> nested-frame, stale-port, and navigation red vectors—before any privileged method
+> becomes callable. Independent second-model review remains **UNVERIFIED**; no result
+> or review artefact was fabricated.
+
 > ## 2026-08-30 C2 LOCK-REVOCATION BOUNDARY — CORE RACE CLOSED, SESSION OWNER OPEN
 >
 > Commit `c2e216fdf930be94fd29d406b6f6ce215743f0b6` adds the smallest honest
