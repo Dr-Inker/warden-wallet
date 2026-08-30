@@ -468,3 +468,41 @@ registry, record mutation lifecycle, privileged consumer, or seeded
 worker-death/wake vector exists. A cleanup rejection can leave stale session
 bytes in browser-managed storage even though readiness fails locally.
 Independent second-model review remains UNVERIFIED.
+
+---
+
+## Client C2 session-to-record binding — c3b74eb — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** the existing `storage.session` unlock record is now v2
+and adds the public 16-byte encrypted-bundle id. Background startup decodes the
+id from the already validated persistent local record and supplies only that id
+to the session owner. No new permission, message, page, popup, provider-success,
+record-mutation, or key-use surface is reachable.
+
+**Removed / narrowed:** activation snapshots and exact-readback checks the
+bundle id beside the unwrap key. Restore snapshots the current persistent id
+before its first await, strictly parses v2, and removes a well-formed session
+whose id differs. The obsolete v1 slot is removed without parsing. A transition
+generation check prevents cleanup based on a stale awaited read from erasing a
+newer unlock. Unit tests cover matching restore, mismatch removal, caller
+mutation, malformed/legacy data, readback corruption, missing persistent state,
+and the forced stale-read/new-unlock race. Real Chromium exact-readback proves a
+canonical local record, mismatched session, and independent session canary were
+present; after actual worker-target death and same-document wake, only the
+mismatched session is absent while the canary survives.
+
+**New invariants:** none promoted. `WRD-KEY-03` and `WRD-KEY-04` remain
+`unimplemented`; this is one extension lifecycle conjunct, not a usable keyring
+or privileged consumer.
+
+**Residual, stated honestly:** bundle-id equality is not a hash of the complete
+persistent record and does not authenticate Chrome storage. Random ids bind
+ordinary replacement, but an older valid same-context record can replay and a
+trusted context that preserves the id can alter ciphertext until AEAD opening
+later rejects it. A session already active in one worker is not revalidated if
+another trusted context writes local storage out of band. There is no composed
+record-mutation/session-revocation owner, creation/unlock ceremony, Argon2
+benchmark/floor, PRF device evidence, account/context registry, key derivation,
+sign/decrypt/export consumer, transaction/CAS/durability guarantee, or policy
+for browser cleanup rejection. The browser vector is structurally valid but
+does not derive a real key. Independent second-model review remains UNVERIFIED.

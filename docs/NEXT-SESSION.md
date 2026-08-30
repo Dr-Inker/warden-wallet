@@ -1,5 +1,65 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C2 SESSION→RECORD BINDING — REAL WORKER MISMATCH REMOVAL, KEYRING STILL OPEN
+>
+> Commit `c3b74eb3e93c9dde6eb29141d737e49bbc57c16f` binds the
+> browser-managed unlock session to the public 16-byte bundle id of the
+> canonical persistent keyring record. The initial focused lane was genuinely
+> red: `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension exec vitest run test/unlock-session.test.ts` exited **1**
+> with **2 failures / 14 passes** because the stored schema was still v1 and a
+> session for bundle A restored against bundle B. Exact-SHA focused evidence
+> after implementation: `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension test` → **221/221**, exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> typecheck` and `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/core build` each exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> test:browser` → **1/1**, exit **0**. These are focused lanes, not the
+> repository deploy gate. Run `env npm_config_cache=/tmp/warden-npm-cache bash
+> .claude/test-gate.sh` on the final ledger-inclusive SHA before claiming this
+> loop boundary green.
+>
+> `UnlockSessionOwner` now owns only `warden.unlock-session.v2`. Its strict
+> record carries account, KDF, unwrap key, absolute deadlines, and the exact
+> public bundle id; activation validates and snapshots the id before its first
+> await, persists it, requires exact readback, and zeroes the owned copy on
+> abort. Wake-time restore snapshots the bundle id decoded from the already
+> validated local record and compares it in constant time. A mismatch removes
+> the session and stays locked. The obsolete v1 slot is removed before every
+> restore and by every replacement/lock cleanup, so a format bump cannot strand
+> old unwrap-key bytes in a development profile.
+>
+> Harsh concurrency review found a real defect after the first focused green: a
+> restore could read a stale mismatched record, a newer unlock could queue its
+> replacement while that read was pending, and stale cleanup would then run
+> behind and erase the newer session. Restore now checks its transition
+> generation immediately after the awaited read and before parsing or enqueueing
+> cleanup. The deterministic regression gates that exact interleaving and
+> requires the newer v2 session to remain committed and usable.
+>
+> The mandatory Playwright lane now seeds a canonical persistent record, a
+> structurally valid but differently bound v2 session, and an unrelated
+> `storage.session` canary in the trusted worker. It exact-readback proves all
+> three values, closes the actual MV3 service-worker target, wakes a replacement
+> execution context from the unchanged page, and observes only the mismatched
+> session removed while the canary survives. Thus blanket browser session loss
+> cannot make this assertion green. Unit composition separately proves a
+> matching session restores and a mismatch stays locked.
+>
+> **Do not promote `WRD-KEY-03` or `WRD-KEY-04`.** This closes the ordinary
+> persistent-record/session identity gap, not the keyring product. The bundle
+> id is not a fingerprint of every ciphertext byte and browser storage is not
+> authenticated; a whole older valid same-context record can still replay.
+> There is no record creation, Argon2 benchmark/floor, PRF ceremony/device
+> matrix, record-to-session derivation/activation, account/context registry,
+> signing/decrypt/export consumer, or composed mutation owner. An already-active
+> worker does not listen for an out-of-band trusted-context record write, and
+> Chrome supplies no transaction/CAS/durability guarantee. Cleanup rejection
+> can leave stale session bytes in browser-managed storage. The browser vector
+> uses structurally valid deterministic bytes, not a key derived through a real
+> unlock ceremony. Independent second-model review remains **UNVERIFIED**.
+
 > ## 2026-08-30 C2 PERSISTENT CHROME RECORD OWNER — STORAGE BOUNDARY PARTIAL, UNLOCK PATH OPEN
 >
 > Commit `7e18f275a839c2d88427a104b5814bb266fe445d` adds the first
