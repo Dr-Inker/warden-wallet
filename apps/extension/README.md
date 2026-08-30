@@ -45,15 +45,30 @@ through its fatal lifecycle promise. The stale serialized session can still
 remain in browser-managed storage; closing the runtime surface is not a
 durability claim.
 
-The raw record adapter is deliberately not exposed by the background runtime.
-A future mutation path must compose record replacement with session revocation;
-otherwise an old unwrap key could remain live beside a new record. Chrome does
-not document a transaction, compare-and-swap, rollback, or durable-write
-primitive for this area, so serialized same-owner calls and readback are not an
-atomicity or freshness claim. The global change listener narrows a different
-trusted context's out-of-band write to fail-closed revocation after Chrome emits
-the event; it does not serialize that writer, authenticate event freshness, or
-prevent replay of an older valid record. See Chrome's
+The background exposes one composed lifecycle owner rather than the raw record
+adapter or raw session owner. Its replace and clear operations synchronously
+revoke live and pending leases before changing the persistent record. Internal
+password activation consumes the caller's byte buffer, derives a KEK from the
+record's bounded Argon2 metadata, authenticates that exact record and context,
+and rejects unless its plaintext is exactly the v1 32-byte Ed25519 seed. Only
+the account, public bundle id, KEK, and absolute deadlines enter the ephemeral
+session; the seed does not. A local-only signer use reloads the exact record,
+authenticates it with the session KEK and supplied account/origin/genesis/program
+context, lends isolated account/seed buffers to one callback, rechecks the
+record and deadline after the callback, and overwrites the lease and any
+suppressed result on lock, expiry, inconsistency, or failure.
+
+This is an internal trust boundary, not a wallet method. The callback is
+explicitly forbidden from sending or committing an irreversible side effect
+before its enclosing owner completes the final checks. There is no transaction
+signer consumer yet, and JavaScript overwrite remains best-effort rather than a
+VM memory-erasure claim. Chrome does not document a transaction,
+compare-and-swap, rollback, or durable-write primitive for storage, so
+serialized same-owner calls and exact readback are not an atomicity or freshness
+claim. The global change listener narrows a different trusted context's
+out-of-band write to fail-closed revocation after Chrome emits the event; it
+does not serialize that writer, authenticate event freshness, or prevent replay
+of an older valid record. See Chrome's
 [`storage.onChanged` API](https://developer.chrome.com/docs/extensions/reference/api/storage/)
 and its requirement to register MV3 event listeners
 [synchronously at top level](https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers#register-listeners-synchronously).
@@ -65,9 +80,12 @@ version compatibility. It also exact-readback proves a matching v2 session and
 an unrelated session canary, replaces the persistent record from the live
 worker, and observes only Warden's session removed. The unit lane separately
 proves the same event synchronously aborts an active in-memory lease; storage
-bytes alone cannot measure heap revocation. There is still no record-creation
-UI, Argon2 benchmark, PRF ceremony, record-to-session activation, account
-registry, or decrypt/sign/export consumer.
+bytes alone cannot measure heap revocation. Focused lifecycle tests use a real
+sealed signer record and password derivation, but the browser lane still does
+not type a password or produce a signature. There is still no record-creation
+UI, Argon2 benchmark and production floor, PRF ceremony/device matrix, account
+and cluster registry, on-chain session-grant verification, approval owner, or
+decrypt/sign/export consumer.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during

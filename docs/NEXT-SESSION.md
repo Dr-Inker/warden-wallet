@@ -1,5 +1,76 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C2 AUTHENTICATED SESSION-SIGNER ACTIVATION — INTERNAL PATH LIVE, WALLET STILL OPEN
+>
+> Implementation commit `bddb0ccbab2aa55780b132fd1528b03a297e2124`
+> closes the previously explicit gap between a canonical encrypted record and
+> an activated extension unlock session. Both contracts were genuinely red
+> before implementation. `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/core exec vitest run test/session-signer-payload.test.ts`
+> exited **1** with **5 failures / 0 passes** because the payload helpers did
+> not exist. `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension exec vitest run test/keyring-lifecycle.test.ts` exited
+> **1** before collection because `keyring-lifecycle.js` did not exist.
+>
+> The v1 plaintext schema is exactly one 32-byte Ed25519 seed. This is not an
+> invented 64-byte secret-key format: the locked `@solana/web3.js` 1.98.4
+> [upstream source](https://github.com/solana-foundation/solana-web3.js/blob/v1.98.4/src/keypair.ts#L70-L84)
+> documents `Keypair.fromSeed` as a 32-byte input and constructs its 64-byte
+> representation as `seed || derived public key`. The existing keyring AAD binds schema version 1 and
+> `keyKind = session-signer`, so persisting the redundant public half would add
+> a consistency field without adding entropy. Five core tests pin the exact
+> length, bytes, copy ownership, and strict rejection of non-byte/31/33-byte
+> inputs.
+>
+> `KeyringLifecycleOwner` is now the background's only persistent-record and
+> ephemeral-session authority; neither raw owner escapes the runtime. Password
+> activation snapshots and synchronously overwrites caller bytes, derives the
+> KEK from bounded canonical metadata, authenticates the exact stored bundle
+> and complete account/origin/genesis/program context, validates the strict
+> plaintext schema, and destroys plaintext copies before committing only the
+> KEK plus public binding/deadline data. Exact record readbacks before and after
+> activation prevent a stale record from committing. Replacement, clear, and
+> record-change events advance the same lifecycle transition and synchronously
+> revoke pending unlocks and active seed leases.
+>
+> Local signer use reloads the persistent record, checks account and bundle id,
+> authenticates it with the session KEK and caller-supplied full context, and
+> lends isolated account/seed buffers only to a local callback. It rechecks the
+> live deadline/revocation signal and exact record after that callback, scrubs
+> every lease, and suppresses/zeros late output on lock or inconsistency. The
+> harsh-review additions prove an unnotified out-of-band record swap zeros the
+> callback's would-be result and locks the session; disappearance locks before
+> the callback; explicit replacement aborts a pending lease synchronously; and
+> an ordinary consumer exception scrubs its lease without spuriously revoking a
+> healthy session.
+>
+> Exact-SHA focused evidence at `bddb0ccbab2aa55780b132fd1528b03a297e2124`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test`
+> → **439/439**, exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension test` → **235/235**, exit **0**; both package
+> `typecheck` commands exited **0**; the extension `build` exited **0** with
+> background/content/popup bundles of **136,560 / 8,269 / 3,229 bytes**; and
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> test:browser` → **1/1**, exit **0**. These are implementation lanes, not the
+> repository deploy gate. Run `env npm_config_cache=/tmp/warden-npm-cache bash
+> .claude/test-gate.sh` on the final ledger-inclusive SHA before calling this
+> loop boundary green.
+>
+> **Do not promote `WRD-KEY-02`, `WRD-KEY-03`, or `WRD-KEY-04`.** No browser-
+> reachable unlock UI or signer exists. The browser lane measures wake and
+> record-change behavior, not password entry or a real signature. There is no
+> record creation/onboarding path, account+cluster+program configuration,
+> on-chain proof that the encrypted seed is the currently granted session,
+> approval owner, transaction builder/signer/send consumer, or RPC. Argon2's
+> production floor is unbenchmarked; the focused fixtures intentionally use
+> cheap test parameters. PRF remains without a real-device matrix. Context must
+> be supplied again on each use, trusted storage has no transaction/CAS or
+> authenticated freshness, and whole valid same-context records remain
+> replayable. A delayed `storage.onChanged` event after a self-write may
+> conservatively revoke a newly unlocked session, and future privileged handlers
+> must enforce `background.ready` rather than merely receiving the internal
+> owner. Independent second-model review remains **UNVERIFIED**.
+
 > ## 2026-08-30 C2 LIVE RECORD-CHANGE REVOCATION — OUT-OF-BAND GAP NARROWED, KEYRING STILL OPEN
 >
 > Commit `0e3fc0f7b7119f41777c8dbbb98eecdef26db34a` makes an

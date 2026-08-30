@@ -553,3 +553,54 @@ readiness. No composed mutation owner, real activation/open path, Argon2 device
 floor, PRF ceremony matrix, account/context registry, signing/decrypt/export
 consumer, or real-key worker vector exists. Independent second-model review
 remains UNVERIFIED.
+
+---
+
+## Client C2 authenticated session-signer activation — bddb0cc — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** the background runtime now exposes one internal composed
+keyring lifecycle owner. It can accept password bytes and the complete public
+keyring context, authenticate the canonical local record, activate a session,
+and lend an isolated plaintext Ed25519 seed to one local callback. Record replace
+and clear operations also live on this owner. No content-script, provider, popup,
+or other browser-reachable method can invoke these operations; there is still no
+signature consumer or RPC route. The emitted background includes the existing
+pure-JavaScript Argon2 implementation and measured **136,560 bytes** at the
+implementation SHA.
+
+**Removed / narrowed:** v1 session-signer plaintext is strictly one 32-byte seed,
+with its schema and key kind bound by existing contextual AAD. Caller password
+bytes are overwritten synchronously; the derived KEK succeeds only by fresh AEAD
+authentication, never an equality check. Plaintext is schema-validated and
+overwritten before session commit. The session retains the KEK, account, public
+bundle id, and absolute deadlines—not the seed. Activation exact-readback checks
+the same canonical record before and after commit. Every local use reloads that
+record, checks account and bundle identity, authenticates the complete supplied
+context, lends isolated buffers, and performs deadline/revocation and exact-record
+checks before releasing callback output. Lock, record replacement, clear, and
+Chrome record-change notification share synchronous transition invalidation;
+late seed leases and results are overwritten. Unit tests measure stale unlock,
+pending-use, unnotified record-swap, disappearance, schema/auth failure, callback
+failure, wake corruption, and matching/mismatched restore paths. The real browser
+lane still measures wake/change storage behavior rather than password/signature
+use.
+
+**New invariants:** none promoted. `WRD-KEY-02`, `WRD-KEY-03`, and `WRD-KEY-04`
+remain `unimplemented`; their low-level and internal-lifecycle conjuncts are
+stronger, but the compound product requirements are not satisfied.
+
+**Residual, stated honestly:** there is no creation/onboarding or browser-
+reachable unlock flow, production Argon2 benchmark/floor or attempt policy, PRF
+device matrix, persisted authoritative account/cluster/program configuration,
+on-chain check that the encrypted seed matches a currently granted session,
+approval owner, transaction signing/sending consumer, RPC, or real-key browser
+vector. A local callback can copy a seed or perform an irreversible side effect;
+the current contract forbids that behavior but cannot revoke bytes already sent.
+JavaScript overwrite is best effort. The session KEK remains sufficient to open
+the record until its deadline. Context is supplied anew on each use. Chrome
+storage supplies no transaction/CAS, authenticated event, rollback, durability,
+or freshness primitive; valid same-context replay remains possible. A delayed
+self-write change event can conservatively revoke a later unlock, and future
+privileged handlers must await the runtime readiness/fatal health gates. Cleanup
+rejection can retain browser-owned KEK bytes. Independent second-model review
+remains UNVERIFIED.
