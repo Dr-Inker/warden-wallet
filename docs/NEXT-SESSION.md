@@ -1,5 +1,61 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C2 KEK/DEK BOUNDARY — PRIMITIVE CLOSED, PRODUCT INVARIANT OPEN
+>
+> **Full gate green @`2b19883c8acedbd97633d3df24b9ea5556a6422f`:**
+> `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh` → exit **0**;
+> `@warden/core` **400/400**, ui-tokens **11/11**, txbudget **8/8**, WebAuthn
+> Playwright **1/1**, Rust **674 passed / 0 failed / 1 ignored**. The cache override is
+> required only because this sandbox refuses npm's default `/root/.npm/_cacache`; the
+> unoverridden run failed solely at `npm pack` with EROFS and is not a green gate.
+>
+> Commit `2b19883` closes the specific C2 construction gap called out below. The
+> bundle format is now one random AES-256 DEK, one payload ciphertext, and two
+> independently authenticated DEK wraps (Argon2id-password KEK and WebAuthn-PRF-HKDF
+> KEK). Wrap AAD binds KDF/position, bundle id/version, component version, and all six
+> Warden context fields. Payload AAD binds the exact encoded bytes of **both** wraps,
+> so tampering or splicing the unused fallback poisons neither silently: both unlock
+> routes fail closed. The strict bounded binary format has independent raw-WebCrypto
+> vectors in both directions and a hand-built wire vector; expected ciphertext is not
+> derived from production code.
+>
+> The hostile self-pass found two real async TOCTOU defects before commit: caller-owned
+> plaintext/KEK/context buffers could be zeroed or mutated across WebCrypto awaits,
+> producing a half-old/half-zero record, and the open path could authenticate a mixture
+> of two mutable records. Both were pinned red then fixed by canonical snapshots and
+> best-effort zeroing of private working copies. The old derivation test that claimed
+> “same envelope” while actually sealing two different payload envelopes was removed.
+>
+> **Independent review is still UNVERIFIED.** A read-only `codex review --base` attempt
+> rejected the required custom prompt before model startup; the equivalent ephemeral
+> `codex exec -s read-only` attempt then failed client initialization with EROFS. A
+> narrowly escalated retry was denied because initialization would write outside the
+> authorized workspace. No model finding, review artefact, run row, or scorecard row was
+> produced; do not claim second-model review green. The older canonical Codex range
+> `c5a4514..77a8273` below remains owed independently of this new range
+> `ac21fa3..2b19883`.
+>
+> **Research correction:** RFC 9106's second recommended Argon2id profile is 64 MiB,
+> `t=3`, **`p=4`**, not `p=1`; the provisional constant and pin were corrected. This
+> remains explicitly **UNVERIFIED** as a product floor until measured on the slowest
+> supported desktop. Envelope-encryption shape was checked against Google Cloud KMS's
+> DEK/KEK guidance; AES-GCM/IV requirements against NIST SP 800-38D; WebAuthn PRF's
+> 32-byte output against WebAuthn L3; and `wrapKey()` extractability behavior against
+> WebCrypto Level 2. Primary sources:
+> <https://www.rfc-editor.org/rfc/rfc9106.html>,
+> <https://docs.cloud.google.com/kms/docs/envelope-encryption>,
+> <https://csrc.nist.gov/pubs/sp/800/38/d/final>,
+> <https://www.w3.org/TR/webauthn-3/>, <https://www.w3.org/TR/WebCryptoAPI/>.
+>
+> **Do not promote `WRD-KEY-*`.** What remains is the actual product: `apps/extension`
+> does not exist; no production record owns Argon2/PRF salts and parameters; no
+> `storage.local`/trusted-only `storage.session` adapter consumes this format; no worker
+> wake, lock, cancellation-generation, or expiry-clearing path exists; the real-device
+> PRF matrix and slowest-device Argon2 benchmark do not exist. C1a's production
+> extension-origin/migration decision is still owner-blocking. The next safe C2 slice
+> may define the complete salt/parameter + bundle record and atomic storage contract,
+> but it must not pretend to discharge C1 lifecycle enforcement.
+
 > ## 2026-08-23 CODEX DIRECT ATTEMPT — BLOCKED / UNVERIFIED
 >
 > `scripts/review.sh c5a4514ab5e36faa6b4450bad7103f3f1cb5a7ca 6d714b29a24afdce97ec269404f95c34143b6c03 --kind task-diff`
