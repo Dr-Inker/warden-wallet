@@ -291,3 +291,36 @@ record resolves it. The page correlation id is not a security id and has no uniq
 the future owner must mint an independent request id and reject duplicate in-flight correlations.
 The local 16 KiB ceiling has not been compatibility-measured. Independent second-model review is
 UNVERIFIED.
+
+---
+
+## Client C1 zero-privilege provider Port owner — 2975296 — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** the emitted MV3 worker now installs one named `runtime.onConnect` listener
+after trusted-only storage restriction and session restoration. It accepts only provider-shaped,
+extension-owned web-frame sender provenance and the closed provider-request schema, then returns a
+fixed `WARDEN_METHOD_UNAVAILABLE` response. The current manifest has no content script, page provider,
+UI page, host permission, external connection, or web-accessible resource, so no webpage can yet
+reach it. The listener has no account, approval, RPC, key, signing, decrypt, export, or dispatch
+capability.
+
+**Removed / narrowed:** every accepted request is owned by the exact browser-derived
+extension/document/origin/tab/frame tuple and an independent 128-bit Web Crypto id which is never
+echoed to the page. Page correlations are unique only while pending and are never authority.
+Requests and provenance are copied/frozen; settlement requires the exact lease object. Per-Port
+pending/total limits, a global active-Port limit, one owner per `documentId`, absolute-time rechecks
+plus a best-effort expiry timer, and synchronous abort on disconnect/malformed input/account
+change/disposal bound memory and stale authority. Invalid channels, senders, and messages close the
+Port. A browser-safe `@warden/core/constants` export prevents the parser's first live bundle from
+importing Node-only `node:fs`/`node:url` code.
+
+**New invariants:** none promoted. `WRD-EXT-01` and `WRD-EXT-02` remain `unimplemented`.
+
+**Residual, stated honestly:** there is no content-script/page bridge, Wallet Standard adapter,
+privileged UI Port, authorized account or cluster binding, success/event protocol, approval
+digest, idempotent sign/send owner, persistent request store, or wallet method. `accountAddress`
+is still only an untrusted lexical selector. Account-change cancellation is not wired to account
+state. Worker restart discards in-memory work rather than proving recovery semantics. Unit mocks
+prove local Port teardown and document-slot reuse, but actual Chromium navigation/disconnect and
+content-script sender shapes remain UNVERIFIED. TTL and cap values are local, compatibility-
+unmeasured choices. Independent second-model review remains UNVERIFIED.

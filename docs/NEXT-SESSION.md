@@ -1,5 +1,74 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C1 PROVIDER-PORT OWNER — EMITTED, ZERO PRIVILEGE, PAGE BRIDGE ABSENT
+>
+> Commit `2975296eeff4f1096146174be41649ec399590b5` installs the first
+> production `runtime.onConnect` provider boundary, but deliberately gives it no
+> account, approval, RPC, signing, decrypt, export, or dispatch hook. Exact-SHA
+> focused evidence: `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension test` → **162/162**, exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> typecheck`, `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/core build`, and `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension build` each exit **0**. These are not the repository
+> deploy gate. Run `env npm_config_cache=/tmp/warden-npm-cache bash
+> .claude/test-gate.sh` on the final ledger-inclusive SHA before claiming this
+> loop boundary green.
+>
+> The initial hostile lane failed for the intended reasons: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> vitest run test/provider-port.test.ts test/runtime.test.ts` could not load the
+> absent `provider-port.js`, and two runtime assertions failed because
+> `startBackground` did not exist. The new per-Port owner binds the frozen
+> browser-derived extension/document/origin/tab/frame tuple to each parsed,
+> copied request; mints a separate 128-bit Web Crypto identity that is never
+> returned to the page; refuses duplicate in-flight correlations; never reuses
+> an internal id on one Port; caps 32 pending, 1,024 total requests per Port, and
+> 256 active Ports; and permits only one owner for a browser `documentId`.
+> Disconnect, malformed input, account change, boundary disposal, clock failure,
+> and timer failure synchronously abort the exact owned lease. Expiry is enforced
+> by an absolute-time check on every owner use plus a best-effort timer.
+> Settlement and authority checks require the exact frozen lease object, not a
+> page correlation or a coincidentally equal id from another Port.
+>
+> Storage restriction and session restoration finish before the global listener
+> is installed. On a live Port, every syntactically valid method receives one frozen
+> `WARDEN_METHOD_UNAVAILABLE` response carrying only the page correlation; every
+> invalid sender, channel, or payload closes the Port. The built worker is
+> **49,237 bytes** and contains `parseProviderRequest`, `warden:provider:v1`, the
+> internal `req_` mint, and `WARDEN_METHOD_UNAVAILABLE`. `rg -n
+> "node:fs|node:url|signMessage|signIn|warden:unlock|privateKey|secretKey"
+> apps/extension/dist/background.js` exits **1** with no match. The first build
+> exposed a real packaging defect: importing the broad `@warden/core` barrel
+> pulled `node:fs` and `node:url` into the browser graph and failed resolution.
+> Commit `2975296` fixes that by exporting/importing the browser-safe
+> `@warden/core/constants` subpath; Node built-ins were not externalized or
+> duplicated away.
+>
+> Harsh review repaired a false-green disposal test: its alleged two active Ports
+> shared one `documentId`, so the second had already been rejected and multi-Port
+> cleanup was never measured. The corrected test uses two live document owners.
+> Disconnect coverage now also proves the released document slot accepts a
+> replacement Port. Idle-expiry timers recheck absolute time and reschedule when
+> fired early; the final authority check reaps expiry even if a timer is delayed.
+>
+> **Do not promote `WRD-EXT-01` or `WRD-EXT-02`.** The current manifest still has
+> no content script, injected provider, UI page, host permission,
+> externally-connectable declaration, or web-accessible resource, so a webpage
+> cannot reach this listener. There is no Wallet Standard `registerWallet`
+> adapter, authorized-account/cluster binding, success/event schema, persistent
+> request record, approval digest, idempotent sign/send path, or privileged UI
+> route. `accountAddress` remains an untrusted lexical selector. Account-change
+> cancellation exists only as an owner primitive because no account state is
+> wired. Service-worker restart drops in-memory requests rather than resuming
+> them. Chrome navigation is represented only by a mocked Port disconnect; an
+> actual Chromium content-script/navigation vector is **UNVERIFIED**. The local
+> TTL/cap choices are unmeasured compatibility limits. Independent second-model
+> review also remains **UNVERIFIED**. The next safe slice must add an actual
+> content-script/page bridge that still exposes no successful wallet method, then
+> measure sender and disconnect behavior in Chromium before any authority is
+> connected.
+
 > ## 2026-08-30 C1 PROVIDER-SCHEMA BOUNDARY — CLOSED INPUT, ROUTER STILL ABSENT
 >
 > Commit `16663cb347707fc564698a9ac76a29ee987e9bd0` adds a pure,
