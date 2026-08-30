@@ -661,3 +661,54 @@ still provides no transaction/CAS, authenticated freshness/event, rollback, or
 durability proof; valid same-context record replay and cleanup-retained KEK bytes
 remain possible. A delayed self-write event may conservatively revoke a later
 unlock. Independent second-model review remains UNVERIFIED.
+
+---
+
+## Client C2 Argon2 host responsiveness and pending-unlock revocation — 125ad76 — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** production password record seal/open now use the exact-pinned
+`@noble/hashes` 2.4.0 asynchronous Argon2id implementation. On scheduling hosts
+that expose `scheduler.postTask`, derivation runs at background priority under the
+lifecycle's `AbortSignal`; Noble's internal yields inherit that scheduling context.
+The deploy verifier's fail-closed dependency allow-list and byte attestation were
+updated for the exact dependency. A temporary-extension benchmark is now part of
+the repository deploy gate and executes the RFC 9106 second recommended profile in
+real Chromium. No WASM implementation, network permission, host permission, page,
+message method, or `wasm-unsafe-eval` exception was added; extension CSP remains
+`script-src 'self'`.
+
+**Removed / narrowed:** password derivation no longer monopolizes the tested Chrome
+151 extension host for its full approximately 0.9-second run. At implementation SHA
+`125ad761b3af1879f42fa13135e5a07d57721223`, five real-browser 64 MiB / t=3 /
+p=4 derivations measured **901.1 ms minimum / 901.8 ms p50 / 927.1 ms p95-max**;
+a browser task requested after 50 ms ran at **53.1–67.7 ms**, before every
+derivation completed. A separate revocation dispatched at 61.4 ms rejected with
+`KeyringLockedError` 29.0 ms later and the caller password buffer was zeroed.
+Lock, record replacement, clear, a competing unlock, and startup restore now revoke
+the one pending derivation authority before suspending. Already-revoked requests
+refuse before Argon allocation. Lifecycle-owned password, KEK, plaintext, and
+decoded-seed copies are wiped best effort on abort and a late result cannot
+activate. A deterministic regression also closes a startup race in which restore
+could previously adopt a session serialized by a just-superseded unlock; restore
+now clears and refuses a same-owner pending unlock.
+
+**New invariants:** none promoted. `WRD-KEY-02`, `WRD-KEY-03`, and `WRD-KEY-04`
+remain `unimplemented`. This establishes browser-backed responsiveness and one
+pending-ceremony revocation mechanism, not a browser-reachable keyring product or
+a production parameter policy.
+
+**Residual, stated honestly:** this is one fast server-class host—Headless Chrome
+151, Linux 6.8, AMD EPYC-Milan, 4 logical CPUs, and 15.25 GiB RAM—not a
+slowest-supported-device matrix. No acceptable latency band, production creation
+floor, below-floor record rejection/upgrade rule, or online attempt-rate/backoff
+policy has been selected. Cheap record metadata remains intentionally accepted for
+tests and would be unsafe as product-created policy. The pure-JavaScript
+implementation remains slower relative to native attackers, and Argon2 `p=4`
+lanes are not four JavaScript CPU workers. On hosts without `scheduler.postTask`,
+Noble's timer fallback yields the host and revoked output is suppressed, but an
+initialized KDF may run to normal completion before cleanup. Chrome 106 fallback
+behavior has not been measured. JavaScript/VM zeroization remains best effort.
+There is still no browser creation/unlock/re-prompt flow, PRF real-device matrix,
+authoritative account registry, on-chain session-grant match, approval/RPC/signer
+consumer, or real-key browser vector. Independent second-model review remains
+UNVERIFIED.

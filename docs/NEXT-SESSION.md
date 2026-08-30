@@ -1,5 +1,87 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C2 ARGON2 HOST RESPONSIVENESS + REVOCATION — BROWSER GATE LIVE, PRODUCT FLOOR OPEN
+>
+> Implementation commit `125ad761b3af1879f42fa13135e5a07d57721223`
+> replaces the production record paths' event-loop-blocking password KDF with a
+> host-responsive and revocable path. The first contract was genuinely red:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/keyring-derive-async.test.ts` exited **1** with **3 failures / 0
+> passes** because `deriveUnwrapKeyFromPasswordBytesAsync` did not exist. It now
+> pins sync/async output equality, a real Node host-task yield, post-revocation
+> result suppression, already-aborted pre-allocation refusal, and password-buffer
+> wiping.
+>
+> The dependency is exact-pinned from `@noble/hashes` 1.8.0 to **2.4.0**. All
+> direct v2 imports use its explicit `.js` exports; the deploy verifier's
+> fail-closed external allow-list and byte attestation were deliberately updated
+> and regenerated. No WASM dependency or `wasm-unsafe-eval` CSP exception was
+> added. This keeps the current `script-src 'self'` extension boundary, but it
+> also keeps Noble's documented pure-JavaScript native-attacker performance
+> disadvantage. The provisional RFC 9106 second profile is **64 MiB / t=3 /
+> p=4 / 32 bytes**. `p=4` describes Argon2 lanes; this pure-JS implementation
+> does not turn those lanes into four CPU workers. The older historical handoff
+> line below that says `p=1` is superseded and wrong.
+>
+> A Node measurement initially looked sufficient and was not. Noble 1.8's async
+> driver yielded only through promises, so a zero-delay timer ran only after the
+> approximately 2.4-second RFC-profile derivation. Noble 2.4's Node timer fallback
+> reduced this host's derivation to approximately 1.0 second and let the timer run,
+> but the first real command `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension bench:argon2` still exited **1** in an MV3 worker:
+> Chromium's default `scheduler.yield()` continuations correctly outranked the
+> queued timer and starved the would-be lock task until KDF completion. The fix
+> starts Argon2 inside `scheduler.postTask(..., { priority: "background", signal })`.
+> Its internal yields inherit both background priority and abort authority, so
+> ordinary extension work can preempt and abort rejection runs Noble's matrix
+> cleanup. Hosts without `postTask` use Noble's timer fallback; they remain
+> responsive and suppress revoked output, but may finish the initialized KDF
+> before cleanup. Primary scheduling references:
+> <https://developer.chrome.com/blog/use-scheduler-yield>,
+> <https://wicg.github.io/scheduling-apis/>, and
+> <https://github.com/paulmillr/noble-hashes/releases/tag/2.4.0>.
+>
+> The benchmark is now a mandatory real-Chromium gate inside
+> `.claude/test-gate.sh`, not a prose claim. It builds a temporary MV3 extension
+> under the unchanged self-only CSP, runs five exact-profile derivations, checks
+> a fixed 32-byte output, proves the caller password is zeroed, requires a delayed
+> browser task to run before each derivation finishes, and separately requires an
+> abort to reject with `KeyringLockedError`. Exact command at implementation SHA
+> `125ad761b3af1879f42fa13135e5a07d57721223`: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> bench:argon2` → exit **0**. On Headless Chrome 151 / Linux 6.8 / AMD EPYC-Milan
+> / 4 logical CPUs / 15.25 GiB RAM, elapsed milliseconds were **901.1 min / 901.8
+> p50 / 927.1 p95-max**; a task requested at 50 ms ran at **53.1–67.7 ms**;
+> revocation dispatched at **61.4 ms** and rejected **29.0 ms** later with the
+> password buffer wiped. This measures one fast server, not a product floor.
+>
+> Record seal/open and the extension password lifecycle now use the async API.
+> Every lock, record mutation, competing unlock, and startup restore revokes one
+> pending derivation authority before its first suspension; local password/KEK/
+> plaintext copies are scrubbed best effort and a revoked derivation cannot
+> activate. Harsh review found another real race after the first green: startup
+> restore could adopt a session that a superseded unlock had serialized just
+> before final readback. The new deterministic test failed **1 / 14** before the
+> fix; restore now clears and refuses a same-owner pending unlock rather than
+> adopting it. Exact-SHA focused evidence: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test` →
+> **447/447**, exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension test` → **241/241**, exit **0**.
+>
+> **Do not promote `WRD-KEY-02`, `WRD-KEY-03`, or `WRD-KEY-04`, and do not call
+> the Argon2 profile calibrated.** The required slowest-supported-desktop/browser
+> matrix has not run, no latency acceptance band or production floor has been
+> selected, stored records below any future floor are still accepted, and no
+> attempt-rate/backoff policy exists. Cheap parameters remain necessary for tests
+> but would be unsafe as product-created metadata. There is still no browser-
+> reachable creation/unlock/sign flow, PRF real-device matrix, authoritative
+> account registry, approval/RPC consumer, on-chain session-grant match, or
+> real-key browser vector. Chrome 106's timer-fallback behavior is not measured by
+> the Chrome 151 lane. JS zeroization is best effort. Independent second-model
+> review remains **UNVERIFIED**. Run `env npm_config_cache=/tmp/warden-npm-cache
+> bash .claude/test-gate.sh` on the final ledger-inclusive SHA before claiming
+> this loop boundary green.
+
 > ## 2026-08-30 C2 SELF-CONTAINED CONTEXT + AUTHENTICATED WAKE — INTERNAL BOUNDARY HARDENED, WALLET STILL OPEN
 >
 > Implementation commit `8653fed0b922e37a3998e96ca3f33f686daeeba7`
