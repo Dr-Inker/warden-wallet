@@ -1,5 +1,56 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C2 LOCK-REVOCATION BOUNDARY — CORE RACE CLOSED, SESSION OWNER OPEN
+>
+> Commit `c2e216fdf930be94fd29d406b6f6ce215743f0b6` adds the smallest honest
+> explicit-lock primitive to the keyring core. Exact-SHA focused evidence: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test` →
+> **434/434**, exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/core build` → exit **0**. This is not the repository deploy gate;
+> run `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh` on the
+> final ledger-inclusive SHA before claiming the loop boundary green.
+>
+> `UnlockCheck` now requires a stable, session-owned `AbortSignal` in addition to
+> absolute deadlines and its live clock reader. Deadline, reader and signal identity
+> are snapshotted. Record, bundle and AEAD scopes register abort listeners for their
+> own JS-owned secret buffers, close the preflight/listener race with another sticky
+> signal check, suppress results when lock wins before the final check, and remove
+> listeners in `finally`. `KeyringLockedError` distinguishes explicit revocation from
+> deadline expiry without turning authentication failures into an oracle.
+>
+> The first red lane was load-bearing: `env npm_config_cache=/tmp/warden-npm-cache
+> pnpm --filter @warden/core exec vitest run test/keyring-deadlines.test.ts
+> test/keyring-envelope.test.ts` produced **2 failures / 49 passes**. The pure guard
+> ignored an aborted controller and decrypt returned plaintext after lock. Final
+> focused coverage is **22 deadline + 31 envelope + 25 bundle + 18 record** tests.
+> The strongest record vector starts real `subtle.encrypt`, stalls only its returned
+> promise, aborts the owning controller, and measures the caller password/plaintext
+> and captured AEAD input as all-zero while the public record promise is still
+> unsettled. It then releases the gate and requires typed lock rejection. This tests
+> retention timing, not merely eventual cleanup or an expected value derived from
+> production code.
+>
+> Primary-source correction: DOM defines `AbortSignal.aborted` as sticky state and an
+> abort event, so listener registration must be followed by a state check because an
+> already-fired event is not replayed. WebCrypto `encrypt()`/`decrypt()` accept no
+> `AbortSignal`; their algorithms copy input bytes before continuing crypto work in
+> parallel. Therefore this boundary claims immediate cleanup of observable JS-owned
+> copies and suppression of late results, **not** cancellation or erasure of a
+> browser-internal copy. Sources: <https://dom.spec.whatwg.org/#abortsignal>,
+> <https://w3c.github.io/webcrypto/#SubtleCrypto-method-encrypt>,
+> <https://w3c.github.io/webcrypto/#SubtleCrypto-method-decrypt>.
+>
+> **Do not promote `WRD-KEY-03`.** No extension/session owner exists to create one
+> controller per unlock, reuse its signal for every operation, abort synchronously
+> before clearing `storage.session`, in-memory references, pending ceremonies,
+> hardware transports and approval state, or rebuild that state after worker wake.
+> A fresh per-call controller would make this primitive theater. A synchronous Argon2
+> call cannot process an event-loop abort until it returns, and a returned byte array
+> is not magically revocable: the final consumer must re-check the same authority
+> immediately before sign/decrypt/export. There is no signing API, so the plan's
+> required lock-during-pending-signing vector remains UNVERIFIED. Independent
+> second-model review also remains UNVERIFIED; no review artefact was fabricated.
+
 > ## 2026-08-30 C2 LIVE-DEADLINE BOUNDARY — ASYNC EXPIRY CLOSED, LIFECYCLE CANCELLATION OPEN
 >
 > Commit `968a71138922087cf887d8ce437ddcf35837c8e9` replaces the stale
