@@ -4,6 +4,9 @@ import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha2";
 import {
   MIN_ARGON2ID_SALT_BYTES,
+  MAX_ARGON2ID_MEMORY_KIB,
+  MAX_ARGON2ID_PARALLELISM,
+  MAX_ARGON2ID_TIME_COST,
   PROVISIONAL_ARGON2ID_PARAMS,
   UNWRAP_KEY_BYTES,
   assertValidArgon2idParams,
@@ -90,6 +93,12 @@ describe("Argon2id, pinned against the library rather than against ourselves", (
     expect(PROVISIONAL_ARGON2ID_PARAMS.parallelism).toBe(4);
   });
 
+  it("pins resource ceilings before attacker-controlled record metadata reaches Argon2", () => {
+    expect(MAX_ARGON2ID_MEMORY_KIB).toBe(128 * 1024);
+    expect(MAX_ARGON2ID_TIME_COST).toBe(10);
+    expect(MAX_ARGON2ID_PARALLELISM).toBe(16);
+  });
+
   it("rejects invalid parameters and short salts rather than clamping them", () => {
     const bad: Argon2idParams[] = [
       { memoryKiB: 64, timeCost: 0, parallelism: 1 },
@@ -97,8 +106,13 @@ describe("Argon2id, pinned against the library rather than against ourselves", (
       { memoryKiB: 64, timeCost: 1, parallelism: 0 },
       { memoryKiB: 8, timeCost: 1, parallelism: 4 }, // m < 8*p
       { memoryKiB: 64.5, timeCost: 1, parallelism: 1 },
+      { memoryKiB: MAX_ARGON2ID_MEMORY_KIB + 1, timeCost: 1, parallelism: 1 },
+      { memoryKiB: 64, timeCost: MAX_ARGON2ID_TIME_COST + 1, parallelism: 1 },
+      { memoryKiB: 1024, timeCost: 1, parallelism: MAX_ARGON2ID_PARALLELISM + 1 },
     ];
     for (const p of bad) expect(() => assertValidArgon2idParams(p)).toThrow(KeyringFormatError);
+    expect(() => assertValidArgon2idParams(undefined as unknown as Argon2idParams)).toThrow(KeyringFormatError);
+    expect(() => assertValidArgon2idParams(null as unknown as Argon2idParams)).toThrow(KeyringFormatError);
     expect(() => deriveUnwrapKeyFromPassword("pw", fill(MIN_ARGON2ID_SALT_BYTES - 1, 1), FAST)).toThrow(
       /salt must be at least 16 bytes/,
     );

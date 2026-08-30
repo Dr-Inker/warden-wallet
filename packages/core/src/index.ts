@@ -12,3 +12,4 @@ export * from "./keyring/deadlines.js";
 export * from "./keyring/derive.js";
 export * from "./keyring/envelope.js";
 export * from "./keyring/bundle.js";
+export * from "./keyring/record.js";

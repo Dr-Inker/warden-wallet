@@ -2,15 +2,18 @@
 //!
 //! One fresh random 256-bit data-encryption key (DEK) encrypts the keyring payload
 //! exactly once. The DEK is then encrypted independently by the password-derived
-//! key-encryption key (KEK) and the WebAuthn-PRF-derived KEK. PRF is therefore an
-//! optimization, not a second vault: either path recovers the same DEK and opens
-//! the same payload ciphertext.
+//! key-encryption key (KEK) and, when the credential supports it, the
+//! WebAuthn-PRF-derived KEK. PRF is therefore an optional optimization, not a
+//! prerequisite or a second vault: password unlock always recovers the DEK, while
+//! an enrolled PRF path recovers that same DEK and opens the same ciphertext.
 //!
 //! The bundle is authenticated as one unit. Each DEK wrap binds its position/KDF,
 //! bundle id, bundle version, component version, and full Warden context. The
-//! payload additionally binds the exact encoded bytes of BOTH wraps. Tampering or
-//! splicing even the unused recovery wrap consequently makes either unlock path
-//! fail closed instead of leaving a poisoned fallback dormant until it is needed.
+//! payload additionally binds the exact encoded bytes of every wrap slot (the PRF
+//! slot is an authenticated empty value when PRF is absent). Tampering or splicing
+//! even an unused fallback consequently makes every enrolled unlock path fail closed
+//! instead of leaving a poisoned fallback dormant until it is needed. A caller may
+//! also bind canonical outer-record metadata; `record.ts` always does.
 //!
 //! ## Wire format (v1)
 //!
@@ -18,13 +21,13 @@
 //! bundle := u16be(version) || u8(bundleIdLen) || bundleId
 //!           || LP32(payloadEnvelope)
 //!           || LP32(passwordDekWrap)
-//!           || LP32(prfDekWrap)
+//!           || LP32(prfDekWrap)        // zero length when PRF is not enrolled
 //! LP32(x) := u32be(x.length) || x
 //! ```
 //!
-//! Each component is a strict v1 `KeyringEnvelope`. Unknown versions are rejected
-//! before component lengths are read, every component length is bounded, and
-//! trailing bytes are refused.
+//! Each non-empty component is a strict v1 `KeyringEnvelope`; only the PRF slot may
+//! be empty. Unknown versions are rejected before component lengths are read, every
+//! component length is bounded, and trailing bytes are refused.
 //!
 //! The raw DEK necessarily exists briefly as bytes: WebCrypto `wrapKey()` first
 //! exports the wrapped key and therefore cannot wrap a non-extractable key. This
@@ -46,6 +49,7 @@ import {
   assertValidKeyringContext,
   encodeKeyringAad,
   encodeLengthPrefixedFields,
+  MAX_AAD_FIELD_BYTES,
   type KeyringContext,
 } from "./aad.js";
 import { assertUnlocked } from "./deadlines.js";
@@ -57,7 +61,7 @@ import {
   type KeyringEnvelope,
   type UnlockCheck,
 } from "./envelope.js";
-import { KeyringFormatError } from "./errors.js";
+import { KeyringAuthError, KeyringFormatError } from "./errors.js";
 
 /** Current persistent bundle format. */
 export const KEYRING_BUNDLE_VERSION_1 = 1;
@@ -87,7 +91,8 @@ export interface KeyringBundle {
   readonly bundleId: Uint8Array;
   readonly payload: KeyringEnvelope;
   readonly passwordWrap: KeyringEnvelope;
-  readonly prfWrap: KeyringEnvelope;
+  /** Null when this credential/device has no usable WebAuthn PRF path. */
+  readonly prfWrap: KeyringEnvelope | null;
 }
 
 function u16be(value: number): Uint8Array {
@@ -152,7 +157,19 @@ function assertKeyringBundle(value: unknown): asserts value is KeyringBundle {
   assertBundleId(bundle.bundleId as Uint8Array);
   assertComponentEnvelope(bundle.payload, "payload");
   assertComponentEnvelope(bundle.passwordWrap, "password wrap");
-  assertComponentEnvelope(bundle.prfWrap, "PRF wrap");
+  if (bundle.prfWrap !== null) assertComponentEnvelope(bundle.prfWrap, "PRF wrap");
+}
+
+function copyRecordBinding(binding: Uint8Array | undefined): Uint8Array | undefined {
+  if (binding === undefined) return undefined;
+  if (!(binding instanceof Uint8Array)) throw new KeyringFormatError("record binding must be a Uint8Array");
+  if (binding.length === 0) throw new KeyringFormatError("record binding must not be empty");
+  if (binding.length > MAX_AAD_FIELD_BYTES) {
+    throw new KeyringFormatError(
+      `record binding of ${binding.length} bytes exceeds the ${MAX_AAD_FIELD_BYTES}-byte cap`,
+    );
+  }
+  return binding.slice();
 }
 
 function assertUnwrapKey(key: KeyringUnwrapKey, expected?: KeyringKdfLabel): void {
@@ -178,13 +195,16 @@ function wrapAad(
   bundleId: Uint8Array,
   kdf: KeyringKdfLabel,
   envelopeVersion: number,
+  recordBinding?: Uint8Array,
 ): Uint8Array {
-  return encodeLengthPrefixedFields(KEYRING_BUNDLE_WRAP_AAD_DOMAIN, bundleVersion, [
+  const fields = [
     encodeKeyringAad(context, bundleVersion),
     bundleId,
     TEXT_ENCODER.encode(kdf),
     u16be(envelopeVersion),
-  ]);
+  ];
+  if (recordBinding !== undefined) fields.push(recordBinding);
+  return encodeLengthPrefixedFields(KEYRING_BUNDLE_WRAP_AAD_DOMAIN, bundleVersion, fields);
 }
 
 function payloadAad(
@@ -193,15 +213,18 @@ function payloadAad(
   bundleId: Uint8Array,
   payloadVersion: number,
   passwordWrap: KeyringEnvelope,
-  prfWrap: KeyringEnvelope,
+  prfWrap: KeyringEnvelope | null,
+  recordBinding?: Uint8Array,
 ): Uint8Array {
-  return encodeLengthPrefixedFields(KEYRING_BUNDLE_PAYLOAD_AAD_DOMAIN, bundleVersion, [
+  const fields = [
     encodeKeyringAad(context, bundleVersion),
     bundleId,
     u16be(payloadVersion),
     encodeKeyringEnvelope(passwordWrap),
-    encodeKeyringEnvelope(prfWrap),
-  ]);
+    prfWrap === null ? new Uint8Array(0) : encodeKeyringEnvelope(prfWrap),
+  ];
+  if (recordBinding !== undefined) fields.push(recordBinding);
+  return encodeLengthPrefixedFields(KEYRING_BUNDLE_PAYLOAD_AAD_DOMAIN, bundleVersion, fields);
 }
 
 /** Serialize the exact persistent representation. */
@@ -210,7 +233,7 @@ export function encodeKeyringBundle(bundle: KeyringBundle): Uint8Array {
   const components = [
     encodeKeyringEnvelope(bundle.payload),
     encodeKeyringEnvelope(bundle.passwordWrap),
-    encodeKeyringEnvelope(bundle.prfWrap),
+    bundle.prfWrap === null ? new Uint8Array(0) : encodeKeyringEnvelope(bundle.prfWrap),
   ];
   const length = BUNDLE_FIXED_HEADER_BYTES + components.reduce((total, bytes) => total + 4 + bytes.length, 0);
   if (length > MAX_KEYRING_BUNDLE_BYTES) throw new KeyringFormatError(`bundle of ${length} bytes exceeds the cap`);
@@ -251,7 +274,7 @@ export function decodeKeyringBundle(bytes: Uint8Array): KeyringBundle {
   const bundleId = bytes.slice(offset, offset + idLength);
   offset += idLength;
 
-  const components: KeyringEnvelope[] = [];
+  const components: Array<KeyringEnvelope | null> = [];
   for (let index = 0; index < BUNDLE_COMPONENT_COUNT; index++) {
     if (offset + 4 > bytes.length) throw new KeyringFormatError("bundle truncated before component length");
     const length =
@@ -260,7 +283,11 @@ export function decodeKeyringBundle(bytes: Uint8Array): KeyringBundle {
       bytes[offset + 2]! * 0x100 +
       bytes[offset + 3]!;
     offset += 4;
-    if (length === 0) throw new KeyringFormatError(`bundle component ${index} is empty`);
+    if (length === 0) {
+      if (index !== 2) throw new KeyringFormatError(`bundle component ${index} is empty`);
+      components.push(null);
+      continue;
+    }
     if (length > MAX_ENCODED_ENVELOPE_BYTES) {
       throw new KeyringFormatError(`bundle component ${index} length ${length} exceeds the cap`);
     }
@@ -270,7 +297,11 @@ export function decodeKeyringBundle(bytes: Uint8Array): KeyringBundle {
   }
   if (offset !== bytes.length) throw new KeyringFormatError("trailing bytes after bundle components");
 
-  const [payload, passwordWrap, prfWrap] = components as [KeyringEnvelope, KeyringEnvelope, KeyringEnvelope];
+  const [payload, passwordWrap, prfWrap] = components as [
+    KeyringEnvelope,
+    KeyringEnvelope,
+    KeyringEnvelope | null,
+  ];
   const bundle = { version, bundleId, payload, passwordWrap, prfWrap };
   assertKeyringBundle(bundle);
   return bundle;
@@ -279,8 +310,11 @@ export function decodeKeyringBundle(bytes: Uint8Array): KeyringBundle {
 export interface SealKeyringBundleParams {
   readonly plaintext: Uint8Array;
   readonly passwordKey: KeyringUnwrapKey;
-  readonly prfKey: KeyringUnwrapKey;
+  /** Omit when PRF is unavailable; password fallback remains fully functional. */
+  readonly prfKey?: KeyringUnwrapKey;
   readonly context: KeyringContext;
+  /** Canonical outer-record metadata authenticated by every enrolled path. */
+  readonly recordBinding?: Uint8Array;
   readonly version?: number;
   readonly unlock?: UnlockCheck;
 }
@@ -297,18 +331,19 @@ export async function sealKeyringBundle(params: SealKeyringBundleParams): Promis
     throw new KeyringFormatError(`plaintext of ${params.plaintext.length} bytes exceeds the envelope cap`);
   }
   assertUnwrapKey(params.passwordKey, "argon2id-password");
-  assertUnwrapKey(params.prfKey, "webauthn-prf-hkdf");
-  if (equalBytes(params.passwordKey.bytes, params.prfKey.bytes)) {
+  if (params.prfKey !== undefined) assertUnwrapKey(params.prfKey, "webauthn-prf-hkdf");
+  if (params.prfKey !== undefined && equalBytes(params.passwordKey.bytes, params.prfKey.bytes)) {
     throw new KeyringFormatError("password and PRF paths must use independent key material");
   }
   assertValidKeyringContext(params.context);
+  const recordBinding = copyRecordBinding(params.recordBinding);
   if (params.unlock !== undefined) assertUnlocked(params.unlock.deadlines, params.unlock.now, "seal bundle");
 
   // Snapshot every mutable caller-owned buffer before the first await. A lock
   // handler may zero the caller's session keys as soon as this async API returns;
   // without snapshots that race can persist a bundle assembled from mixed states.
   const passwordKeyBytes = params.passwordKey.bytes.slice();
-  const prfKeyBytes = params.prfKey.bytes.slice();
+  const prfKeyBytes = params.prfKey?.bytes.slice();
   const plaintext = params.plaintext.slice();
   const context: KeyringContext = {
     ...params.context,
@@ -324,20 +359,37 @@ export async function sealKeyringBundle(params: SealKeyringBundleParams): Promis
       plaintext: dek,
       keyBytes: passwordKeyBytes,
       keyName: "password unwrap key",
-      aad: wrapAad(context, version, bundleId, "argon2id-password", KEYRING_ENVELOPE_VERSION_1),
+      aad: wrapAad(
+        context,
+        version,
+        bundleId,
+        "argon2id-password",
+        KEYRING_ENVELOPE_VERSION_1,
+        recordBinding,
+      ),
     });
     const passwordWrap: KeyringEnvelope = {
       version: KEYRING_ENVELOPE_VERSION_1,
       ...passwordBody,
     };
 
-    const prfBody = await sealAead({
-      plaintext: dek,
-      keyBytes: prfKeyBytes,
-      keyName: "PRF unwrap key",
-      aad: wrapAad(context, version, bundleId, "webauthn-prf-hkdf", KEYRING_ENVELOPE_VERSION_1),
-    });
-    const prfWrap: KeyringEnvelope = { version: KEYRING_ENVELOPE_VERSION_1, ...prfBody };
+    let prfWrap: KeyringEnvelope | null = null;
+    if (prfKeyBytes !== undefined) {
+      const prfBody = await sealAead({
+        plaintext: dek,
+        keyBytes: prfKeyBytes,
+        keyName: "PRF unwrap key",
+        aad: wrapAad(
+          context,
+          version,
+          bundleId,
+          "webauthn-prf-hkdf",
+          KEYRING_ENVELOPE_VERSION_1,
+          recordBinding,
+        ),
+      });
+      prfWrap = { version: KEYRING_ENVELOPE_VERSION_1, ...prfBody };
+    }
 
     const payloadBody = await sealAead({
       plaintext,
@@ -350,6 +402,7 @@ export async function sealKeyringBundle(params: SealKeyringBundleParams): Promis
         KEYRING_ENVELOPE_VERSION_1,
         passwordWrap,
         prfWrap,
+        recordBinding,
       ),
     });
     return {
@@ -361,7 +414,7 @@ export async function sealKeyringBundle(params: SealKeyringBundleParams): Promis
     };
   } finally {
     passwordKeyBytes.fill(0);
-    prfKeyBytes.fill(0);
+    prfKeyBytes?.fill(0);
     plaintext.fill(0);
     dek?.fill(0);
   }
@@ -371,6 +424,8 @@ export interface OpenKeyringBundleParams {
   readonly bundle: KeyringBundle | Uint8Array;
   readonly unwrapKey: KeyringUnwrapKey;
   readonly context: KeyringContext;
+  /** Must be the exact canonical outer-record metadata used at seal time. */
+  readonly recordBinding?: Uint8Array;
   readonly unlock?: UnlockCheck;
 }
 
@@ -380,6 +435,7 @@ export async function openKeyringBundle(params: OpenKeyringBundleParams): Promis
   assertKeyringBundle(parsed);
   assertUnwrapKey(params.unwrapKey);
   assertValidKeyringContext(params.context);
+  const recordBinding = copyRecordBinding(params.recordBinding);
   if (params.unlock !== undefined) assertUnlocked(params.unlock.deadlines, params.unlock.now, "open bundle");
 
   // Canonicalize/copy all caller-owned mutable bytes before awaiting WebCrypto.
@@ -397,12 +453,13 @@ export async function openKeyringBundle(params: OpenKeyringBundleParams): Promis
   let dek: Uint8Array | undefined;
   try {
     const selected = kdf === "argon2id-password" ? bundle.passwordWrap : bundle.prfWrap;
+    if (selected === null) throw new KeyringAuthError();
     dek = await openAead({
       nonce: selected.nonce,
       ciphertext: selected.ciphertext,
       keyBytes: unwrapKeyBytes,
       keyName: "unwrap key",
-      aad: wrapAad(context, bundle.version, bundle.bundleId, kdf, selected.version),
+      aad: wrapAad(context, bundle.version, bundle.bundleId, kdf, selected.version, recordBinding),
     });
     if (dek.length !== KEYRING_DEK_BYTES) {
       throw new KeyringFormatError(`wrapped data-encryption key must be ${KEYRING_DEK_BYTES} bytes`);
@@ -419,6 +476,7 @@ export async function openKeyringBundle(params: OpenKeyringBundleParams): Promis
         bundle.payload.version,
         bundle.passwordWrap,
         bundle.prfWrap,
+        recordBinding,
       ),
     });
   } finally {

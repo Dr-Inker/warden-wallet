@@ -101,23 +101,32 @@ function refWrapAad(
   bundleId: Uint8Array,
   kdf: KeyringUnwrapKey["kdf"],
   envelopeVersion: number,
+  recordBinding?: Uint8Array,
 ): Uint8Array {
-  return refFields("warden/keyring-bundle/wrap/aad", bundleVersion, [
+  const fields = [
     refContextAad(context, bundleVersion),
     bundleId,
     new TextEncoder().encode(kdf),
     refU16(envelopeVersion),
-  ]);
+  ];
+  if (recordBinding !== undefined) fields.push(recordBinding);
+  return refFields("warden/keyring-bundle/wrap/aad", bundleVersion, fields);
 }
 
-function refPayloadAad(bundle: KeyringBundle, context: KeyringContext): Uint8Array {
-  return refFields("warden/keyring-bundle/payload/aad", bundle.version, [
+function refPayloadAad(
+  bundle: KeyringBundle,
+  context: KeyringContext,
+  recordBinding?: Uint8Array,
+): Uint8Array {
+  const fields = [
     refContextAad(context, bundle.version),
     bundle.bundleId,
     refU16(bundle.payload.version),
     refEnvelopeBytes(bundle.passwordWrap),
-    refEnvelopeBytes(bundle.prfWrap),
-  ]);
+    bundle.prfWrap === null ? new Uint8Array(0) : refEnvelopeBytes(bundle.prfWrap),
+  ];
+  if (recordBinding !== undefined) fields.push(recordBinding);
+  return refFields("warden/keyring-bundle/payload/aad", bundle.version, fields);
 }
 
 async function rawEncrypt(
@@ -174,7 +183,7 @@ async function rawDecrypt(
   );
 }
 
-async function independentBundle(): Promise<KeyringBundle> {
+async function independentBundle(recordBinding?: Uint8Array): Promise<KeyringBundle> {
   const version = 1;
   const bundleId = fill(16, 0x71);
   const dek = fill(32, 0x82);
@@ -187,7 +196,7 @@ async function independentBundle(): Promise<KeyringBundle> {
     ciphertext: await rawEncrypt(
       PASSWORD_KEY.bytes,
       passwordNonce,
-      refWrapAad(CONTEXT, version, bundleId, PASSWORD_KEY.kdf, 1),
+      refWrapAad(CONTEXT, version, bundleId, PASSWORD_KEY.kdf, 1, recordBinding),
       dek,
     ),
   };
@@ -197,7 +206,7 @@ async function independentBundle(): Promise<KeyringBundle> {
     ciphertext: await rawEncrypt(
       PRF_KEY.bytes,
       prfNonce,
-      refWrapAad(CONTEXT, version, bundleId, PRF_KEY.kdf, 1),
+      refWrapAad(CONTEXT, version, bundleId, PRF_KEY.kdf, 1, recordBinding),
       dek,
     ),
   };
@@ -213,13 +222,17 @@ async function independentBundle(): Promise<KeyringBundle> {
     payload: {
       version: 1,
       nonce: payloadNonce,
-      ciphertext: await rawEncrypt(dek, payloadNonce, refPayloadAad(skeleton, CONTEXT), SECRET),
+      ciphertext: await rawEncrypt(dek, payloadNonce, refPayloadAad(skeleton, CONTEXT, recordBinding), SECRET),
     },
   };
 }
 
 function refBundleBytes(bundle: KeyringBundle): Uint8Array {
-  const components = [bundle.payload, bundle.passwordWrap, bundle.prfWrap].map(refEnvelopeBytes);
+  const components = [
+    refEnvelopeBytes(bundle.payload),
+    refEnvelopeBytes(bundle.passwordWrap),
+    bundle.prfWrap === null ? new Uint8Array(0) : refEnvelopeBytes(bundle.prfWrap),
+  ];
   return Uint8Array.from([
     (bundle.version >>> 8) & 0xff,
     bundle.version & 0xff,
@@ -243,11 +256,14 @@ function cloneBundle(bundle: KeyringBundle): KeyringBundle {
       nonce: bundle.passwordWrap.nonce.slice(),
       ciphertext: bundle.passwordWrap.ciphertext.slice(),
     },
-    prfWrap: {
-      version: bundle.prfWrap.version,
-      nonce: bundle.prfWrap.nonce.slice(),
-      ciphertext: bundle.prfWrap.ciphertext.slice(),
-    },
+    prfWrap:
+      bundle.prfWrap === null
+        ? null
+        : {
+            version: bundle.prfWrap.version,
+            nonce: bundle.prfWrap.nonce.slice(),
+            ciphertext: bundle.prfWrap.ciphertext.slice(),
+          },
   };
 }
 
@@ -309,6 +325,85 @@ describe("C2 KEK/DEK bundle: one payload ciphertext, two unlock paths", () => {
     expect(hex(fromPrf)).toBe(hex(SECRET));
     expect(hex(bundle.payload.ciphertext)).toBe(payloadBefore);
     expect(hex(bundle.passwordWrap.ciphertext)).not.toBe(hex(bundle.prfWrap.ciphertext));
+  });
+
+  it("keeps password unlock usable when this credential has no PRF capability", async () => {
+    const bundle = await sealKeyringBundle({
+      plaintext: SECRET,
+      passwordKey: PASSWORD_KEY,
+      context: CONTEXT,
+    });
+
+    expect(bundle.prfWrap).toBeNull();
+    expect(hex(await openKeyringBundle({ bundle, unwrapKey: PASSWORD_KEY, context: CONTEXT }))).toBe(hex(SECRET));
+    await expect(openKeyringBundle({ bundle, unwrapKey: PRF_KEY, context: CONTEXT })).rejects.toThrow(
+      KeyringAuthError,
+    );
+    expect(decodeKeyringBundle(encodeKeyringBundle(bundle)).prfWrap).toBeNull();
+
+    const dek = await rawDecrypt(
+      PASSWORD_KEY.bytes,
+      bundle.passwordWrap.nonce,
+      refWrapAad(CONTEXT, bundle.version, bundle.bundleId, PASSWORD_KEY.kdf, bundle.passwordWrap.version),
+      bundle.passwordWrap.ciphertext,
+    );
+    expect(
+      hex(await rawDecrypt(dek, bundle.payload.nonce, refPayloadAad(bundle, CONTEXT), bundle.payload.ciphertext)),
+    ).toBe(hex(SECRET));
+  });
+
+  it("authenticates external record metadata through either unlock path", async () => {
+    const recordBinding = new TextEncoder().encode("canonical KDF metadata v1");
+    const bundle = await sealKeyringBundle({
+      plaintext: SECRET,
+      passwordKey: PASSWORD_KEY,
+      prfKey: PRF_KEY,
+      context: CONTEXT,
+      recordBinding,
+    });
+    const tampered = recordBinding.slice();
+    tampered[0] ^= 1;
+
+    for (const unwrapKey of [PASSWORD_KEY, PRF_KEY]) {
+      await expect(
+        openKeyringBundle({ bundle, unwrapKey, context: CONTEXT, recordBinding: tampered }),
+      ).rejects.toThrow(KeyringAuthError);
+    }
+  });
+
+  it("interoperates with independent raw WebCrypto when record metadata is bound", async () => {
+    const recordBinding = Uint8Array.from([0, 1, 1, ...refU32(64), ...refU32(1), ...refU32(1), ...fill(16, 0x61)]);
+    const independent = await independentBundle(recordBinding);
+    expect(
+      hex(await openKeyringBundle({ bundle: independent, unwrapKey: PASSWORD_KEY, context: CONTEXT, recordBinding })),
+    ).toBe(hex(SECRET));
+    expect(
+      hex(await openKeyringBundle({ bundle: independent, unwrapKey: PRF_KEY, context: CONTEXT, recordBinding })),
+    ).toBe(hex(SECRET));
+
+    const ours = await sealKeyringBundle({
+      plaintext: SECRET,
+      passwordKey: PASSWORD_KEY,
+      prfKey: PRF_KEY,
+      context: CONTEXT,
+      recordBinding,
+    });
+    const passwordDek = await rawDecrypt(
+      PASSWORD_KEY.bytes,
+      ours.passwordWrap.nonce,
+      refWrapAad(CONTEXT, ours.version, ours.bundleId, PASSWORD_KEY.kdf, ours.passwordWrap.version, recordBinding),
+      ours.passwordWrap.ciphertext,
+    );
+    expect(
+      hex(
+        await rawDecrypt(
+          passwordDek,
+          ours.payload.nonce,
+          refPayloadAad(ours, CONTEXT, recordBinding),
+          ours.payload.ciphertext,
+        ),
+      ),
+    ).toBe(hex(SECRET));
   });
 
   it("uses fresh bundle ids, payload nonces, and wrap nonces on every seal", async () => {

@@ -64,6 +64,14 @@ export type KeyringKdfLabel = "argon2id-password" | "webauthn-prf-hkdf";
 export const UNWRAP_KEY_BYTES = 32;
 /** Minimum Argon2id salt length, in bytes. RFC 9106 recommends 16. */
 export const MIN_ARGON2ID_SALT_BYTES = 16;
+/**
+ * Resource-exhaustion ceilings for metadata read from persistent storage.
+ * These are safety caps, NOT password-hardening floors: the measured product
+ * floor remains open. Raising a ceiling requires a format/policy review.
+ */
+export const MAX_ARGON2ID_MEMORY_KIB = 128 * 1024;
+export const MAX_ARGON2ID_TIME_COST = 10;
+export const MAX_ARGON2ID_PARALLELISM = 16;
 /** Length of the WebAuthn PRF secret the CTAP2 `hmac-secret` construction yields. */
 export const WEBAUTHN_PRF_OUTPUT_BYTES = 32;
 
@@ -104,15 +112,19 @@ export const PROVISIONAL_ARGON2ID_PARAMS: Argon2idParams = {
 
 /** Validate Argon2id parameters explicitly. No coercion, no rounding, no defaults. */
 export function assertValidArgon2idParams(params: Argon2idParams): void {
-  const rows: ReadonlyArray<readonly [string, number, number]> = [
-    // [name, value, minimum]
-    ["memoryKiB", params.memoryKiB, 8],
-    ["timeCost", params.timeCost, 1],
-    ["parallelism", params.parallelism, 1],
+  if (typeof params !== "object" || params === null) {
+    throw new KeyringFormatError("argon2id params must be an object");
+  }
+  const rows: ReadonlyArray<readonly [string, number, number, number]> = [
+    // [name, value, minimum, maximum]
+    ["memoryKiB", params.memoryKiB, 8, MAX_ARGON2ID_MEMORY_KIB],
+    ["timeCost", params.timeCost, 1, MAX_ARGON2ID_TIME_COST],
+    ["parallelism", params.parallelism, 1, MAX_ARGON2ID_PARALLELISM],
   ];
-  for (const [name, value, min] of rows) {
+  for (const [name, value, min, max] of rows) {
     if (!Number.isInteger(value)) throw new KeyringFormatError(`argon2id ${name} must be an integer, got ${value}`);
     if (value < min) throw new KeyringFormatError(`argon2id ${name} must be at least ${min}, got ${value}`);
+    if (value > max) throw new KeyringFormatError(`argon2id ${name} must be at most ${max}, got ${value}`);
   }
   // RFC 9106: m must be at least 8*p KiB, else the lane layout is degenerate.
   if (params.memoryKiB < 8 * params.parallelism) {
