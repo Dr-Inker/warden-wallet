@@ -18,6 +18,13 @@ if [ "${WARDEN_SKIP_SPIKES:-0}" = "1" ]; then
 else
   pnpm test
 fi
+# The extension consumes the built package subpath, not a source alias. Build core
+# first so this lane proves the package export exists, then prove the MV3 source is
+# type-safe and emits a self-contained browser bundle. Unit tests alone transpile
+# TypeScript and would not catch either packaging failure.
+pnpm --filter @warden/core build
+pnpm --filter @warden/extension typecheck
+pnpm --filter @warden/extension build
 # WRDF-0081: the cross-language fixtures under programs/warden/tests/fixtures are
 # READ-ONLY golden vectors, written only by `pnpm --filter @warden/core
 # gen:fixtures`. The suite asserts wrapForExecute/encode reproduce them; this

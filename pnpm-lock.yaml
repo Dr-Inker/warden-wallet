@@ -18,6 +18,19 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
 
+  apps/extension:
+    dependencies:
+      '@warden/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+    devDependencies:
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
+
   packages/core:
     dependencies:
       '@noble/hashes':
