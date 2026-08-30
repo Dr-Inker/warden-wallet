@@ -1,24 +1,27 @@
 import {
-  bootstrapBackground,
-  type ExtensionBackgroundStorageApi,
+  startBackground,
+  type ExtensionBackgroundChromeApi,
 } from "./runtime.js";
 
-function requireBackgroundStorage(value: unknown): ExtensionBackgroundStorageApi {
+function requireBackgroundChrome(value: unknown): ExtensionBackgroundChromeApi {
   if (typeof value !== "object" || value === null) {
-    throw new Error("Warden extension: Chrome storage API is unavailable");
+    throw new Error("Warden extension: Chrome API is unavailable");
   }
-  const chromeApi = value as { readonly storage?: unknown };
+  const chromeApi = value as { readonly storage?: unknown; readonly runtime?: unknown };
   if (typeof chromeApi.storage !== "object" || chromeApi.storage === null) {
     throw new Error("Warden extension: Chrome storage API is unavailable");
   }
-  return chromeApi.storage as ExtensionBackgroundStorageApi;
+  if (typeof chromeApi.runtime !== "object" || chromeApi.runtime === null) {
+    throw new Error("Warden extension: Chrome runtime API is unavailable");
+  }
+  return chromeApi as ExtensionBackgroundChromeApi;
 }
 
 const chromeApi = (globalThis as { readonly chrome?: unknown }).chrome;
-const background = bootstrapBackground(requireBackgroundStorage(chromeApi));
+const background = startBackground(requireBackgroundChrome(chromeApi));
 
-// No message/provider surface exists yet. Keep initialization failure visible to
-// extension diagnostics while leaving the worker with no callable wallet API.
-void background.ready.catch((error: unknown) => {
+// The only message surface returns METHOD_UNAVAILABLE after strict provenance
+// and schema checks. Keep initialization failure visible to extension diagnostics.
+void background.providerReady.catch((error: unknown) => {
   console.error("Warden extension background initialization failed", error);
 });

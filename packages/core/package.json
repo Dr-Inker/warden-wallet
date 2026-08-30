@@ -12,6 +12,10 @@
     "./keyring": {
       "types": "./dist/keyring/index.d.ts",
       "import": "./dist/keyring/index.js"
+    },
+    "./constants": {
+      "types": "./dist/constants.d.ts",
+      "import": "./dist/constants.js"
     }
   },
   "files": [

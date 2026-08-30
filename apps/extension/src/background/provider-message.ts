@@ -1,4 +1,4 @@
-import { MAX_TX_BYTES } from "@warden/core";
+import { MAX_TX_BYTES } from "@warden/core/constants";
 
 export const MAX_PROVIDER_MESSAGE_BYTES = 16 * 1024;
 export const MAX_TRANSACTION_BYTES = MAX_TX_BYTES;
