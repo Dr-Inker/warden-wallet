@@ -812,3 +812,54 @@ a MAC over all public metadata, and strict durability remains a hint rather than
 a disk/rollback guarantee. Only one Chrome build and worker stop/wake are tested,
 not Chrome floor, Brave, full browser/host crash, disk corruption, or rollback.
 Independent second-model review remains UNVERIFIED.
+
+---
+
+## Client C3/C4 strict serialized-transaction envelope — d49529c — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** core now exports `@warden/core/transaction`, a manual
+browser-safe parser for the serialized Solana transaction supplied by Wallet
+Standard. It retains an owned copy of the exact 1–1,232 bytes and exposes
+copy-isolated signatures, message bytes, static keys, required signers,
+blockhash, and compiled instructions. The package is not imported by the
+extension, so no background route, page, permission, network request, CSP rule,
+or successful provider method changed.
+
+**Removed / narrowed:** the parser accepts only legacy and lookup-free v0. It
+enforces strict Solana ShortU16 form, exact end-of-input, signature/header
+agreement, one writable fee payer, unique static accounts, non-payer static
+program ids, in-range account indices, and optional membership of the requested
+wallet account in the real signer prefix. Unknown versions, lookup-dependent
+messages, aliases, overflow, truncation, trailing bytes, duplicate accounts, and
+ambiguous/out-of-range indices fail with typed errors. Hand-authored legacy/v0
+goldens agree byte-for-byte with web3 as a differential oracle; every proper
+prefix rejects; canonical two-byte compact length accepts while an alias of the
+same value rejects; every returned byte buffer is isolated. The implementation
+does not call the more permissive web3 deserializers.
+
+Primary sources establish that Wallet Standard passes a serialized transaction,
+while Warden's program-owned PDA cannot directly sign it and instead requires a
+distinct wrapped `execute` transaction:
+<https://github.com/anza-xyz/wallet-standard/blob/master/packages/core/features/src/signTransaction.ts>,
+<https://github.com/anza-xyz/wallet-standard/blob/master/packages/core/features/src/signAndSendTransaction.ts>,
+<https://github.com/wallet-standard/wallet-standard/blob/master/extensions/solana.md>,
+<https://solana.com/docs/core/transactions>, and
+<https://github.com/anza-xyz/solana-sdk/blob/master/message/src/versions/v0/loaded.rs>.
+
+**New invariants:** none promoted. `WRD-APR-01`, `WRD-APR-02`, and
+`WRD-TXI-01` remain `unimplemented`. Syntactic framing is a prerequisite, not
+the approval-to-signature or semantic no-blind-sign product invariant.
+
+**Residual, stated honestly:** the parser deliberately accepts syntactically
+valid unknown programs, arbitrary signature bytes, empty instruction lists, and
+stale/zero blockhashes. It does not authenticate current cluster/account/policy,
+resolve lookups, decode program intent, understand Warden payloads, calculate
+balance/authority consequences, simulate, wrap, construct the final transaction,
+create or render an approval, recheck a digest, or sign. Fixed goldens plus a
+web3 differential are not the full C4 independent Rust differential/fuzzer
+corpus. Lookup transactions are blocked, reducing compatibility. Most
+critically, recording the incoming dApp transaction and later signing a distinct
+wrapped transaction would violate WYSIWYS; the next coordinator may create a
+record only after constructing and reparsing the exact final wrapped message and
+binding its recent-blockhash rules. Independent second-model review remains
+UNVERIFIED.
