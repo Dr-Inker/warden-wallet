@@ -33,22 +33,41 @@ binds ordinary record replacement to session revocation; it is not a hash of
 every persistent ciphertext byte and does not authenticate browser storage by
 itself.
 
+The worker registers `chrome.storage.onChanged` synchronously during top-level
+startup, before any readiness promise settles. Any `local`-area change that
+contains the keyring property conservatively locks the session: owned key bytes
+are zeroed and live leases are aborted in the event callback before asynchronous
+removal of both session schema keys settles. Changes in another area and changes
+to unrelated local properties do not lock. If Chrome rejects session cleanup,
+the worker remains locally locked, disables its storage-change handler, closes
+existing runtime Ports, stops accepting new Ports, and reports the failure
+through its fatal lifecycle promise. The stale serialized session can still
+remain in browser-managed storage; closing the runtime surface is not a
+durability claim.
+
 The raw record adapter is deliberately not exposed by the background runtime.
 A future mutation path must compose record replacement with session revocation;
 otherwise an old unwrap key could remain live beside a new record. Chrome does
 not document a transaction, compare-and-swap, rollback, or durable-write
 primitive for this area, so serialized same-owner calls and readback are not an
-atomicity or freshness claim. A different trusted context could still race an
-out-of-band write, and replay of an older valid record remains unsolved without
-an external freshness authority.
+atomicity or freshness claim. The global change listener narrows a different
+trusted context's out-of-band write to fail-closed revocation after Chrome emits
+the event; it does not serialize that writer, authenticate event freshness, or
+prevent replay of an older valid record. See Chrome's
+[`storage.onChanged` API](https://developer.chrome.com/docs/extensions/reference/api/storage/)
+and its requirement to register MV3 event listeners
+[synchronously at top level](https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers#register-listeners-synchronously).
 
 The real-browser lane seeds and reads back a non-secret local-storage canary in
 the service worker, then causally observes the actual Warden content-script
 world being denied access. This proves the tested browser boundary, not broad
-version compatibility. There is still no record-creation UI, Argon2 benchmark,
-PRF ceremony, record-to-session activation, account registry, decrypt/sign/export
-consumer, or revalidation of an already-active session after an out-of-band
-trusted-context write.
+version compatibility. It also exact-readback proves a matching v2 session and
+an unrelated session canary, replaces the persistent record from the live
+worker, and observes only Warden's session removed. The unit lane separately
+proves the same event synchronously aborts an active in-memory lease; storage
+bytes alone cannot measure heap revocation. There is still no record-creation
+UI, Argon2 benchmark, PRF ceremony, record-to-session activation, account
+registry, or decrypt/sign/export consumer.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during

@@ -506,3 +506,50 @@ benchmark/floor, PRF device evidence, account/context registry, key derivation,
 sign/decrypt/export consumer, transaction/CAS/durability guarantee, or policy
 for browser cleanup rejection. The browser vector is structurally valid but
 does not derive a real key. Independent second-model review remains UNVERIFIED.
+
+---
+
+## Client C2 live record-change revocation — 0e3fc0f — 2026-08-30 — **PARTIAL**
+
+**New trust surface:** the service worker now owns one global
+`chrome.storage.onChanged` listener and one internal fatal lifecycle promise.
+The listener is installed synchronously during top-level evaluation, before
+storage readiness settles, because Chrome's MV3 lifecycle requires synchronous
+event registration. It examines only Chrome's change-area label and whether the
+change dictionary owns `warden.keyring-record.v1`; it parses no attacker value
+and adds no permission, page, method, account, approval, RPC, or key-use route.
+Current platform references:
+<https://developer.chrome.com/docs/extensions/reference/api/storage/> and
+<https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers#register-listeners-synchronously>.
+
+**Removed / narrowed:** every reported local mutation, removal, or clear that
+contains the keyring property now conservatively increments the session
+transition, aborts live leases, zeroes owned account/bundle/key buffers, and
+starts selective removal of the v2 and legacy-v1 session properties. The
+in-memory authority change happens synchronously before the cleanup promise is
+returned. Wrong-area and unrelated-key events do not revoke. Successful cleanup
+keeps the closed runtime boundary available. Cleanup rejection keeps memory
+locked, preserves the typed failure, disables the storage handler, disconnects
+existing provider/popup Ports, and disables the sole runtime connection handler.
+Registration failure, readiness rejection, and explicit disposal roll both
+listeners back. Unit tests measure active lease abort and active-Port teardown;
+real Chromium measures actual event delivery, exact persistent replacement,
+selective Warden-session removal, and survival of an unrelated session canary.
+
+**New invariants:** none promoted. `WRD-KEY-03` and `WRD-KEY-04` remain
+`unimplemented`; this closes one extension lifecycle conjunct without creating
+or consuming a real derived key.
+
+**Residual, stated honestly:** `storage.onChanged` is notification, not a
+transaction, lock, CAS, durability proof, storage authenticator, or freshness
+authority. A different trusted context can still race writes, preserve a bundle
+id, or replay an older valid same-context record. If session removal rejects,
+stale unwrap-key bytes can remain in browser storage even though this worker is
+locally locked and unreachable; replaying the matching old record before a
+later worker start remains dangerous. The fatal state closes every runtime
+surface that exists today, all of which are zero-authority, but future privileged
+surfaces must use the same health gate rather than merely await initial
+readiness. No composed mutation owner, real activation/open path, Argon2 device
+floor, PRF ceremony matrix, account/context registry, signing/decrypt/export
+consumer, or real-key worker vector exists. Independent second-model review
+remains UNVERIFIED.

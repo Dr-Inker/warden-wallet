@@ -1,5 +1,69 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-30 C2 LIVE RECORD-CHANGE REVOCATION — OUT-OF-BAND GAP NARROWED, KEYRING STILL OPEN
+>
+> Commit `0e3fc0f7b7119f41777c8dbbb98eecdef26db34a` makes an
+> already-running worker revoke its session when Chrome reports any change to
+> `warden.keyring-record.v1`. The focused contract was genuinely red before the
+> implementation: `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension exec vitest run test/runtime.test.ts` exited **1** with
+> **1 failure / 12 passes** because the storage-change listener count was **0**
+> instead of **1**. Exact-SHA focused evidence after implementation: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test`
+> → **224/224**, exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension typecheck` → exit **0**; and `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> test:browser` → **1/1**, exit **0**. These are focused lanes, not the
+> repository deploy gate. Run `env npm_config_cache=/tmp/warden-npm-cache bash
+> .claude/test-gate.sh` on the final ledger-inclusive SHA before calling this
+> loop boundary green.
+>
+> `startBackground()` now registers the global `storage.onChanged` listener in
+> the same synchronous top-level turn as `runtime.onConnect`, before storage
+> readiness settles. A `local` change containing the exact persistent-record
+> property calls `UnlockSessionOwner.lock()`: transition invalidation, lease
+> abort, and zeroization happen in the event callback before Chrome's
+> asynchronous removal promise settles. Other storage areas and unrelated local
+> keys are ignored. If removal rejects, memory remains locked but the stale
+> serialized copy is acknowledged as still present; the worker disables its
+> storage handler, disconnects already-open runtime Ports, stops accepting new
+> Ports, and rejects a fatal lifecycle promise that production logs. Unit tests
+> measure the live lease signal, late-use rejection, successful selective
+> cleanup, stale-copy failure state, active-Port disconnect, and registration /
+> readiness / disposal rollback paths.
+>
+> The mandatory Chromium lane now supplies two distinct measurements. First it
+> exact-readback proves a mismatched v2 session before actual worker-target
+> death, wakes a replacement execution context from the unchanged document, and
+> observes only that session removed while an unrelated session canary survives.
+> Then it exact-readback proves a session bound to the current record, replaces
+> the local record with a different canonical bundle, and observes the real
+> Chrome `storage.onChanged` path again remove only Warden's session property.
+> This browser assertion measures event delivery and browser-owned bytes; it
+> does **not** pretend those bytes prove active heap state. The unit lease test
+> is the executable evidence for synchronous in-memory revocation.
+>
+> Chrome's current documentation says `storage.onChanged` reports changes by
+> key and area, `storage.session` is in-memory for a browser session, and MV3
+> event listeners must be registered synchronously at top level:
+> <https://developer.chrome.com/docs/extensions/reference/api/storage/>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/events>,
+> <https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers#register-listeners-synchronously>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>.
+>
+> **Do not promote `WRD-KEY-03` or `WRD-KEY-04`.** This closes the known
+> already-active/out-of-band notification gap, not the keyring product. Chrome
+> still provides no transaction/CAS/durability or authenticated-event guarantee;
+> a trusted writer can race, preserve a bundle id, or replay a whole older valid
+> same-context record. Cleanup rejection can leave stale browser bytes, and a
+> later replay to the old record can make those bytes relevant again. The fatal
+> state closes today's zero-authority runtime routes, but every future privileged
+> surface must share that health gate. There is still no composed record mutation
+> owner, record creation, Argon2 benchmark/floor, PRF ceremony/device matrix,
+> context-supplying record open, record-to-session derivation/activation,
+> account registry, or signing/decrypt/export consumer. Independent second-model
+> review remains **UNVERIFIED**.
+
 > ## 2026-08-30 C2 SESSION→RECORD BINDING — REAL WORKER MISMATCH REMOVAL, KEYRING STILL OPEN
 >
 > Commit `c3b74eb3e93c9dde6eb29141d737e49bbc57c16f` binds the
