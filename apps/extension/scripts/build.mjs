@@ -51,9 +51,9 @@ const approvalResult = await build({
 });
 
 // C11 deliberately composes the exact-byte review projector and the internal
-// fixed-URL approval-window owner into the worker. C12-C19 add test-only
+// fixed-URL approval-window owner into the worker. C12-C20 add test-only
 // provider preparation/selection, durable operation, bind-before-open, and
-// terminal replay/page-promise/action owners,
+// terminal replay/page-promise/action/content-recovery owners,
 // but keep those owners, the coordinator, authority/RPC owners, signer, and
 // release registry tree-shaken until a later milestone opens them with
 // executable contracts.
@@ -111,12 +111,22 @@ const allowedContentInputs = [
 const contentInputs = Object.keys(contentResult.metafile.inputs)
   .map((input) => resolve(input))
   .sort();
+const forbiddenContentInputs = [
+  join(appDirectory, "src/content/provider-content-transport.ts"),
+  join(appDirectory, "src/page/provider-request-owner.ts"),
+  join(appDirectory, "src/background/provider-message.ts"),
+  join(appDirectory, "src/background/provider-terminal-protocol.ts"),
+].map((input) => resolve(input));
+const reachableForbiddenContentInputs = forbiddenContentInputs.filter(
+  (input) => contentInputs.includes(input),
+);
 if (
   contentInputs.length !== allowedContentInputs.length ||
-  contentInputs.some((input, index) => input !== allowedContentInputs[index])
+  contentInputs.some((input, index) => input !== allowedContentInputs[index]) ||
+  reachableForbiddenContentInputs.length > 0
 ) {
   throw new Error(
-    `content-script dependency boundary changed: ${contentInputs.join(", ")}`,
+    `content-script dependency boundary changed: inputs=${contentInputs.join(", ")} forbidden=${reachableForbiddenContentInputs.join(",")}`,
   );
 }
 
