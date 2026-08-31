@@ -1,5 +1,109 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C26 IN-FLIGHT SIGNING-COMMIT WORKER CUT — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `48cc0323ceb4a113f17fead282c569386320a606` closes the unmeasured interval
+> between C25's returned signer result and C24's committed signed outcome. The
+> browser-only worker now delegates the exact completed approval envelope to
+> native `IDBObjectStore.put`, attaches a listener to that native request's
+> `success` event, publishes a non-secret checkpoint marker through
+> `chrome.storage.session`, and synchronously holds the event open. The
+> production repository and its `{ durability: "strict" }` readwrite
+> transaction remain real; no fake repository or simulated commit decides the
+> result.
+>
+> The marker proves the same reviewed approval and attempt reached native write
+> request success after one selection, approval create, signing claim,
+> completion call, key lease, and signer result, with the exact expected RPC
+> counts. At that point the page and content owner are still pending. An
+> independent extension page removes the serialized unlock session, and CDP
+> closes the actual service-worker target before the held request event can
+> return.
+>
+> A different boot must start ready-but-locked and perform zero selection,
+> identity, RPC, approval create/claim/complete, key lease, or signer-result
+> work. The contract accepts only the native transaction's two atomic durable
+> outcomes. If the signed row committed, startup invalidates zero approvals and
+> the retained operation replays exactly those durable bytes; the test
+> deserializes them, matches the reviewed message and digest, and independently
+> verifies the Ed25519 signature. If the transaction aborted, startup converts
+> exactly one unresolved attempt to `failed/worker-restarted`, the page receives
+> one generic failure, and durable/page signed bytes remain null. Either branch
+> retains attempt number 1, settles content pending to zero, leaves no
+> non-document volatile owner, performs no retry, and keeps one navigation.
+> The test deliberately validates this allowed union; it does not claim both
+> outcomes were observed across repeated runs.
+>
+> Executable RED:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec playwright test -c playwright.config.ts
+>   provider-sign-success.pw.ts -g "in-flight strict signing commit"`
+>   first exited **1** at the intended arm boundary with
+>   `unsupported signing worker checkpoint`.
+>
+> Primary contracts checked:
+> <https://w3c.github.io/IndexedDB/>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+> and
+> <https://developer.chrome.com/docs/extensions/how-to/test/test-serviceworker-termination-with-puppeteer>.
+> IndexedDB defines transaction changes as atomic and defines `strict`
+> durability as an attempt to verify persistence before completion, not a
+> guarantee against operating-system failure or loss of the storage medium.
+> C26 therefore proves an MV3 target-termination recovery contract inside one
+> loaded Chromium session, not browser-crash, power-loss, eviction, corruption,
+> disk-loss, or stable-media durability.
+>
+> Exact focused evidence at clean implementation SHA
+> `48cc0323ceb4a113f17fead282c569386320a606`:
+>
+> ```sh
+> set -euo pipefail
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec playwright test -c playwright.config.ts provider-sign-success.pw.ts --repeat-each=5 --workers=1
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build
+> test -z "$(rg -n 'after-signing-committed|warden-provider-sign-success-keyring-initialized-v1|restart checkpoint control|C24 keyring|after-signature-produced|signerResultsProduced|signingFailureCode|precommit checkpoint control|unsupported signing worker checkpoint|signing worker checkpoint|during-signing-commit|warden:test:signing-commit-request-succeeded-v1|native IDBObjectStore.put is unavailable|in-flight commit checkpoint control|native signing-completion request did not reach success' apps/extension/dist || true)"
+> git diff --check
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It exited **0** and printed the same SHA before and after: extension
+> **473/473**, typecheck, all four success/recovery/fail-closed/in-flight
+> real-browser contracts repeated five times (**20/20**), production build,
+> emitted-artifact exclusion, `git diff --check`, and clean-tree guards passed.
+> The full repository gate is deliberately not inferred from focused evidence;
+> it must run on the subsequent ledger-inclusive SHA.
+>
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented` because
+> the entire success composition, native checkpoint hook, marker, and recovery
+> control remain excluded from production artifacts.
+>
+> **Harsh residual:** C26 proves only atomic recovery from an actual service-
+> worker target kill while one native IndexedDB request event is held. Its
+> JavaScript hook is test instrumentation; it does not reproduce an OS crash,
+> power failure, browser data eviction, corruption, or storage-media loss, and
+> the lane does not force or count both allowed branches. Preparation, pending
+> approval, terminal enqueue, page receipt, settled acknowledgment, and whole-
+> browser restart remain uncut. Production still has an empty release registry,
+> fixed unavailable provider, deterministic test Connection only, no
+> onboarding/account registry, no production KDF decision, no Wallet Standard
+> registration, no send/confirm path, no external audit, and no real funds.
+>
+> **Next load-bearing work:** C27 should kill after the durable terminal result
+> is available to the retained operation but before the original worker can
+> finish terminal delivery, then prove a locked replacement returns exactly one
+> bound outcome without signing, replay confusion, navigation, or leaked
+> volatile ownership. Do not conflate terminal enqueue, page receipt, and
+> settled acknowledgment; cut and measure one boundary at a time.
+>
 > ## 2026-08-31 C25 PRE-COMMIT SIGNATURE WORKER CUT — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit

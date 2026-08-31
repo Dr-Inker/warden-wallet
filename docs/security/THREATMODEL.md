@@ -2957,3 +2957,72 @@ suite, artifact exclusion, and clean-tree guards. Known Anchor test-program
 key, legacy macro-`cfg`, and Rust unused-code warnings were non-fatal. The
 evidence-only documentation commit recording this result does not inherit the
 verdict or promote an invariant.
+
+---
+
+## Client C26 in-flight signing-commit recovery — 48cc032 — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Threat closed internally:** C24 and C25 proved the committed and pre-commit
+sides of signing but left the strict IndexedDB completion transaction itself
+unmeasured. C26 keeps the production `IndexedDbApprovalRecordRepository`,
+delegates the completed signed envelope to native `IDBObjectStore.put`, and
+attaches a browser-fixture listener to the native request's `success` event.
+That listener records a non-secret checkpoint and synchronously holds the event
+open while an independent extension page removes restart authority and CDP
+closes the actual MV3 service-worker target.
+
+The checkpoint binds the exact approval id and attempt id to one selection,
+approval creation, signing claim, signing-completion call, signer lease, signer
+result, and the expected RPC counts. The page and content owner remain pending
+at the cut. A replacement boot must be different, ready-but-locked, and perform
+zero selection, identity, RPC, approval create/claim/complete, key lease, or
+signer-result work.
+
+Only two durable states are accepted. A committed `signed` row must invalidate
+zero approvals and replay exactly the durable bytes; the returned message and
+SHA-256 digest must equal the reviewed values and the Ed25519 signature is
+verified independently. An aborted transaction must leave one unresolved
+attempt for startup to convert to `failed/worker-restarted`; both durable and
+page signed bytes must be null and the page receives one generic failure. Both
+branches retain attempt number 1, perform no retry, keep one navigation, settle
+content pending to zero, and leave no non-document volatile owner. This proves
+the allowed atomic union; it does not claim that repeated runs observed both
+branches.
+
+The initial focused browser command was executable RED: it exited **1** because
+the worker rejected `during-signing-commit` with `unsupported signing worker
+checkpoint`. At exact clean implementation SHA
+`48cc0323ceb4a113f17fead282c569386320a606`, the focused command recorded in
+`docs/NEXT-SESSION.md` exited **0** with the same SHA before and after:
+extension **473/473**, typecheck, all four signing/recovery contracts repeated
+five times (**20/20**), production build, emitted-artifact exclusion,
+`git diff --check`, and clean-tree guards passed. The ledger-inclusive full
+repository gate is not inferred from this focused evidence.
+
+Primary references checked were the IndexedDB specification
+<https://w3c.github.io/IndexedDB/>, Chrome's extension service-worker lifecycle
+<https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+and Chrome's official worker-termination testing guidance
+<https://developer.chrome.com/docs/extensions/how-to/test/test-serviceworker-termination-with-puppeteer>.
+IndexedDB transactions atomically write all changes or none. Its `strict`
+durability option does not establish an operating-system or stable-media
+guarantee, so this target-termination test makes no browser-crash, power-loss,
+eviction, corruption, disk-loss, or storage-media claim.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the success graph and
+every C26 hook, marker, counter, and control remain absent from production
+artifacts. Independent second-model review remains **UNVERIFIED**.
+
+**Residual, stated as a threat:** the native-method listener and synchronous
+hold are browser-only instrumentation, and the lane validates an outcome union
+without demonstrating that both branches occur. C26 does not cut preparation,
+pending approval, terminal enqueue, page receipt, settled acknowledgment, or a
+whole-browser restart. It cannot measure storage behavior under process crash,
+eviction, corruption, or hardware loss. The deterministic Connection is not
+endpoint trust; production remains fixed unavailable with no release registry,
+onboarding, account registry, production KDF policy, Wallet Standard
+registration, send/confirm path, external audit, or real-funds exercise. The
+next honest cut is after durable terminal-result resolution but before terminal
+delivery completes; terminal enqueue, page receipt, and settled acknowledgment
+must remain separate measured boundaries.

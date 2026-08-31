@@ -287,16 +287,31 @@ retained bound operation to deliver one generic failure, and performs no
 selection, RPC, approval mutation beyond startup invalidation, key use, or
 signing. The attempt stays number 1; page and durable signed bytes remain null.
 
+C26 cuts the remaining in-flight interval without replacing the repository.
+The browser-only worker delegates the signed-envelope write to the native
+`IDBObjectStore.put`, observes that request's real `success` event, records a
+non-secret marker, and synchronously holds the event open. An independent
+extension page removes restart authority and closes the actual service-worker
+target while the strict transaction is still unable to finish its JavaScript
+event dispatch. The replacement accepts only the transaction's two atomic
+durable outcomes: exact committed bytes, replayed and cryptographically checked
+without signer authority; or one unresolved attempt converted to
+`failed/worker-restarted` with no returned or durable bytes. Both branches ban a
+second selection, RPC read, approval claim, signer lease, completion, or signing
+attempt. The lane validates this allowed union; it does not claim that repeated
+runs observed both outcomes.
+
 These contracts still do not cover death during preparation, pending approval,
-the strict IndexedDB completion transaction itself, terminal enqueue, page
-receipt, or settled acknowledgment. Chrome documents that `storage.session` is
-cleared on browser restart, and IndexedDB's `strict` durability setting remains
-a user-agent hint rather than a power-loss guarantee. The fixture marker is not
-an onboarding or account-registry design. This graph still does not register or
-inject Wallet Standard, configure a live trusted RPC/release, define production
-KDF policy, send a transaction, or make the production provider reachable.
-Future activation must replace the fixed-unavailable provider behind the
-existing single central Port router, not install an independent
+terminal enqueue, page receipt, or settled acknowledgment. Target termination
+within one loaded browser is not whole-browser restart or power loss. Chrome
+documents that `storage.session` is cleared on browser restart, and IndexedDB's
+`strict` durability setting remains a user-agent hint rather than a stable-media
+guarantee. The fixture marker and native-method hook are test instrumentation,
+not an onboarding or account-registry design. This graph still does not register
+or inject Wallet Standard, configure a live trusted RPC/release, define
+production KDF policy, send a transaction, or make the production provider
+reachable. Future activation must replace the fixed-unavailable provider behind
+the existing single central Port router, not install an independent
 `runtime.onConnect` listener.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
