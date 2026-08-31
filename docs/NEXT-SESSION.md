@@ -1,5 +1,110 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C24 COMMITTED-RESULT WORKER CUT — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `f7163720fe287c19bf25368ae9c8faa4f2b53e9b` closes one precise C23
+> restart gap: a real MV3 worker can now be killed after the signed transaction
+> is committed to the durable approval row but before the original coordinator
+> continuation or provider flow delivers it, and the unchanged page still
+> receives exactly that result from a replacement worker.
+>
+> The browser checkpoint sits after `completeSigning()` returns the
+> IndexedDB-backed `signed` outcome. At the cut, the first worker has exactly
+> one selection, approval creation, signing claim, signing completion, and
+> signer lease; the approval/flow/page are still pending and the page has no
+> terminal bytes. The test then removes the serialized unlock session, closes
+> the actual service-worker CDP target, and requires a different boot id. The
+> replacement starts locked, invalidates zero signed approvals and zero bound
+> operations, performs zero selection/RPC/approval/key/signing calls, follows
+> the retained-operation replay branch, re-verifies the durable signed result,
+> and completes the C20–C22 receipt handshake. Returned page bytes, durable
+> bytes, reviewed message bytes, SHA-256 digest, and independently verified
+> Ed25519 signature all match; navigation remains exactly one and every
+> non-document volatile owner settles.
+>
+> C24 also removes a dishonest test-harness behavior. C23 resealed and unlocked
+> the fixture keyring on every worker boot, which could fabricate authority
+> after a restart. The test worker now calls the real authenticated
+> `KeyringLifecycleOwner.restore()` first and records a test-only one-time
+> initialization marker. If a prior fixture exists but its session cannot be
+> restored, startup becomes ready-but-locked and never reseeds or re-unlocks.
+> This lets durable terminal recovery proceed without granting a new signer
+> generation, while any new selection still fails closed.
+>
+> Executable RED and focused evidence:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec playwright test -c playwright.config.ts
+>   provider-sign-success.pw.ts -g "durable signed bytes replay"` first exited
+>   **1** at the deliberate boundary because the restart checkpoint control did
+>   not exist: `restart checkpoint control is unavailable`.
+> - The finished two-contract file passed **6/6** under `--repeat-each=3`; this
+>   repeats both uninterrupted C23 and committed-result C24 paths with fresh
+>   temporary extensions.
+> - The complete extension unit lane remains **473/473**, the production build
+>   excludes every C24 checkpoint/marker string, and the complete Chromium lane
+>   is now **11/11**.
+>
+> Primary contracts checked:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+> <https://developer.chrome.com/docs/extensions/reference/api/storage>, and
+> <https://developer.chrome.com/docs/extensions/how-to/test/test-serviceworker-termination-with-puppeteer>.
+> Chrome states that service-worker globals are lost at shutdown, recommends
+> persisted state and termination testing, and documents `storage.session` as
+> in-memory state retained while the extension is loaded but cleared on browser
+> restart, extension reload/update/disable. C24 therefore proves one forced
+> worker replacement inside one browser session only; it makes no browser-
+> restart claim.
+>
+> Exact focused evidence at clean implementation SHA
+> `f7163720fe287c19bf25368ae9c8faa4f2b53e9b`:
+>
+> ```sh
+> set -euo pipefail
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec playwright test -c playwright.config.ts provider-sign-success.pw.ts --repeat-each=3
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build
+> test -z "$(rg -n 'after-signing-committed|warden-provider-sign-success-keyring-initialized-v1|restart checkpoint control|C24 keyring' apps/extension/dist || true)"
+> git diff --check
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It exited **0** and printed the same SHA before and after: extension
+> **473/473**, typecheck, repeated real Chromium **6/6**, production build,
+> emitted-artifact exclusion, `git diff --check`, and clean-tree guards passed.
+> The full repository gate is deliberately not claimed by this implementation
+> entry; it must run on the subsequent ledger-inclusive SHA.
+>
+> Independent second-model review remains **UNVERIFIED**. No review verdict is
+> inferred from the prior host app-server initialization failure.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented` because
+> this is still a temporary, build-excluded composition.
+>
+> **Harsh residual:** C24 cuts only after durable signing completion. It does
+> not kill during operation preparation, pending approval, signer use before
+> commit, terminal enqueue, page receipt, or settled acknowledgment. It does
+> not prove `storage.session` across browser restart—the official contract says
+> it is cleared—or protect IndexedDB against browser crash, eviction, storage
+> corruption, or disk loss. The one-time initialization marker is test fixture
+> state, not an onboarding/account registry design. Production still has an
+> empty release registry, fixed unavailable provider, no live RPC/KDF decision,
+> no Wallet Standard injection/registration, no send/confirm, no external
+> audit, and no real funds.
+>
+> **Next load-bearing work:** C25 should stop after the signer has produced an
+> in-memory signature but before `completeSigning()` commits. The replacement
+> must start locked, invalidate that exact signing attempt to
+> `worker-restarted`, emit one closed failure, never retry or expose the
+> uncommitted bytes, and measure old+new signer counts as exactly one. Then cut
+> preparation/pending approval and the terminal/receipt phases separately.
+>
 > ## 2026-08-31 C23 EXACT-BYTE BROWSER SIGNING SPINE — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit

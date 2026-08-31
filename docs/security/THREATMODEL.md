@@ -2778,3 +2778,75 @@ benchmark, repository guards, and the complete Rust workspace suite. The
 artifact scan was empty. Known Anchor test-program key and legacy macro-`cfg`
 warnings were non-fatal. The evidence-only ledger commit recording this result
 does not inherit the verdict or promote an invariant.
+
+---
+
+## Client C24 committed-result worker recovery — f716372 — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Threat closed internally:** C23 could prove exact-byte signing only while one
+worker remained alive, and its browser fixture recreated signing authority on
+every boot. C24 places a browser-only checkpoint immediately after
+`completeSigning()` returns the IndexedDB-backed `signed` outcome and before
+the original coordinator continuation can deliver it. At that cut, the first
+worker has exactly one selection, approval creation, signing claim, signing
+completion, and signer lease; the durable approval is signed while the flow and
+page remain pending.
+
+The contract removes the serialized unlock session, closes the actual MV3
+service-worker CDP target, and requires a different boot id. The replacement
+worker reports locked, invalidates zero completed approvals and zero bound
+operations, and performs zero selection, identity, RPC, approval, or signer
+calls. It follows the retained-operation replay path, cryptographically
+re-verifies the durable signed outcome without key access, and completes the
+C20–C22 terminal/receipt handshake. Returned page bytes, durable result bytes,
+reviewed message bytes, SHA-256 digest, and independently verified Ed25519
+signature all match. There is exactly one navigation and no non-document
+volatile owner remains.
+
+**Harness authority correction:** the worker now attempts the real
+`KeyringLifecycleOwner.restore()` on every boot and uses a test-only local
+one-time initialization marker. Only the first boot seeds and unlocks the
+fixture. A later boot with an existing fixture but no restorable session becomes
+ready-but-locked and never fabricates another unlock generation. Durable
+terminal recovery therefore remains available without recreating signer
+authority, while any fresh selection fails closed.
+
+Primary contracts checked were Chrome's service-worker lifecycle
+<https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+storage API
+<https://developer.chrome.com/docs/extensions/reference/api/storage>, and
+official termination-testing guidance
+<https://developer.chrome.com/docs/extensions/how-to/test/test-serviceworker-termination-with-puppeteer>.
+Chrome requires state needed across unexpected worker termination to be
+persisted and documents `storage.session` as in-memory extension state that is
+cleared on browser restart, extension reload/update, or disable. C24 therefore
+makes no browser-restart claim.
+
+The focused RED command first exited **1** at the intended boundary with
+`restart checkpoint control is unavailable`. At clean implementation SHA
+`f7163720fe287c19bf25368ae9c8faa4f2b53e9b`, the exact focused command in
+`docs/NEXT-SESSION.md` exited **0** and printed that same SHA before and after:
+extension **473/473**, typecheck, both real-browser contracts repeated three
+times (**6/6**), production build, emitted-artifact exclusion,
+`git diff --check`, and clean-tree guards passed. The complete Chromium lane was
+also observed at **11/11**, but the ledger-inclusive full repository gate is not
+claimed until it runs on the subsequent exact SHA.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the entire success graph
+and every C24 fixture/checkpoint remain excluded from production builds.
+Independent second-model review remains **UNVERIFIED**.
+
+**Residual, stated as a threat:** C24 cuts only after durable signing
+completion. It does not kill during preparation, pending approval, after the
+signer has produced bytes but before commit, terminal enqueue, page receipt, or
+settled acknowledgment. It does not preserve `storage.session` across browser
+restart or prove IndexedDB against browser crash, eviction, corruption, or disk
+loss. The deterministic Connection and initialization marker are fixtures, not
+RPC trust, onboarding, migration, or an account registry. Production still has
+an empty release registry, fixed unavailable provider, no production KDF
+decision, no Wallet Standard registration, no send/confirm path, no external
+audit, and no real-funds exercise. The next load-bearing cut is immediately
+after signature production but before durable completion: replacement startup
+must close the exact attempt as `worker-restarted`, never retry it, and never
+deliver the uncommitted bytes.

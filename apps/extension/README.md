@@ -261,10 +261,25 @@ now uses browser-native `Uint8Array` instead of two Node-only `Buffer`
 constructors; the focused core test deletes the global `Buffer` before invoking
 the real rewrite path.
 
-This is uninterrupted test provenance only. It does not survive a service-
-worker death during preparation, signing, result delivery, or receipt
-settlement; seed/release initialization on worker restart is intentionally not
-a production design. It does not register or inject Wallet Standard, configure
+At C23 this was uninterrupted test provenance only. C24 now adds one precise
+restart cut: after `completeSigning()` has committed the signed outcome to the
+durable approval row, but before the original worker can continue the provider
+flow, the Chromium contract removes the serialized unlock session and closes
+the actual service-worker target. A different boot starts ready-but-locked,
+invalidates no completed signing state, performs no selection, RPC, approval,
+keyring, or signing work, and replays the exact durable bytes to the unchanged
+page through the retained operation. The returned, durable, and reviewed
+message bytes and digest match, the signature independently verifies, and the
+receipt protocol settles all non-document volatile owners.
+
+C24 also corrects the browser harness: fixture authority is initialized once,
+and later boots call the real authenticated restore path instead of reseeding
+and unlocking on every worker start. This proves only replacement inside one
+loaded browser session. It does not cover death during preparation, pending
+approval, signer use before durable commit, terminal enqueue, page receipt, or
+settled acknowledgment; Chrome documents that `storage.session` is cleared on
+browser restart. The fixture marker is not an onboarding or account-registry
+design. This graph still does not register or inject Wallet Standard, configure
 a live trusted RPC/release, define production KDF policy, send a transaction,
 or make the production provider reachable. Future activation must replace the
 fixed-unavailable provider behind the existing single central Port router, not
