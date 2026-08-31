@@ -86,6 +86,29 @@
 > ledger-inclusive full repository gate is deliberately not inferred from
 > focused evidence; it must run on the subsequent ledger SHA.
 >
+> Ledger-inclusive full-repository evidence belongs only to
+> `5a9dff7b2e6399ef7ff6d9558243d3d5f4b76b0b`. From a clean tree, these exact
+> commands exited **0** and the first/last SHA matched:
+>
+> ```sh
+> git rev-parse HEAD
+> git status --short
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh
+> if rg -n 'after-signing-committed|warden-provider-sign-success-keyring-initialized-v1|restart checkpoint control|C24 keyring|after-signature-produced|signerResultsProduced|signingFailureCode|precommit checkpoint control|unsupported signing worker checkpoint|signing worker checkpoint|during-signing-commit|warden:test:signing-commit-request-succeeded-v1|native IDBObjectStore.put is unavailable|in-flight commit checkpoint control|native signing-completion request did not reach success|after-terminal-enqueued|warden:test:terminal-enqueued-v1|terminal-enqueue checkpoint control|Warden test control|page-settled signed result' apps/extension/dist; then exit 1; fi
+> git diff --check
+> git diff --exit-code
+> git status --short
+> git rev-parse HEAD
+> ```
+>
+> The executable gate passed core **700/700**, extension **473/473**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real
+> Chromium **14/14**, builds/typechecks, the production Argon2 benchmark, the
+> complete Rust workspace suite, emitted-artifact exclusion, diff validation,
+> and clean-tree guards. Known Anchor test-program key, legacy macro-`cfg`, and
+> Rust unused-code warnings were non-fatal. This evidence-only documentation
+> commit does not inherit that verdict or promote an invariant.
+>
 > Independent second-model review remains **UNVERIFIED**.
 >
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
