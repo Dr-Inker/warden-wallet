@@ -1,5 +1,135 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C13 AUTHENTICATED COMMITTED-RELEASE SELECTION — INTERNAL ONLY, PROVIDER STILL UNAVAILABLE
+>
+> The C13 implementation set ends at
+> `63521de32b7b1be425aeaaed504c1e177d689c4b`. Commit
+> `2b6e667c4584e8ac918f66de0addd8d6c32c627a` adds a still-unreachable
+> `CommittedProviderApprovalSelectionResolver`, an authenticated public-keyring
+> identity read, and an RFC 8032 Ed25519 public-key derivation helper. Harsh
+> review then found a real Promise-settlement gap between resolver return and
+> C12 preparation. Commit `63521de32b7b1be425aeaaed504c1e177d689c4b`
+> carries the exact unlock-generation revocation signal across selection,
+> preparation, window lifetime, cancellation, and settlement.
+>
+> The resolver calls `resolveCommittedSessionRelease(releaseName)` before it
+> inspects the Connection factory, keyring, approval repository, clock, or TTL.
+> The actual committed registry is empty, so the real integration test proves
+> only that this path rejects before any privileged getter. In the separately
+> mocked composition test, one repository-owned release identity is joined to a
+> zero-argument trusted Connection factory and two authenticated public keyring
+> snapshots. Page account/chain selectors, RPC URL, release document, program
+> id, and deploy pin are not read; C12 independently checks the returned account
+> and chain against the page request before preparation.
+>
+> `readAuthenticatedSessionIdentity` opens the existing encrypted v2 bundle
+> through the exact live unlock lease, strict schema and AAD checks, derives only
+> the 32-byte Ed25519 public half with `@noble/curves`, checks the exact stored
+> record again, and scrubs every seed/intermediate it owns. It returns copied
+> account, genesis hash, program id, and public signer bytes plus the stable
+> `AbortSignal` belonging to that exact unlock generation. The resolver requires
+> all public bytes and the signal object itself to match across two reads. This
+> catches a lock/re-unlock even when the new record produces identical public
+> bytes.
+>
+> C12 now snapshots that authority signal before `prepare`. Provider disconnect
+> or keyring revocation during preparation is recovered against the exact
+> durable id/digest/browser binding and cancelled. Once active, either signal
+> synchronously aborts one combined window-lifetime signal and starts exact-row
+> cancellation. Normal settlement/cancellation also aborts the window lifetime
+> and removes both listeners. Listener registration plus immediate state check
+> is one fail-closed cleanup scope; a malformed structural signal cannot leave a
+> half-installed active entry.
+>
+> Meaningful RED and adversarial evidence:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+>   vitest run test/session-signer-payload.test.ts` first exited **1**, **1
+>   failed / 5 passed**, because the pinned public-key helper did not exist.
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run test/keyring-context-ownership.test.ts`
+>   first exited **1**, **2 failed / 2 passed**, because the authenticated public
+>   identity method did not exist.
+> - The two selection suites first failed before collection because
+>   `provider-approval-selection.js` did not exist. The actual empty-registry
+>   suite then proved rejection before privileged getter access; the mocked
+>   suite covers stable composition, release mismatch, page-selector
+>   non-access, provider abort, changed public identity, changed unlock
+>   generation, and already/in-flight revoked identity.
+> - After the first implementation, `env
+>   npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+>   vitest run test/keyring-context-ownership.test.ts
+>   test/provider-approval-selection-empty.test.ts
+>   test/provider-approval-selection.test.ts
+>   test/provider-approval-request.test.ts` exited **1**, **7 failed / 30
+>   passed**. It exposed the absent generation signal, same-bytes re-unlock
+>   blindness, resolver Promise-settlement gap, in-flight preparation race,
+>   post-launch stale window, and the old provider-only window signal. Those are
+>   the failures closed by `63521de…`; they are not described as green evidence.
+>
+> Current contracts were checked against Solana's official `getGenesisHash`
+> RPC documentation, the official web3.js `Connection` API, and Chrome's
+> storage/service-worker event rules:
+> <https://solana.com/docs/rpc/http/getgenesishash>,
+> <https://solana-foundation.github.io/solana-web3.js/v1.x/classes/Connection.html>,
+> <https://developer.chrome.com/docs/extensions/reference/api/storage>, and
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/events>.
+> A Connection is still only a trusted factory capability here; there is no
+> production endpoint, release, or live genesis-hash call. Independent
+> second-model review did not run; C13 remains **UNVERIFIED**.
+>
+> Exact implementation-SHA evidence at
+> `63521de32b7b1be425aeaaed504c1e177d689c4b`: the following exact command
+> exited **0**, printed the same SHA before and after, and proved a clean tree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core build &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build &&
+> node -e 'const fs=require("node:fs");const source=fs.readFileSync("apps/extension/dist/background.js","utf8");const required=["function deriveSessionSignerPublicKey","async readAuthenticatedSessionIdentity","function installUnavailableProviderBoundary","WARDEN_METHOD_UNAVAILABLE","Warden provider methods are not enabled"];const forbidden=["class ProviderApprovalRequestOwner","class CommittedProviderApprovalSelectionResolver","resolveCommittedSessionRelease","createCommittedSessionApprovalCoordinator"];for(const marker of required){if(!source.includes(marker))throw new Error("missing emitted marker: "+marker)}for(const marker of forbidden){if(source.includes(marker))throw new Error("forbidden emitted marker: "+marker)}console.log("C13 public identity bridge emitted; resolver absent; provider remains fixed unavailable")' &&
+> git diff --check && git rev-parse HEAD && test -z "$(git status --porcelain)"
+> ```
+>
+> Core passed **699/699**; extension passed **347/347**; both typechecks and
+> builds exited **0**. The emitted worker contains the authenticated public
+> identity bridge, but the build metafile rejects C12, C13, coordinator,
+> authority, release, RPC, and signer-transaction reachability. The artifact
+> still contains the fixed unavailable provider code/message and contains none
+> of the C12/C13/release/coordinator markers. Ledger-inclusive full-gate evidence
+> is not claimed until the exact ledger SHA runs it below.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`, so
+> `docs/security/invariants.jsonl` is intentionally unchanged.
+>
+> **Harsh residual:** the happy selection path is tested with mocked release and
+> coordinator factories; production proves only empty-registry refusal. The
+> constructor accepts a release name and Connection factory, so “source-owned”
+> remains a contract on a future reviewed composition that does not yet exist.
+> The v1 encrypted payload omits a redundant public half, requiring two internal
+> decryptions per selection; seed copies are scrubbed and never returned, but
+> their transient exposure and cost remain. Elapsed unlock deadlines do not
+> autonomously fire the generation signal; later key use and approval expiry
+> remain authoritative. There is no emitted provider-to-preparation route,
+> non-empty committed release, trusted endpoint, approve/claim/sign action,
+> signed-result/replay protocol, send/confirmation owner, simulation or fee/
+> balance consequence model, Wallet Standard registration/batching, onboarding,
+> or root ceremony. This is a stronger unreachable boundary, not deployable
+> wallet behavior.
+>
+> **Next load-bearing work:** do not emit C12/C13 merely to demonstrate wiring.
+> First define a durable provider terminal-result/replay owner that binds one
+> Port request to one approval outcome and cannot duplicate signing across MV3
+> restart/reconnect. In parallel, a real route remains blocked on a reviewed
+> non-empty committed release and source-fixed RPC endpoint with executable
+> genesis/deployment attestation. The approve/sign path must recheck the exact
+> row, digest, account, chain, release, registry authority, and keyring
+> immediately before signing.
+
 > ## 2026-08-31 C12 PROVIDER LEASE→PREPARATION OWNER — INTERNAL ONLY, EMITTED PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit

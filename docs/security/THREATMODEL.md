@@ -1840,3 +1840,83 @@ and the complete Rust workspace. The known Anchor test-program key mismatch
 notice and legacy macro `cfg` notices were warnings, not skipped failures. This
 verdict belongs only to `537f325…`; the evidence-only follow-up does not inherit
 it or promote an invariant.
+
+---
+
+## Client C13 authenticated committed-release selection — 63521de — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**New internal boundary:** the still-unreachable
+`CommittedProviderApprovalSelectionResolver` accepts one repository-configured
+release name, a zero-argument trusted Connection factory, the approval owner,
+and the keyring lifecycle. It resolves the committed release before reading any
+other capability. The actual registry is empty, so production composition fails
+before Connection, keyring, approval, clock, or TTL access. Page-controlled
+account/chain selectors, RPC URL, release statement, program id, and deploy pin
+cannot choose those capabilities; C12 separately compares account/chain after
+selection.
+
+The emitted keyring lifecycle now exposes an authenticated public-identity read
+to background code. It uses the existing exact unlock lease, v2 record AAD,
+strict signer-payload schema, decrypt/readback checks, and derives only the
+Ed25519 public half from an isolated seed copy. Caller-visible results contain
+copied account, genesis hash, program id, and public signer bytes, never the
+seed. The exact unlock generation's stable `AbortSignal` accompanies those
+facts. Every plaintext/intermediate byte array owned by the method is cleared
+on settlement; JavaScript overwrite is still best effort, not VM erasure.
+
+**Removed / narrowed:** the resolver requires two complete public identity
+snapshots to match the committed release, each other, and the same signal object.
+A lock/record replacement/re-unlock therefore wins even if the replacement has
+identical public bytes. Already-revoked and second-read-revoked generations are
+rejected. C12 snapshots the returned signal before preparation, propagates it
+through durable recovery, and combines it with the provider signal for the C11
+window lifetime. Either revocation synchronously aborts the window signal and
+starts cancellation of the exact proven durable row. Revocation in the async
+resolver settlement gap prevents `prepare`; revocation while `prepare` is in
+flight recovers and cancels the exact row; revocation after launch closes the
+window lifetime and cancels. Listener install plus immediate state inspection
+shares one cleanup scope so a malformed signal cannot strand an active entry.
+
+The first helper/keyring/selection runs were RED because the APIs/modules did
+not exist. The first generation-aware adversarial run then failed **7/37** and
+proved the resolver Promise gap, same-bytes re-unlock blindness, preparation
+race, and active-window race. The corrected focused lane passes **39/39**.
+Exact commands and the individual RED counts are recorded in
+`docs/NEXT-SESSION.md`; failed runs are not accepted as verification.
+
+Official contracts reviewed:
+<https://solana.com/docs/rpc/http/getgenesishash>,
+<https://solana-foundation.github.io/solana-web3.js/v1.x/classes/Connection.html>,
+<https://developer.chrome.com/docs/extensions/reference/api/storage>, and
+<https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/events>.
+The factory is only a trust-boundary shape: no real endpoint, release, or live
+genesis query exists here. Independent second-model review remains
+**UNVERIFIED**; none ran for C13.
+
+Exact-SHA evidence at `63521de32b7b1be425aeaaed504c1e177d689c4b`:
+the exact clean-tree command in `docs/NEXT-SESSION.md` passed core **699/699**,
+extension **347/347**, both typechecks, both builds, `git diff --check`, and an
+emitted-worker scan. It printed the same SHA before and after. The artifact
+contains the public identity helper/read boundary and the fixed
+`WARDEN_METHOD_UNAVAILABLE` provider, while C12, C13, committed-release, and
+coordinator markers are absent. The build metafile independently forbids those
+source inputs. This ledger-inclusive SHA has not yet run the full repository
+gate; no earlier verdict is inherited.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the invariants JSONL is
+intentionally unchanged.
+
+**Residual, stated honestly:** the happy resolver path uses mocked committed
+release/coordinator factories. The only real registry behavior is refusal, and
+“source-owned” is conditional on a future reviewed runtime composition. The v1
+payload intentionally stores no redundant public key, so selection decrypts the
+seed twice to derive it; seed bytes stay internal and are scrubbed, but this is
+still additional plaintext exposure and computation. The generation signal
+revokes synchronously on explicit lifecycle transitions, not merely because a
+wall-clock deadline passes without another keyring check. The emitted provider
+cannot prepare an approval. There is no committed release, trusted endpoint,
+approve/claim/sign route, durable provider result/replay owner, simulation,
+fee/balance consequence model, send/confirmation owner, onboarding, Wallet
+Standard registration/batching, or root ceremony. C13 reduces authority
+confusion in code that remains unreachable; it does not make Warden deployable.

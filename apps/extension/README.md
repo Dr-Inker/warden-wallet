@@ -162,10 +162,23 @@ A separate C12 provider-to-preparation owner is unit-tested but deliberately
 excluded by the production build graph. It can bind an exact live provider
 lease to a trusted account/chain selection, the strict coordinator, one durable
 approval id, and the window launcher; disconnect or open failure can cancel only
-that exact durable binding. It has no production selection resolver, release,
-RPC endpoint, signer, or provider result writer. The emitted worker must reject
-any accidental import of this module until those authorities are source-owned
-and reviewed.
+that exact durable binding. It has no emitted selection resolver, release, RPC
+endpoint, signer, or provider result writer. The emitted worker must reject any
+accidental import of this module until those authorities are source-owned and
+reviewed.
+
+C13 adds that selection resolver as another deliberately excluded boundary. It
+resolves a repository-committed release name before inspecting a zero-argument
+Connection factory or any keyring capability, authenticates the encrypted
+keyring record, derives only the Ed25519 public half from the signer seed, and
+requires two identical public identity snapshots from the same exact unlock
+generation. The C12 owner carries that generation's revocation signal through
+preparation and the approval-window lifetime, so lock, record replacement, or
+same-bytes re-unlock closes the window and cancels the exact durable row. The
+production release registry is empty, there is no configured endpoint, and the
+build rejects both C12 and C13 from the worker; the emitted provider therefore
+remains fixed unavailable. Because the v1 encrypted payload stores only the
+seed, selection currently decrypts it twice to derive the public key internally.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during
