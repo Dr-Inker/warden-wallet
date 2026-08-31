@@ -329,17 +329,22 @@ describe("provider operation owner", () => {
     const secondOwned = owned({ id: `req_${"22".repeat(16)}` });
     let prepareCalls = 0;
     let release!: () => void;
+    let signalPrepareStarted!: () => void;
     const blocked = new Promise<void>((resolve) => {
       release = resolve;
     });
+    const prepareStarted = new Promise<void>((resolve) => {
+      signalPrepareStarted = resolve;
+    });
     const prepare = async () => {
       prepareCalls++;
+      signalPrepareStarted();
       await blocked;
       return { id: APPROVAL_ID, messageDigest: APPROVAL_DIGEST };
     };
 
     const first = owner.prepare(requestLease(firstOwned), prepare);
-    await Promise.resolve();
+    await prepareStarted;
     await expect(owner.prepare(requestLease(secondOwned), prepare)).rejects.toThrow(
       "already being prepared",
     );
