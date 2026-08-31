@@ -14,9 +14,11 @@ import {
   type ApprovalChain,
   type ApprovalRecord,
 } from "@warden/core/approval";
+import { MAX_TX_BYTES } from "@warden/core/constants";
 import type {
   PreparedSessionApproval,
   SessionApprovalRequest,
+  SignedSessionApproval,
 } from "@warden/core/transaction/session-approval";
 import { PublicKey } from "@solana/web3.js";
 
@@ -49,6 +51,10 @@ export interface ProviderRequestLease {
 
 export interface ProviderApprovalCoordinator {
   prepare(request: SessionApprovalRequest): Promise<PreparedSessionApproval>;
+  approve(
+    id: string,
+    expectedDigest: Uint8Array,
+  ): Promise<SignedSessionApproval>;
   cancel(id: string): Promise<ApprovalRecord>;
 }
 
@@ -90,6 +96,10 @@ export interface ProviderApprovalHandle {
 }
 
 export interface ProviderPreparedApprovalHandle extends ProviderApprovalHandle {
+  /** Ends when provider, keyring, or preparation ownership ends. */
+  readonly signal: AbortSignal;
+  /** Invoke the exact bound coordinator once; signed bytes never leave here. */
+  approve(): Promise<boolean>;
   /** Open at most once; C15 calls this only after its outer durable bind. */
   open(): Promise<void>;
 }
@@ -128,6 +138,13 @@ interface PreparedCleanupHint {
   readonly messageDigest: Uint8Array;
 }
 
+interface SignedSnapshot {
+  readonly id: string;
+  readonly messageDigest: Uint8Array;
+  readonly transactionBytes: Uint8Array;
+  readonly signature: Uint8Array;
+}
+
 interface RequestBinding {
   readonly origin: string;
   readonly tabId: number;
@@ -146,6 +163,7 @@ interface ActiveEntry {
   readonly lifetimeController: AbortController;
   readonly signals: readonly AbortSignal[];
   readonly onAbort: () => void;
+  approvePromise: Promise<boolean> | undefined;
   cancelPromise: Promise<boolean> | undefined;
   openPromise: Promise<void> | undefined;
   active: boolean;
@@ -306,6 +324,7 @@ function bindCoordinator(value: unknown): ProviderApprovalCoordinator {
   ) as unknown as ProviderApprovalCoordinator;
   return Object.freeze({
     prepare: requireMethod(coordinator, "prepare", "coordinator.prepare"),
+    approve: requireMethod(coordinator, "approve", "coordinator.approve"),
     cancel: requireMethod(coordinator, "cancel", "coordinator.cancel"),
   });
 }
@@ -398,6 +417,55 @@ function snapshotPreparedCleanupHint(value: unknown): PreparedCleanupHint {
   });
 }
 
+function snapshotSigned(value: unknown): SignedSnapshot {
+  const result = requireObject(
+    value,
+    "signed approval",
+  ) as unknown as Partial<SignedSessionApproval>;
+  let id: unknown;
+  let messageDigest: unknown;
+  let transactionBytes: unknown;
+  let signature: unknown;
+  try {
+    id = result.id;
+    messageDigest = result.messageDigest;
+    transactionBytes = result.transactionBytes;
+    signature = result.signature;
+    if (typeof id !== "string" || !APPROVAL_ID_PATTERN.test(id)) {
+      stateError("signed approval id is malformed");
+    }
+    if (
+      !(messageDigest instanceof Uint8Array) ||
+      messageDigest.length !== APPROVAL_DIGEST_BYTES
+    ) {
+      stateError("signed approval digest is malformed");
+    }
+    if (
+      !(transactionBytes instanceof Uint8Array) ||
+      transactionBytes.length === 0 ||
+      transactionBytes.length > MAX_TX_BYTES
+    ) {
+      stateError("signed approval transaction is malformed");
+    }
+    if (!(signature instanceof Uint8Array) || signature.length !== 64) {
+      stateError("signed approval signature is malformed");
+    }
+    return Object.freeze({
+      id,
+      messageDigest: messageDigest.slice(),
+      transactionBytes: transactionBytes.slice(),
+      signature: signature.slice(),
+    });
+  } catch (error) {
+    if (error instanceof ProviderApprovalRequestStateError) throw error;
+    return stateError("signed approval access failed", error);
+  } finally {
+    if (messageDigest instanceof Uint8Array) messageDigest.fill(0);
+    if (transactionBytes instanceof Uint8Array) transactionBytes.fill(0);
+    if (signature instanceof Uint8Array) signature.fill(0);
+  }
+}
+
 function clearPrepared(value: PreparedSnapshot | undefined): void {
   value?.messageDigest.fill(0);
   value?.account.fill(0);
@@ -406,6 +474,12 @@ function clearPrepared(value: PreparedSnapshot | undefined): void {
 
 function clearPreparedCleanupHint(value: PreparedCleanupHint | undefined): void {
   value?.messageDigest.fill(0);
+}
+
+function clearSigned(value: SignedSnapshot | undefined): void {
+  value?.messageDigest.fill(0);
+  value?.transactionBytes.fill(0);
+  value?.signature.fill(0);
 }
 
 function clearBinding(value: ApprovalBinding | undefined): void {
@@ -502,9 +576,9 @@ function terminalBinding(
 }
 
 /**
- * Owns only provider-to-preparation ordering. It cannot approve, sign, send,
- * construct a trusted Connection, choose a release, or serialize a provider
- * success response. Those capabilities remain absent from the emitted worker.
+ * Owns provider-to-preparation ordering and one exact coordinator invocation.
+ * It cannot construct a trusted Connection, choose a release, send, or release
+ * signed bytes. The action route remains absent from the emitted worker.
  */
 export class ProviderApprovalRequestOwner {
   readonly #dependencies: BoundDependencies;
@@ -570,6 +644,88 @@ export class ProviderApprovalRequestOwner {
       clearApproval(terminal);
       clearApproval(observed);
     }
+  }
+
+  async #proveApproved(binding: ApprovalBinding): Promise<boolean> {
+    let observed: ApprovalRecord | null;
+    try {
+      observed = await this.#dependencies.readApproval(binding.id);
+    } catch (error) {
+      stateError("durable approval read failed after signing", error);
+    }
+    if (observed === null) stateError("durable signed approval is absent");
+    let terminal: ApprovalRecord | undefined;
+    try {
+      terminal = terminalBinding(observed, binding);
+      if (terminal.state !== "approved") {
+        stateError("durable approval is not signed");
+      }
+      return true;
+    } finally {
+      clearApproval(terminal);
+      clearApproval(observed);
+    }
+  }
+
+  #assertActionActive(entry: ActiveEntry, phase: string): void {
+    this.#assertUsable();
+    entry.assertRequestActive();
+    assertAuthorityActive(entry.authoritySignal);
+    if (
+      !entry.active ||
+      entry.lifetimeController.signal.aborted ||
+      entry.cancelPromise !== undefined
+    ) {
+      stateError(`approval lifetime ended ${phase}`);
+    }
+  }
+
+  #approveEntry(entry: ActiveEntry): Promise<boolean> {
+    if (entry.approvePromise !== undefined) return entry.approvePromise;
+    // Install the Promise before the coordinator can be reached so a repeated
+    // click or re-entrant action cannot create a second signing attempt.
+    entry.approvePromise = Promise.resolve().then(async () => {
+      const binding = cloneBinding(entry.binding);
+      let expectedDigest: Uint8Array | undefined;
+      let signed: SignedSnapshot | undefined;
+      try {
+        this.#assertActionActive(entry, "before signing");
+        expectedDigest = binding.messageDigest.slice();
+        const signedValue = await entry.coordinator.approve(
+          binding.id,
+          expectedDigest,
+        );
+        try {
+          signed = snapshotSigned(signedValue);
+          if (
+            signed.id !== binding.id ||
+            !approvalDigestsEqual(signed.messageDigest, binding.messageDigest)
+          ) {
+            stateError("signed approval differs from the exact durable binding");
+          }
+        } catch (error) {
+          this.#reportFatal(error);
+          throw error;
+        }
+
+        // A provider/keyring abort while the coordinator was awaiting durable
+        // completion suppresses page success. C14 may still replay the result.
+        this.#assertActionActive(entry, "during signing");
+        try {
+          await this.#proveApproved(binding);
+        } catch (error) {
+          this.#reportFatal(error);
+          throw error;
+        }
+        this.#assertActionActive(entry, "during signing proof");
+        return true;
+      } finally {
+        expectedDigest?.fill(0);
+        clearSigned(signed);
+        clearBinding(binding);
+      }
+    });
+    return entry.approvePromise;
   }
 
   #cancelEntry(entry: ActiveEntry): Promise<boolean> {
@@ -638,6 +794,7 @@ export class ProviderApprovalRequestOwner {
       lifetimeController,
       signals,
       onAbort,
+      approvePromise: undefined,
       cancelPromise: undefined,
       openPromise: undefined,
       active: true,
@@ -827,6 +984,8 @@ export class ProviderApprovalRequestOwner {
       get messageDigest(): Uint8Array {
         return handle.messageDigest;
       },
+      signal: entry.lifetimeController.signal,
+      approve: (): Promise<boolean> => this.#approveEntry(entry),
       open: (): Promise<void> => this.#openEntry(entry),
       settle: handle.settle,
       cancel: handle.cancel,

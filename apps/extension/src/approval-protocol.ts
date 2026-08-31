@@ -7,6 +7,7 @@ const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvw
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const REVIEW_METHOD = "approval:getReview";
+const APPROVE_METHOD = "approval:approve";
 const REJECT_METHOD = "approval:reject";
 const UNAVAILABLE_CODE = "WARDEN_APPROVAL_UNAVAILABLE";
 const UNAVAILABLE_MESSAGE = "Approval request is unavailable";
@@ -24,7 +25,8 @@ const PARAM_FIELDS = ["requestId"] as const;
 const RESPONSE_FIELDS = ["correlationId", "ok", "result", "type", "version"] as const;
 const ERROR_RESPONSE_FIELDS = ["correlationId", "error", "ok", "type", "version"] as const;
 const ERROR_FIELDS = ["code", "message"] as const;
-const REVIEW_RESULT_FIELDS = ["requestId", "review", "status"] as const;
+const REVIEW_RESULT_FIELDS = ["canApprove", "requestId", "review", "status"] as const;
+const APPROVED_RESULT_FIELDS = ["requestId", "status"] as const;
 const REJECTED_RESULT_FIELDS = ["requestId", "status"] as const;
 const REVIEW_FIELDS = [
   "account",
@@ -51,7 +53,10 @@ const REVIEW_FIELDS = [
   "wardenProgram",
 ] as const;
 
-export type ApprovalUiMethod = typeof REVIEW_METHOD | typeof REJECT_METHOD;
+export type ApprovalUiMethod =
+  | typeof REVIEW_METHOD
+  | typeof APPROVE_METHOD
+  | typeof REJECT_METHOD;
 
 export interface ApprovalUiRequest {
   readonly version: 1;
@@ -98,7 +103,19 @@ export interface ApprovalReviewResponse {
   readonly result: Readonly<{
     readonly status: "pending";
     readonly requestId: string;
+    readonly canApprove: boolean;
     readonly review: ApprovalReviewDetails;
+  }>;
+}
+
+export interface ApprovalApprovedResponse {
+  readonly version: 1;
+  readonly type: "response";
+  readonly correlationId: string;
+  readonly ok: true;
+  readonly result: Readonly<{
+    readonly status: "approved";
+    readonly requestId: string;
   }>;
 }
 
@@ -126,6 +143,7 @@ export interface ApprovalUnavailableResponse {
 
 export type ApprovalUiResponse =
   | ApprovalReviewResponse
+  | ApprovalApprovedResponse
   | ApprovalRejectedResponse
   | ApprovalUnavailableResponse;
 
@@ -364,7 +382,11 @@ export function parseApprovalUiRequest(value: unknown): ApprovalUiRequest {
   const raw = exactDataRecord(value, REQUEST_FIELDS, "request");
   if (raw.version !== 1 || raw.type !== "request") invalid("request envelope is invalid");
   const id = correlationId(raw.correlationId);
-  if (raw.method !== REVIEW_METHOD && raw.method !== REJECT_METHOD) {
+  if (
+    raw.method !== REVIEW_METHOD &&
+    raw.method !== APPROVE_METHOD &&
+    raw.method !== REJECT_METHOD
+  ) {
     invalid("request method is unsupported");
   }
   const params = exactDataRecord(raw.params, PARAM_FIELDS, "request params");
@@ -380,9 +402,13 @@ export function parseApprovalUiRequest(value: unknown): ApprovalUiRequest {
 export function createApprovalReviewResponse(
   correlationIdValue: string,
   reviewValue: ApprovalReviewDetails,
+  canApproveValue = false,
 ): ApprovalReviewResponse {
   const id = correlationId(correlationIdValue);
   const review = reviewDetails(reviewValue);
+  if (typeof canApproveValue !== "boolean") {
+    invalid("review approval capability must be boolean");
+  }
   return Object.freeze({
     version: 1,
     type: "response",
@@ -391,7 +417,24 @@ export function createApprovalReviewResponse(
     result: Object.freeze({
       status: "pending",
       requestId: review.requestId,
+      canApprove: canApproveValue,
       review,
+    }),
+  });
+}
+
+export function createApprovalApprovedResponse(
+  correlationIdValue: string,
+  requestIdValue: string,
+): ApprovalApprovedResponse {
+  return Object.freeze({
+    version: 1,
+    type: "response",
+    correlationId: correlationId(correlationIdValue),
+    ok: true,
+    result: Object.freeze({
+      status: "approved",
+      requestId: parseApprovalRequestId(requestIdValue),
     }),
   });
 }
@@ -452,9 +495,16 @@ export function parseApprovalUiResponse(value: unknown): ApprovalUiResponse {
   if (resultStatus === "pending") {
     const result = exactDataRecord(raw.result, REVIEW_RESULT_FIELDS, "review result");
     const requestId = parseApprovalRequestId(result.requestId);
+    if (typeof result.canApprove !== "boolean") {
+      invalid("review approval capability must be boolean");
+    }
     const review = reviewDetails(result.review);
     if (review.requestId !== requestId) invalid("review request id does not match result");
-    return createApprovalReviewResponse(id, review);
+    return createApprovalReviewResponse(id, review, result.canApprove);
+  }
+  if (resultStatus === "approved") {
+    const result = exactDataRecord(raw.result, APPROVED_RESULT_FIELDS, "approved result");
+    return createApprovalApprovedResponse(id, parseApprovalRequestId(result.requestId));
   }
   if (resultStatus === "rejected") {
     const result = exactDataRecord(raw.result, REJECTED_RESULT_FIELDS, "rejected result");

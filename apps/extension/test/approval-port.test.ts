@@ -9,6 +9,7 @@ import {
 import {
   MAX_ACTIVE_APPROVAL_UI_PORTS,
   installApprovalReviewBoundary,
+  type ApprovalReviewActions,
   type ApprovalReviewOwner,
 } from "../src/background/approval-port.js";
 import type {
@@ -19,6 +20,7 @@ import type {
 } from "../src/background/provider-port.js";
 import {
   APPROVAL_UI_PORT_NAME,
+  createApprovalApprovedResponse,
   createApprovalReviewResponse,
   createApprovalRejectedResponse,
   type ApprovalReviewDetails,
@@ -105,9 +107,15 @@ function contentSender(): Record<string, unknown> {
 }
 
 function request(
-  method: "approval:getReview" | "approval:reject",
+  method: "approval:getReview" | "approval:approve" | "approval:reject",
   id = REQUEST_ID,
-  correlationId = `approval_${method === "approval:getReview" ? "review" : "reject"}_0123456789`,
+  correlationId = `approval_${
+    method === "approval:getReview"
+      ? "review"
+      : method === "approval:approve"
+        ? "approve"
+        : "reject"
+  }_0123456789`,
 ): Record<string, unknown> {
   return {
     version: 1,
@@ -183,7 +191,14 @@ class MemoryOwner implements ApprovalReviewOwner {
     return this.transition(id, "cancelled");
   }
 
-  private transition(id: string, state: "rejected" | "cancelled"): ApprovalRecord {
+  approveForTest(id: string): void {
+    this.transition(id, "approved");
+  }
+
+  private transition(
+    id: string,
+    state: "approved" | "rejected" | "cancelled",
+  ): ApprovalRecord {
     const current = this.records.get(id);
     if (current === undefined || current.state !== "pending") {
       throw new Error("transition refused");
@@ -194,16 +209,49 @@ class MemoryOwner implements ApprovalReviewOwner {
   }
 }
 
+class MemoryActions implements ApprovalReviewActions {
+  readonly calls: Array<
+    | { readonly method: "canApprove"; readonly id: string; readonly digest: Uint8Array }
+    | { readonly method: "approve" | "settle"; readonly id: string }
+  > = [];
+  canApproveResult = true;
+  approveResult = true;
+  settleResult = true;
+
+  constructor(readonly owner: MemoryOwner) {}
+
+  canApprove(id: string, digest: Uint8Array): boolean {
+    this.calls.push({ method: "canApprove", id, digest: digest.slice() });
+    return this.canApproveResult;
+  }
+
+  async approve(id: string): Promise<boolean> {
+    this.calls.push({ method: "approve", id });
+    if (this.approveResult) this.owner.approveForTest(id);
+    return this.approveResult;
+  }
+
+  async settle(id: string): Promise<boolean> {
+    this.calls.push({ method: "settle", id });
+    return this.settleResult;
+  }
+}
+
 async function flush(): Promise<void> {
   for (let index = 0; index < 8; index++) await Promise.resolve();
 }
 
-function install(owner: MemoryOwner, onFatal: (error: unknown) => void = () => {}) {
+function install(
+  owner: MemoryOwner,
+  onFatal: (error: unknown) => void = () => {},
+  actions?: ApprovalReviewActions,
+) {
   const onConnect = new MockConnectEvent();
   const boundary = installApprovalReviewBoundary(
     { id: EXTENSION_ID, onConnect },
     {
       approvals: owner,
+      actions,
       ready: Promise.resolve(),
       projectReview: (value) => review(value.id),
       onFatal,
@@ -233,7 +281,9 @@ describe("approval review runtime boundary", () => {
 
   it("persists an explicit rejection before acknowledging it", async () => {
     const owner = new MemoryOwner(record());
-    const { onConnect } = install(owner);
+    const actions = new MemoryActions(owner);
+    actions.canApproveResult = false;
+    const { onConnect } = install(owner, () => {}, actions);
     const port = new MockPort();
     onConnect.emit(port);
     port.onMessage.emit(request("approval:getReview"));
@@ -245,9 +295,63 @@ describe("approval review runtime boundary", () => {
     expect(port.posted.at(-1)).toEqual(
       createApprovalRejectedResponse("approval_reject_0123456789", REQUEST_ID),
     );
+    expect(actions.calls.at(-1)).toEqual({ method: "settle", id: REQUEST_ID });
     port.onDisconnect.emit();
     await flush();
     expect(owner.records.get(REQUEST_ID)?.state).toBe("rejected");
+  });
+
+  it("invokes one background-bound approval action without accepting a digest or bytes", async () => {
+    const owner = new MemoryOwner(record());
+    const actions = new MemoryActions(owner);
+    const expectedDigest = owner.records.get(REQUEST_ID)!.messageDigest.slice();
+    const { onConnect } = install(owner, () => {}, actions);
+    const port = new MockPort();
+    onConnect.emit(port);
+
+    port.onMessage.emit(request("approval:getReview"));
+    await flush();
+    expect(port.posted.at(-1)).toEqual(
+      createApprovalReviewResponse("approval_review_0123456789", review(), true),
+    );
+
+    const approveRequest = request("approval:approve");
+    expect(Object.keys(approveRequest.params as object)).toEqual(["requestId"]);
+    port.onMessage.emit(approveRequest);
+    await flush();
+
+    expect(actions.calls).toEqual([
+      { method: "canApprove", id: REQUEST_ID, digest: expectedDigest },
+      { method: "approve", id: REQUEST_ID },
+      { method: "settle", id: REQUEST_ID },
+    ]);
+    expect(owner.records.get(REQUEST_ID)?.state).toBe("approved");
+    expect(port.posted.at(-1)).toEqual(
+      createApprovalApprovedResponse("approval_approve_0123456789", REQUEST_ID),
+    );
+    expect(JSON.stringify(port.posted.at(-1))).not.toContain("transactionBytes");
+  });
+
+  it("burns a forged approval action when no exact live capability exists", async () => {
+    const owner = new MemoryOwner(record());
+    const actions = new MemoryActions(owner);
+    actions.canApproveResult = false;
+    const { onConnect } = install(owner, () => {}, actions);
+    const port = new MockPort();
+    onConnect.emit(port);
+    port.onMessage.emit(request("approval:getReview"));
+    await flush();
+
+    expect(port.posted.at(-1)).toEqual(
+      createApprovalReviewResponse("approval_review_0123456789", review(), false),
+    );
+    port.onMessage.emit(request("approval:approve"));
+    await flush();
+
+    expect(port.disconnectCalls).toBe(1);
+    expect(actions.calls.some((call) => call.method === "approve")).toBe(false);
+    expect(owner.records.get(REQUEST_ID)?.state).toBe("cancelled");
+    expect(actions.calls.at(-1)).toEqual({ method: "settle", id: REQUEST_ID });
   });
 
   it("derives the id from browser provenance and burns it on a payload mismatch", async () => {

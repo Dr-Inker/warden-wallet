@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   APPROVAL_UI_PORT_NAME,
   ApprovalUiProtocolError,
+  createApprovalApprovedResponse,
   createApprovalReviewResponse,
   createApprovalUnavailableResponse,
   createApprovalRejectedResponse,
@@ -41,7 +42,8 @@ const review: ApprovalReviewDetails = Object.freeze({
 });
 
 function request(
-  method: "approval:getReview" | "approval:reject" = "approval:getReview",
+  method: "approval:getReview" | "approval:approve" | "approval:reject" =
+    "approval:getReview",
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
@@ -55,7 +57,7 @@ function request(
 }
 
 describe("closed approval UI protocol", () => {
-  it("uses one versioned channel and accepts only review or rejection for one exact id", () => {
+  it("accepts only review, approval, or rejection for one exact id", () => {
     expect(APPROVAL_UI_PORT_NAME).toBe("warden:approval-ui:v1");
     expect(parseApprovalUiRequest(request())).toEqual({
       version: 1,
@@ -68,11 +70,20 @@ describe("closed approval UI protocol", () => {
       method: "approval:reject",
       params: { requestId: REQUEST_ID },
     });
+    expect(parseApprovalUiRequest(request("approval:approve"))).toEqual({
+      version: 1,
+      type: "request",
+      correlationId: CORRELATION_ID,
+      method: "approval:approve",
+      params: { requestId: REQUEST_ID },
+    });
   });
 
   it.each([
-    ["approve method", request("approval:getReview", { method: "approval:approve" })],
     ["sign method", request("approval:getReview", { method: "approval:sign" })],
+    ["page-selected digest", request("approval:approve", {
+      params: { requestId: REQUEST_ID, messageDigest: "11".repeat(32) },
+    })],
     ["page-selected account", request("approval:getReview", {
       params: { requestId: REQUEST_ID, account: "attacker" },
     })],
@@ -85,8 +96,12 @@ describe("closed approval UI protocol", () => {
     expect(() => parseApprovalUiRequest(value)).toThrow(ApprovalUiProtocolError);
   });
 
-  it("round-trips exact primitive-only review, rejection, and unavailable responses", () => {
-    const reviewResponse = createApprovalReviewResponse(CORRELATION_ID, review);
+  it("round-trips byte-free review, approval, rejection, and unavailable responses", () => {
+    const reviewResponse = createApprovalReviewResponse(CORRELATION_ID, review, true);
+    const approvedResponse = createApprovalApprovedResponse(
+      CORRELATION_ID,
+      REQUEST_ID,
+    );
     const rejectedResponse = createApprovalRejectedResponse(
       CORRELATION_ID,
       REQUEST_ID,
@@ -94,10 +109,13 @@ describe("closed approval UI protocol", () => {
     const unavailableResponse = createApprovalUnavailableResponse(CORRELATION_ID);
 
     expect(parseApprovalUiResponse(reviewResponse)).toEqual(reviewResponse);
+    expect(parseApprovalUiResponse(approvedResponse)).toEqual(approvedResponse);
     expect(parseApprovalUiResponse(rejectedResponse)).toEqual(rejectedResponse);
     expect(parseApprovalUiResponse(unavailableResponse)).toEqual(unavailableResponse);
     expect(JSON.stringify(reviewResponse)).not.toContain("rawMessage");
     expect(JSON.stringify(reviewResponse)).not.toContain("authorizationState");
+    expect(JSON.stringify(approvedResponse)).not.toContain("transactionBytes");
+    expect(reviewResponse.result.canApprove).toBe(true);
     expect(Object.values(reviewResponse.result.review).every(
       (value) => !(value instanceof Uint8Array),
     )).toBe(true);
@@ -116,15 +134,22 @@ describe("closed approval UI protocol", () => {
         review: { ...review, requestId: `req_${"cd".repeat(16)}` },
       },
     }],
-    ["invented approved response", {
-      version: 1,
-      type: "response",
-      correlationId: CORRELATION_ID,
-      ok: true,
-      result: { status: "approved", requestId: REQUEST_ID },
+    ["approved response carrying signed bytes", {
+      ...createApprovalApprovedResponse(CORRELATION_ID, REQUEST_ID),
+      result: {
+        status: "approved",
+        requestId: REQUEST_ID,
+        transactionBytes: [1, 2, 3],
+      },
     }],
   ])("rejects an inbound %s", (_label, value) => {
     expect(() => parseApprovalUiResponse(value)).toThrow(ApprovalUiProtocolError);
+  });
+
+  it("defaults review capability to disabled for production composition", () => {
+    expect(
+      createApprovalReviewResponse(CORRELATION_ID, review).result.canApprove,
+    ).toBe(false);
   });
 
   it("requires every displayed public key to canonically encode exactly 32 bytes", () => {

@@ -282,7 +282,8 @@ dd {
   line-height: 1.45;
 }
 
-.status[data-state="review"] {
+.status[data-state="review"],
+.status[data-state="approved"] {
   border-color: #295948;
   background: #11261f;
   color: #9ee9ce;

@@ -12,6 +12,9 @@ import {
 } from "@warden/core/approval";
 
 import {
+  type ProviderApprovalActionRegistration,
+} from "./provider-approval-action.js";
+import {
   type ProviderApprovalHandle,
   type ProviderPreparedApprovalHandle,
   type ProviderRequestLease,
@@ -42,7 +45,12 @@ interface ProviderOperationBinder {
   ): Promise<ProviderOperationResolution>;
 }
 
+interface ProviderApprovalActionRegistrar {
+  register(action: ProviderApprovalActionRegistration): void;
+}
+
 export interface ProviderApprovalOperationOwnerOptions {
+  readonly actions: ProviderApprovalActionRegistrar;
   readonly approvals: ProviderApprovalPreparer;
   readonly operations: ProviderOperationBinder;
 }
@@ -61,12 +69,15 @@ interface BoundPreparedApproval {
   readonly account: Uint8Array;
   readonly chain: ApprovalChain;
   readonly messageDigest: Uint8Array;
+  readonly signal: AbortSignal;
+  readonly approve: () => Promise<boolean>;
   readonly open: () => Promise<void>;
   readonly settle: () => Promise<boolean>;
   readonly cancel: () => Promise<boolean>;
 }
 
 interface BoundDependencies {
+  readonly registerAction: ProviderApprovalActionRegistrar["register"];
   readonly prepareApproval: ProviderApprovalPreparer["prepare"];
   readonly prepareOperation: ProviderOperationBinder["prepare"];
 }
@@ -114,6 +125,10 @@ function requireMethod<T extends object, K extends keyof T>(
 
 function bindDependencies(value: unknown): BoundDependencies {
   const options = requireObject(value, "options");
+  const actions = requireObject(
+    options.actions,
+    "approval action owner",
+  ) as unknown as ProviderApprovalActionRegistrar;
   const approvals = requireObject(
     options.approvals,
     "approval preparation owner",
@@ -123,9 +138,23 @@ function bindDependencies(value: unknown): BoundDependencies {
     "provider operation owner",
   ) as unknown as ProviderOperationBinder;
   return Object.freeze({
+    registerAction: requireMethod(actions, "register", "actions.register"),
     prepareApproval: requireMethod(approvals, "prepare", "approvals.prepare"),
     prepareOperation: requireMethod(operations, "prepare", "operations.prepare"),
   });
+}
+
+function requireSignal(value: unknown): AbortSignal {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof (value as { readonly aborted?: unknown }).aborted !== "boolean" ||
+    typeof (value as { readonly addEventListener?: unknown }).addEventListener !== "function" ||
+    typeof (value as { readonly removeEventListener?: unknown }).removeEventListener !== "function"
+  ) {
+    stateError("prepared approval signal is malformed");
+  }
+  return value as AbortSignal;
 }
 
 function requireBytes(value: unknown, length: number, name: string): Uint8Array {
@@ -187,6 +216,8 @@ async function bindPreparedApproval(value: unknown): Promise<BoundPreparedApprov
       account,
       chain,
       messageDigest,
+      signal: requireSignal(handle.signal),
+      approve: requireMethod(handle, "approve", "prepared approval approve"),
       open: requireMethod(handle, "open", "prepared approval open"),
       settle: requireMethod(handle, "settle", "prepared approval settle"),
       cancel,
@@ -259,9 +290,9 @@ function clearPrepared(handle: BoundPreparedApproval | undefined): void {
 }
 
 /**
- * Composes the C12 and C14 owners without adding a Port listener, trusted RPC,
- * signing action, or success route. Within this owner, `launch()` is the sole
- * visibility edge.
+ * Composes the C12/C15 owners with the volatile C17 action registry without a
+ * Port listener, trusted RPC factory, or success route. Within this owner,
+ * `launch()` remains the sole visibility edge.
  */
 export class ProviderApprovalOperationOwner {
   readonly #dependencies: BoundDependencies;
@@ -317,6 +348,19 @@ export class ProviderApprovalOperationOwner {
         stateError("durable operation binding differs from the prepared approval");
       }
 
+      const registration: ProviderApprovalActionRegistration = Object.freeze({
+        id: prepared.id,
+        get messageDigest(): Uint8Array {
+          return prepared!.messageDigest.slice();
+        },
+        signal: prepared.signal,
+        approve: prepared.approve,
+        settle: prepared.settle,
+      });
+      const registered = this.#dependencies.registerAction(registration);
+      if (registered !== undefined) {
+        stateError("approval action registration must complete synchronously");
+      }
       const approval = approvalFacade(prepared);
       await prepared.open();
       return Object.freeze({ kind: "opened", approval });

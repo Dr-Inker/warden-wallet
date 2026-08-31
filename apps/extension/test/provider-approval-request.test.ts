@@ -9,6 +9,7 @@ import {
 import type {
   PreparedSessionApproval,
   SessionApprovalRequest,
+  SignedSessionApproval,
 } from "@warden/core/transaction/session-approval";
 
 import {
@@ -30,6 +31,10 @@ import {
 import {
   ProviderApprovalOperationOwner,
 } from "../src/background/provider-approval-operation.js";
+import {
+  ProviderApprovalActionOwner,
+  type ProviderApprovalActionRegistration,
+} from "../src/background/provider-approval-action.js";
 import {
   ProviderOperationOwner,
   bindProviderOperation,
@@ -263,8 +268,13 @@ function preparedFromRecord(record: ApprovalRecord): PreparedSessionApproval {
 
 class FakeCoordinator implements ProviderApprovalCoordinator {
   readonly prepareCalls: SessionApprovalRequest[] = [];
+  readonly approveCalls: { readonly id: string; readonly digest: Uint8Array }[] = [];
   readonly cancelCalls: string[] = [];
   prepareImpl: ((request: SessionApprovalRequest) => Promise<PreparedSessionApproval>) | undefined;
+  approveImpl: ((
+    id: string,
+    digest: Uint8Array,
+  ) => Promise<SignedSessionApproval>) | undefined;
   cancelImpl: ((id: string) => Promise<ApprovalRecord>) | undefined;
 
   constructor(readonly approvals: MemoryApprovals) {}
@@ -291,6 +301,26 @@ class FakeCoordinator implements ProviderApprovalCoordinator {
     const cancelled = resolveApprovalRecord(current, "cancelled", 1_100);
     this.approvals.records.set(id, cancelled);
     return snapshotApprovalRecord(cancelled);
+  }
+
+  async approve(
+    id: string,
+    digest: Uint8Array,
+  ): Promise<SignedSessionApproval> {
+    this.approveCalls.push({ id, digest: digest.slice() });
+    if (this.approveImpl !== undefined) return this.approveImpl(id, digest);
+    const current = this.approvals.records.get(id);
+    if (current === undefined || current.state !== "pending") {
+      throw new Error("approval refused");
+    }
+    const approved = resolveApprovalRecord(current, "approved", 1_100);
+    this.approvals.records.set(id, approved);
+    return Object.freeze({
+      id,
+      messageDigest: digest.slice(),
+      transactionBytes: Uint8Array.of(1, 2, 3, 4),
+      signature: new Uint8Array(64).fill(0x55),
+    });
   }
 }
 
@@ -360,12 +390,14 @@ describe("provider-bound session approval preparation", () => {
     expect(installed.launcher.calls).toEqual([]);
     expect(Object.keys(handle).sort()).toEqual([
       "account",
+      "approve",
       "cancel",
       "chain",
       "id",
       "messageDigest",
       "open",
       "settle",
+      "signal",
     ]);
 
     const firstOpen = handle.open();
@@ -376,6 +408,125 @@ describe("provider-bound session approval preparation", () => {
     expect(installed.launcher.calls).toHaveLength(1);
 
     await expect(handle.cancel()).resolves.toBe(true);
+    session.disconnect();
+  });
+
+  it("owns one exact durable signing attempt without releasing signed bytes", async () => {
+    const { session, lease } = providerLease();
+    const installed = install();
+    const handle = await installed.owner.prepare(lease);
+    const expectedDigest = handle.messageDigest;
+
+    const first = handle.approve();
+    const concurrent = handle.approve();
+    expect(concurrent).toBe(first);
+    await expect(first).resolves.toBe(true);
+
+    expect(installed.coordinator.approveCalls).toEqual([{
+      id: APPROVAL_ID,
+      digest: expectedDigest,
+    }]);
+    expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("approved");
+    expect(handle.signal.aborted).toBe(false);
+    expect(installed.owner.activeCount).toBe(1);
+    await expect(handle.settle()).resolves.toBe(true);
+    expect(handle.signal.aborted).toBe(true);
+    expect(installed.owner.activeCount).toBe(0);
+    session.disconnect();
+  });
+
+  it("scrubs a coordinator result and poisons the owner when its digest changes", async () => {
+    const { session, lease } = providerLease();
+    const installed = install();
+    const handle = await installed.owner.prepare(lease);
+    const returnedDigest = new Uint8Array(32).fill(0xee);
+    const returnedTransaction = Uint8Array.of(4, 3, 2, 1);
+    const returnedSignature = new Uint8Array(64).fill(0xaa);
+    installed.coordinator.approveImpl = async (id) => {
+      const current = installed.approvals.records.get(id)!;
+      installed.approvals.records.set(
+        id,
+        resolveApprovalRecord(current, "approved", 1_100),
+      );
+      return {
+        id,
+        messageDigest: returnedDigest,
+        transactionBytes: returnedTransaction,
+        signature: returnedSignature,
+      };
+    };
+
+    await expect(handle.approve()).rejects.toThrow(
+      "signed approval differs from the exact durable binding",
+    );
+    expect(returnedDigest).toEqual(new Uint8Array(32));
+    expect(returnedTransaction).toEqual(new Uint8Array(4));
+    expect(returnedSignature).toEqual(new Uint8Array(64));
+    expect(installed.fatals).toHaveLength(1);
+    await flush();
+    expect(installed.owner.activeCount).toBe(0);
+    session.disconnect();
+  });
+
+  it("refuses success when signed bytes lack an exact approved durable row", async () => {
+    const { session, lease } = providerLease();
+    const installed = install();
+    const handle = await installed.owner.prepare(lease);
+    installed.coordinator.approveImpl = async (id, digest) => ({
+      id,
+      messageDigest: digest.slice(),
+      transactionBytes: Uint8Array.of(1, 2, 3),
+      signature: new Uint8Array(64).fill(0x44),
+    });
+
+    const approval = handle.approve();
+    await expect(approval).rejects.toThrow("terminal record is required");
+    expect(handle.approve()).toBe(approval);
+    expect(installed.coordinator.approveCalls).toHaveLength(1);
+    expect(installed.fatals).toHaveLength(1);
+    await flush();
+    expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("cancelled");
+    session.disconnect();
+  });
+
+  it("suppresses a durable signing result when keyring authority ends in flight", async () => {
+    const { session, lease } = providerLease();
+    const installed = install();
+    const handle = await installed.owner.prepare(lease);
+    const signed = deferred<SignedSessionApproval>();
+    const returnedTransaction = Uint8Array.of(7, 7, 7);
+    const returnedSignature = new Uint8Array(64).fill(0x77);
+    installed.coordinator.approveImpl = (id, digest) => {
+      const current = installed.approvals.records.get(id)!;
+      installed.approvals.records.set(
+        id,
+        resolveApprovalRecord(current, "approved", 1_100),
+      );
+      return signed.promise.then(() => ({
+        id,
+        messageDigest: digest,
+        transactionBytes: returnedTransaction,
+        signature: returnedSignature,
+      }));
+    };
+
+    const approving = handle.approve();
+    await flush();
+    expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("approved");
+    installed.resolver.authority.abort();
+    signed.resolve(Object.freeze({
+      id: APPROVAL_ID,
+      messageDigest: handle.messageDigest,
+      transactionBytes: returnedTransaction,
+      signature: returnedSignature,
+    }));
+
+    await expect(approving).rejects.toThrow("selected keyring authority is revoked");
+    expect(returnedTransaction).toEqual(new Uint8Array(3));
+    expect(returnedSignature).toEqual(new Uint8Array(64));
+    expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("approved");
+    expect(installed.fatals).toEqual([]);
+    expect(handle.signal.aborted).toBe(true);
     session.disconnect();
   });
 
@@ -934,8 +1085,11 @@ describe("provider operation to approval composition", () => {
   function composite(
     installed: ReturnType<typeof install>,
     operations: MemoryProviderOperations,
+    actions: { register(action: ProviderApprovalActionRegistration): void } =
+      new ProviderApprovalActionOwner(),
   ): ProviderApprovalOperationOwner {
     return new ProviderApprovalOperationOwner({
+      actions,
       approvals: installed.owner,
       operations: new ProviderOperationOwner(operations, {
         readNow: () => 1_100,
@@ -947,6 +1101,13 @@ describe("provider operation to approval composition", () => {
     const { session, lease } = providerLease();
     const installed = install();
     const operations = new MemoryProviderOperations();
+    const actionOwner = new ProviderApprovalActionOwner();
+    const actions = {
+      register(action: ProviderApprovalActionRegistration): void {
+        operations.events.push("action.register");
+        actionOwner.register(action);
+      },
+    };
     installed.coordinator.prepareImpl = async (request) => {
       operations.events.push("approval.prepare");
       const record = approvalFromRequest(request);
@@ -962,7 +1123,7 @@ describe("provider operation to approval composition", () => {
       });
     };
 
-    const result = await composite(installed, operations).launch(lease);
+    const result = await composite(installed, operations, actions).launch(lease);
 
     expect(result.kind).toBe("opened");
     expect(operations.events).toEqual([
@@ -970,6 +1131,7 @@ describe("provider operation to approval composition", () => {
       "approval.prepare",
       "operation.bind-start",
       "operation.bind-commit",
+      "action.register",
       "window.open",
     ]);
     if (result.kind === "opened") {
@@ -981,7 +1143,15 @@ describe("provider operation to approval composition", () => {
         "messageDigest",
         "settle",
       ]);
-      await expect(result.approval.cancel()).resolves.toBe(true);
+      expect(actionOwner.canApprove(
+        result.approval.id,
+        result.approval.messageDigest,
+      )).toBe(true);
+      await expect(actionOwner.approve(result.approval.id)).resolves.toBe(true);
+      expect(installed.coordinator.approveCalls).toHaveLength(1);
+      await expect(actionOwner.settle(result.approval.id)).resolves.toBe(true);
+      expect(actionOwner.activeCount).toBe(0);
+      await expect(result.approval.cancel()).resolves.toBe(false);
     }
     session.disconnect();
   });
@@ -1006,11 +1176,39 @@ describe("provider operation to approval composition", () => {
     session.disconnect();
   });
 
+  it("keeps the window hidden and cancels when action registration fails", async () => {
+    const { session, lease } = providerLease();
+    const installed = install();
+    const operations = new MemoryProviderOperations();
+    const registrationFailure = new Error("action registry unavailable");
+    installed.launcher.launchImpl = async () => {
+      operations.events.push("window.open");
+    };
+
+    await expect(composite(installed, operations, {
+      register(): void {
+        operations.events.push("action.register");
+        throw registrationFailure;
+      },
+    }).launch(lease)).rejects.toBe(registrationFailure);
+
+    expect(operations.events).toContain("action.register");
+    expect(installed.launcher.calls).toEqual([]);
+    expect(installed.coordinator.cancelCalls).toEqual([APPROVAL_ID]);
+    expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("cancelled");
+    expect([...operations.records.values()][0]).toMatchObject({
+      state: "bound",
+      approvalId: APPROVAL_ID,
+    });
+    session.disconnect();
+  });
+
   it("cancels a prepared row when its visibility capability is malformed", async () => {
     const { session, lease } = providerLease();
     const installed = install();
     const operations = new MemoryProviderOperations();
     const owner = new ProviderApprovalOperationOwner({
+      actions: new ProviderApprovalActionOwner(),
       approvals: {
         async prepare(current): Promise<ProviderPreparedApprovalHandle> {
           const handle = await installed.owner.prepare(current);
@@ -1023,6 +1221,8 @@ describe("provider operation to approval composition", () => {
             get messageDigest(): Uint8Array {
               return handle.messageDigest;
             },
+            signal: handle.signal,
+            approve: handle.approve,
             open: undefined,
             settle: handle.settle,
             cancel: handle.cancel,
@@ -1068,7 +1268,9 @@ describe("provider operation to approval composition", () => {
       releaseBind.resolve();
 
       await expect(launching).rejects.toThrow(
-        race === "Port disconnect" ? "request is no longer owned" : "authority is revoked",
+        race === "Port disconnect"
+          ? "request is no longer owned"
+          : "approval action lifetime already ended",
       );
       await flush();
       expect(installed.launcher.calls).toEqual([]);

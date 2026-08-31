@@ -110,11 +110,17 @@ const heapFrame = element<HTMLElement>("#heap-frame-value");
 const messageSize = element<HTMLElement>("#message-size-value");
 const rejectButton = element<HTMLButtonElement>("[data-action=reject]");
 const approveButton = element<HTMLButtonElement>("[data-action=approve]");
+const capabilityTitle = element<HTMLElement>("#capability-title");
+const capabilityMessage = element<HTMLElement>("#capability-message");
 
 let port: ApprovalUiPort | undefined;
 let requestId: string;
-let phase: "awaiting-review" | "review-visible" | "awaiting-reject" | "terminal" =
-  "awaiting-review";
+let phase:
+  | "awaiting-review"
+  | "review-visible"
+  | "awaiting-approve"
+  | "awaiting-reject"
+  | "terminal" = "awaiting-review";
 let correlationId = "";
 let expiryWallClock = 0;
 let expiryMonotonicDeadline = 0;
@@ -188,7 +194,7 @@ function closeUi(state: "closed" | "unavailable", message: string): void {
   }
 }
 
-function renderReview(review: ApprovalReviewDetails): void {
+function renderReview(review: ApprovalReviewDetails, canApprove: boolean): void {
   if (review.requestId !== requestId) {
     closeUi("closed", "The background returned a different request.");
     return;
@@ -222,11 +228,15 @@ function renderReview(review: ApprovalReviewDetails): void {
     Math.max(0, review.expiresAt - now);
   phase = "review-visible";
   rejectButton.disabled = false;
-  approveButton.disabled = true;
-  setStatus(
-    "review",
-    "Exact durable message decoded locally. Signing remains unavailable.",
-  );
+  approveButton.disabled = !canApprove;
+  approveButton.textContent = canApprove ? "Approve and sign" : "Signing unavailable";
+  capabilityTitle.textContent = canApprove ? "Signing enabled." : "Review only.";
+  capabilityMessage.textContent = canApprove
+    ? " Approval signs only this digest-authenticated transaction. Provider delivery remains unavailable in this build."
+    : " Signing and provider success are disabled in this build. This page cannot approve, sign, send, or change the account or network.";
+  setStatus("review", canApprove
+    ? "Exact durable message decoded locally and ready for approval."
+    : "Exact durable message decoded locally. Signing remains unavailable.");
   refreshExpiry();
 }
 
@@ -254,10 +264,30 @@ try {
       return;
     }
     if (phase === "awaiting-review" && response.result.status === "pending") {
-      renderReview(response.result.review);
+      renderReview(response.result.review, response.result.canApprove);
       return;
     }
-    if (phase === "awaiting-reject" && response.result.status === "rejected") {
+    if (
+      phase === "awaiting-approve" &&
+      response.result.status === "approved" &&
+      response.result.requestId === requestId
+    ) {
+      phase = "terminal";
+      clearExpiryTimer();
+      rejectButton.disabled = true;
+      approveButton.disabled = true;
+      setStatus(
+        "approved",
+        "Request approved and signed. Provider delivery remains unavailable.",
+      );
+      port?.disconnect();
+      return;
+    }
+    if (
+      phase === "awaiting-reject" &&
+      response.result.status === "rejected" &&
+      response.result.requestId === requestId
+    ) {
       phase = "terminal";
       clearExpiryTimer();
       rejectButton.disabled = true;
@@ -287,6 +317,7 @@ try {
     phase = "awaiting-reject";
     clearExpiryTimer();
     rejectButton.disabled = true;
+    approveButton.disabled = true;
     correlationId = mintCorrelationId();
     setStatus("loading", "Rejecting the durable request…");
     try {
@@ -299,6 +330,27 @@ try {
       });
     } catch {
       closeUi("closed", "The rejection request could not be delivered.");
+    }
+  });
+
+  approveButton.addEventListener("click", () => {
+    if (phase !== "review-visible" || approveButton.disabled) return;
+    phase = "awaiting-approve";
+    clearExpiryTimer();
+    rejectButton.disabled = true;
+    approveButton.disabled = true;
+    correlationId = mintCorrelationId();
+    setStatus("loading", "Signing the exact durable request…");
+    try {
+      port?.postMessage({
+        version: 1,
+        type: "request",
+        correlationId,
+        method: "approval:approve",
+        params: { requestId },
+      });
+    } catch {
+      closeUi("closed", "The approval request could not be delivered.");
     }
   });
 

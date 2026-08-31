@@ -5,6 +5,7 @@ import {
 
 import {
   APPROVAL_UI_PORT_NAME,
+  createApprovalApprovedResponse,
   createApprovalRejectedResponse,
   createApprovalReviewResponse,
   createApprovalUnavailableResponse,
@@ -29,8 +30,16 @@ export interface ApprovalReviewOwner {
   cancel(id: string): Promise<ApprovalRecord>;
 }
 
+/** Optional volatile action route. Production deliberately omits it. */
+export interface ApprovalReviewActions {
+  canApprove(id: string, messageDigest: Uint8Array): boolean;
+  approve(id: string): Promise<boolean>;
+  settle(id: string): Promise<boolean>;
+}
+
 export interface ApprovalReviewBoundaryOptions {
   readonly approvals: ApprovalReviewOwner;
+  readonly actions?: ApprovalReviewActions;
   readonly ready: Promise<unknown>;
   readonly projectReview: (record: ApprovalRecord) => ApprovalReviewDetails;
   readonly onFatal: (error: unknown) => void;
@@ -91,6 +100,27 @@ function requireOwner(value: unknown): ApprovalReviewOwner {
   return value as ApprovalReviewOwner;
 }
 
+function requireActions(value: unknown): ApprovalReviewActions | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null) {
+    throw new ApprovalReviewPortStateError("approval actions must be an object");
+  }
+  const actions = value as Partial<ApprovalReviewActions>;
+  for (const method of ["canApprove", "approve", "settle"] as const) {
+    if (typeof actions[method] !== "function") {
+      throw new ApprovalReviewPortStateError(
+        `approval actions must provide ${method}()`,
+      );
+    }
+  }
+  const bound = value as ApprovalReviewActions;
+  return Object.freeze({
+    canApprove: bound.canApprove.bind(value),
+    approve: bound.approve.bind(value),
+    settle: bound.settle.bind(value),
+  });
+}
+
 function safeDisconnect(port: ProviderRuntimePort): void {
   try {
     port.disconnect();
@@ -139,8 +169,9 @@ function clearRecord(record: ApprovalRecord | null | undefined): void {
  * Install the only runtime route reachable from `approval.html`.
  *
  * The route can read one URL-bound pending record, emit one primitive review,
- * and durably reject or cancel it. It has no approval claim, keyring, signer,
- * provider response, RPC, account enumeration, or record-creation dependency.
+ * and durably reject or cancel it. An optional volatile action owner can answer
+ * only whether that exact id/digest is live and invoke it by id; this route has
+ * no keyring, signer bytes, RPC, account enumeration, or record creation.
  */
 export function installApprovalReviewBoundary(
   runtime: ProviderRuntimeApi,
@@ -159,6 +190,7 @@ export function installApprovalReviewBoundary(
     throw new ApprovalReviewPortStateError("options must be an object");
   }
   const approvals = requireOwner(options.approvals);
+  const actions = requireActions(options.actions);
   if (!(options.ready instanceof Promise)) {
     throw new ApprovalReviewPortStateError("ready must be a Promise");
   }
@@ -218,8 +250,23 @@ export function installApprovalReviewBoundary(
     let busy = false;
     let phase: "awaiting-review" | "review-visible" | "terminal" =
       "awaiting-review";
+    let reviewCanApprove = false;
     let cancellationStarted = false;
     const correlations = new Set<string>();
+
+    const settleAction = async (requireProof: boolean): Promise<void> => {
+      if (actions === undefined) return;
+      try {
+        const settled = await actions.settle(provenance.requestId);
+        if (requireProof && settled !== true) {
+          throw new ApprovalReviewPortStateError(
+            "live approval action returned no terminal proof",
+          );
+        }
+      } catch (error) {
+        safeReportFatal(reportFatal, error);
+      }
+    };
 
     const cancelDurably = (): void => {
       if (cancellationStarted || phase === "terminal") return;
@@ -241,6 +288,7 @@ export function installApprovalReviewBoundary(
           );
           clearRecord(cancelled);
           phase = "terminal";
+          await settleAction(false);
           return;
         } catch (cancelError) {
           if (disposed) {
@@ -254,6 +302,7 @@ export function installApprovalReviewBoundary(
             current = await approvals.read(provenance.requestId);
             if (current === null || current.state !== "pending") {
               phase = "terminal";
+              await settleAction(false);
               return;
             }
           } catch (readError) {
@@ -320,13 +369,33 @@ export function installApprovalReviewBoundary(
           return;
         }
         const projected = projectReview(current);
-        const response = createApprovalReviewResponse(correlationId, projected);
+        let canApprove = false;
+        if (actions !== undefined) {
+          const digest = current.messageDigest.slice();
+          try {
+            const verdict = actions.canApprove(provenance.requestId, digest);
+            if (typeof verdict !== "boolean") {
+              throw new ApprovalReviewPortStateError(
+                "approval capability verdict is not boolean",
+              );
+            }
+            canApprove = verdict;
+          } finally {
+            digest.fill(0);
+          }
+        }
+        const response = createApprovalReviewResponse(
+          correlationId,
+          projected,
+          canApprove,
+        );
         if (response.result.requestId !== provenance.requestId) {
           throw new ApprovalReviewPortStateError(
             "review projection changed the URL-bound request id",
           );
         }
         port.postMessage(response);
+        reviewCanApprove = canApprove;
         phase = "review-visible";
         busy = false;
       } catch {
@@ -354,6 +423,7 @@ export function installApprovalReviewBoundary(
           createApprovalRejectedResponse(correlationId, provenance.requestId),
         );
         busy = false;
+        await settleAction(false);
       } catch {
         if (!open) return;
         let current: ApprovalRecord | null | undefined;
@@ -372,6 +442,36 @@ export function installApprovalReviewBoundary(
         if (open) postUnavailableAndClose(correlationId, true);
       } finally {
         clearRecord(terminal);
+      }
+    };
+
+    const handleApprove = async (correlationId: string): Promise<void> => {
+      let approved = false;
+      try {
+        if (actions === undefined || !reviewCanApprove) {
+          throw new ApprovalReviewPortStateError(
+            "approval action is not available for this exact review",
+          );
+        }
+        const proven = await actions.approve(provenance.requestId);
+        if (proven !== true) {
+          throw new ApprovalReviewPortStateError(
+            "approval action returned no durable signing proof",
+          );
+        }
+        approved = true;
+        phase = "terminal";
+        if (!open) return;
+        port.postMessage(
+          createApprovalApprovedResponse(correlationId, provenance.requestId),
+        );
+        busy = false;
+      } catch {
+        if (open) postUnavailableAndClose(correlationId, true);
+      } finally {
+        // Queue the byte-free terminal response first. Settlement then releases
+        // the exact C12 lifetime, which also closes the owned approval window.
+        if (approved) await settleAction(true);
       }
     };
 
@@ -404,6 +504,15 @@ export function installApprovalReviewBoundary(
       if (phase === "review-visible" && request.method === "approval:reject") {
         busy = true;
         void handleReject(request.correlationId);
+        return;
+      }
+      if (
+        phase === "review-visible" &&
+        reviewCanApprove &&
+        request.method === "approval:approve"
+      ) {
+        busy = true;
+        void handleApprove(request.correlationId);
         return;
       }
       close(true, true);
