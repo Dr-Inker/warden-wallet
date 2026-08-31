@@ -22,7 +22,7 @@ async function liveExtensionWorker(context: BrowserContext, origin?: string) {
   });
 }
 
-test("background opens one fixed permissionless popup and user close cancels its row", async () => {
+test("permissionless approval popups cancel on user close and worker death", async () => {
   const temporaryParent = resolve(tmpdir());
   const extensionDirectory = await mkdtemp(
     join(temporaryParent, "warden-approval-window-browser-"),
@@ -83,14 +83,19 @@ test("background opens one fixed permissionless popup and user close cancels its
       predicate: (page) => page.url() === expectedUrl,
       timeout: 30_000,
     });
-    const resultPromise = worker.evaluate(async () => {
+    const resultPromise = worker.evaluate(async (request) => {
       const runner = (globalThis as unknown as {
-        __wardenApprovalWindowOpen?: () => Promise<unknown>;
+        __wardenApprovalWindowOpen?: (
+          input: typeof request,
+        ) => Promise<unknown>;
       }).__wardenApprovalWindowOpen;
       if (typeof runner !== "function") {
         throw new Error("approval-window browser runner is unavailable");
       }
-      return runner();
+      return runner(request);
+    }, {
+      requestId: `req_${"9a".repeat(16)}`,
+      messageByte: 0x9a,
     });
     const [popupPage, result] = await Promise.all([
       popupPagePromise,
@@ -154,6 +159,95 @@ test("background opens one fixed permissionless popup and user close cancels its
         return reader(requestId);
       }, result.requestId);
     }).toEqual({ state: "cancelled", fatals: [] });
+
+    const restartRequestId = `req_${"9b".repeat(16)}`;
+    const restartUrl = `${extensionOrigin}/approval.html?request=${restartRequestId}`;
+    const restartWorker = await liveExtensionWorker(context, extensionOrigin);
+    const restartPopupPromise = context.waitForEvent("page", {
+      predicate: (page) => page.url() === restartUrl,
+      timeout: 30_000,
+    });
+    const restartResultPromise = restartWorker.evaluate(async (request) => {
+      const runner = (globalThis as unknown as {
+        __wardenApprovalWindowOpen?: (
+          input: typeof request,
+        ) => Promise<unknown>;
+      }).__wardenApprovalWindowOpen;
+      if (typeof runner !== "function") {
+        throw new Error("approval-window browser runner is unavailable");
+      }
+      return runner(request);
+    }, {
+      requestId: restartRequestId,
+      messageByte: 0x9b,
+    });
+    const [restartPopup, restartResult] = await Promise.all([
+      restartPopupPromise,
+      restartResultPromise,
+    ]) as [Awaited<typeof restartPopupPromise>, typeof result];
+    expect(restartPopup.url()).toBe(restartUrl);
+    expect(restartResult.createCalls.at(-1)).toEqual({
+      url: restartUrl,
+      type: "popup",
+      focused: true,
+      width: 720,
+      height: 600,
+      setSelfAsOpener: false,
+    });
+    expect(await restartWorker.evaluate(async (requestId) => {
+      const reader = (globalThis as unknown as {
+        __wardenApprovalWindowRead?: (
+          id: string,
+        ) => Promise<{ state: string | null; fatals: string[] }>;
+      }).__wardenApprovalWindowRead;
+      if (typeof reader !== "function") {
+        throw new Error("approval-window state reader is unavailable before restart");
+      }
+      return reader(requestId);
+    }, restartRequestId)).toEqual({ state: "pending", fatals: [] });
+
+    const marker = "approval-window-map-must-not-survive-worker-death";
+    await restartWorker.evaluate((value) => {
+      (globalThis as unknown as { __wardenApprovalWindowMarker?: string })
+        .__wardenApprovalWindowMarker = value;
+    }, marker);
+    const controlPage = await context.newPage();
+    const cdp = await context.newCDPSession(controlPage);
+    const targets = await cdp.send("Target.getTargets");
+    const target = targets.targetInfos.find((candidate) =>
+      candidate.type === "service_worker" && candidate.url.startsWith(extensionOrigin));
+    expect(target, "approval-window worker exists before forced stop").toBeDefined();
+    const closed = await cdp.send("Target.closeTarget", {
+      targetId: target!.targetId,
+    });
+    expect(closed.success).toBe(true);
+    await expect.poll(async () => {
+      const current = await cdp.send("Target.getTargets");
+      return current.targetInfos.filter((candidate) =>
+        candidate.type === "service_worker" &&
+        candidate.url.startsWith(extensionOrigin)).length;
+    }).toBe(0);
+    expect(restartPopup.isClosed()).toBe(false);
+
+    // The old in-memory window-id map died with the worker. Closing the orphaned
+    // popup wakes a fresh worker; startup invalidation, not that lost map, must
+    // cancel the durable row before any review route can become ready.
+    await restartPopup.close();
+    const replacement = await liveExtensionWorker(context, extensionOrigin);
+    expect(await replacement.evaluate(() =>
+      (globalThis as unknown as { __wardenApprovalWindowMarker?: string })
+        .__wardenApprovalWindowMarker ?? null)).toBeNull();
+    await expect.poll(async () => replacement.evaluate(async (requestId) => {
+      const reader = (globalThis as unknown as {
+        __wardenApprovalWindowRead?: (
+          id: string,
+        ) => Promise<{ state: string | null; fatals: string[] }>;
+      }).__wardenApprovalWindowRead;
+      if (typeof reader !== "function") {
+        throw new Error("approval-window state reader is unavailable after restart");
+      }
+      return reader(requestId);
+    }, restartRequestId)).toEqual({ state: "cancelled", fatals: [] });
   } finally {
     await context?.close();
     if (resolve(extensionDirectory).startsWith(expectedPrefix)) {

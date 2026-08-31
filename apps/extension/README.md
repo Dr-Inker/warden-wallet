@@ -145,9 +145,12 @@ still returns unavailable. There is still no production release registry,
 authoritative account/network/policy composition, approve/sign/RPC consumer,
 signed-result replay route, or root ceremony. A temporary-extension Chromium
 contract now proves the real permissionless popup has the exact extension URL,
-popup type, focus, and user-close cancellation. Headless Chrome expanded the
-requested `720×600` bounds to `1280×720`, so the fixed dimensions are a measured
-request, not a browser-enforced layout guarantee. Earlier browser lanes cover
+popup type, focus, and user-close cancellation. It also force-stops the exact
+worker while a second popup and pending row remain, proves the popup outlives
+the lost in-memory map, then observes the replacement worker's startup pass
+cancel the row. Headless Chrome expanded the requested `720×600` bounds to
+`1280×720`, so the fixed dimensions are a measured request, not a browser-
+enforced layout guarantee. Earlier browser lanes cover
 IndexedDB competing connections, tamper/worker restart, the production approval
 render, navigation/reject/expiry races, and exact technical values. IndexedDB
 transaction serialization is evidence for the tested compare-and-set;

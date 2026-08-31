@@ -61,8 +61,6 @@ const windows = installApprovalWindowOwner(measuredWindows, {
   },
 });
 
-const REQUEST_ID = `req_${"9a".repeat(16)}`;
-
 function clearRecord(record: ApprovalRecord | null | undefined): void {
   record?.account.fill(0);
   record?.genesisHash.fill(0);
@@ -71,37 +69,44 @@ function clearRecord(record: ApprovalRecord | null | undefined): void {
   record?.messageDigest.fill(0);
 }
 
-function input(now: number): ApprovalCreateParams {
+function input(requestId: string, messageByte: number, now: number): ApprovalCreateParams {
   return {
-    id: REQUEST_ID,
+    id: requestId,
     origin: "https://approval-window-browser.example",
     tabId: 7,
     frameId: 0,
-    documentId: "approval-window-browser-document",
+    documentId: `approval-window-browser-document-${requestId}`,
     account: new Uint8Array(32).fill(0x11),
     method: "solana:signTransaction",
     chain: "solana:devnet",
     genesisHash: new Uint8Array(32).fill(0x22),
     programId: new Uint8Array(32).fill(0x33),
-    rawMessage: Uint8Array.of(1, 2, 3, 4),
+    rawMessage: Uint8Array.of(messageByte, 2, 3, 4),
     policyVersion: 1,
     createdAt: now,
     expiresAt: now + 60_000,
   };
 }
 
-async function openApprovalWindow() {
+async function openApprovalWindow(request: {
+  readonly requestId: string;
+  readonly messageByte: number;
+}) {
   await ready;
   const now = Date.now();
-  const created = await owner.create(input(now));
+  const created = await owner.create(input(
+    request.requestId,
+    request.messageByte,
+    now,
+  ));
   clearRecord(created);
-  await windows.launch(REQUEST_ID, new AbortController().signal);
+  await windows.launch(request.requestId, new AbortController().signal);
   const popups = await chromeApi.windows.getAll({
     populate: false,
     windowTypes: ["popup"],
   });
   return {
-    requestId: REQUEST_ID,
+    requestId: request.requestId,
     permissions: chromeApi.runtime.getManifest().permissions ?? [],
     createCalls: createCalls.map((options) => ({ ...options })),
     popups: popups.map((window) => ({
@@ -116,6 +121,7 @@ async function openApprovalWindow() {
 }
 
 async function readApprovalState(id: string) {
+  await ready;
   const record = await owner.read(id);
   try {
     return {
