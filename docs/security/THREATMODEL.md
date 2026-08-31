@@ -2850,3 +2850,17 @@ audit, and no real-funds exercise. The next load-bearing cut is immediately
 after signature production but before durable completion: replacement startup
 must close the exact attempt as `worker-restarted`, never retry it, and never
 deliver the uncommitted bytes.
+
+Ledger-inclusive full-repository evidence belongs only to
+`cba956c25dedb323110fcd4e983bead35181b97c`. From a clean tree, the exact
+command recorded in `docs/NEXT-SESSION.md` ran `.claude/test-gate.sh`, scanned
+the emitted extension for every C24 checkpoint/fixture marker, validated the
+diff, and guarded both SHA and worktree before and after. It exited **0** with
+the same SHA printed on both sides. The executable gate passed core
+**700/700**, extension **473/473**, UI tokens **11/11**,
+transaction-budget **8/8**, WebAuthn **1/1**, real Chromium **11/11**,
+builds/typechecks, the production Argon2 benchmark, the complete Rust workspace
+suite, artifact exclusion, and clean-tree guards. Known Anchor test-program
+key, legacy macro-`cfg`, and Rust unused-code warnings were non-fatal. The
+evidence-only documentation commit recording this result does not inherit the
+verdict or promote an invariant.
