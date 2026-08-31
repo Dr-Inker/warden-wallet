@@ -362,7 +362,9 @@ function resolveEffectivePrivileges(
   const executeIx = new TransactionInstruction({
     programId: wardenProgram,
     keys: builtMetas.map((m) => ({ pubkey: m.pubkey, isSigner: m.isSigner, isWritable: m.isWritable })),
-    data: Buffer.alloc(8), // discriminator placeholder; data does not affect coalescing
+    // web3.js types this field as Node's Buffer even though its runtime accepts
+    // Uint8Array. Keep the browser path free of a Node-only global.
+    data: new Uint8Array(8) as TransactionInstruction["data"],
   });
   const msg = new TransactionMessage({
     payerKey: payer,

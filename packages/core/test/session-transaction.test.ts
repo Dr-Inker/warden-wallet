@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { createPublicKey, verify as verifySignature } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -226,6 +226,18 @@ describe("prepareSessionTransaction", () => {
       expect(prepared.messageByteLength).toBe(prepared.messageBytes.length);
     },
   );
+
+  it("rewrites in a browser runtime with no Node Buffer global", () => {
+    const source = sourceTransaction([ordinaryInstruction()]).serialize();
+    vi.stubGlobal("Buffer", undefined);
+    try {
+      const prepared = prepare(source);
+      expect(prepared.messageBytes.length).toBeGreaterThan(0);
+      expect(prepared.unsignedTransactionBytes.length).toBeLessThanOrEqual(1_232);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 
   it("copy-owns source, blockhash, and every byte-bearing result", () => {
     const source = sourceTransaction([ordinaryInstruction()]).serialize();

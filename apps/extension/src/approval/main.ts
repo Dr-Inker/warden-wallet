@@ -232,7 +232,7 @@ function renderReview(review: ApprovalReviewDetails, canApprove: boolean): void 
   approveButton.textContent = canApprove ? "Approve and sign" : "Signing unavailable";
   capabilityTitle.textContent = canApprove ? "Signing enabled." : "Review only.";
   capabilityMessage.textContent = canApprove
-    ? " Approval signs only this digest-authenticated transaction. Provider delivery remains unavailable in this build."
+    ? " Approval signs only this digest-authenticated transaction. The background can return only the durable signed result to the requesting page."
     : " Signing and provider success are disabled in this build. This page cannot approve, sign, send, or change the account or network.";
   setStatus("review", canApprove
     ? "Exact durable message decoded locally and ready for approval."
@@ -278,7 +278,7 @@ try {
       approveButton.disabled = true;
       setStatus(
         "approved",
-        "Request approved and signed. Provider delivery remains unavailable.",
+        "Request approved and signed. The durable result is ready for the requesting page.",
       );
       port?.disconnect();
       return;

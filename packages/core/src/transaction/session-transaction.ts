@@ -774,7 +774,9 @@ export function prepareSessionTransaction(
   const executeInstruction = new TransactionInstruction({
     programId: options.wardenProgram,
     keys: expectedExecuteMetas,
-    data: Buffer.from(executeData),
+    // web3.js requires only byte semantics here; Buffer is absent in an MV3
+    // service worker unless a bundler silently injects an unsafe Node shim.
+    data: executeData as TransactionInstruction["data"],
   });
 
   let finalMessage;
