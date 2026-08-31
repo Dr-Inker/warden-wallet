@@ -167,6 +167,8 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
       async (lease) => {
         borrowed = lease;
         expect(Array.from(lease.account)).toEqual(Array.from(CONTEXT.account));
+        expect(Array.from(lease.genesisHash)).toEqual(Array.from(CONTEXT.genesisHash));
+        expect(Array.from(lease.programId)).toEqual(Array.from(CONTEXT.programId));
         expect(Array.from(lease.seed)).toEqual(Array.from(SEED));
         expect(lease.unlock.signal.aborted).toBe(false);
         return Uint8Array.of(7, 8, 9);
@@ -174,6 +176,8 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     );
     expect(Array.from(result)).toEqual([7, 8, 9]);
     expect(Array.from(borrowed!.account)).toEqual(new Array(32).fill(0));
+    expect(Array.from(borrowed!.genesisHash)).toEqual(new Array(32).fill(0));
+    expect(Array.from(borrowed!.programId)).toEqual(new Array(32).fill(0));
     expect(Array.from(borrowed!.seed)).toEqual(new Array(32).fill(0));
   });
 

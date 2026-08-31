@@ -28,6 +28,10 @@
     "./transaction/session": {
       "types": "./dist/transaction/session-transaction.d.ts",
       "import": "./dist/transaction/session-transaction.js"
+    },
+    "./transaction/session-approval": {
+      "types": "./dist/transaction/session-approval-coordinator.d.ts",
+      "import": "./dist/transaction/session-approval-coordinator.js"
     }
   },
   "files": [

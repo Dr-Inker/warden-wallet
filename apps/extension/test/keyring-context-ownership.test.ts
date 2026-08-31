@@ -95,6 +95,8 @@ describe("background-owned keyring context", () => {
     });
     const output = await lifecycle.useSessionSignerBytes("sign", async (lease) => {
       expect(lease.account).toEqual(CONTEXT.account);
+      expect(lease.genesisHash).toEqual(CONTEXT.genesisHash);
+      expect(lease.programId).toEqual(CONTEXT.programId);
       expect(lease.seed).toEqual(fill(32, 0x74));
       return Uint8Array.of(1, 2, 3);
     });

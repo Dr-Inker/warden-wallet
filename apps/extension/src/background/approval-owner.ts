@@ -6,6 +6,7 @@ import {
   type ApprovalRecord,
   type ApprovalTerminalState,
 } from "@warden/core/approval";
+import type { SessionApprovalOwner } from "@warden/core/transaction/session-approval";
 
 export interface ApprovalTransition {
   readonly id: string;
@@ -63,7 +64,7 @@ function requireClock(value: unknown): () => number {
  * delegates every terminal decision to a transactional repository. It is not a
  * signer, UI, account resolver, decoder, RPC client, or browser message route.
  */
-export class ApprovalOwner {
+export class ApprovalOwner implements SessionApprovalOwner {
   private readonly repository: ApprovalRecordRepository;
   private readonly readNow: () => number;
 

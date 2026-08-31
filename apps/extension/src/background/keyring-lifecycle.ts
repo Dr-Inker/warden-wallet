@@ -21,6 +21,10 @@ import {
   type UnlockCheck,
   type UnlockPolicy,
 } from "@warden/core/keyring";
+import type {
+  SessionApprovalKeyring,
+  SessionApprovalSignerLease,
+} from "@warden/core/transaction/session-approval";
 
 import {
   PersistentKeyringRecordStore,
@@ -37,16 +41,20 @@ export interface UnlockKeyringWithPasswordParams {
   readonly policy: UnlockPolicy;
 }
 
-export interface SessionSignerLease {
+export interface SessionSignerLease extends SessionApprovalSignerLease {
   /** Isolated public account copy; overwritten when the callback settles. */
   readonly account: Uint8Array;
+  /** AAD-authenticated canonical cluster identity; overwritten on settlement. */
+  readonly genesisHash: Uint8Array;
+  /** AAD-authenticated Warden deployment; overwritten on settlement. */
+  readonly programId: Uint8Array;
   /** Isolated plaintext Ed25519 seed; overwritten when the callback settles. */
   readonly seed: Uint8Array;
   readonly unlock: UnlockCheck;
 }
 
 /** Privileged lifecycle surface; production exposes it only through readiness gating. */
-export interface KeyringLifecycle {
+export interface KeyringLifecycle extends SessionApprovalKeyring {
   isUnlocked(): Promise<boolean>;
   lock(): Promise<void>;
   replacePersistentRecord(value: unknown): Promise<void>;
@@ -141,7 +149,7 @@ function extensionOrigin(runtimeId: unknown): string {
  * record B wins. Startup restore refuses and clears a same-owner pending unlock;
  * it never adopts a session that the superseded operation had just serialized.
  */
-export class KeyringLifecycleOwner {
+export class KeyringLifecycleOwner implements KeyringLifecycle {
   private readonly records: PersistentKeyringRecordStore;
   private readonly sessions: UnlockSessionOwner;
   private readonly readNow: () => number;
@@ -511,7 +519,13 @@ export class KeyringLifecycleOwner {
             throw error;
           }
 
-          result = await use({ account: session.account, seed, unlock: session.unlock });
+          result = await use({
+            account: session.account,
+            genesisHash: context.genesisHash,
+            programId: context.programId,
+            seed,
+            unlock: session.unlock,
+          });
           if (!(result instanceof Uint8Array)) {
             throw new KeyringFormatError(
               "session-signer use callback must return a Uint8Array",
