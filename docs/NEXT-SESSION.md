@@ -1,5 +1,139 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C17 EXACT APPROVAL ACTION — INTERNAL ONLY, PRODUCTION SIGNING STILL UNAVAILABLE
+>
+> Implementation commit
+> `b36aeecd3c2b49ee18144ab1144d46dcddddd88f` adds the missing
+> approval-page action boundary without making the production provider usable.
+> A new volatile `ProviderApprovalActionOwner` copy-binds one background-minted
+> approval id and 32-byte message digest to the exact live C12 coordinator
+> capability. C15 must first prove the durable provider-operation → approval
+> binding, then synchronously register that action, and only then may open the
+> review window. Registration failure, capacity exhaustion, duplicate id,
+> malformed capability, Port/keyring lifetime loss, or window failure keeps the
+> window hidden or terminalizes the exact row.
+>
+> C12 now owns one Promise-idempotent `approve()` invocation. It supplies the
+> coordinator's already-bound id/digest itself, structurally snapshots the
+> returned id/digest/transaction/signature, scrubs every accessible byte copy,
+> independently proves the exact durable approval row is `approved`, and
+> returns only `true`. Signed transaction and signature bytes never enter the
+> action registry, approval protocol, page, or C15 facade. A provider or keyring
+> abort while signing suppresses UI success even when the signed result became
+> durable; C14 remains the replay owner for that committed result.
+>
+> The strict approval protocol now admits `approval:approve`, but its params
+> remain exactly `{requestId}`. The page cannot supply a digest, transaction,
+> account, chain, release, endpoint, key, signature, or action bytes. A pending
+> review carries one boolean `canApprove`; the production default is `false`.
+> The background computes `true` only by matching the URL/provenance-bound
+> pending row's exact digest against the live volatile registry. A successful
+> action emits only `{status:"approved",requestId}`, then settles the capability;
+> rejection and cancellation also settle any surviving route. A forged approve
+> request when the capability is absent burns the exact pending row.
+>
+> The approval page enables and labels the button only when that background
+> boolean is true. Its success text says that the exact request was signed and
+> that provider delivery is still unavailable. The shipped runtime deliberately
+> passes no action owner, and the build metafile now explicitly forbids
+> `provider-approval-action.ts` together with every C12–C16 provider/signing/page
+> owner. Real Chromium therefore continues to measure a disabled production
+> approve button.
+>
+> Meaningful RED and adversarial evidence:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run test/provider-approval-action.test.ts`
+>   first exited **1** before collection because
+>   `provider-approval-action.js` did not exist.
+> - The C12 lane then exited **1**, **2 failed / 30 passed**: the prepared handle
+>   exposed neither `approve()` nor its exact lifetime signal.
+> - The protocol lane exited **1** before collection because the byte-free
+>   approved-response constructor did not exist. The approval-Port RED was
+>   **3 failed / 8 passed**: production reported `canApprove:false`, no action
+>   ran, and no action settlement occurred.
+> - Final focused C12/C15/action/protocol/Port is **69/69**. It proves one shared
+>   action Promise, bind → action-register → window-open ordering, duplicate and
+>   cap refusal, malformed/listener rollback, byte scrubbing, digest
+>   substitution poison, refusal of shaped signed bytes without an approved
+>   durable row, authority-loss suppression after durable signing, byte-free
+>   page messages, explicit rejection/cancellation settlement, and forged-action
+>   cancellation.
+> - Harsh self-review found and fixed two defects after initial greens: normal
+>   lifetime revocation could be falsely escalated as fatal after the registry
+>   had correctly self-removed, and malformed action method binding left its
+>   copied digest unscrubbed.
+>
+> Primary contracts reviewed:
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime>,
+> <https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers>,
+> <https://solana.com/docs/rpc/http/getlatestblockhash>,
+> <https://solana.com/docs/rpc/http/isblockhashvalid>,
+> <https://solana.com/docs/rpc/http/getgenesishash>, and the Wallet Standard
+> reference Solana wallet at
+> <https://github.com/wallet-standard/wallet-standard/blob/master/packages/example/wallets/src/solanaWallet.ts>.
+> Chrome documents that MV3 global state is ephemeral and that sender document
+> lifecycle can change after Port creation; the action registry is therefore
+> intentionally volatile and never reconstructs signing authority from a row.
+> Solana's RPC contracts support the existing coordinator's exact
+> blockhash/last-valid-height/genesis binding. Wallet Standard returns signed
+> transaction bytes; C17 deliberately withholds them from the approval page.
+> The conclusion that a durable row alone cannot recreate an in-memory signing
+> capsule is an architectural inference, not a browser or RPC guarantee.
+>
+> `codex review --commit b36aeecd3c2b49ee18144ab1144d46dcddddd88f`
+> exited **1** before review because the in-process app-server client could not
+> initialize on this host's read-only state path. Independent second-model
+> review remains **UNVERIFIED**.
+>
+> Exact implementation-SHA evidence at
+> `b36aeecd3c2b49ee18144ab1144d46dcddddd88f`, with a clean tree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test:browser &&
+> node -e "const fs=require('node:fs');const path=require('node:path');const root='apps/extension/dist';const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=walk(root);const all=files.map(f=>fs.readFileSync(f,'utf8')).join('\n');const background=fs.readFileSync(path.join(root,'background.js'),'utf8');const content=fs.readFileSync(path.join(root,'content.js'),'utf8');const required=['WARDEN_METHOD_UNAVAILABLE'];const forbidden=['provider approval action:','provider page request:','page_validation_0000000000000000','provider approval operation:','provider operation:','warden-provider-operations-v1','provider terminal result:','provider terminal protocol:','provider approval request:','provider approval selection:','session approval coordinator:'];const missing=required.filter(s=>!background.includes(s)||!content.includes(s));const hit=forbidden.filter(s=>all.includes(s));if(missing.length||hit.length){console.error({missing,hit});process.exit(1)}console.log('extension dist remains fixed-unavailable; C12-C17 provider/signing/page owners are absent')" &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> exited **0** and printed the same SHA before and after: extension **395/395**,
+> typecheck, build, production Chromium **6/6**, emitted-artifact exclusion,
+> `git diff --check`, and clean-tree proof passed. The production background
+> and content bundles retain `WARDEN_METHOD_UNAVAILABLE`; all C12–C17 owner
+> markers are absent. Ledger-inclusive full-gate evidence is not claimed until
+> the ledger SHA runs the repository gate.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
+> invariants JSONL is intentionally unchanged.
+>
+> **Harsh residual:** C17 is not a shipped signing flow. The production release
+> registry is empty, no trusted production RPC endpoint or reviewed deployment
+> pin exists, and the emitted runtime omits the action/coordinator graph. The
+> real Chromium lane therefore measures only the disabled production page, not
+> a cryptographic signature. C17 unit tests compose C12 → C15 → the real action
+> registry and separately exercise the Port/UI protocol, but there is no single
+> real-browser action → durable signature → C14 replay → C16 Promise flow.
+> Worker restart intentionally destroys pending action authority; startup
+> invalidation must terminalize pending rows, while an already-signed outcome is
+> replay-only. Page `approved` means durable signature, not provider delivery,
+> send, confirmation, or page consumption. C12's legacy `launch()`/`open()`
+> bypasses remain internal and must not ship. Consequence review, Wallet
+> Standard registration/batching, onboarding, production KDF policy, root
+> ceremony, and send/confirmation remain absent. C17 narrows one signing
+> authority boundary; it does not make Warden deployable.
+>
+> **Next load-bearing work:** compose the C17 byte-free approval terminal with
+> C14 signed-result replay and C16 page-Promise settlement in one closed,
+> still-unshipped lane, including provider/keyring/worker-death races. Do not add
+> a non-empty production release or endpoint without a reviewed real deployment
+> and explicit deployment authority; do not enable the provider merely because
+> a fake/test coordinator can sign.
+
 > ## 2026-08-31 C16 MAIN-WORLD TERMINAL IDEMPOTENCE — INTERNAL ONLY, PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit

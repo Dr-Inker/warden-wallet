@@ -2189,3 +2189,89 @@ and the complete Rust workspace. The known Anchor test-program key mismatch
 notice and legacy macro `cfg` notices were warnings, not skipped failures. This
 verdict belongs only to `a7a5301…`; the evidence-only follow-up does not inherit
 it or promote an invariant.
+
+---
+
+## Client C17 exact approval action — b36aeec — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**New internal authority surface:** C17 introduces the first extension-side
+capability that can ask the exact live C12 coordinator to sign. It is not
+reachable in the production build. A volatile `ProviderApprovalActionOwner`
+copy-binds a background-minted approval id and digest to bound `approve` and
+`settle` methods plus the provider/keyring lifetime signal. It holds no key,
+transaction, endpoint, release, Connection, or signed result. Duplicate ids,
+the 32-entry cap, malformed methods/signals, listener failure, disposal, and an
+already-ended lifetime fail closed.
+
+C15 now requires this registry. Its order is executable: durable provider
+operation claim → C12 approval preparation → durable operation/approval bind →
+synchronous action registration → window open. The facade returned after open
+strips `approve`, `signal`, and `open`; only the registry retains the action.
+Any registration or later open failure cancels the exact prepared row. The
+production build explicitly forbids the C17 action module and all C12–C16
+provider/signing/page owners, so this internal composition cannot reach funds
+in the shipped extension.
+
+C12 owns one Promise-idempotent coordinator call. It chooses the already-bound
+id/digest, validates and scrubs all accessible returned digest/transaction/
+signature copies, proves the exact durable row is `approved`, and returns only
+a boolean. Id or digest substitution poisons the owner. A shaped signed result
+without an exact approved durable row is refused. Provider or keyring lifetime
+loss during the coordinator await suppresses page success even if a durable
+signed outcome won the race; C14 is the only intended replay route.
+
+The approval protocol admits `approval:approve` with exactly one page-provided
+field: the URL/provenance-bound request id. The background reads the trusted
+pending row and computes `canApprove` by matching its binary digest against the
+volatile registry. The page cannot choose the digest, bytes, account, chain,
+release, RPC, or signer. Success contains only approved status and request id;
+no transaction or signature crosses the UI Port. Rejection, navigation,
+disconnect, malformed messages, and missing capability terminalize the durable
+row and settle/drop any surviving route. Production composes no action owner,
+so `canApprove` remains false and real Chromium still sees a disabled button.
+
+The meaningful REDs were a missing action module, **2 failed / 30 passed** for
+the absent C12 action handle, a missing approved-response constructor, and
+**3 failed / 8 passed** for the unbound Port action. Final focused
+C12/C15/action/protocol/Port is **69/69**. Harsh self-review additionally found
+and fixed false-fatal reporting after normal route self-removal and digest
+cleanup on malformed capability binding.
+
+Exact implementation-SHA evidence at
+`b36aeecd3c2b49ee18144ab1144d46dcddddd88f` passed extension **395/395**,
+typecheck, build, production Chromium **6/6**, emitted-artifact exclusion,
+`git diff --check`, identical before/after SHA, and clean-tree proof with the
+combined command recorded in `docs/NEXT-SESSION.md`. The build metafile rejects
+C17 and every earlier internal provider owner; emitted background/content still
+retain the fixed-unavailable marker. No ledger-inclusive SHA has yet run the
+full repository gate, and no earlier verdict is inherited.
+
+Primary Chrome MV3/runtime, Solana blockhash/genesis RPC, and Wallet Standard
+contracts reviewed for this boundary are linked in `docs/NEXT-SESSION.md`.
+MV3 global state is ephemeral, so C17 deliberately never recreates pending
+signing authority from durable storage. This is an architectural inference:
+durable identity supports replay and invalidation, not resurrection of an
+in-memory keyring/coordinator capsule.
+
+Independent second-model review is **UNVERIFIED**. `codex review --commit
+b36aeecd3c2b49ee18144ab1144d46dcddddd88f` exited before review because the
+in-process app-server client could not initialize on the host's read-only state
+path.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the invariants JSONL is
+intentionally unchanged.
+
+**Residual, stated honestly:** there is no non-empty committed production
+release, trusted production endpoint, reviewed real deployment, or production
+composition of the coordinator/action/result/page graph. The real browser lane
+proves that signing stays disabled, not that a signature succeeds. Unit lanes
+compose the real C12/C15/action registry and separately exercise the Port, but
+there is no one-browser action → durable signature → C14 result → C16 Promise
+test. Worker restart drops pending actions by design; pending-row startup
+invalidation and already-signed replay remain separate owners. An approved UI
+terminal proves neither provider delivery nor page consumption. Legacy internal
+open/launch bypasses, consequence review, Wallet Standard batching and
+registration, send/confirmation, onboarding, production KDF policy, root
+ceremony, and external audit remain. C17 reduces authority ambiguity in
+unreachable code; it does not make Warden deployable.
