@@ -125,7 +125,7 @@ class MockPort implements ProviderRuntimePort {
   readonly posted: unknown[] = [];
   disconnectCalls = 0;
   throwOnPost = false;
-  postHook: (() => void) | null = null;
+  postHook: ((message: unknown) => void) | null = null;
 
   constructor(
     readonly name = PROVIDER_PORT_NAME,
@@ -135,7 +135,7 @@ class MockPort implements ProviderRuntimePort {
   postMessage(message: unknown): void {
     if (this.throwOnPost) throw new Error("Port is disconnected");
     this.posted.push(message);
-    this.postHook?.();
+    this.postHook?.(message);
   }
 
   disconnect(): void {
@@ -519,6 +519,34 @@ describe("C22 background delivery settlement transport", () => {
     await eventually(() => expect(replacement.disconnectCalls).toBe(1));
     expect(flow.leases).toHaveLength(1);
     expect(MAX_PROVIDER_RUNTIME_REPLAYS_PER_REQUEST).toBe(1);
+    transport.dispose();
+  });
+
+  it("finishes delivery ownership before settlement enqueue starts", async () => {
+    const runtime = new MockRuntime();
+    const flow = new DeferredFlow();
+    const transport = owner(runtime, flow);
+    const port = new MockPort();
+    runtime.onConnect.emit(port);
+    port.onMessage.emit(request());
+    await eventually(() => expect(flow.leases).toHaveLength(1));
+    const lease = flow.leases[0]!;
+
+    lease.postMessage(failure());
+    expect(lease.finish()).toBe(true);
+    flow.resolvers[0]?.(Object.freeze({ kind: "delivered", replayed: false }));
+    await eventually(() => expect(terminalPayloads(port)).toEqual([failure()]));
+
+    let settlementEnqueues = 0;
+    port.postHook = (message) => {
+      if (readProviderTransportSettledEnvelope(message) === null) return;
+      settlementEnqueues++;
+      expect(() => lease.assertActive()).toThrow();
+    };
+    port.onMessage.emit(receiptFor(port));
+
+    await eventually(() => expect(settlementEnqueues).toBe(1));
+    expect(port.disconnectCalls).toBe(0);
     transport.dispose();
   });
 
