@@ -4,11 +4,6 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { build } from "esbuild";
 
-import {
-  APPROVAL_WINDOW_HEIGHT,
-  APPROVAL_WINDOW_WIDTH,
-} from "../src/background/approval-window.js";
-
 const scriptDirectory = resolve(import.meta.dirname, "../scripts");
 
 async function liveExtensionWorker(context: BrowserContext, origin?: string) {
@@ -129,8 +124,8 @@ test("background opens one fixed permissionless popup and user close cancels its
       url: expectedUrl,
       type: "popup",
       focused: true,
-      width: APPROVAL_WINDOW_WIDTH,
-      height: APPROVAL_WINDOW_HEIGHT,
+      width: 720,
+      height: 600,
       setSelfAsOpener: false,
     }]);
     expect(result.popups).toHaveLength(1);

@@ -161,12 +161,15 @@ describe("background-owned approval windows", () => {
 
     await expect(installed.launch(REQUEST_ID, controller.signal)).resolves.toBeUndefined();
 
+    expect(APPROVAL_WINDOW_WIDTH).toBe(720);
+    expect(APPROVAL_WINDOW_HEIGHT).toBe(600);
+    expect(MAX_ACTIVE_APPROVAL_WINDOWS).toBe(16);
     expect(windows.createCalls).toEqual([{
       url: `chrome-extension://${EXTENSION_ID}/approval.html?request=${REQUEST_ID}`,
       type: "popup",
       focused: true,
-      width: APPROVAL_WINDOW_WIDTH,
-      height: APPROVAL_WINDOW_HEIGHT,
+      width: 720,
+      height: 600,
       setSelfAsOpener: false,
     }]);
     expect(windows.getCalls).toEqual([1]);
