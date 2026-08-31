@@ -24,6 +24,10 @@
     "./transaction": {
       "types": "./dist/transaction/index.d.ts",
       "import": "./dist/transaction/index.js"
+    },
+    "./transaction/session": {
+      "types": "./dist/transaction/session-transaction.d.ts",
+      "import": "./dist/transaction/session-transaction.js"
     }
   },
   "files": [

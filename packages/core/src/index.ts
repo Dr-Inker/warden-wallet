@@ -16,3 +16,4 @@ export * from "./keyring/record.js";
 export * from "./keyring/session-signer.js";
 export * from "./approval/record.js";
 export * from "./transaction/envelope.js";
+export * from "./transaction/session-transaction.js";

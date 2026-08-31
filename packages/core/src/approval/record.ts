@@ -56,7 +56,10 @@ export interface ApprovalCreateParams {
   readonly chain: ApprovalChain;
   readonly genesisHash: Uint8Array;
   readonly programId: Uint8Array;
-  /** Exact serialized transaction/message bytes that a future signer may consume. */
+  /**
+   * Exact serialized Solana MESSAGE bytes a future signer may consume. Never a
+   * whole transaction: its signature slots are mutable and are not signed.
+   */
   readonly rawMessage: Uint8Array;
   readonly policyVersion: number;
   readonly createdAt: number;
