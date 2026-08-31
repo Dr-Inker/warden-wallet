@@ -156,6 +156,20 @@
 > committed release/trusted RPC boundary, and the approve/sign action all have
 > executable end-to-end gates.
 >
+> **C14 full-gate addendum:** the ledger-inclusive SHA
+> `19557ff540c6e5701f619378979e9e595d0b954e` passed this exact command,
+> exit **0**: `git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && git
+> diff --check && git rev-parse HEAD && test -z "$(git status --porcelain)"`.
+> It printed the same SHA before and after, proved a clean worktree, and ran the
+> complete pnpm workspace, core **699/699**, extension **358/358**, production
+> Chromium **6/6**, the pinned Argon2 worker benchmark, core/extension builds
+> and typechecks, fixture/ledger/feature guards, and the complete Rust workspace.
+> The known Anchor test-program key mismatch notice and legacy macro `cfg`
+> notices were warnings, not skipped failures. This verdict belongs only to
+> `19557ff…`; this evidence-only addendum commit does not inherit it or promote
+> an invariant.
+>
 
 > ## 2026-08-31 C13 AUTHENTICATED COMMITTED-RELEASE SELECTION — INTERNAL ONLY, PROVIDER STILL UNAVAILABLE
 >
