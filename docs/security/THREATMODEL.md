@@ -1086,3 +1086,90 @@ resolver, approval UI, provider composition, send/confirmation/replay owner, or
 token consequence model. The decoder's size and Memo-only utility are poor.
 Independent second-model review and fuzz/differential coverage remain
 UNVERIFIED.
+
+---
+
+## Client C5 pinned authority/RPC snapshot resolver — 5edb932 — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** core exports the separate opt-in
+`@warden/core/transaction/session-authority` boundary. An explicitly trusted
+RPC/Connection capability and reviewed immutable release configuration now
+determine a canonical authority snapshot. Each snapshot is one exact ordered
+six-account `confirmed` request with `minContextSlot`: SmartAccount, SessionKey,
+Registry, shipped Warden Program, canonical ProgramData, and Clock. Public
+mainnet/devnet/testnet genesis hashes and one explicit localnet hash are pinned.
+The extension imports none of this boundary and every provider route remains
+unavailable.
+
+**Removed / narrowed:** the resolver rejects absent/extra accounts, hostile
+getter drift, oversized input before copying, wrong state owner/size/executable
+flags, malformed account discriminators/versions, noncanonical ProgramData,
+wrong loader state, wrong upgrade authority/slot/allocation, code-hash or raw-
+hash drift, malformed/noncanonical Clock, response/Clock slot disagreement,
+unsafe time, wrong genesis, expired/revoked/frozen/stale-generation sessions,
+and policy/Registry disagreement. RPC methods are snapshotted at adapter
+construction. All returned values are bounded, copy-owned, and primitive or
+immutable. Rust tests pin current loader and Clock byte offsets in addition to
+the Warden state ABI.
+
+The real Memo intent and approval coordinator now consume this resolver. Every
+approval capsule binds the ProgramData address, deployment slot, governed
+upgrade authority, code hash, full raw account hash, allocation, and
+cluster-observed Clock. Clock is checked between immediately consecutive
+authority observations, allowing forward time and rejecting regression. The
+real resolver/intent/coordinator/signing integration fixes all six resolver
+minimum contexts to `[0, 52, 52, 52, 62, 62]`.
+
+The focused test began red because the module did not exist. Subsequent harsh
+review created two more genuine red failures: an adapter followed mutation of
+its Connection method after construction, and chained authority observations
+could regress Clock from an intermediate value while remaining above the
+original capsule. Both are fixed and regression-tested. The ProgramData PDA
+was independently derived rather than guessed; fixture hashes use independent
+Node/OpenSSL goldens; extension source and emitted-dist isolation are recursive
+executable checks. Independent second-model review remains **UNVERIFIED**
+because the local review subprocess could not initialize its in-process app
+server on this read-only host.
+
+Primary RPC/ABI evidence:
+<https://solana.com/docs/rpc/http/getmultipleaccounts>,
+<https://solana.com/docs/rpc/http/getgenesishash>,
+<https://docs.rs/solana-clock/latest/solana_clock/struct.Clock.html>,
+<https://docs.rs/solana-loader-v3-interface/latest/solana_loader_v3_interface/state/enum.UpgradeableLoaderState.html>,
+and
+<https://github.com/solana-labs/solana/blob/master/sdk/src/genesis_config.rs>.
+Clock monotonicity is explicitly version-scoped to audited Agave commit
+`a4144392c8ffd8d0840e312ecc3a59d35533c005`, whose Tower and Alpenglow paths
+enforce nondecreasing ancestor time:
+<https://github.com/anza-xyz/agave/blob/a4144392c8ffd8d0840e312ecc3a59d35533c005/runtime/src/bank.rs#L2405-L2460>,
+<https://github.com/anza-xyz/agave/blob/a4144392c8ffd8d0840e312ecc3a59d35533c005/runtime/src/bank.rs#L3333-L3368>, and
+<https://github.com/anza-xyz/agave/blob/a4144392c8ffd8d0840e312ecc3a59d35533c005/runtime/src/block_component_processor.rs#L653-L713>.
+
+Exact-SHA evidence at `5edb932503fdeebb72c029eba49c5f79653599fc`:
+the focused resolver/intent/coordinator suites passed **141/141**; core passed
+**620/620**, typecheck, build, and compiled subpath resolution; the Rust
+resolver ABI suite passed **3/3**; extension passed **246/246**, typecheck, build,
+and emitted resolver-isolation scanning. The preceding ledger SHA
+`01d6694da877b33022c02cc48c6815f38d2d35b5` passed the exact full command `env
+npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit **0**.
+The full gate for this ledger-inclusive boundary is pending and that earlier
+verdict is not transferred.
+
+**New invariants:** none. `WRD-APR-01`, `WRD-APR-02`, `WRD-APR-03`,
+`WRD-TXI-01`, and `WRD-KEY-04` remain `unimplemented`.
+`docs/security/invariants.jsonl` is intentionally unchanged.
+
+**Residual, stated honestly:** the trusted RPC remains a trust terminus; genesis
+binding does not make a malicious endpoint truthful. Six full ProgramData
+fetches per approval are expensive and expose an availability lever. Rechecking
+code through signing cannot prevent a governed upgrade after signature and
+before landing. `solana-verify` trailing-zero code-hash parity remains release-
+candidate **UNVERIFIED**, and every raw/config hash must come from an
+independently reviewed release manifest. Loader/Clock layout and Agave Clock
+monotonicity are versioned compatibility assumptions, not protocol guarantees.
+
+No trusted Connection owner, reviewed release-pin manifest, real blockhash RPC
+adapter, runtime composition, approval UI, successful provider route, sender,
+confirmation, or durable replay exists. Memo is still the only decoded verb;
+the extension cannot reach any of it. This is a strong authority primitive, not
+a deployable no-blind-sign product.

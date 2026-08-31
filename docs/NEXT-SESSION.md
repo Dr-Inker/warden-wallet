@@ -1,5 +1,131 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C5 PINNED AUTHORITY SNAPSHOT — RPC/PROGRAM/TIME RESOLUTION CLOSED, RUNTIME COMPOSITION ABSENT
+>
+> Implementation commit `5edb932503fdeebb72c029eba49c5f79653599fc`
+> adds the still-opt-in `@warden/core/transaction/session-authority` boundary
+> and composes it through the real intent gate and approval coordinator. One
+> authority observation is exactly one ordered six-account
+> `getMultipleAccountsInfoAndContext` request at `confirmed` commitment and a
+> caller-supplied non-regressing `minContextSlot`: SmartAccount, SessionKey,
+> Registry, the literal shipped Warden Program, its canonical ProgramData PDA,
+> and the Clock sysvar. Missing, extra, malformed, wrong-owner, wrong-size, or
+> wrong-executable accounts fail closed before an authority packet is emitted.
+>
+> The resolver binds an explicitly trusted RPC capability at construction,
+> checks the RPC genesis hash against a pinned mainnet/devnet/testnet/localnet
+> mapping, and copy-owns bounded hostile responses. It pins the Warden program
+> id, upgradeable-loader Program state, canonical ProgramData address, governed
+> upgrade authority, deployment slot, exact ProgramData allocation, full raw
+> ProgramData SHA-256, and executable-code SHA-256. It independently validates
+> the three Warden state accounts and encodes their exact bytes into the
+> authorization packet. The Clock account must be canonical, 40 bytes,
+> sysvar-owned, non-executable, and from the same response context; its slot
+> must equal the response context and its Unix time must be safe. Session
+> validity is evaluated at observed Clock time plus 30 seconds, never browser
+> wall time.
+>
+> Every resolver, configuration, response, account, and byte-array boundary is
+> single-read/copy-owned. The coordinator now binds ProgramData address, slot,
+> authority, code hash, raw hash, allocation, and observed Clock in every
+> capsule comparison. Clock observations are compared between each immediately
+> consecutive authority read: forward time is allowed and any regression is
+> rejected. The approval render exposes the same program identity and
+> cluster-observed time. A production integration contract drives the real
+> resolver, Memo-only decoder, coordinator, and exact-byte signer; the six
+> authority reads use exact minimum contexts `[0, 52, 52, 52, 62, 62]`.
+>
+> The initial focused test was genuinely red: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest
+> run test/session-authority-resolver.test.ts` exited **1** before collection
+> because the resolver module did not exist. Harsh review then produced a
+> second real red at the implementation boundary: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest
+> run test/session-authority-resolver.test.ts
+> test/session-approval-coordinator.test.ts` exited **1**, **53 passed / 2
+> failed**. The adapter followed a post-construction mutation of the supplied
+> Connection method, and the coordinator accepted Clock regression from a
+> newer intermediate observation when the value remained above the original
+> capsule. Both defects are now regression-tested and closed. Review also
+> replaced a guessed ProgramData PDA with an official derivation/literal pin,
+> replaced circular fixture hash expectations with independent Node/OpenSSL
+> goldens, made extension isolation recursive and executable, asserted exact
+> request counts, corrected the signed-transaction byte count, and bounded
+> account data before copying. Independent second-model review remains
+> **UNVERIFIED** because `codex review --uncommitted` could not initialize its
+> in-process app-server client on this read-only host.
+>
+> Primary contracts are Solana's ordered/contextual `getMultipleAccounts` and
+> genesis-hash RPC documentation, the Clock ABI, the upgradeable-loader v3
+> Program/ProgramData layout, and Solana's public genesis constants:
+> <https://solana.com/docs/rpc/http/getmultipleaccounts>,
+> <https://solana.com/docs/rpc/http/getgenesishash>,
+> <https://docs.rs/solana-clock/latest/solana_clock/struct.Clock.html>,
+> <https://docs.rs/solana-loader-v3-interface/latest/solana_loader_v3_interface/state/enum.UpgradeableLoaderState.html>,
+> and
+> <https://github.com/solana-labs/solana/blob/master/sdk/src/genesis_config.rs>.
+> Clock monotonicity is a versioned Agave compatibility assumption, not a
+> universal protocol promise. It was audited at exact upstream commit
+> `a4144392c8ffd8d0840e312ecc3a59d35533c005`: Tower floors timestamp against
+> its ancestor, while Alpenglow requires the nanosecond footer time to exceed
+> its parent before writing the seconds field:
+> <https://github.com/anza-xyz/agave/blob/a4144392c8ffd8d0840e312ecc3a59d35533c005/runtime/src/bank.rs#L2405-L2460>,
+> <https://github.com/anza-xyz/agave/blob/a4144392c8ffd8d0840e312ecc3a59d35533c005/runtime/src/bank.rs#L3333-L3368>,
+> and
+> <https://github.com/anza-xyz/agave/blob/a4144392c8ffd8d0840e312ecc3a59d35533c005/runtime/src/block_component_processor.rs#L653-L713>.
+>
+> Exact-SHA evidence at `5edb932503fdeebb72c029eba49c5f79653599fc`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/session-authority-resolver.test.ts test/session-intent.test.ts
+> test/session-approval-coordinator.test.ts` passed **141/141**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test`
+> passed **620/620**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/core typecheck` and `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/core build` exited **0**. From `packages/core`, `node
+> --input-type=module -e "const module = await
+> import('@warden/core/transaction/session-authority'); if (typeof
+> module.PinnedSessionAuthorityResolver !== 'function' || typeof
+> module.ConnectionSessionAuthorityRpc !== 'function') process.exit(1);
+> console.log('session-authority subpath resolves')"` exited **0**. `cargo test
+> -p warden client_authority_resolver --lib` passed **3/3**. `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test`
+> passed **246/246**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension typecheck` and `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build`
+> exited **0**. After build, `node -e "const fs=require('node:fs');const path=require('node:path');const pattern=/PinnedSessionAuthorityResolver|ConnectionSessionAuthorityRpc|SESSION_AUTHORITY_PUBLIC_GENESIS_HASHES|session authority resolver|session-authority/;const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const hit=walk('apps/extension/dist').find(f=>pattern.test(fs.readFileSync(f,'utf8')));if(hit){console.error(hit);process.exit(1)}console.log('extension dist resolver isolation: no matches')"`
+> exited **0** with no matches. The
+> preceding ledger-inclusive C4 SHA
+> `01d6694da877b33022c02cc48c6815f38d2d35b5` passed `env
+> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit **0**.
+> The full gate for this new ledger-inclusive boundary is pending; do not
+> transfer the preceding verdict.
+>
+> **No invariant status changes.** Do not promote `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, `WRD-TXI-01`, or `WRD-KEY-04`; therefore
+> `docs/security/invariants.jsonl` is intentionally unchanged. The RPC endpoint
+> remains an explicit trust terminus: a genesis check detects the wrong honest
+> cluster, not a malicious server. Full ProgramData allocation is fetched six
+> times per approval, imposing a real bandwidth/memory/availability cost.
+> Program identity is rechecked through final signing, but a governed upgrade
+> can still occur after signature and before landing. `solana-verify`
+> trailing-zero code-hash parity is release-candidate **UNVERIFIED**; the full
+> raw hash disambiguates bytes only if its pin comes from a reviewed release
+> manifest. Loader/Clock layouts and Agave time monotonicity require explicit
+> client-upgrade review.
+>
+> This remains runtime-unreachable. There is no trusted-RPC owner, reviewed
+> release-pin manifest, real blockhash Connection adapter, provider/UI route,
+> approval render, sender, confirmation owner, or durable replay. The extension
+> deliberately imports none of the resolver. No live security product is
+> deployable yet.
+>
+> **Next load-bearing slice:** research and implement a still-unreachable,
+> chain-bound blockhash RPC adapter plus the smallest composition/config seam
+> that can be constructed only from reviewed release pins and an explicitly
+> trusted Connection. Re-audit the existing `SessionApprovalBlockhashClient`
+> contract before coding, preserve provider closure, and do not claim a
+> no-blind-sign invariant or add token semantics.
+
 > ## 2026-08-31 C4 DETERMINISTIC MEMO INTENT — ONE SAFE VERB CLOSED, RUNTIME AUTHORITY STILL ABSENT
 >
 > Implementation commit `fa71bf3aef0269a73bb1881b29ba1a69ed932993`
