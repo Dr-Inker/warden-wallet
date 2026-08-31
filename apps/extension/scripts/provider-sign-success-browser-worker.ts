@@ -1,4 +1,4 @@
-//! Browser-only C23/C24 exact-byte success and restart-cut composition.
+//! Browser-only C23-C26 exact-byte success and restart-cut composition.
 //! Never copied into the product build.
 //!
 //! The release pins and Connection below are deterministic test provenance, not a
@@ -39,7 +39,10 @@ import {
 
 import { ApprovalOwner } from "../src/background/approval-owner.js";
 import { installApprovalReviewBoundary } from "../src/background/approval-port.js";
-import { IndexedDbApprovalRecordRepository } from "../src/background/approval-store.js";
+import {
+  APPROVAL_OBJECT_STORE_NAME,
+  IndexedDbApprovalRecordRepository,
+} from "../src/background/approval-store.js";
 import {
   installApprovalWindowOwner,
   type ApprovalWindowsApi,
@@ -75,6 +78,8 @@ const APPROVAL_DATABASE_NAME = "warden-provider-sign-success-approvals-v1";
 const OPERATION_DATABASE_NAME = "warden-provider-sign-success-operations-v1";
 const KEYRING_INITIALIZED_STORAGE_KEY =
   "warden-provider-sign-success-keyring-initialized-v1";
+const SIGNING_COMMIT_CHECKPOINT_STORAGE_KEY =
+  "warden:test:signing-commit-request-succeeded-v1";
 const WARDEN_PROGRAM = new PublicKey(
   "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
 );
@@ -173,7 +178,15 @@ interface Counters {
 type KeyringStartup = "seeded" | "restored" | "locked";
 type WorkerCheckpoint =
   | "after-signature-produced"
-  | "after-signing-committed";
+  | "after-signing-committed"
+  | "during-signing-commit";
+
+interface SigningCommitCandidate {
+  readonly approvalId: string;
+  readonly attemptId: string;
+  readonly attemptNumber: number;
+  readonly transactionBytesLength: number;
+}
 
 function hexBytes(value: string): Uint8Array {
   const pairs = value.match(/../g);
@@ -380,6 +393,94 @@ async function pauseAtCheckpoint(stage: WorkerCheckpoint): Promise<void> {
     // C24 closes the real worker target while this exact continuation is held.
   });
 }
+
+function signingCommitCandidate(value: unknown): SigningCommitCandidate | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const envelope = value as Record<string, unknown>;
+  const signingValue = envelope.signing;
+  if (
+    typeof envelope.id !== "string" ||
+    typeof signingValue !== "object" ||
+    signingValue === null ||
+    Array.isArray(signingValue)
+  ) {
+    return null;
+  }
+  const signing = signingValue as Record<string, unknown>;
+  if (
+    signing.state !== "signed" ||
+    typeof signing.attemptId !== "string" ||
+    !Number.isSafeInteger(signing.attemptNumber) ||
+    !(signing.transactionBytes instanceof Uint8Array) ||
+    signing.transactionBytes.length === 0
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    approvalId: envelope.id,
+    attemptId: signing.attemptId,
+    attemptNumber: signing.attemptNumber as number,
+    transactionBytesLength: signing.transactionBytes.length,
+  });
+}
+
+function installSigningCommitCheckpoint(): void {
+  const prototype = IDBObjectStore.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "put");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("native IDBObjectStore.put is unavailable");
+  }
+  const nativePut = descriptor.value as (...args: unknown[]) => IDBRequest;
+  const checkpointPut = function (
+    this: IDBObjectStore,
+    value: unknown,
+    key?: IDBValidKey,
+  ): IDBRequest {
+    const request = Reflect.apply(
+      nativePut,
+      this,
+      key === undefined ? [value] : [value, key],
+    ) as IDBRequest;
+    const candidate = this.name === APPROVAL_OBJECT_STORE_NAME
+      ? signingCommitCandidate(value)
+      : null;
+    if (armedCheckpoint !== "during-signing-commit" || candidate === null) {
+      return request;
+    }
+    request.addEventListener("success", () => {
+      if (armedCheckpoint !== "during-signing-commit") return;
+      armedCheckpoint = null;
+      checkpointReached = "during-signing-commit";
+      void chromeApi.storage.session.set({
+        [SIGNING_COMMIT_CHECKPOINT_STORAGE_KEY]: {
+          stage: "during-signing-commit",
+          bootId,
+          ...candidate,
+          selectionCalls: counters.selectionCalls,
+          approvalCreates: counters.approvalCreates,
+          signingClaims: counters.signingClaims,
+          signingCompletions: counters.signingCompletions,
+          signerLeaseUses: counters.signerLeaseUses,
+          signerResultsProduced: counters.signerResultsProduced,
+          rpc: { ...rpcCounters },
+        },
+      });
+      const holdUntil = Date.now() + 20_000;
+      while (Date.now() < holdUntil) {
+        // C26 closes the actual worker target before this native event returns.
+      }
+    }, { once: true });
+    return request;
+  };
+  Object.defineProperty(prototype, "put", {
+    ...descriptor,
+    value: checkpointPut,
+  });
+}
+
+installSigningCommitCheckpoint();
 
 async function keyringWasInitialized(): Promise<boolean> {
   const stored = await chromeApi.storage.local.get(
@@ -773,7 +874,8 @@ Object.assign(globalThis, {
   __wardenProviderSignSuccessArmCheckpoint: (stage: unknown): void => {
     if (
       stage !== "after-signature-produced" &&
-      stage !== "after-signing-committed"
+      stage !== "after-signing-committed" &&
+      stage !== "during-signing-commit"
     ) {
       throw new Error("unsupported signing worker checkpoint");
     }
