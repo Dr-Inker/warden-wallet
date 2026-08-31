@@ -964,3 +964,72 @@ composed, expiry has no durable result, send/confirmation/replay are absent, and
 JavaScript secret zeroization is only best effort. There is no independent Rust
 final-message/signature golden or fuzzer corpus. Independent second-model review
 remains UNVERIFIED.
+
+---
+
+## Client C3 session-approval coordinator ordering — cafced9 — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** core exports a separate opt-in
+`@warden/core/transaction/session-approval` orchestration domain. It accepts
+injected authority, blockhash-RPC, synchronous local-intent, approval-owner, and
+contextual-keyring capabilities. It owns a maximum of 32 worker-memory capsules
+containing public approval/authority/blockhash observations. The extension's
+approval and keyring owners now compile-time implement those structural
+interfaces; the keyring lease exposes callback-lifetime copies of its
+AAD-authenticated genesis hash and Warden program id in addition to account and
+seed. These are type-only coordinator imports. The emitted extension does not
+contain the coordinator/builder/signer, all provider methods remain fixed
+unavailable, and no permission, CSP, storage schema, page, or network endpoint
+changed.
+
+**Removed / narrowed:** the coordinator rejects sign-and-send and accepts one
+fixed `confirmed` commitment. Preparation resolves a requested account/chain at
+a monotonic context, fetches exactly one blockhash, re-resolves and exact-compares
+every explicit authority plus canonical authorization-state byte, constructs
+the final session wrapper, requires a synchronous local verdict on its exact
+message, and persists that exact message. Approval rereads every record binding,
+atomically invalidates a wrong UI digest, revalidates authority/verdict before
+the pending-to-approved CAS, validates only the bound blockhash afterward, and
+never rebuilds under the existing digest. Post-claim RPC work occurs before
+plaintext key borrow. The lease must match SmartAccount, genesis, and program;
+one final authority observation and verdict are followed synchronously by exact
+message signing. Strict reparse, digest/signer/message/blockhash comparison, and
+Ed25519 verification guard the returned bytes.
+
+Twenty-nine focused contracts cover exact successful ordering and four identical
+decoder views, drift in every authority field at preparation, drift before and
+after claim/validity and inside the key lease, monotonic-context regression,
+expired blockhash with no refresh, wrong-digest invalidation, record-metadata
+tamper, all three keyring context mismatches, async/throwing gate refusal,
+post-finalizer signature mutation, approve/cancel and double-approve races,
+unsupported sign-and-send, and real resolver/RPC/gate/result buffer mutation.
+The copy-isolation lane was corrected after review because its first version had
+not actually returned the mutable blockhash it claimed to test.
+
+Primary RPC contracts remain:
+<https://solana.com/docs/rpc/http/getlatestblockhash>,
+<https://solana.com/docs/rpc/http/isblockhashvalid>, and
+<https://solana.com/docs/rpc/http/sendtransaction>.
+
+**New invariants:** none promoted. `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, `WRD-TXI-01`, and `WRD-KEY-04` remain `unimplemented`.
+This is tested ordering around injected fakes, not a browser-reachable complete
+approval authority.
+
+**Residual, stated honestly:** there is no real authoritative account/session/
+registry resolver, canonical authorization-state encoder, live cluster-bound RPC
+client, or deterministic semantic decoder. A no-op injected gate can still allow
+a structurally valid unknown program, so no no-blind-sign claim exists. No
+approval page renders exact bytes and no provider/UI route can create, resolve,
+or receive a signature. Live Port/navigation cancellation is not composed with
+the capsule, and the real IndexedDB and decrypted-key owners are not exercised
+together through this coordinator.
+
+The existing `approved` terminal state means “digest claimed,” not “signature
+success.” Any post-claim expiry, RPC failure, lock, drift, or key mismatch consumes
+availability and leaves that tombstone without a durable result; idempotent
+response replay is absent. One final authority RPC holds plaintext seed bytes
+inside the abortable lease. State can change immediately after observation and
+blockhashes can expire immediately after a true response. Sender, confirmation,
+fees/simulation, Chrome-floor/Brave/device matrices, independent Rust
+differential/fuzzing, and independent second-model review remain UNVERIFIED.

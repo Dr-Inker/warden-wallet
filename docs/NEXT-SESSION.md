@@ -1,5 +1,106 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C3 SESSION-APPROVAL COORDINATOR — ORDERING CLOSED, REAL AUTHORITIES STILL ABSENT
+>
+> Implementation commit `cafced9c2f4725e0a95afc792fd0290acc01d28b`
+> adds a separate opt-in `@warden/core/transaction/session-approval` domain.
+> The focused contract was genuinely red first: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest
+> run test/session-approval-coordinator.test.ts` exited **1** before collection
+> because `session-approval-coordinator.js` did not exist.
+>
+> The still-unreachable coordinator accepts structural authority-resolver,
+> blockhash-RPC, synchronous local-intent, transactional approval-owner, and
+> contextual keyring dependencies. It supports only `solana:signTransaction`;
+> sign-and-send is rejected before authority or RPC work because durable send
+> result ownership does not exist. Preparation copy-owns browser provenance and
+> source bytes, resolves account/chain/genesis/program/session/registry/
+> generation/policy plus a bounded canonical `authorizationState`, fetches one
+> final blockhash at fixed `confirmed` commitment, requires a non-regressing
+> context, resolves the same authority again, builds the final wrapped message,
+> obtains a synchronous blocking intent verdict over those exact bytes, and
+> creates the immutable approval from that message only. A bounded worker-memory
+> capsule retains the authority/blockhash observation; worker restart still
+> makes the shipped approval owner cancel every pending record.
+>
+> Approval consumes that capsule once. It rereads and exact-compares every record
+> binding, makes a wrong UI digest drive the repository's atomic invalidation,
+> re-resolves authority and reruns the local gate before the CAS, and atomically
+> claims the exact digest. After claim it validates the original approved
+> blockhash—never refreshes it—at the same cluster/commitment and monotonic
+> context, re-resolves authority, and reruns the gate. Only then does it borrow
+> the session seed. Inside the lease it matches all three AAD-bound public fields
+> (SmartAccount, genesis hash, Warden program), performs one final monotonic
+> authority read, runs the gate, and synchronously signs with no suspension
+> between verdict and `signApprovedSessionMessage`. The coordinator strictly
+> reparses the keyring result, recomputes the digest, compares signer/message/
+> blockhash, and verifies Ed25519 again before returning isolated bytes.
+>
+> Harsh review changed the first green design: it unnecessarily held plaintext
+> seed bytes over three RPC waits. Post-claim validity work now occurs before key
+> borrow; only the unavoidable final authority read remains inside the abortable
+> lease. Another initially green test claimed RPC/gate copy isolation without
+> actually returning its mutable blockhash from the fake. That false-positive
+> lane was corrected: resolver, RPC, and gate buffers are now independently
+> mutated while the stored message/context remain exact.
+>
+> The extension keyring lease now exposes its already-authenticated genesis hash
+> and Warden program id as callback-lifetime copies, clears them with the context,
+> and compile-time implements the coordinator keyring interface. The real
+> approval owner likewise compile-time implements the coordinator owner
+> interface. These imports are type-only. The emitted background is 194,257
+> bytes (prior boundary: 194,123); content and popup remain 8,269 and 3,229
+> bytes. No manifest permission, CSP, storage schema, page, RPC endpoint,
+> successful provider method, or runtime coordinator import was added.
+>
+> Exact-SHA evidence at `cafced9c2f4725e0a95afc792fd0290acc01d28b`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/session-approval-coordinator.test.ts` → **29/29**, exit **0**;
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test` →
+> **508/508**, exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension test` → **246/246**, exit **0**; core and extension
+> typecheck/build commands all exited **0**; the compiled package subpath import
+> resolves the coordinator and fixed commitment. After extension build, `rg -n
+> "SessionApprovalCoordinator|session approval coordinator|signApprovedSessionMessage|prepareSessionTransaction|authorizationState"
+> apps/extension/dist` exited **1** with no matches. The preceding
+> ledger-inclusive SHA `3eb346ca141981c8a435b3abb41aadfef0eaaa1f` passed
+> `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit
+> **0**. The full gate for this new ledger-inclusive boundary is pending; do not
+> transfer the preceding verdict.
+>
+> **Do not promote `WRD-APR-01`, `WRD-APR-02`, `WRD-APR-03`,
+> `WRD-TXI-01`, or `WRD-KEY-04`.** The coordinator is an ordering contract
+> exercised with fakes, not a complete authority. There is no real canonical
+> account/session/registry resolver, live cluster-bound RPC client, or local
+> program/discriminator/account-role/policy decoder. A permissive injected gate
+> still makes structurally valid unknown-program signing possible. No approval
+> UI renders the record; no provider or UI route can construct or approve it;
+> navigation and Port teardown are not composed with a live capsule; and there
+> is no end-to-end test using the real IndexedDB owner and real decrypted keyring
+> together.
+>
+> The opaque `authorizationState` contract says it must contain every byte used
+> by authority/policy decisions, but no implementation proves completeness or
+> canonical encoding. Claim precedes RPC/keyring work, so an expired blockhash,
+> resolver outage, lock, or final drift leaves a one-shot `approved` tombstone
+> even though no signature escaped; durable result states/replay do not exist.
+> One authority RPC still occurs while seed bytes are live. Authority can change
+> immediately after the final observation, and a blockhash can expire
+> immediately after validity; on-chain checks and a future sender must fail
+> closed rather than refreshing this approval. Simulation, fees, send,
+> confirmation, result replay, Chrome-floor/Brave coverage, independent Rust
+> differential/fuzzing, and independent second-model review remain
+> **UNVERIFIED**.
+>
+> **Next load-bearing slice:** implement a real deterministic local decoder/gate
+> for the exact final lookup-free-v0 session message. It must validate the outer
+> ComputeBudget/`execute` shape, literal Warden discriminator and Borsh framing,
+> decode the embedded payload/account roles from bytes, allow only explicitly
+> supported program/discriminator layouts, consume canonical authority state,
+> and return no benign verdict for unknown/ambiguous input. Use independent
+> hand-authored/golden mutations; keep the coordinator and every provider route
+> runtime-unreachable until a real approval UI can render that same decode.
+
 > ## 2026-08-31 C3 EXACT APPROVED-BYTE SIGNING — CRYPTOGRAPHIC SEAM CLOSED, AUTHORIZATION STILL OPEN
 >
 > Implementation commit `349e73aac0ea710c748d33fff151e0dd83a514c0`
