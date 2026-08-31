@@ -2275,3 +2275,18 @@ open/launch bypasses, consequence review, Wallet Standard batching and
 registration, send/confirmation, onboarding, production KDF policy, root
 ceremony, and external audit remain. C17 reduces authority ambiguity in
 unreachable code; it does not make Warden deployable.
+
+### C17 full-gate addendum — 4fd8fc9 — 2026-08-31
+
+The ledger-inclusive SHA `4fd8fc979c4ac7f1c3af6378dc047d64548d17a9`
+passed this exact command, exit **0**: `git rev-parse HEAD && test -z "$(git
+status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash
+.claude/test-gate.sh && git diff --check && git rev-parse HEAD && test -z
+"$(git status --porcelain)"`. It printed the same SHA before and after, proved
+a clean worktree, and ran the complete pnpm workspace, core **699/699**,
+extension **395/395**, production Chromium **6/6**, the pinned Argon2 worker
+benchmark, core/extension builds and typechecks, fixture/ledger/feature guards,
+and the complete Rust workspace. The known Anchor test-program key mismatch
+notice and legacy macro `cfg` notices were warnings, not skipped failures. This
+verdict belongs only to `4fd8fc9…`; the evidence-only follow-up does not inherit
+it or promote an invariant.
