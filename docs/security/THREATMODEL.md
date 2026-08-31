@@ -1538,3 +1538,15 @@ verdict. There is no simulation, fee/balance consequence, switch binding,
 onboarding, send, confirmation, event, or result delivery. A compromised
 extension origin remains outside the boundary. Memo is the only decoded verb.
 This is a measurable, fail-closed approval review—not a deployable wallet.
+
+### C9 full-gate addendum — 04c810a — 2026-08-31
+
+The ledger-inclusive SHA `04c810a649a537d46e38e0898548c06287cb6ec7`
+passed the exact command `env npm_config_cache=/tmp/warden-npm-cache bash
+.claude/test-gate.sh`, exit **0**. The command ran the complete pnpm workspace,
+core **698/698**, extension **282/282**, production Chromium **3/3**, the pinned
+Argon2 worker benchmark, core/extension builds and typechecks, fixture-drift
+guard, feature-resolution check, and the complete Rust workspace. Afterward
+HEAD remained that SHA, the worktree was clean, and `git diff --check` exited
+**0**. This verdict belongs only to `04c810a…`; it does not promote any C9
+invariant or remove the residuals above.

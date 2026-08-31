@@ -117,8 +117,11 @@
 > must include the review projector/route and must exclude the coordinator,
 > authority resolver, release registry, RPC owner, and signer. `git rev-parse
 > HEAD` returned the exact implementation SHA, `git status --short` was empty,
-> and `git diff --check` exited **0**. This C9 ledger-inclusive SHA has not yet
-> run the full deploy gate; no prior verdict is inherited.
+> and `git diff --check` exited **0**. The ledger-inclusive C9 SHA
+> `04c810a649a537d46e38e0898548c06287cb6ec7` then passed the exact full command
+> `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit
+> **0**. Afterward `git rev-parse HEAD` still returned that exact SHA, `git
+> status --short` was empty, and `git diff --check` exited **0**.
 >
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-EXT-02`, `WRD-APR-01`,
 > `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; their
