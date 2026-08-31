@@ -1,5 +1,162 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C14 DURABLE PROVIDER OPERATION / SIGNED-RESULT REPLAY — INTERNAL ONLY, PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `ad66c1633bea96e5cda14e96ab8982c3ae824985` adds a still-unreachable
+> provider-operation journal, terminal signed-result owner, and success response
+> language. The production build explicitly forbids every C12–C14 provider owner
+> and the approval coordinator from the background graph; the content bundle
+> still understands only `WARDEN_METHOD_UNAVAILABLE`. This is durability and
+> replay infrastructure, not an enabled wallet method.
+>
+> C14 treats a live Chrome `Port` as an in-memory delivery lease, never as
+> durable continuity. A stable SHA-256 operation identity joins the exact closed
+> `solana:signTransaction` request—including correlation id, account selector,
+> chain, options, and transaction bytes—to Chrome-owned extension, origin, tab,
+> frame, and document identity. Volatile background request ids and timestamps
+> are deliberately excluded so a reconnect in the same browser document can
+> find the same operation. Changing one transaction byte, option, correlation
+> id, or browser-document field derives a different operation.
+>
+> A separate IndexedDB v1 journal owns strict `preparing`, `bound`, and `failed`
+> records. One serializable `readwrite` transaction claims the unique operation
+> before its callback may create an approval. Only that claimant may invoke the
+> callback; a concurrent connection observes `preparing` or the eventual exact
+> approval id/digest binding. Startup turns every abandoned `preparing` row into
+> `worker-restarted` (or `expired`) and never resumes it. Because the operation
+> and approval databases are separate, there is intentionally no false cross-DB
+> atomicity claim: a worker death between claim and binding loses liveness and
+> may strand a non-visible pending approval, but the retained claim prevents a
+> second preparation. The callback contract therefore stops immediately after
+> durable approval creation; it may not open the review window or sign before
+> the operation binding commits.
+>
+> Bound rows carry both the exact request digest and the exact approval id plus
+> approved-message digest. Terminal delivery rederives the current operation,
+> reads that binding, independently checks the approved row's id, digest,
+> browser provenance, method, account, and requested chain, and invokes the
+> core's extracted durable result reader. That reader needs only the atomic
+> approval/signing-outcome read: it strictly reparses the committed transaction,
+> recomputes the message digest, matches the approved raw message, requires one
+> nonzero signature/required signer, and verifies Ed25519 before releasing copied
+> bytes. It does not rebuild a coordinator, reopen the keyring, contact RPC, or
+> create/retry a signing attempt.
+>
+> `Port.postMessage` is only a synchronous enqueue. C14 deliberately writes no
+> delivered bit because Chrome supplies no page receipt acknowledgment; if the
+> enqueue throws, a reconnect reads and releases the same committed bytes again
+> without signing again. The future page boundary must deduplicate the stable
+> correlation id. The journal is bounded at 32 preparing / 128 total records and
+> prunes terminal rows after a ten-minute horizon anchored to resolution or
+> request expiry. Accordingly, the at-most-once preparation claim is only for a
+> retained row, not eternal deduplication.
+>
+> Meaningful RED and adversarial evidence:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+>   vitest run test/session-approval-coordinator.test.ts` first exited **1**, **1
+>   failed / 42 passed**, because the disposed-coordinator scenario had no
+>   `readSignedSessionApproval` restart path even though the signed outcome was
+>   durably committed.
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run test/provider-operation.test.ts` first
+>   failed before collection because `provider-operation.js` did not exist.
+> - The final C14 unit lane has **11/11** cases covering stable/reminted identity,
+>   every request/provenance discriminator, copy-owned closed records, hostile
+>   response proxies, concurrent claim ownership, retained interrupted claims,
+>   disconnect after claim, exact terminal delivery, enqueue failure/retry,
+>   unbound/wrong-digest refusal, cross-document refusal, and changed-transaction
+>   refusal before signed-result access.
+> - The real Chromium contract opens competing connections to native IndexedDB,
+>   proves only one preparation callback runs, force-stops the exact MV3 worker,
+>   proves its global marker is gone, then observes the replacement worker replay
+>   the bound locator without another callback and terminalize the interrupted
+>   claim as `worker-restarted`.
+>
+> Official contracts reviewed:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>,
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime>,
+> <https://github.com/anza-xyz/wallet-standard>, and the official Wallet
+> Standard reference wallet implementation at
+> <https://github.com/wallet-standard/wallet-standard/blob/master/packages/example/wallets/src/solanaWallet.ts>.
+> Chrome documents disposable worker globals, `Port` disconnect/enqueue
+> behavior, and browser-owned `MessageSender.documentId`; Wallet Standard's
+> Solana transaction result carries signed transaction bytes. The inference that
+> `postMessage` is not a page receipt acknowledgment is deliberately treated as
+> an architectural constraint, not an API guarantee Chrome provides.
+>
+> `codex review --commit ad66c1633bea96e5cda14e96ab8982c3ae824985`
+> exited **1** before review because the in-process app-server client could not
+> initialize on this host's read-only state path. Independent second-model review
+> therefore remains **UNVERIFIED**.
+>
+> Exact implementation-SHA evidence at
+> `ad66c1633bea96e5cda14e96ab8982c3ae824985`, with a clean tree:
+>
+> ```sh
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core build
+> ```
+>
+> exited **0**: core **699/699**, typecheck, and build passed.
+>
+> ```sh
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build
+> ```
+>
+> exited **0**: extension **358/358**, typecheck, and build passed.
+>
+> ```sh
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test:browser
+> ```
+>
+> exited **0**, real Chromium **6/6**, including the C14 forced-worker-death
+> contract.
+>
+> ```sh
+> node -e "const fs=require('node:fs');const path=require('node:path');const root='apps/extension/dist';const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=walk(root);const text=files.map(f=>fs.readFileSync(f,'utf8')).join('\\n');const background=fs.readFileSync(path.join(root,'background.js'),'utf8');const content=fs.readFileSync(path.join(root,'content.js'),'utf8');const required=['WARDEN_METHOD_UNAVAILABLE'];const forbidden=['provider operation:','warden-provider-operations-v1','provider terminal result:','provider terminal protocol:','provider approval request:','provider approval selection:','session approval coordinator:'];const missing=required.filter(s=>!background.includes(s)||!content.includes(s));const hit=forbidden.filter(s=>text.includes(s));if(missing.length||hit.length){console.error({missing,hit});process.exit(1)}console.log('extension dist remains fixed-unavailable; C12-C14 provider/signing owners are absent')"
+> ```
+>
+> exited **0**. The build metafile also rejects all four C14 modules if they
+> become reachable. `git diff --check && test -z "$(git status --porcelain)" &&
+> git rev-parse HEAD` exited **0** and printed the exact implementation SHA.
+> Ledger-inclusive full-gate evidence is not claimed until the ledger SHA runs
+> the repository gate.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
+> invariants JSONL is intentionally unchanged.
+>
+> **Harsh residual:** C12 and C14 are not yet safely composable. C12's current
+> `launch()` creates the durable approval and opens the visible window before it
+> returns, while C14 requires the operation→approval binding to commit before
+> any visible/actionable side effect. The next slice must split C12 into a
+> prepare/prove handle, bind that handle through C14, and only then open the
+> window. A Port enqueue can also be delivered even if the subsequent in-memory
+> `finish()` loses ownership, so future page code must deduplicate correlation
+> ids; no acknowledgment protocol exists. Retention is bounded, the terminal
+> owner uses a test seam in extension unit tests while the real cryptographic
+> verifier is exercised in core, and the browser lane measures journal restart
+> behavior rather than an end-to-end real signature. There is still no emitted
+> success protocol, non-empty committed release, trusted endpoint, approve/sign
+> UI action, simulation/fee/balance consequence model, send/confirmation owner,
+> Wallet Standard registration/batching, onboarding, or root ceremony. C14 is
+> not deployable wallet behavior.
+>
+> **Next load-bearing work:** split the C12 preparation and window-open phases so
+> the exact durable approval locator can be bound to C14 before review becomes
+> visible. Then prove disconnect/revocation races across the split and make page
+> delivery correlation-idempotent. Do not import any success/result language
+> into the production content/background graph until that composition, a real
+> committed release/trusted RPC boundary, and the approve/sign action all have
+> executable end-to-end gates.
+>
+
 > ## 2026-08-31 C13 AUTHENTICATED COMMITTED-RELEASE SELECTION — INTERNAL ONLY, PROVIDER STILL UNAVAILABLE
 >
 > The C13 implementation set ends at

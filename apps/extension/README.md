@@ -180,6 +180,28 @@ build rejects both C12 and C13 from the worker; the emitted provider therefore
 remains fixed unavailable. Because the v1 encrypted payload stores only the
 seed, selection currently decrypts it twice to derive the public key internally.
 
+C14 adds a third excluded boundary for MV3-safe provider operation ownership and
+signed-result replay. A SHA-256 identity commits the exact parsed provider
+request to Chrome-owned origin/tab/frame/document provenance while excluding
+volatile worker request ids and timestamps. A separate native IndexedDB journal
+claims that identity before approval preparation, binds the one durable approval
+id/digest afterward, and startup-fails any interrupted preparation rather than
+retrying it. A replacement worker can replay a retained bound locator without
+preparing or signing again. The journal is bounded (32 preparing, 128 retained,
+ten-minute terminal retention), so this is a bounded replay guarantee, not
+eternal deduplication or a disk-failure proof.
+
+The excluded terminal owner rechecks the operation, approved record, exact
+browser provenance, account, chain, and digest, then uses the core durable
+result verifier to reparse and cryptographically verify the committed signed
+transaction without RPC or keyring access. `Port.postMessage` is not treated as
+a page acknowledgment; a failed enqueue leaves the same result replayable and
+future page code must deduplicate its stable correlation id. C12 still opens its
+window before returning, so it must be split into prepare/bind/open phases before
+these owners can be safely composed. The build forbids all C12–C14 owners and
+the success response schema from the worker; the emitted provider remains fixed
+unavailable.
+
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during
 ordinary browsing: an exact, same-document request envelope opens one lazily,

@@ -1935,3 +1935,83 @@ and the complete Rust workspace. The known Anchor test-program key mismatch
 notice and legacy macro `cfg` notices were warnings, not skipped failures. This
 verdict belongs only to `8355394…`; the evidence-only follow-up does not inherit
 it or promote an invariant.
+
+---
+
+## Client C14 durable provider operation / result replay — ad66c16 — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**New internal boundary:** one stable operation identity commits the exact
+closed `solana:signTransaction` request (correlation, selector, chain, options,
+and transaction bytes) to Chrome-owned extension/origin/tab/frame/document
+provenance. Volatile background ids and request timestamps are excluded so the
+same document can recover after Port reconnect or MV3 restart; changing any
+request/provenance discriminator derives a different SHA-256 key.
+
+A separate IndexedDB database owns strict `preparing`, `bound`, and `failed`
+records. A unique claim commits before one callback may create a durable
+approval. Competing connections cannot both invoke preparation. The callback
+may not open a window or sign; it returns only the approval id and exact approved
+message digest, which are durably attached to the request digest. Startup fails
+all abandoned preparations rather than resuming them. This ordering sacrifices
+liveness in the cross-database crash gap and makes no cross-DB atomicity claim.
+The journal caps 32 preparing and 128 total rows and prunes terminal rows after a
+ten-minute replay horizon, so at-most-once preparation is asserted only while
+the row is retained.
+
+The terminal owner rederives the exact current request identity, reads its bound
+locator, checks the approved row's id/digest/provenance/method/account/chain, and
+uses the core durable signed-result verifier. That verifier atomically reads the
+approval/outcome pair, strictly reparses the signed transaction, recomputes and
+matches the approved message digest/raw bytes, requires exactly one signer and
+signature, and verifies Ed25519. No coordinator, RPC, keyring, or signing retry
+is required. The success response copies signed transaction bytes and exposes no
+approval or authority object.
+
+**Delivery constraint:** Chrome Port enqueue is not a page receipt. No delivered
+bit is persisted; enqueue failure permits replay of the same committed bytes
+without another signing attempt. Enqueue success followed by lost in-memory
+ownership remains an ambiguous delivery and future page code must deduplicate
+the stable correlation id. C14 provides no page acknowledgment protocol.
+
+The meaningful module REDs were the missing core restart reader (**1 failed / 42
+passed**) and missing extension operation module (collection failure). The final
+C14 unit lane passes **11/11**. Native Chromium opens competing IndexedDB
+connections, observes one callback, force-stops the exact worker, proves globals
+were lost, then observes bound replay without a callback and startup failure of
+the interrupted row. Official contracts reviewed: Chrome service-worker
+lifecycle, messaging, and runtime `documentId`, plus Anza's Wallet Standard and
+reference Solana wallet implementation; exact links and commands are in
+`docs/NEXT-SESSION.md`.
+
+Independent second-model review is **UNVERIFIED**. `codex review --commit
+ad66c1633bea96e5cda14e96ab8982c3ae824985` exited before review because the
+in-process app-server client could not initialize on this host's read-only state
+path.
+
+Exact implementation-SHA evidence at
+`ad66c1633bea96e5cda14e96ab8982c3ae824985`: the commands recorded in
+`docs/NEXT-SESSION.md` passed core **699/699**, extension **358/358**, both
+typechecks/builds, real Chromium **6/6**, `git diff --check`, clean-tree proof,
+and an emitted-artifact scan. The build metafile forbids all C12–C14 owner/result
+modules and the coordinator; both emitted page/background bundles retain
+`WARDEN_METHOD_UNAVAILABLE` and contain no C12–C14/coordinator markers. This
+ledger-inclusive SHA has not yet run the full repository gate; no earlier gate
+verdict is inherited.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the invariants JSONL is
+intentionally unchanged.
+
+**Residual, stated honestly:** C12 currently opens the approval window inside
+`launch()` before returning, so it cannot satisfy C14's bind-before-visible-
+action contract. It must be split into prepare/prove, operation bind, and window
+open phases, with disconnect/keyring-revocation cleanup across each boundary.
+The operation and approval stores are separate; a crash can strand an invisible
+pending row. Retention is bounded. Extension terminal tests use a signed-reader
+seam while the actual cryptographic replay path is tested in core; the Chromium
+lane does not produce a real signature. No success language is emitted. There
+is still no non-empty committed release, trusted endpoint, approve/sign action,
+simulation or fee/balance consequences, send/confirmation owner, page receipt
+deduplication, Wallet Standard registration/batching, onboarding, or root
+ceremony. C14 narrows restart/replay risks in unreachable code; it does not make
+Warden deployable.
