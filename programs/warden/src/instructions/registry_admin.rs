@@ -92,3 +92,69 @@ pub(crate) fn handler(ctx: Context<InitRegistry>) -> Result<()> {
     write_defaults(&mut reg)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_authority_resolver_programdata_pda_matches_shipped_pin() {
+        let (program_data, _) =
+            Pubkey::find_program_address(&[crate::ID.as_ref()], &bpf_loader_upgradeable::ID);
+
+        assert_eq!(
+            program_data.to_string(),
+            "Eb2gEx5X9TUwJ7z8hhg1SC4GHSEW72ohG7L7emve9bpf"
+        );
+    }
+
+    #[test]
+    fn client_authority_resolver_loader_state_layout_matches_snapshot_decoder() {
+        let (program_data, _) =
+            Pubkey::find_program_address(&[crate::ID.as_ref()], &bpf_loader_upgradeable::ID);
+        let upgrade_authority = Pubkey::new_from_array([0xaa; 32]);
+        let program =
+            bincode::serialize(&bpf_loader_upgradeable::UpgradeableLoaderState::Program {
+                programdata_address: program_data,
+            })
+            .expect("Program state must serialize");
+        let program_data_header = bincode::serialize(
+            &bpf_loader_upgradeable::UpgradeableLoaderState::ProgramData {
+                slot: 0x0102_0304_0506_0708,
+                upgrade_authority_address: Some(upgrade_authority),
+            },
+        )
+        .expect("ProgramData state must serialize");
+
+        assert_eq!(program.len(), 36);
+        assert_eq!(&program[..4], &[2, 0, 0, 0]);
+        assert_eq!(&program[4..], program_data.as_ref());
+        assert_eq!(program_data_header.len(), 45);
+        assert_eq!(&program_data_header[..4], &[3, 0, 0, 0]);
+        assert_eq!(
+            &program_data_header[4..12],
+            &[0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]
+        );
+        assert_eq!(program_data_header[12], 1);
+        assert_eq!(&program_data_header[13..45], upgrade_authority.as_ref());
+    }
+
+    #[test]
+    fn client_authority_resolver_clock_sysvar_layout_matches_snapshot_decoder() {
+        let clock = Clock {
+            slot: 0x0102_0304_0506_0708,
+            epoch_start_timestamp: -2,
+            epoch: 0x1112_1314_1516_1718,
+            leader_schedule_epoch: 0x2122_2324_2526_2728,
+            unix_timestamp: -5,
+        };
+        let encoded = bincode::serialize(&clock).expect("Clock must serialize");
+        let expected = [
+            0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11, 0x28, 0x27, 0x26, 0x25,
+            0x24, 0x23, 0x22, 0x21, 0xfb, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        ];
+
+        assert_eq!(encoded, expected);
+    }
+}

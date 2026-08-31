@@ -36,6 +36,10 @@
     "./transaction/session-intent": {
       "types": "./dist/transaction/session-intent.d.ts",
       "import": "./dist/transaction/session-intent.js"
+    },
+    "./transaction/session-authority": {
+      "types": "./dist/transaction/session-authority-resolver.d.ts",
+      "import": "./dist/transaction/session-authority-resolver.js"
     }
   },
   "files": [

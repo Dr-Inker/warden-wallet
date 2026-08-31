@@ -10,6 +10,7 @@ import {
 } from "@solana/web3.js";
 import { describe, expect, it } from "vitest";
 
+import { BPF_UPGRADEABLE_LOADER } from "../src/deploy/config.js";
 import {
   approvalDigestsEqual,
   createPendingApprovalRecord,
@@ -50,6 +51,15 @@ const DESTINATION = key(0x66);
 const SOURCE_BLOCKHASH = fill(0x77);
 const FINAL_BLOCKHASH = fill(0x88);
 const GENESIS_HASH = fill(0x99);
+const WARDEN_PROGRAM_DATA = PublicKey.findProgramAddressSync(
+  [WARDEN_PROGRAM.toBytes()],
+  BPF_UPGRADEABLE_LOADER,
+)[0];
+const WARDEN_PROGRAM_DATA_SLOT = 123n;
+const WARDEN_UPGRADE_AUTHORITY = key(0xaa);
+const WARDEN_CODE_HASH = fill(0xab);
+const WARDEN_PROGRAM_DATA_HASH = fill(0xac);
+const OBSERVED_TIME = 1_900_000_000;
 
 function sourceTransaction(): Uint8Array {
   const instruction = new TransactionInstruction({
@@ -76,9 +86,15 @@ function authority(
     sessionAccount: SESSION_ACCOUNT,
     registry: REGISTRY,
     wardenProgram: WARDEN_PROGRAM,
+    wardenProgramData: WARDEN_PROGRAM_DATA,
+    wardenProgramDataSlot: WARDEN_PROGRAM_DATA_SLOT,
+    wardenUpgradeAuthority: WARDEN_UPGRADE_AUTHORITY,
+    wardenCodeHash: WARDEN_CODE_HASH,
+    wardenProgramDataHash: WARDEN_PROGRAM_DATA_HASH,
     accountGeneration: 7n,
     policyVersion: 9,
     authorizationState: Uint8Array.of(1, 2, 3, 4),
+    observedUnixTimestamp: OBSERVED_TIME,
     contextSlot: 10,
     ...overrides,
   };
@@ -379,9 +395,15 @@ describe("session approval coordinator", () => {
     ["session account", { sessionAccount: key(0xa4) }, "AUTHORITY_CHANGED"],
     ["registry", { registry: key(0xa5) }, "AUTHORITY_CHANGED"],
     ["program", { wardenProgram: key(0xa6) }, "AUTHORITY_CHANGED"],
+    ["program data", { wardenProgramData: key(0xa7) }, "AUTHORITY_CHANGED"],
+    ["program data slot", { wardenProgramDataSlot: 124n }, "AUTHORITY_CHANGED"],
+    ["upgrade authority", { wardenUpgradeAuthority: key(0xa8) }, "AUTHORITY_CHANGED"],
+    ["code hash", { wardenCodeHash: fill(0xa9) }, "AUTHORITY_CHANGED"],
+    ["program data hash", { wardenProgramDataHash: fill(0xaa) }, "AUTHORITY_CHANGED"],
     ["generation", { accountGeneration: 8n }, "AUTHORITY_CHANGED"],
     ["policy", { policyVersion: 10 }, "AUTHORITY_CHANGED"],
     ["authorization state", { authorizationState: Uint8Array.of(9) }, "AUTHORITY_CHANGED"],
+    ["Clock regression", { observedUnixTimestamp: OBSERVED_TIME - 1 }, "AUTHORITY_CHANGED"],
   ] satisfies ReadonlyArray<readonly [
     string,
     Partial<SessionAuthoritySnapshot>,
@@ -402,6 +424,56 @@ describe("session approval coordinator", () => {
       expect(test.events).not.toContain("approval:create");
     },
   );
+
+  it("permits forward Clock observations and gives each intent check the latest snapshot", async () => {
+    const observed: number[] = [];
+    const test = harness({
+      resolve(call, minContextSlot) {
+        return authority({
+          contextSlot: Math.max(minContextSlot, call * 10),
+          observedUnixTimestamp: OBSERVED_TIME + call,
+        });
+      },
+      gate: {
+        assertAllowed(input) {
+          observed.push(input.authority.observedUnixTimestamp);
+        },
+      },
+    });
+
+    const prepared = await test.coordinator.prepare(request());
+    await test.coordinator.approve(prepared.id, prepared.messageDigest);
+    expect(observed).toEqual([
+      OBSERVED_TIME + 2,
+      OBSERVED_TIME + 3,
+      OBSERVED_TIME + 5,
+      OBSERVED_TIME + 6,
+    ]);
+  });
+
+  it("rejects a Clock regression from the immediately preceding observation", async () => {
+    const test = harness({
+      resolve(call, minContextSlot) {
+        const observedUnixTimestamp = call === 3
+          ? OBSERVED_TIME + 10
+          : call === 4
+            ? OBSERVED_TIME + 5
+            : OBSERVED_TIME;
+        return authority({
+          contextSlot: Math.max(minContextSlot, call * 10),
+          observedUnixTimestamp,
+        });
+      },
+    });
+
+    const prepared = await test.coordinator.prepare(request());
+    await captureError(
+      test.coordinator.approve(prepared.id, prepared.messageDigest),
+      "AUTHORITY_CHANGED",
+    );
+    expect(test.owner.records.get(prepared.id)?.state).toBe("approved");
+    expect(test.events.some((event) => event.startsWith("keyring:"))).toBe(false);
+  });
 
   it("cancels before claim when current authority or policy changed", async () => {
     const test = harness({

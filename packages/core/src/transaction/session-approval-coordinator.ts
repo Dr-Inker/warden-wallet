@@ -118,9 +118,21 @@ export interface SessionAuthoritySnapshot {
   readonly sessionAccount: PublicKey;
   readonly registry: PublicKey;
   readonly wardenProgram: PublicKey;
+  /** Canonical Upgradeable Loader ProgramData PDA for `wardenProgram`. */
+  readonly wardenProgramData: PublicKey;
+  /** Loader-recorded deployment/upgrade slot, pinned by the resolver. */
+  readonly wardenProgramDataSlot: bigint;
+  /** Exact pinned ProgramData upgrade authority. */
+  readonly wardenUpgradeAuthority: PublicKey;
+  /** Release artifact hash over the deployed code region. */
+  readonly wardenCodeHash: Uint8Array;
+  /** Full raw ProgramData account hash, including metadata and allocation. */
+  readonly wardenProgramDataHash: Uint8Array;
   readonly accountGeneration: bigint;
   readonly policyVersion: number;
   readonly authorizationState: Uint8Array;
+  /** Clock sysvar `unix_timestamp` from the same bank snapshot as the accounts. */
+  readonly observedUnixTimestamp: number;
   readonly contextSlot: number;
 }
 
@@ -575,6 +587,33 @@ function snapshotAuthority(
     "authority wardenProgram",
     "AUTHORITY_INVALID",
   );
+  const wardenProgramData = requirePublicKey(
+    authority.wardenProgramData,
+    "authority wardenProgramData",
+    "AUTHORITY_INVALID",
+  );
+  const wardenProgramDataSlot = requireU64Bigint(
+    authority.wardenProgramDataSlot,
+    "authority wardenProgramDataSlot",
+    "AUTHORITY_INVALID",
+  );
+  const wardenUpgradeAuthority = requirePublicKey(
+    authority.wardenUpgradeAuthority,
+    "authority wardenUpgradeAuthority",
+    "AUTHORITY_INVALID",
+  );
+  const wardenCodeHash = requireBytes(
+    authority.wardenCodeHash,
+    32,
+    "authority wardenCodeHash",
+    "AUTHORITY_INVALID",
+  );
+  const wardenProgramDataHash = requireBytes(
+    authority.wardenProgramDataHash,
+    32,
+    "authority wardenProgramDataHash",
+    "AUTHORITY_INVALID",
+  );
   const accountGeneration = requireU64Bigint(
     authority.accountGeneration,
     "authority accountGeneration",
@@ -592,6 +631,11 @@ function snapshotAuthority(
     "authority authorizationState",
     "AUTHORITY_INVALID",
   );
+  const observedUnixTimestamp = requireSafeNonNegativeInteger(
+    authority.observedUnixTimestamp,
+    "authority observedUnixTimestamp",
+    "AUTHORITY_INVALID",
+  );
   const contextSlot = requireSafeNonNegativeInteger(
     authority.contextSlot,
     "authority contextSlot",
@@ -599,6 +643,8 @@ function snapshotAuthority(
   );
   if (contextSlot < minimumContextSlot) {
     genesisHash.fill(0);
+    wardenCodeHash.fill(0);
+    wardenProgramDataHash.fill(0);
     authorizationState.fill(0);
     fail("AUTHORITY_INVALID", "authority context regressed below minContextSlot");
   }
@@ -607,13 +653,24 @@ function snapshotAuthority(
     !bytesEqual(smartAccount.toBytes(), selection.account)
   ) {
     genesisHash.fill(0);
+    wardenCodeHash.fill(0);
+    wardenProgramDataHash.fill(0);
     authorizationState.fill(0);
     fail("AUTHORITY_INVALID", "authority did not resolve the requested selection");
   }
   if (allZero(genesisHash)) {
     genesisHash.fill(0);
+    wardenCodeHash.fill(0);
+    wardenProgramDataHash.fill(0);
     authorizationState.fill(0);
     fail("AUTHORITY_INVALID", "authority genesisHash must not be all zero");
+  }
+  if (allZero(wardenCodeHash) || allZero(wardenProgramDataHash)) {
+    genesisHash.fill(0);
+    wardenCodeHash.fill(0);
+    wardenProgramDataHash.fill(0);
+    authorizationState.fill(0);
+    fail("AUTHORITY_INVALID", "authority program identity hashes must not be all zero");
   }
   return Object.freeze({
     chain,
@@ -623,9 +680,15 @@ function snapshotAuthority(
     sessionAccount,
     registry,
     wardenProgram,
+    wardenProgramData,
+    wardenProgramDataSlot,
+    wardenUpgradeAuthority,
+    wardenCodeHash,
+    wardenProgramDataHash,
     accountGeneration,
     policyVersion,
     authorizationState,
+    observedUnixTimestamp,
     contextSlot,
   });
 }
@@ -639,15 +702,23 @@ function cloneAuthority(value: SessionAuthoritySnapshot): SessionAuthoritySnapsh
     sessionAccount: new PublicKey(value.sessionAccount.toBytes()),
     registry: new PublicKey(value.registry.toBytes()),
     wardenProgram: new PublicKey(value.wardenProgram.toBytes()),
+    wardenProgramData: new PublicKey(value.wardenProgramData.toBytes()),
+    wardenProgramDataSlot: value.wardenProgramDataSlot,
+    wardenUpgradeAuthority: new PublicKey(value.wardenUpgradeAuthority.toBytes()),
+    wardenCodeHash: value.wardenCodeHash.slice(),
+    wardenProgramDataHash: value.wardenProgramDataHash.slice(),
     accountGeneration: value.accountGeneration,
     policyVersion: value.policyVersion,
     authorizationState: value.authorizationState.slice(),
+    observedUnixTimestamp: value.observedUnixTimestamp,
     contextSlot: value.contextSlot,
   });
 }
 
 function clearAuthority(value: SessionAuthoritySnapshot | undefined): void {
   value?.genesisHash.fill(0);
+  value?.wardenCodeHash.fill(0);
+  value?.wardenProgramDataHash.fill(0);
   value?.authorizationState.fill(0);
 }
 
@@ -663,6 +734,11 @@ function authoritiesEqual(
     expected.sessionAccount.equals(actual.sessionAccount) &&
     expected.registry.equals(actual.registry) &&
     expected.wardenProgram.equals(actual.wardenProgram) &&
+    expected.wardenProgramData.equals(actual.wardenProgramData) &&
+    expected.wardenProgramDataSlot === actual.wardenProgramDataSlot &&
+    expected.wardenUpgradeAuthority.equals(actual.wardenUpgradeAuthority) &&
+    bytesEqual(expected.wardenCodeHash, actual.wardenCodeHash) &&
+    bytesEqual(expected.wardenProgramDataHash, actual.wardenProgramDataHash) &&
     expected.accountGeneration === actual.accountGeneration &&
     expected.policyVersion === actual.policyVersion &&
     bytesEqual(expected.authorizationState, actual.authorizationState)
@@ -675,6 +751,9 @@ function assertAuthorityUnchanged(
 ): void {
   if (!authoritiesEqual(expected, actual)) {
     fail("AUTHORITY_CHANGED", "authoritative account/session/registry state changed");
+  }
+  if (actual.observedUnixTimestamp < expected.observedUnixTimestamp) {
+    fail("AUTHORITY_CHANGED", "authoritative Clock timestamp regressed");
   }
 }
 
@@ -1358,7 +1437,7 @@ export class SessionApprovalCoordinator {
         preclaimAuthority.contextSlot,
       );
       this.#assertUsable();
-      assertAuthorityUnchanged(capsule.authority, postclaimAuthority);
+      assertAuthorityUnchanged(preclaimAuthority, postclaimAuthority);
       const validity = await this.#blockhashValidity(
         postclaimAuthority,
         capsule.blockhash,
@@ -1375,7 +1454,7 @@ export class SessionApprovalCoordinator {
         validity.contextSlot,
       );
       this.#assertUsable();
-      assertAuthorityUnchanged(capsule.authority, postValidityAuthority);
+      assertAuthorityUnchanged(postclaimAuthority, postValidityAuthority);
       this.#assertIntentAllowed(claimed.rawMessage, postValidityAuthority);
       this.#assertUsable();
 
@@ -1437,7 +1516,7 @@ export class SessionApprovalCoordinator {
                 postValidityAuthority!.contextSlot,
               );
               this.#assertUsable();
-              assertAuthorityUnchanged(capsule.authority, finalAuthority);
+              assertAuthorityUnchanged(postValidityAuthority!, finalAuthority);
               this.#assertIntentAllowed(claimed!.rawMessage, finalAuthority);
               this.#assertUsable();
 

@@ -17,6 +17,7 @@ import {
   REGISTRY_DATA_LEN,
   decodeRegistry,
 } from "../deploy/accounts.js";
+import { BPF_UPGRADEABLE_LOADER } from "../deploy/config.js";
 import { MAX_TX_BYTES } from "../constants.js";
 import { decodeExecutePayload } from "../execute/payload.js";
 import { parseSerializedTransactionEnvelope } from "./envelope.js";
@@ -158,6 +159,11 @@ export interface SessionIntentDecodeInput {
   readonly nowUnixSeconds: number;
 }
 
+export interface SessionAuthorityValidationInput {
+  readonly authority: SessionAuthoritySnapshot;
+  readonly nowUnixSeconds: number;
+}
+
 /** Primitive-only rendering facts for the one intent this decoder recognizes. */
 export interface SessionMemoIntent {
   readonly kind: "memo-v1";
@@ -168,6 +174,11 @@ export interface SessionMemoIntent {
   readonly sessionAccount: string;
   readonly registry: string;
   readonly wardenProgram: string;
+  readonly wardenProgramData: string;
+  readonly wardenProgramDataSlot: string;
+  readonly wardenUpgradeAuthority: string;
+  readonly wardenCodeHash: string;
+  readonly wardenProgramDataHash: string;
   readonly programId: string;
   readonly recentBlockhash: string;
   readonly memo: string;
@@ -179,12 +190,12 @@ export interface SessionMemoIntent {
   readonly policyVersion: number;
   readonly sessionExpiryUnixSeconds: number;
   readonly programAllowlistId: number;
+  readonly observedUnixTimestamp: number;
   readonly contextSlot: number;
 }
 
-export interface DeterministicSessionIntentGateOptions {
-  readonly readUnixSeconds?: () => number;
-}
+/** Reject a session that may expire during approval/signing/network latency. */
+export const SESSION_INTENT_EXPIRY_SAFETY_SECONDS = 30;
 
 interface OwnedAuthorizationAccount {
   readonly owner: PublicKey;
@@ -206,9 +217,15 @@ interface OwnedAuthority {
   readonly sessionAccount: PublicKey;
   readonly registry: PublicKey;
   readonly wardenProgram: PublicKey;
+  readonly wardenProgramData: PublicKey;
+  readonly wardenProgramDataSlot: bigint;
+  readonly wardenUpgradeAuthority: PublicKey;
+  readonly wardenCodeHash: Uint8Array;
+  readonly wardenProgramDataHash: Uint8Array;
   readonly accountGeneration: bigint;
   readonly policyVersion: number;
   readonly authorizationState: Uint8Array;
+  readonly observedUnixTimestamp: number;
   readonly contextSlot: number;
 }
 
@@ -220,6 +237,12 @@ interface ValidatedSessionState {
 interface ValidatedRegistryState {
   readonly entries: ReturnType<typeof decodeRegistry>["entries"];
   readonly lists: ReturnType<typeof decodeRegistry>["lists"];
+}
+
+interface ValidatedAuthorityContext {
+  readonly authority: OwnedAuthority;
+  readonly session: ValidatedSessionState;
+  readonly registry: ValidatedRegistryState;
 }
 
 function fail(
@@ -251,6 +274,12 @@ function allZero(bytes: Uint8Array): boolean {
     if (byte !== 0) return false;
   }
   return true;
+}
+
+function bytesToHex(value: Uint8Array): string {
+  let result = "";
+  for (const byte of value) result += byte.toString(16).padStart(2, "0");
+  return result;
 }
 
 function requireZeroRange(
@@ -398,9 +427,15 @@ function snapshotAuthority(value: unknown): OwnedAuthority {
   const sessionAccountValue = value.sessionAccount;
   const registryValue = value.registry;
   const wardenProgramValue = value.wardenProgram;
+  const wardenProgramDataValue = value.wardenProgramData;
+  const wardenProgramDataSlotValue = value.wardenProgramDataSlot;
+  const wardenUpgradeAuthorityValue = value.wardenUpgradeAuthority;
+  const wardenCodeHashValue = value.wardenCodeHash;
+  const wardenProgramDataHashValue = value.wardenProgramDataHash;
   const accountGenerationValue = value.accountGeneration;
   const policyVersionValue = value.policyVersion;
   const authorizationStateValue = value.authorizationState;
+  const observedUnixTimestampValue = value.observedUnixTimestamp;
   const contextSlotValue = value.contextSlot;
   if (typeof chainValue !== "string" || !CHAINS.has(chainValue)) {
     fail("INVALID_INPUT", "authority.chain is unsupported");
@@ -412,6 +447,13 @@ function snapshotAuthority(value: unknown): OwnedAuthority {
   );
   if (allZero(genesisHash)) {
     fail("INVALID_INPUT", "authority.genesisHash must not be all zero");
+  }
+  if (
+    typeof wardenProgramDataSlotValue !== "bigint" ||
+    wardenProgramDataSlotValue < 0n ||
+    wardenProgramDataSlotValue > U64_MAX
+  ) {
+    fail("INVALID_INPUT", "authority.wardenProgramDataSlot must be a u64 bigint");
   }
   if (
     typeof accountGenerationValue !== "bigint" ||
@@ -426,6 +468,13 @@ function snapshotAuthority(value: unknown): OwnedAuthority {
   );
   if (contextSlot < 0) {
     fail("INVALID_INPUT", "authority.contextSlot must not be negative");
+  }
+  const observedUnixTimestamp = requireSafeInteger(
+    observedUnixTimestampValue,
+    "authority.observedUnixTimestamp",
+  );
+  if (observedUnixTimestamp < 0) {
+    fail("INVALID_INPUT", "authority.observedUnixTimestamp must not be negative");
   }
   if (!(authorizationStateValue instanceof Uint8Array)) {
     fail("INVALID_INPUT", "authority.authorizationState must be a Uint8Array");
@@ -446,6 +495,37 @@ function snapshotAuthority(value: unknown): OwnedAuthority {
       "authority.wardenProgram is not the shipped Warden program",
     );
   }
+  const wardenProgramData = requirePublicKey(
+    wardenProgramDataValue,
+    "authority.wardenProgramData",
+  );
+  const [canonicalProgramData] = PublicKey.findProgramAddressSync(
+    [wardenProgram.toBytes()],
+    BPF_UPGRADEABLE_LOADER,
+  );
+  if (!wardenProgramData.equals(canonicalProgramData)) {
+    fail(
+      "AUTHORITY_MISMATCH",
+      "authority.wardenProgramData is not the canonical loader PDA",
+    );
+  }
+  const wardenUpgradeAuthority = requirePublicKey(
+    wardenUpgradeAuthorityValue,
+    "authority.wardenUpgradeAuthority",
+  );
+  const wardenCodeHash = requireBytes(
+    wardenCodeHashValue,
+    PUBLIC_KEY_BYTES,
+    "authority.wardenCodeHash",
+  );
+  const wardenProgramDataHash = requireBytes(
+    wardenProgramDataHashValue,
+    PUBLIC_KEY_BYTES,
+    "authority.wardenProgramDataHash",
+  );
+  if (allZero(wardenCodeHash) || allZero(wardenProgramDataHash)) {
+    fail("AUTHORITY_MISMATCH", "authority program identity hashes are zero");
+  }
   return {
     chain: chainValue as OwnedAuthority["chain"],
     genesisHash,
@@ -463,9 +543,15 @@ function snapshotAuthority(value: unknown): OwnedAuthority {
     ),
     registry: requirePublicKey(registryValue, "authority.registry"),
     wardenProgram,
+    wardenProgramData,
+    wardenProgramDataSlot: wardenProgramDataSlotValue,
+    wardenUpgradeAuthority,
+    wardenCodeHash,
+    wardenProgramDataHash,
     accountGeneration: accountGenerationValue,
     policyVersion: requireU32(policyVersionValue, "authority.policyVersion"),
     authorizationState: authorizationStateValue.slice(),
+    observedUnixTimestamp,
     contextSlot,
   };
 }
@@ -913,6 +999,47 @@ function assertRegistryAllowsMemo(
   }
 }
 
+function validateAuthorityContext(
+  authorityValue: unknown,
+  nowUnixSeconds: number,
+): ValidatedAuthorityContext {
+  const authority = snapshotAuthority(authorityValue);
+  const state = parseAuthorizationState(authority.authorizationState);
+  validateSmartAccount(state.smartAccount, authority);
+  const session = validateSessionAccount(
+    state.session,
+    authority,
+    nowUnixSeconds,
+  );
+  const registry = validateRegistryAccount(
+    state.registry,
+    authority,
+    session.allowlistId,
+  );
+  return { authority, session, registry };
+}
+
+/**
+ * Validate one resolver observation without needing a transaction message.
+ * The resolver uses this before returning a snapshot; the message decoder then
+ * repeats the same checks at every approval/signing boundary.
+ */
+export function assertUsableSessionAuthority(
+  input: SessionAuthorityValidationInput,
+): void {
+  if (!isObject(input)) {
+    fail("INVALID_INPUT", "authority validation input must be an object");
+  }
+  const nowUnixSeconds = requireSafeInteger(
+    input.nowUnixSeconds,
+    "nowUnixSeconds",
+  );
+  if (nowUnixSeconds < 0) {
+    fail("INVALID_INPUT", "nowUnixSeconds must not be negative");
+  }
+  validateAuthorityContext(input.authority, nowUnixSeconds);
+}
+
 /** Decode and authorize one exact final message without RPC or asynchronous work. */
 export function decodeSessionIntent(
   input: SessionIntentDecodeInput,
@@ -943,18 +1070,9 @@ export function decodeSessionIntent(
   if (nowUnixSeconds < 0) {
     fail("INVALID_INPUT", "nowUnixSeconds must not be negative");
   }
-  const authority = snapshotAuthority(authorityValue);
-  const state = parseAuthorizationState(authority.authorizationState);
-  validateSmartAccount(state.smartAccount, authority);
-  const session = validateSessionAccount(
-    state.session,
-    authority,
+  const { authority, session, registry } = validateAuthorityContext(
+    authorityValue,
     nowUnixSeconds,
-  );
-  const registry = validateRegistryAccount(
-    state.registry,
-    authority,
-    session.allowlistId,
   );
 
   // The strict parser accepts serialized transaction envelopes. Reconstruct
@@ -1044,6 +1162,11 @@ export function decodeSessionIntent(
     sessionAccount: authority.sessionAccount.toBase58(),
     registry: authority.registry.toBase58(),
     wardenProgram: authority.wardenProgram.toBase58(),
+    wardenProgramData: authority.wardenProgramData.toBase58(),
+    wardenProgramDataSlot: authority.wardenProgramDataSlot.toString(10),
+    wardenUpgradeAuthority: authority.wardenUpgradeAuthority.toBase58(),
+    wardenCodeHash: bytesToHex(authority.wardenCodeHash),
+    wardenProgramDataHash: bytesToHex(authority.wardenProgramDataHash),
     programId: MEMO_PROGRAM.toBase58(),
     recentBlockhash: new PublicKey(envelope.recentBlockhash).toBase58(),
     memo,
@@ -1055,41 +1178,36 @@ export function decodeSessionIntent(
     policyVersion: authority.policyVersion,
     sessionExpiryUnixSeconds: session.expiryUnixSeconds,
     programAllowlistId: session.allowlistId,
+    observedUnixTimestamp: authority.observedUnixTimestamp,
     contextSlot: authority.contextSlot,
   });
 }
 
 /** Synchronous adapter for SessionApprovalCoordinator's no-await intent hook. */
 export class DeterministicSessionIntentGate implements SessionApprovalIntentGate {
-  readonly #readUnixSeconds: () => number;
-
-  constructor(options: DeterministicSessionIntentGateOptions = {}) {
-    if (!isObject(options)) {
-      fail("INVALID_INPUT", "gate options must be an object");
-    }
-    const readUnixSeconds = (
-      options as DeterministicSessionIntentGateOptions
-    ).readUnixSeconds;
-    if (
-      readUnixSeconds !== undefined &&
-      typeof readUnixSeconds !== "function"
-    ) {
-      fail("INVALID_INPUT", "readUnixSeconds must be a function");
-    }
-    this.#readUnixSeconds =
-      readUnixSeconds === undefined
-        ? () => Math.floor(Date.now() / 1_000)
-        : readUnixSeconds;
-  }
-
   assertAllowed(input: {
     readonly messageBytes: Uint8Array;
     readonly authority: SessionAuthoritySnapshot;
   }): void {
+    if (!isObject(input)) {
+      fail("INVALID_INPUT", "intent gate input must be an object");
+    }
+    const messageBytes = input.messageBytes;
+    const authority = snapshotAuthority(input.authority);
+    const observedUnixTimestamp = authority.observedUnixTimestamp;
+    if (
+      !Number.isSafeInteger(observedUnixTimestamp) ||
+      observedUnixTimestamp < 0 ||
+      observedUnixTimestamp >
+        Number.MAX_SAFE_INTEGER - SESSION_INTENT_EXPIRY_SAFETY_SECONDS
+    ) {
+      fail("INVALID_INPUT", "authority observedUnixTimestamp is not usable");
+    }
     decodeSessionIntent({
-      messageBytes: input.messageBytes,
-      authority: input.authority,
-      nowUnixSeconds: this.#readUnixSeconds(),
+      messageBytes,
+      authority,
+      nowUnixSeconds:
+        observedUnixTimestamp + SESSION_INTENT_EXPIRY_SAFETY_SECONDS,
     });
   }
 }

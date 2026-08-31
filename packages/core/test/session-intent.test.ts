@@ -10,6 +10,7 @@ import {
 } from "@solana/web3.js";
 import { describe, expect, it } from "vitest";
 
+import { BPF_UPGRADEABLE_LOADER } from "../src/deploy/config.js";
 import type { SessionAuthoritySnapshot } from "../src/transaction/session-approval-coordinator.js";
 import { prepareSessionTransaction } from "../src/transaction/session-transaction.js";
 import {
@@ -65,6 +66,11 @@ const BLOCKHASH = fill(0x88);
 const ACCOUNT_GENERATION = 7n;
 const POLICY_VERSION = 1;
 const SESSION_EXPIRY = 2_000_000_000;
+const OBSERVED_TIME = 1_900_000_000;
+const WARDEN_PROGRAM_DATA_SLOT = 123n;
+const WARDEN_UPGRADE_AUTHORITY = new PublicKey(fill(0xaa));
+const WARDEN_CODE_HASH = fill(0xab);
+const WARDEN_PROGRAM_DATA_HASH = fill(0xac);
 const MEMO_TEXT = "warden release candidate";
 const MEMO_BYTES = new TextEncoder().encode(MEMO_TEXT);
 const SMART_DATA_LEN = 4_120;
@@ -98,6 +104,10 @@ const [SESSION_ACCOUNT, SESSION_BUMP] = PublicKey.findProgramAddressSync(
 const [REGISTRY, REGISTRY_BUMP] = PublicKey.findProgramAddressSync(
   [new TextEncoder().encode("registry")],
   WARDEN_PROGRAM,
+);
+const [WARDEN_PROGRAM_DATA] = PublicKey.findProgramAddressSync(
+  [WARDEN_PROGRAM.toBytes()],
+  BPF_UPGRADEABLE_LOADER,
 );
 
 function findAlternateProgramAddress(
@@ -297,9 +307,15 @@ function fixture(options: FixtureOptions = {}): {
       sessionAccount: SESSION_ACCOUNT,
       registry: REGISTRY,
       wardenProgram: WARDEN_PROGRAM,
+      wardenProgramData: WARDEN_PROGRAM_DATA,
+      wardenProgramDataSlot: WARDEN_PROGRAM_DATA_SLOT,
+      wardenUpgradeAuthority: WARDEN_UPGRADE_AUTHORITY,
+      wardenCodeHash: WARDEN_CODE_HASH.slice(),
+      wardenProgramDataHash: WARDEN_PROGRAM_DATA_HASH.slice(),
       accountGeneration: ACCOUNT_GENERATION,
       policyVersion: POLICY_VERSION,
       authorizationState,
+      observedUnixTimestamp: OBSERVED_TIME,
       contextSlot: 42,
     },
     smart,
@@ -440,6 +456,11 @@ describe("deterministic session intent", () => {
       sessionAccount: SESSION_ACCOUNT.toBase58(),
       registry: REGISTRY.toBase58(),
       wardenProgram: WARDEN_PROGRAM.toBase58(),
+      wardenProgramData: WARDEN_PROGRAM_DATA.toBase58(),
+      wardenProgramDataSlot: WARDEN_PROGRAM_DATA_SLOT.toString(10),
+      wardenUpgradeAuthority: WARDEN_UPGRADE_AUTHORITY.toBase58(),
+      wardenCodeHash: "ab".repeat(32),
+      wardenProgramDataHash: "ac".repeat(32),
       programId: MEMO_PROGRAM.toBase58(),
       recentBlockhash: new PublicKey(BLOCKHASH).toBase58(),
       memo: MEMO_TEXT,
@@ -451,6 +472,7 @@ describe("deterministic session intent", () => {
       policyVersion: POLICY_VERSION,
       sessionExpiryUnixSeconds: SESSION_EXPIRY,
       programAllowlistId: 1,
+      observedUnixTimestamp: OBSERVED_TIME,
       contextSlot: 42,
     });
     expect(Object.isFrozen(intent)).toBe(true);
@@ -510,16 +532,41 @@ describe("deterministic session intent", () => {
     expect(reads).toBe(1);
   });
 
-  it("provides a synchronous coordinator gate with an injected clock", () => {
-    let clockReads = 0;
-    const gate = new DeterministicSessionIntentGate({
-      readUnixSeconds() {
-        clockReads++;
-        return 1_900_000_000;
+  it("uses the resolver-observed Clock plus a signing-latency safety margin", () => {
+    const gate = new DeterministicSessionIntentGate();
+    expect(gate.assertAllowed(fixture())).toBeUndefined();
+    const expiring = fixture({
+      session(bytes) {
+        writeU64le(bytes, 75, BigInt(OBSERVED_TIME + 30));
       },
     });
-    expect(gate.assertAllowed(fixture())).toBeUndefined();
-    expect(clockReads).toBe(1);
+    captureError(() => gate.assertAllowed(expiring), "AUTHORITY_NOT_USABLE");
+  });
+
+  it("snapshots the gate authority and observed Clock getters once", () => {
+    const input = fixture();
+    let authorityReads = 0;
+    let clockReads = 0;
+    const authority = {
+      ...input.authority,
+      get observedUnixTimestamp() {
+        clockReads++;
+        return clockReads === 1 ? OBSERVED_TIME : -1;
+      },
+    };
+    const gateInput = {
+      messageBytes: input.messageBytes,
+      get authority() {
+        authorityReads++;
+        return authorityReads === 1 ? authority : null;
+      },
+    } as unknown as Parameters<DeterministicSessionIntentGate["assertAllowed"]>[0];
+
+    expect(new DeterministicSessionIntentGate().assertAllowed(gateInput)).toBeUndefined();
+    expect({ authorityReads, clockReads }).toEqual({
+      authorityReads: 1,
+      clockReads: 1,
+    });
   });
 
   it.each([
