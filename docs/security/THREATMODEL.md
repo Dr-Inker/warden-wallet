@@ -2104,3 +2104,73 @@ and the complete Rust workspace. The known Anchor test-program key mismatch
 notice and legacy macro `cfg` notices were warnings, not skipped failures. This
 verdict belongs only to `a292000…`; the evidence-only follow-up does not inherit
 it or promote an invariant.
+
+---
+
+## Client C16 main-world terminal idempotence — d376a88 — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Closed replay/alias gap:** a new page request owner accepts only one closed
+`solana:signTransaction` input, copies it through the existing parser, mints its
+own 128-bit Web Crypto correlation, and installs the pending Promise before
+posting the exact direction-tagged envelope. The page never chooses the
+correlation. Issued ids remain tombstones for the bounded document lifetime, so
+success, unavailable error, timeout, send failure, and disposal cannot release
+an id for a later request. Eight collision attempts fail closed.
+
+One module instance claims one page object and never releases that claim after
+disposal. This closes the draft's disjoint-registry hole where two owners on the
+same document could each issue and accept one coincidentally equal correlation.
+Construction failure removes/inerts any partially registered listener and rolls
+back the claim; a completed owner cannot be replaced within that module
+instance.
+
+Only an exact same-window/same-origin response wrapper containing either the
+strict C14 signed-transaction response or fixed-unavailable response is
+recognized. These event fields route traffic but grant no authority. The owner
+removes the exact pending entry and timer before its first resolve/reject, copies
+the signed bytes, and ignores every late duplicate, conflicting terminal,
+unknown id, wrong context, outer-envelope accessor, sparse byte array, or
+malformed/open envelope. Limits are 32 pending, 1,024 issued per document, a
+two-minute default TTL, and a ten-minute maximum. Timers are backed by absolute-time checks and
+reschedule if early.
+
+Chrome's official messaging/runtime contracts and the Window messaging contract
+provide enqueue APIs, not a page-consumption receipt. C14 therefore remains
+correct not to persist a delivered bit. C16 narrows the eventual page behavior
+to at-most-one Promise settlement per retained owner-issued id. Web Crypto's
+official `getRandomValues` contract supplies the random bytes, and the Wallet
+Standard reference implementation confirms that sign-transaction results carry
+signed bytes. Exact source links are recorded in `docs/NEXT-SESSION.md`.
+
+The focused RED was a missing-module collection failure. The final focused lane
+passes **14/14**, including reverse-order concurrency, first-terminal wins,
+collision/non-reuse, transport failure, absolute timeout, hostile schemas,
+bounded counts, listener rollback, disposal, and single-document ownership.
+Exact implementation-SHA evidence at
+`d376a885937066b3f54a661fa6ae09fc3b920d5d` passed extension **380/380**,
+typecheck, build, real Chromium **6/6**, emitted-artifact exclusion,
+`git diff --check`, and clean-tree proof with the combined command in
+`docs/NEXT-SESSION.md`. Production content/background still contain only the
+unavailable protocol; C12–C16 markers are absent.
+
+Independent second-model review is **UNVERIFIED**. `codex review --commit
+d376a885937066b3f54a661fa6ae09fc3b920d5d` exited before review because the
+in-process app-server client could not initialize on this host's read-only state
+path.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the invariants JSONL is
+intentionally unchanged.
+
+**Residual, stated honestly:** the owner is not in any emitted bundle. Its
+single-owner WeakSet is scoped to one evaluated module and is not proof against
+a separately reinjected bundle; actual MAIN-world injection must prove one
+evaluation per document in Chromium. Same-page JavaScript is the hostile caller
+principal and can forge/suppress terminal traffic or interfere with main-world
+platform methods. C16 has no Port-disconnect signal, retry, receipt ACK, or
+durable page state, and it does not bind page-visible success cryptographically
+beyond the correlation; the trusted background owns exact operation binding.
+There is no Wallet Standard registration/batching, real-browser successful
+provider path, non-empty release/trusted RPC, approve/sign action, consequence
+review, send/confirmation, onboarding, or root ceremony. This is an internal
+replay primitive, not a deployable wallet feature.

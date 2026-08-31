@@ -1,5 +1,131 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C16 MAIN-WORLD TERMINAL IDEMPOTENCE — INTERNAL ONLY, PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `d376a885937066b3f54a661fa6ae09fc3b920d5d` adds a still-unreachable
+> `solana:signTransaction` page request/promise owner. Primary-source review
+> confirmed that Chrome `Port.postMessage()` is a void enqueue operation and
+> `window.postMessage()` returns no recipient acknowledgment. C14 therefore
+> cannot honestly persist a delivered bit, and a content-script filter alone
+> cannot own Promise settlement. C16 makes the future main-world request owner
+> the narrow terminal-idempotence boundary instead.
+>
+> One owner claims one page object for its full document lifetime, including
+> after disposal. It validates and copies an exact sign-transaction input through
+> the existing closed provider parser, mints a `page_` correlation from 128 bits
+> of Web Crypto randomness, records that id before posting, and never accepts a
+> page-supplied correlation. Every issued id remains a bounded tombstone even
+> after success, unavailable error, timeout, transport failure, or disposal.
+> A random collision is retried at most eight times and can never attach a
+> different request to a retained id.
+>
+> The pending entry is installed before `window.postMessage()`. The response
+> listener requires the captured same-window/same-origin event shape and one
+> exact direction-tagged outer envelope, then accepts only C14's strict signed-
+> transaction response or the existing fixed-unavailable response. It removes
+> the exact entry and timer before the first resolve/reject. Later identical or
+> conflicting deliveries, unknown correlations, wrong contexts, sparse byte
+> arrays, outer-envelope accessors, and open/malformed envelopes are ignored.
+> Signed bytes are copied into a new `Uint8Array` before resolving. These event
+> checks are routing filters, not page authentication: every same-page script remains the same
+> hostile caller principal.
+>
+> The in-memory registry is capped at 32 pending and 1,024 issued requests per
+> document. Requests have a two-minute default and ten-minute maximum lifetime;
+> timers are hints backed by absolute clock checks, reschedule if fired early,
+> and cannot make a delayed response win at or after expiry. Configuration may
+> lower but never raise the caps. Listener setup has rollback, disposal rejects
+> all exact pending Promises, and disposed owners inspect no later hostile input.
+>
+> Meaningful RED and adversarial evidence:
+>
+> - `pnpm --filter @warden/extension exec vitest run
+>   test/provider-page-request.test.ts` first exited **1** before collection
+>   because `src/page/provider-request-owner.js` did not exist.
+> - Harsh review found a load-bearing hole after the first **12/12** green:
+>   two owners on the same document had disjoint issued-id tombstones. C16 now
+>   claims the page once, rolls that claim back only when construction fails,
+>   and refuses reinstallation even after disposal.
+> - The review also moved the disposed check before input inspection and made a
+>   partially installed listener inert/removed when registration throws.
+> - The final focused lane is **14/14**. It covers pre-send registration and
+>   input/result copying, out-of-order parallel responses, first-terminal wins,
+>   success/error replay, random collision and exhaustion, post failure,
+>   absolute timeout/early timer behavior, wrong-context and malformed traffic,
+>   bounded pending/issued counts, hostile input, construction rollback,
+>   disposal, and one owner per document.
+>
+> Official contracts reviewed:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>,
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts>,
+> <https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage>,
+> <https://www.w3.org/TR/WebCryptoAPI/#Crypto-method-getRandomValues>, and the
+> Wallet Standard reference Solana implementation at
+> <https://github.com/wallet-standard/wallet-standard/blob/master/packages/example/wallets/src/solanaWallet.ts>.
+> Chrome documents MAIN-world interference and Port send/disconnect behavior;
+> the web-platform contracts make `postMessage` asynchronous with no receipt;
+> Web Crypto supplies synchronous strong random bytes even where `subtle` is
+> unavailable; Wallet Standard returns signed transaction bytes. The conclusion
+> that no send call proves Promise consumption is an explicit architectural
+> inference, not a delivery guarantee claimed by those APIs.
+>
+> `codex review --commit d376a885937066b3f54a661fa6ae09fc3b920d5d`
+> exited **1** before review because the in-process app-server client could not
+> initialize on this host's read-only state path. Independent second-model
+> review therefore remains **UNVERIFIED**.
+>
+> Exact implementation-SHA evidence at
+> `d376a885937066b3f54a661fa6ae09fc3b920d5d`, with a clean tree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test:browser &&
+> node -e "const fs=require('node:fs');const path=require('node:path');const root='apps/extension/dist';const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=walk(root);const all=files.map(f=>fs.readFileSync(f,'utf8')).join('\n');const background=fs.readFileSync(path.join(root,'background.js'),'utf8');const content=fs.readFileSync(path.join(root,'content.js'),'utf8');const required=['WARDEN_METHOD_UNAVAILABLE'];const forbidden=['provider page request:','page_validation_0000000000000000','provider approval operation:','provider operation:','warden-provider-operations-v1','provider terminal result:','provider terminal protocol:','provider approval request:','provider approval selection:','session approval coordinator:'];const missing=required.filter(s=>!background.includes(s)||!content.includes(s));const hit=forbidden.filter(s=>all.includes(s));if(missing.length||hit.length){console.error({missing,hit});process.exit(1)}console.log('extension dist remains fixed-unavailable; C12-C16 provider/signing/page owners are absent')" &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> exited **0** and printed the same SHA before and after: extension **380/380**,
+> typecheck, build, real Chromium **6/6**, emitted-artifact exclusion,
+> `git diff --check`, and clean-tree proof passed. The build now explicitly
+> forbids C16 from the background and the existing exact entry-point allowlists
+> exclude it from content, popup, and approval bundles. Both emitted bridge
+> bundles retain `WARDEN_METHOD_UNAVAILABLE`; C12–C16 markers are absent.
+> Ledger-inclusive full-gate evidence is not claimed until the ledger SHA runs
+> the repository gate.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
+> invariants JSONL is intentionally unchanged.
+>
+> **Harsh residual:** C16 is not injected, registered, or browser-tested as a
+> main-world provider. Its one-owner guard is module-instance memory; the future
+> manifest/injection lane must prove exactly one evaluation per real document
+> and must not imply that a WeakSet survives a separately reinjected bundle.
+> Same-page code can forge a syntactically valid terminal response, steal or
+> suppress traffic, replace main-world platform methods, or deny service; Warden
+> treats that whole page as the caller, not an authenticated sub-principal. The
+> registry does not receive Port-disconnect notices, resend pending requests, or
+> acknowledge delivery back to C14. It provides document-lifetime terminal
+> deduplication, not transport recovery or durable page state. It handles only
+> one sign-transaction call, not Wallet Standard batching, connect/events,
+> sign-and-send, or registration. C16 unit tests compose the pure request and
+> terminal schemas; no real-browser C12–C16 signature flow exists. Production
+> remains fixed-unavailable, and release/RPC authority, approve/claim/sign,
+> consequence review, send/confirmation, onboarding, and root ceremony remain
+> absent. C16 is not deployable wallet behavior.
+>
+> **Next load-bearing work:** build the trusted non-empty release/RPC selection
+> and the actual approval-page claim/sign action as a closed composition, while
+> keeping provider success unreachable. Only after that should a separately
+> gated MAIN-world Wallet Standard adapter integrate C16 and exercise real
+> disconnect/replay behavior end to end.
+
 > ## 2026-08-31 C15 BIND-BEFORE-OPEN COMPOSITION — INTERNAL ONLY, PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit

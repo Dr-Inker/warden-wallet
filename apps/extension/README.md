@@ -209,6 +209,24 @@ remains an internal bypass that must not be production-wired. The build forbids
 all C12–C15 owners and the success response schema from the worker; the emitted
 provider remains fixed unavailable.
 
+C16 adds a still-unshipped main-world `solana:signTransaction` request owner.
+It validates and copies one closed request, mints a 128-bit correlation before
+posting, installs the pending Promise first, retains every issued id as a
+bounded document-lifetime tombstone, and removes the exact entry before the
+first success/error settlement. One module instance permits only one owner per
+page even after disposal; absolute TTL checks, 32 pending / 1,024 issued limits,
+and collision failure bound the registry. Duplicate or conflicting terminal
+responses cannot attach to a later owner-created request.
+
+This is page-Promise idempotence, not page authentication or transport
+recovery. Same-page scripts can observe, forge, suppress, or disrupt main-world
+traffic and are the caller trust principal. C16 receives no Port-disconnect
+notification, sends no receipt acknowledgment, and performs no retry. It is not
+injected, registered, or included in any production bundle; the future
+MAIN-world lane must prove single evaluation in real Chromium before relying on
+its module-scoped one-owner guard. The emitted provider remains fixed
+unavailable.
+
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during
 ordinary browsing: an exact, same-document request envelope opens one lazily,
