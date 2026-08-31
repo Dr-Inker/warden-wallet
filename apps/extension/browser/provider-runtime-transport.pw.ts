@@ -1,4 +1,4 @@
-import { expect, chromium, test, type BrowserContext } from "@playwright/test";
+import { expect, chromium, test, type BrowserContext, type Page } from "@playwright/test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { build } from "esbuild";
 const scriptDirectory = resolve(import.meta.dirname, "../scripts");
 const CORRELATION_ID = "browser_restart_0123456789";
 const OVERLAP_CORRELATION_ID = "browser_overlap_0123456789";
+const DEADLINE_CORRELATION_ID = "browser_deadline_01234567";
 const ACCOUNT = "29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2";
 
 interface TestServer {
@@ -23,6 +24,9 @@ interface WorkerStatus {
   readonly identityDigestCalls: number;
   readonly identityDigestCompletions: number;
   readonly activeDocuments: number;
+  readonly ownedDeliveries: number;
+  readonly latestCorrelationId: string | null;
+  readonly latestExpiresAt: number | null;
 }
 
 function signRequest(correlationId: string): Record<string, unknown> {
@@ -40,16 +44,46 @@ function signRequest(correlationId: string): Record<string, unknown> {
   };
 }
 
+function deliveryRequest(
+  correlationId: string,
+  expiresAt = Date.now() + 2 * 60 * 1_000,
+): Record<string, unknown> {
+  return {
+    version: 1,
+    type: "warden:provider:transport-request",
+    expiresAt,
+    payload: signRequest(correlationId),
+  };
+}
+
 function pageMarkup(): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Warden runtime transport fixture</title></head>
 <body><script>
   globalThis.__wardenResponses = [];
+  globalThis.__wardenTerminals = [];
+  globalThis.__wardenReceipts = [];
   globalThis.__wardenPortEvents = [];
   addEventListener("message", (event) => {
     if (event.source !== window || event.origin !== location.origin) return;
     if (event.data?.type === "warden:provider:response") {
-      globalThis.__wardenResponses.push(event.data.payload);
+      const terminal = event.data.payload;
+      if (terminal?.version !== 1 || terminal?.type !== "warden:provider:transport-terminal") return;
+      globalThis.__wardenTerminals.push(terminal);
+      globalThis.__wardenResponses.push(terminal.payload);
+      const receipt = {
+        version: 1,
+        type: "warden:provider:transport-receipt",
+        correlationId: terminal.correlationId,
+        receiptId: terminal.receiptId,
+        expiresAt: terminal.expiresAt,
+      };
+      globalThis.__wardenReceipts.push(receipt);
+      postMessage({
+        version: 1,
+        type: "warden:provider:receipt",
+        payload: receipt,
+      }, location.origin);
     }
     if (typeof event.data?.type === "string" && event.data.type.startsWith("warden:test:port-")) {
       globalThis.__wardenPortEvents.push(event.data);
@@ -123,6 +157,35 @@ async function readStatus(context: BrowserContext, origin?: string): Promise<Wor
   });
 }
 
+async function readContentPending(page: Page): Promise<number> {
+  return page.evaluate(() => new Promise<number>((resolvePending, rejectPending) => {
+    const nonce = `probe_${Date.now()}_${Math.random()}`;
+    const timer = setTimeout(() => {
+      removeEventListener("message", listener);
+      rejectPending(new Error("content status probe timed out"));
+    }, 2_000);
+    const listener = (event: MessageEvent): void => {
+      if (
+        event.source !== window ||
+        event.origin !== location.origin ||
+        event.data?.type !== "warden:test:content-status-response" ||
+        event.data?.nonce !== nonce ||
+        !Number.isSafeInteger(event.data?.pendingCount)
+      ) {
+        return;
+      }
+      clearTimeout(timer);
+      removeEventListener("message", listener);
+      resolvePending(event.data.pendingCount as number);
+    };
+    addEventListener("message", listener);
+    postMessage({
+      type: "warden:test:content-status-request",
+      nonce,
+    }, location.origin);
+  }));
+}
+
 async function createExtension(contentEntry: string): Promise<string> {
   const temporaryParent = resolve(tmpdir());
   const extensionDirectory = await mkdtemp(
@@ -181,22 +244,24 @@ test("real Chromium replacement Port preserves one volatile delivery lease", asy
     });
     const page = await context.newPage();
     await page.goto(server.origin);
+    const carried = deliveryRequest(OVERLAP_CORRELATION_ID);
     await page.evaluate((request) => {
       (globalThis as unknown as { __openWardenPort(value: unknown): void })
         .__openWardenPort(request);
-    }, signRequest(OVERLAP_CORRELATION_ID));
+    }, carried);
     await expect.poll(() => readStatus(context!)).toMatchObject({
       startupInvalidated: 0,
       volatileCalls: 1,
       identityDigestCalls: 2,
       identityDigestCompletions: 2,
       activeDocuments: 1,
+      ownedDeliveries: 1,
     });
 
     await page.evaluate((request) => {
       (globalThis as unknown as { __openWardenPort(value: unknown): void })
         .__openWardenPort(request);
-    }, signRequest(OVERLAP_CORRELATION_ID));
+    }, carried);
     await expect.poll(async () => ({
       status: await readStatus(context!),
       events: await page.evaluate(() =>
@@ -207,6 +272,7 @@ test("real Chromium replacement Port preserves one volatile delivery lease", asy
         identityDigestCalls: 4,
         identityDigestCompletions: 4,
         activeDocuments: 1,
+        ownedDeliveries: 1,
       },
       events: expect.arrayContaining([
         expect.objectContaining({ type: "warden:test:port-disconnect", index: 0 }),
@@ -229,20 +295,30 @@ test("real Chromium replacement Port preserves one volatile delivery lease", asy
         index: 1,
         payload: expect.objectContaining({
           correlationId: OVERLAP_CORRELATION_ID,
-          ok: false,
-          error: {
-            code: "WARDEN_REQUEST_CANCELLED",
-            message: "Provider request was cancelled",
+          type: "warden:provider:transport-terminal",
+          payload: {
+            version: 1,
+            type: "response",
+            correlationId: OVERLAP_CORRELATION_ID,
+            ok: false,
+            error: {
+              code: "WARDEN_REQUEST_CANCELLED",
+              message: "Provider request was cancelled",
+            },
           },
         }),
       }),
     ]));
-    expect(await readStatus(context)).toMatchObject({
+    await expect.poll(() => readStatus(context!)).toMatchObject({
       volatileCalls: 1,
       identityDigestCalls: 4,
       identityDigestCompletions: 4,
       activeDocuments: 1,
+      ownedDeliveries: 0,
     });
+    expect(await page.evaluate(() =>
+      (globalThis as unknown as { __wardenReceipts: unknown[] }).__wardenReceipts,
+    )).toHaveLength(1);
   } finally {
     await context?.close();
     await server.close();
@@ -267,15 +343,17 @@ test("C20 resend reaches one C14/C19 terminal result after real MV3 worker death
     });
     const page = await context.newPage();
     await page.goto(server.origin);
+    const carried = deliveryRequest(CORRELATION_ID);
     await page.evaluate((request) => {
       (globalThis as unknown as { __sendWardenRequest(value: unknown): void })
         .__sendWardenRequest(request);
-    }, signRequest(CORRELATION_ID));
+    }, carried);
 
     await expect.poll(() => readStatus(context!)).toMatchObject({
       startupInvalidated: 0,
       preparationCalls: 1,
       activeDocuments: 1,
+      ownedDeliveries: 1,
     });
     const before = await readStatus(context);
     expect(await page.evaluate(() =>
@@ -311,12 +389,96 @@ test("C20 resend reaches one C14/C19 terminal result after real MV3 worker death
       startupInvalidated: 1,
       preparationCalls: 1,
       activeDocuments: 1,
+      ownedDeliveries: 0,
     });
     const after = await readStatus(context, extensionOrigin);
     expect(after.bootId).not.toBe(before.bootId);
     expect(await page.evaluate(() =>
       (globalThis as unknown as { __wardenResponses: unknown[] }).__wardenResponses,
     )).toHaveLength(1);
+  } finally {
+    await context?.close();
+    await server.close();
+    await rm(extensionDirectory, { recursive: true, force: true });
+  }
+});
+
+test("near-deadline MV3 worker death cannot extend the initiating deadline", async () => {
+  const extensionDirectory = await createExtension(
+    "provider-runtime-transport-browser-content.ts",
+  );
+  const server = await startServer();
+  let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext("", {
+      headless: false,
+      args: [
+        `--disable-extensions-except=${extensionDirectory}`,
+        `--load-extension=${extensionDirectory}`,
+        "--headless=new",
+      ],
+    });
+    const page = await context.newPage();
+    await page.goto(server.origin);
+    const expiresAt = Date.now() + 8_000;
+    const carried = deliveryRequest(DEADLINE_CORRELATION_ID, expiresAt);
+    await page.evaluate((request) => {
+      (globalThis as unknown as { __sendWardenRequest(value: unknown): void })
+        .__sendWardenRequest(request);
+    }, carried);
+
+    await expect.poll(() => readStatus(context!)).toMatchObject({
+      startupInvalidated: 0,
+      preparationCalls: 1,
+      ownedDeliveries: 1,
+      latestCorrelationId: DEADLINE_CORRELATION_ID,
+      latestExpiresAt: expiresAt,
+    });
+
+    const waitBeforeCloseMs = Math.max(0, expiresAt - Date.now() - 3_000);
+    if (waitBeforeCloseMs > 0) await page.waitForTimeout(waitBeforeCloseMs);
+    const remainingAtClose = expiresAt - Date.now();
+    expect(remainingAtClose).toBeGreaterThan(0);
+    expect(remainingAtClose).toBeLessThanOrEqual(3_250);
+
+    const worker = await liveExtensionWorker(context);
+    const extensionOrigin = `chrome-extension://${new URL(worker.url()).hostname}`;
+    const cdp = await context.newCDPSession(page);
+    const targets = await cdp.send("Target.getTargets");
+    const target = targets.targetInfos.find((candidate) =>
+      candidate.type === "service_worker" && candidate.url.startsWith(extensionOrigin));
+    expect(target, "runtime transport worker exists before near-deadline stop")
+      .toBeDefined();
+    const closed = await cdp.send("Target.closeTarget", { targetId: target!.targetId });
+    expect(closed.success).toBe(true);
+
+    await page.waitForTimeout(1_000);
+    expect(await readStatus(context, extensionOrigin)).toMatchObject({
+      startupInvalidated: 1,
+      preparationCalls: 1,
+      ownedDeliveries: 1,
+      latestCorrelationId: DEADLINE_CORRELATION_ID,
+      latestExpiresAt: expiresAt,
+    });
+
+    const waitAfterExpiryMs = Math.max(0, expiresAt - Date.now() + 150);
+    if (waitAfterExpiryMs > 0) await page.waitForTimeout(waitAfterExpiryMs);
+    await expect.poll(() => readStatus(context!, extensionOrigin)).toMatchObject({
+      startupInvalidated: 1,
+      preparationCalls: 1,
+      ownedDeliveries: 0,
+      latestCorrelationId: DEADLINE_CORRELATION_ID,
+      latestExpiresAt: expiresAt,
+    });
+    expect(await readContentPending(page)).toBe(0);
+    expect(await page.evaluate(() => ({
+      responses: (globalThis as unknown as { __wardenResponses: unknown[] })
+        .__wardenResponses,
+      terminals: (globalThis as unknown as { __wardenTerminals: unknown[] })
+        .__wardenTerminals,
+      receipts: (globalThis as unknown as { __wardenReceipts: unknown[] })
+        .__wardenReceipts,
+    }))).toEqual({ responses: [], terminals: [], receipts: [] });
   } finally {
     await context?.close();
     await server.close();

@@ -35,10 +35,23 @@ import {
   PROVIDER_PORT_NAME,
   createUnavailableProviderResponse,
 } from "../src/provider-protocol.js";
+import {
+  createProviderTransportCancelEnvelope,
+  createPageProviderReceiptEnvelope,
+  createProviderTransportReceiptEnvelope,
+  createProviderTransportRequestEnvelope,
+  createProviderTransportSettledEnvelope,
+  createProviderTransportTerminalEnvelope,
+  readProviderTransportReceiptEnvelope,
+  readProviderTransportCancelEnvelope,
+  readProviderTransportTerminalEnvelope,
+} from "../src/provider-delivery-protocol.js";
 
 const ORIGIN = "https://dapp.example";
 const ACCOUNT = "29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2";
 const CORRELATION_ID = "content_request_0123456789";
+const RECEIPT_ID = `delivery_${"cd".repeat(32)}`;
+const DEFAULT_EXPIRES_AT = Date.now() + DEFAULT_PROVIDER_CONTENT_REQUEST_TTL_MS;
 
 class MessageEventOwner implements ContentPortMessageEvent {
   readonly listeners = new Set<(message: unknown) => void>();
@@ -79,11 +92,20 @@ class MockPort implements ContentRuntimePort {
   disconnectCalls = 0;
   throwOnPost = false;
   postHook: ((message: unknown) => void) | null = null;
+  autoSettleReceipts = true;
 
   postMessage(message: unknown): void {
     if (this.throwOnPost) throw new Error("Port is disconnected");
     this.posted.push(message);
     this.postHook?.(message);
+    const receipt = readProviderTransportReceiptEnvelope(message);
+    if (this.autoSettleReceipts && receipt !== null) {
+      this.onMessage.emit(createProviderTransportSettledEnvelope(
+        receipt.correlationId,
+        receipt.receiptId,
+        receipt.expiresAt,
+      ));
+    }
   }
 
   disconnect(): void {
@@ -96,6 +118,7 @@ class MockRuntime implements ContentRuntimeApi {
   readonly connectCalls: unknown[] = [];
   failConnectCount = 0;
   throwOnEveryPost = false;
+  autoSettleReceipts = true;
   connectHook: ((port: MockPort) => void) | null = null;
 
   get port(): MockPort {
@@ -112,6 +135,7 @@ class MockRuntime implements ContentRuntimeApi {
     }
     const port = new MockPort();
     port.throwOnPost = this.throwOnEveryPost;
+    port.autoSettleReceipts = this.autoSettleReceipts;
     this.ports.push(port);
     this.connectHook?.(port);
     return port;
@@ -125,6 +149,7 @@ class MockWindow implements ContentWindowApi, ProviderPageWindowApi {
   dispatchPosts = false;
   throwOnPost = false;
   postHook: ((message: unknown) => void) | null = null;
+  autoReceipt = true;
 
   addEventListener(type: "message", listener: ContentWindowMessageListener): void {
     expect(type).toBe("message");
@@ -140,6 +165,19 @@ class MockWindow implements ContentWindowApi, ProviderPageWindowApi {
     if (this.throwOnPost) throw new Error("document disappeared");
     this.posted.push({ message, targetOrigin });
     this.postHook?.(message);
+    const outer = message as { readonly type?: unknown; readonly payload?: unknown };
+    const terminal = outer.type === PAGE_PROVIDER_RESPONSE_TYPE
+      ? readProviderTransportTerminalEnvelope(outer.payload)
+      : null;
+    if (this.autoReceipt && terminal !== null) {
+      this.emit(createPageProviderReceiptEnvelope(
+        createProviderTransportReceiptEnvelope(
+          terminal.correlationId,
+          terminal.receiptId,
+          terminal.expiresAt,
+        ),
+      ));
+    }
     if (this.dispatchPosts) this.emit(message);
   }
 
@@ -186,12 +224,39 @@ function signRequest(
   };
 }
 
-function requestEnvelope(payload: unknown): Record<string, unknown> {
-  return { version: 1, type: PAGE_PROVIDER_REQUEST_TYPE, payload };
+function requestEnvelope(
+  payload: unknown,
+  expiresAt = DEFAULT_EXPIRES_AT,
+): Record<string, unknown> {
+  return {
+    version: 1,
+    type: PAGE_PROVIDER_REQUEST_TYPE,
+    payload: createProviderTransportRequestEnvelope(expiresAt, payload),
+  };
 }
 
 function responseEnvelope(payload: unknown): Record<string, unknown> {
-  return { version: 1, type: PAGE_PROVIDER_RESPONSE_TYPE, payload };
+  const response = payload as { readonly correlationId: string };
+  return {
+    version: 1,
+    type: PAGE_PROVIDER_RESPONSE_TYPE,
+    payload: createProviderTransportTerminalEnvelope(
+      response.correlationId,
+      RECEIPT_ID,
+      DEFAULT_EXPIRES_AT,
+      payload,
+    ),
+  };
+}
+
+function terminalEnvelope(payload: unknown, expiresAt = DEFAULT_EXPIRES_AT) {
+  const response = payload as { readonly correlationId: string };
+  return createProviderTransportTerminalEnvelope(
+    response.correlationId,
+    RECEIPT_ID,
+    expiresAt,
+    payload,
+  );
 }
 
 class FixedRandom implements ProviderPageRandomSource {
@@ -251,7 +316,9 @@ describe("C20 bounded content provider transport", () => {
     request.params.accountAddress = "attacker";
 
     expect(runtime.connectCalls).toEqual([{ name: PROVIDER_PORT_NAME }]);
-    expect(runtime.port.posted).toEqual([signRequest()]);
+    expect(runtime.port.posted).toEqual([
+      createProviderTransportRequestEnvelope(DEFAULT_EXPIRES_AT, signRequest()),
+    ]);
     expect(runtime.port.posted[0]).not.toBe(request);
     expect(owner.pendingCount).toBe(1);
     expect(owner.issuedCount).toBe(1);
@@ -305,7 +372,9 @@ describe("C20 bounded content provider transport", () => {
     page.emit(requestEnvelope(signRequest()));
     const port = runtime.port;
     port.onMessage.emit(
-      createProviderTerminalFailureResponse(CORRELATION_ID, "WARDEN_USER_REJECTED"),
+      terminalEnvelope(
+        createProviderTerminalFailureResponse(CORRELATION_ID, "WARDEN_USER_REJECTED"),
+      ),
     );
     expect(owner.pendingCount).toBe(0);
 
@@ -321,7 +390,9 @@ describe("C20 bounded content provider transport", () => {
     const owner = new ProviderContentTransportOwner(page, runtime);
     page.emit(requestEnvelope(signRequest()));
 
-    runtime.port.onMessage.emit(createUnavailableProviderResponse(CORRELATION_ID));
+    runtime.port.onMessage.emit(terminalEnvelope(
+      createUnavailableProviderResponse(CORRELATION_ID),
+    ));
 
     expect(owner.pendingCount).toBe(0);
     expect(page.posted).toEqual([
@@ -332,7 +403,7 @@ describe("C20 bounded content provider transport", () => {
     ]);
   });
 
-  it("ignores a stale Port and removes pending state before page delivery", () => {
+  it("ignores a stale Port and retains pending state until page receipt", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
     const owner = new ProviderContentTransportOwner(page, runtime);
@@ -343,20 +414,21 @@ describe("C20 bounded content provider transport", () => {
     let observedPending = -1;
     page.postHook = () => {
       observedPending = owner.pendingCount;
-      secondPort.onMessage.emit(
-        createProviderTerminalFailureResponse(CORRELATION_ID, "WARDEN_REQUEST_FAILED"),
-      );
     };
 
     firstPort.onMessage.emit(
-      createSignedTransactionProviderResponse(CORRELATION_ID, Uint8Array.of(7)),
+      terminalEnvelope(
+        createSignedTransactionProviderResponse(CORRELATION_ID, Uint8Array.of(7)),
+      ),
     );
     expect(page.posted).toEqual([]);
     secondPort.onMessage.emit(
-      createProviderTerminalFailureResponse(CORRELATION_ID, "WARDEN_REQUEST_CANCELLED"),
+      terminalEnvelope(
+        createProviderTerminalFailureResponse(CORRELATION_ID, "WARDEN_REQUEST_CANCELLED"),
+      ),
     );
 
-    expect(observedPending).toBe(0);
+    expect(observedPending).toBe(1);
     expect(owner.pendingCount).toBe(0);
     expect(page.posted).toEqual([
       {
@@ -371,6 +443,52 @@ describe("C20 bounded content provider transport", () => {
     ]);
   });
 
+  it("recovers a lost receipt and retains state until the exact settled ack", () => {
+    const runtime = new MockRuntime();
+    runtime.autoSettleReceipts = false;
+    const page = new MockWindow();
+    page.autoReceipt = false;
+    const owner = new ProviderContentTransportOwner(page, runtime);
+    page.emit(requestEnvelope(signRequest()));
+    const firstPort = runtime.port;
+    const retainedRequest = firstPort.posted[0];
+    const terminal = terminalEnvelope(
+      createProviderTerminalFailureResponse(
+        CORRELATION_ID,
+        "WARDEN_REQUEST_CANCELLED",
+      ),
+    );
+    const receipt = createProviderTransportReceiptEnvelope(
+      CORRELATION_ID,
+      RECEIPT_ID,
+      DEFAULT_EXPIRES_AT,
+    );
+
+    firstPort.onMessage.emit(terminal);
+    expect(owner.pendingCount).toBe(1);
+    expect(page.posted).toHaveLength(1);
+
+    page.emit(createPageProviderReceiptEnvelope(receipt));
+    expect(owner.pendingCount).toBe(1);
+    expect(firstPort.posted).toEqual([retainedRequest, receipt]);
+
+    firstPort.onDisconnect.emit();
+    const replacement = runtime.port;
+    expect(replacement.posted).toEqual([retainedRequest]);
+    replacement.onMessage.emit(terminal);
+
+    expect(owner.pendingCount).toBe(1);
+    expect(page.posted).toHaveLength(1);
+    expect(replacement.posted).toEqual([retainedRequest, receipt]);
+
+    replacement.onMessage.emit(createProviderTransportSettledEnvelope(
+      CORRELATION_ID,
+      RECEIPT_ID,
+      DEFAULT_EXPIRES_AT,
+    ));
+    expect(owner.pendingCount).toBe(0);
+  });
+
   it("copies strict signed bytes before forwarding and ignores an unknown terminal id", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
@@ -378,9 +496,11 @@ describe("C20 bounded content provider transport", () => {
     page.emit(requestEnvelope(signRequest()));
 
     runtime.port.onMessage.emit(
-      createSignedTransactionProviderResponse(
-        "content_unknown_01234567",
-        Uint8Array.of(1),
+      terminalEnvelope(
+        createSignedTransactionProviderResponse(
+          "content_unknown_01234567",
+          Uint8Array.of(1),
+        ),
       ),
     );
     expect(owner.pendingCount).toBe(1);
@@ -393,7 +513,7 @@ describe("C20 bounded content provider transport", () => {
       ok: true,
       result: { signedTransaction: [9, 8, 7] },
     };
-    runtime.port.onMessage.emit(response);
+    runtime.port.onMessage.emit(terminalEnvelope(response));
     response.result.signedTransaction[0] = 0;
 
     expect(page.posted).toEqual([
@@ -432,7 +552,9 @@ describe("C20 bounded content provider transport", () => {
 
     expect(runtime.connectCalls).toHaveLength(2);
     expect(runtime.ports).toHaveLength(1);
-    expect(runtime.port.posted).toEqual([signRequest()]);
+    expect(runtime.port.posted).toEqual([
+      createProviderTransportRequestEnvelope(DEFAULT_EXPIRES_AT, signRequest()),
+    ]);
     runtime.port.onDisconnect.emit();
     expect(runtime.connectCalls).toHaveLength(2);
     expect(owner.pendingCount).toBe(1);
@@ -448,7 +570,7 @@ describe("C20 bounded content provider transport", () => {
       requestTtlMs: 100,
       timerSource: timers,
     });
-    page.emit(requestEnvelope(signRequest()));
+    page.emit(requestEnvelope(signRequest(), 1_100));
     const port = runtime.port;
     expect([...timers.timers.values()].map(({ delayMs }) => delayMs)).toEqual([100]);
 
@@ -459,8 +581,16 @@ describe("C20 bounded content provider transport", () => {
 
     now = 1_100;
     timers.fire(2);
+    const cancellation = readProviderTransportCancelEnvelope(port.posted.at(-1));
+    expect(cancellation).toEqual(createProviderTransportCancelEnvelope(
+      1_100,
+      signRequest(),
+    ));
     port.onMessage.emit(
-      createProviderTerminalFailureResponse(CORRELATION_ID, "WARDEN_REQUEST_EXPIRED"),
+      terminalEnvelope(
+        createProviderTerminalFailureResponse(CORRELATION_ID, "WARDEN_REQUEST_EXPIRED"),
+        1_100,
+      ),
     );
     port.onDisconnect.emit();
 
@@ -484,7 +614,7 @@ describe("C20 bounded content provider transport", () => {
       requestTtlMs: 100,
       timerSource: initialTimers,
     });
-    initialPage.emit(requestEnvelope(signRequest("content_expiry_initial_01")));
+    initialPage.emit(requestEnvelope(signRequest("content_expiry_initial_01"), 1_100));
 
     expect(initialRuntime.port.posted).toEqual([]);
     expect(initial.pendingCount).toBe(0);
@@ -502,7 +632,7 @@ describe("C20 bounded content provider transport", () => {
         timerSource: recoveryTimers,
       },
     );
-    recoveryPage.emit(requestEnvelope(signRequest("content_expiry_recover_01")));
+    recoveryPage.emit(requestEnvelope(signRequest("content_expiry_recover_01"), 2_100));
     const firstPort = recoveryRuntime.port;
     recoveryRuntime.connectHook = () => {
       recoveryNow = 2_100;
@@ -597,6 +727,7 @@ describe("C20 bounded content provider transport", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
     page.dispatchPosts = true;
+    page.autoReceipt = false;
     const transport = new ProviderContentTransportOwner(page, runtime);
     const requestOwner = new ProviderPageRequestOwner(page, {
       randomSource: new FixedRandom(),
@@ -618,9 +749,12 @@ describe("C20 bounded content provider transport", () => {
     firstPort.onDisconnect.emit();
     expect(runtime.port.posted[0]).toBe(retained);
     runtime.port.onMessage.emit(
-      createProviderTerminalFailureResponse(
-        PAGE_CORRELATION_ID,
-        "WARDEN_REQUEST_CANCELLED",
+      terminalEnvelope(
+        createProviderTerminalFailureResponse(
+          PAGE_CORRELATION_ID,
+          "WARDEN_REQUEST_CANCELLED",
+        ),
+        ((retained as { readonly expiresAt: number }).expiresAt),
       ),
     );
 

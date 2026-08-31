@@ -51,9 +51,9 @@ const approvalResult = await build({
 });
 
 // C11 deliberately composes the exact-byte review projector and the internal
-// fixed-URL approval-window owner into the worker. C12-C21 add test-only
+// fixed-URL approval-window owner into the worker. C12-C22 add test-only
 // provider preparation/selection, durable operation, bind-before-open, and
-// terminal replay/page-promise/action/content-recovery owners,
+// terminal replay/page-promise/action/content-recovery/delivery-settlement owners,
 // but keep those owners, the coordinator, authority/RPC owners, signer, and
 // release registry tree-shaken until a later milestone opens them with
 // executable contracts.
@@ -78,6 +78,7 @@ const forbiddenBackgroundInputs = [
   join(appDirectory, "src/background/provider-terminal-protocol.ts"),
   join(appDirectory, "src/background/provider-terminal-result.ts"),
   join(appDirectory, "src/background/provider-runtime-transport.ts"),
+  join(appDirectory, "src/provider-delivery-protocol.ts"),
   ...[
     "session-approval-coordinator.ts",
     "session-authority-resolver.ts",
@@ -117,6 +118,7 @@ const forbiddenContentInputs = [
   join(appDirectory, "src/page/provider-request-owner.ts"),
   join(appDirectory, "src/background/provider-message.ts"),
   join(appDirectory, "src/background/provider-terminal-protocol.ts"),
+  join(appDirectory, "src/provider-delivery-protocol.ts"),
 ].map((input) => resolve(input));
 const reachableForbiddenContentInputs = forbiddenContentInputs.filter(
   (input) => contentInputs.includes(input),

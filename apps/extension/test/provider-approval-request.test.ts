@@ -66,12 +66,17 @@ import {
   PAGE_PROVIDER_RESPONSE_TYPE,
   readPageProviderRequestEnvelope,
 } from "../src/provider-protocol.js";
+import {
+  createProviderTransportTerminalEnvelope,
+  readProviderTransportRequestEnvelope,
+} from "../src/provider-delivery-protocol.js";
 
 const EXTENSION_ID = "a".repeat(32);
 const DOCUMENT_ID = "123e4567-e89b-12d3-a456-426614174000";
 const ACCOUNT_ADDRESS = "29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2";
 const ACCOUNT = new Uint8Array(32).fill(0x11);
 const APPROVAL_ID = `req_${"ab".repeat(16)}`;
+const DELIVERY_RECEIPT_ID = `delivery_${"ef".repeat(32)}`;
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -1394,7 +1399,11 @@ describe("provider operation to approval composition", () => {
     });
     const requestEnvelope = readPageProviderRequestEnvelope(page.posted[0]?.message);
     expect(requestEnvelope).not.toBeNull();
-    const request = requestEnvelope!.payload as Record<string, unknown>;
+    const transportEnvelope = readProviderTransportRequestEnvelope(
+      requestEnvelope!.payload,
+    );
+    expect(transportEnvelope).not.toBeNull();
+    const request = transportEnvelope!.payload as Record<string, unknown>;
     const { session, owned } = providerLease(request);
     const installed = install();
     const operations = new MemoryProviderOperations();
@@ -1430,7 +1439,12 @@ describe("provider operation to approval composition", () => {
         page.emit(Object.freeze({
           version: 1,
           type: PAGE_PROVIDER_RESPONSE_TYPE,
-          payload: message,
+          payload: createProviderTransportTerminalEnvelope(
+            message.correlationId,
+            DELIVERY_RECEIPT_ID,
+            owned.expiresAt,
+            message,
+          ),
         }));
       },
       finish: () => session.finish(owned),
@@ -1471,8 +1485,12 @@ describe("provider operation to approval composition", () => {
       chain: "solana:devnet",
     });
     const requestEnvelope = readPageProviderRequestEnvelope(page.posted[0]?.message);
+    const transportEnvelope = readProviderTransportRequestEnvelope(
+      requestEnvelope!.payload,
+    );
+    expect(transportEnvelope).not.toBeNull();
     const { session, owned } = providerLease(
-      requestEnvelope!.payload as Record<string, unknown>,
+      transportEnvelope!.payload as Record<string, unknown>,
     );
     const installed = install();
     const operations = new MemoryProviderOperations();
@@ -1517,7 +1535,12 @@ describe("provider operation to approval composition", () => {
         page.emit(Object.freeze({
           version: 1,
           type: PAGE_PROVIDER_RESPONSE_TYPE,
-          payload: message,
+          payload: createProviderTransportTerminalEnvelope(
+            message.correlationId,
+            DELIVERY_RECEIPT_ID,
+            owned.expiresAt,
+            message,
+          ),
         }));
       },
       finish: () => session.finish(owned),
@@ -1560,7 +1583,11 @@ describe("provider operation to approval composition", () => {
       chain: "solana:devnet",
     });
     const requestEnvelope = readPageProviderRequestEnvelope(page.posted[0]?.message);
-    const request = requestEnvelope!.payload as Record<string, unknown>;
+    const transportEnvelope = readProviderTransportRequestEnvelope(
+      requestEnvelope!.payload,
+    );
+    expect(transportEnvelope).not.toBeNull();
+    const request = transportEnvelope!.payload as Record<string, unknown>;
     const first = providerLease(request);
     const installed = install();
     const operations = new MemoryProviderOperations();
@@ -1660,7 +1687,12 @@ describe("provider operation to approval composition", () => {
         page.emit(Object.freeze({
           version: 1,
           type: PAGE_PROVIDER_RESPONSE_TYPE,
-          payload: message,
+          payload: createProviderTransportTerminalEnvelope(
+            message.correlationId,
+            DELIVERY_RECEIPT_ID,
+            retry.owned.expiresAt,
+            message,
+          ),
         }));
       },
       finish: () => retry.session.finish(retry.owned),

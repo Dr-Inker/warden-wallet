@@ -22,11 +22,20 @@ import {
   type ProviderRuntimeTransportFlow,
   type ProviderRuntimeTransportLease,
 } from "../src/background/provider-runtime-transport.js";
+import {
+  createProviderTransportCancelEnvelope,
+  createProviderTransportReceiptEnvelope,
+  createProviderTransportRequestEnvelope,
+  readProviderTransportSettledEnvelope,
+  readProviderTransportTerminalEnvelope,
+  type ProviderTransportRequestEnvelope,
+} from "../src/provider-delivery-protocol.js";
 
 const EXTENSION_ID = "a".repeat(32);
 const DOCUMENT_ID = "123e4567-e89b-12d3-a456-426614174000";
 const ACCOUNT = "29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2";
 const CORRELATION_ID = "runtime_request_01234567";
+const DEFAULT_EXPIRES_AT = Date.now() + 2 * 60 * 1_000;
 
 function providerSender(
   overrides: Record<string, unknown> = {},
@@ -46,8 +55,9 @@ function providerSender(
 function request(
   correlationId = CORRELATION_ID,
   transaction: number[] = [1, 2, 3],
-): Record<string, unknown> {
-  return {
+  expiresAt = DEFAULT_EXPIRES_AT,
+): ProviderTransportRequestEnvelope {
+  return createProviderTransportRequestEnvelope(expiresAt, {
     version: 1,
     type: "request",
     correlationId,
@@ -58,7 +68,7 @@ function request(
       chain: "solana:devnet",
       options: { preflightCommitment: "confirmed", minContextSlot: 42 },
     },
-  };
+  });
 }
 
 class MessageEventOwner implements ProviderMessageEvent {
@@ -244,7 +254,28 @@ function failure(correlationId = CORRELATION_ID): ProviderTerminalResponse {
   );
 }
 
-describe("C21 background replacement-Port transport", () => {
+function terminalPayloads(port: MockPort): unknown[] {
+  return port.posted.flatMap((message) => {
+    const terminal = readProviderTransportTerminalEnvelope(message);
+    return terminal === null ? [] : [terminal.payload];
+  });
+}
+
+function receiptFor(port: MockPort, index = 0) {
+  const terminals = port.posted.flatMap((message) => {
+    const terminal = readProviderTransportTerminalEnvelope(message);
+    return terminal === null ? [] : [terminal];
+  });
+  const terminal = terminals[index];
+  if (terminal === undefined) throw new Error("terminal delivery is absent");
+  return createProviderTransportReceiptEnvelope(
+    terminal.correlationId,
+    terminal.receiptId,
+    terminal.expiresAt,
+  );
+}
+
+describe("C22 background delivery settlement transport", () => {
   it("preserves one live lease across an overlapping exact replacement", async () => {
     const runtime = new MockRuntime();
     const flow = new DeferredFlow();
@@ -273,11 +304,11 @@ describe("C21 background replacement-Port transport", () => {
     expect(lease.finish()).toBe(true);
     flow.resolvers[0]?.(Object.freeze({ kind: "delivered", replayed: false }));
     expect(first.posted).toEqual([]);
-    expect(replacement.posted).toEqual([failure()]);
+    expect(terminalPayloads(replacement)).toEqual([failure()]);
     transport.dispose();
   });
 
-  it("preserves identity when replacement lands during operation hashing", async () => {
+  it("does not let a superseded Port mint authority after operation hashing", async () => {
     const runtime = new MockRuntime();
     const flow = new DeferredFlow();
     const digestSource = new FirstDigestGate();
@@ -289,8 +320,12 @@ describe("C21 background replacement-Port transport", () => {
 
     const replacement = new MockPort();
     runtime.onConnect.emit(replacement);
-    replacement.onMessage.emit(request());
     digestSource.releaseFirst();
+    await eventually(() => expect(digestSource.completed).toBe(2));
+    await Promise.resolve();
+
+    expect(flow.leases).toEqual([]);
+    replacement.onMessage.emit(request());
     await eventually(() => expect(digestSource.completed).toBe(4));
 
     expect(flow.leases).toHaveLength(1);
@@ -299,7 +334,7 @@ describe("C21 background replacement-Port transport", () => {
     expect(flow.leases[0]!.finish()).toBe(true);
     flow.resolvers[0]?.(Object.freeze({ kind: "delivered", replayed: false }));
     expect(first.posted).toEqual([]);
-    expect(replacement.posted).toEqual([failure()]);
+    expect(terminalPayloads(replacement)).toEqual([failure()]);
     transport.dispose();
   });
 
@@ -352,7 +387,7 @@ describe("C21 background replacement-Port transport", () => {
       flow.resolvers[index]?.(Object.freeze({ kind: "delivered", replayed: false }));
     }
     expect(first.posted).toEqual([]);
-    expect(replacement.posted).toEqual([
+    expect(terminalPayloads(replacement)).toEqual([
       failure(firstCorrelation),
       failure(secondCorrelation),
     ]);
@@ -393,7 +428,7 @@ describe("C21 background replacement-Port transport", () => {
     });
     const port = new MockPort();
     runtime.onConnect.emit(port);
-    port.onMessage.emit(request());
+    port.onMessage.emit(request(CORRELATION_ID, [1, 2, 3], 1_100));
     await eventually(() => expect(digestSource.calls).toBe(1));
 
     now = 1_100;
@@ -456,7 +491,7 @@ describe("C21 background replacement-Port transport", () => {
     transport.dispose();
   });
 
-  it("replays one finished exact request on a later generation without aliasing it", async () => {
+  it("reposts one staged terminal on a verified replacement and settles only on receipt", async () => {
     const runtime = new MockRuntime();
     const flow = new DeferredFlow();
     const transport = owner(runtime, flow);
@@ -471,16 +506,110 @@ describe("C21 background replacement-Port transport", () => {
     const replacement = new MockPort();
     runtime.onConnect.emit(replacement);
     replacement.onMessage.emit(request());
-    await eventually(() => expect(flow.leases).toHaveLength(2));
+    await eventually(() => expect(terminalPayloads(replacement)).toEqual([failure()]));
 
-    expect(flow.leases[1]!.owned.id).not.toBe(flow.leases[0]!.owned.id);
-    expect(flow.leases[1]!.owned.expiresAt).toBe(
-      flow.leases[0]!.owned.expiresAt,
-    );
+    expect(flow.leases).toHaveLength(1);
+    expect(() => flow.leases[0]!.assertActive()).not.toThrow();
+    replacement.onMessage.emit(receiptFor(replacement));
+    await eventually(() => expect(replacement.posted.some((message) =>
+      readProviderTransportSettledEnvelope(message) !== null
+    )).toBe(true));
+    expect(() => flow.leases[0]!.assertActive()).toThrow();
     replacement.onMessage.emit(request());
     await eventually(() => expect(replacement.disconnectCalls).toBe(1));
-    expect(flow.leases).toHaveLength(2);
+    expect(flow.leases).toHaveLength(1);
     expect(MAX_PROVIDER_RUNTIME_REPLAYS_PER_REQUEST).toBe(1);
+    transport.dispose();
+  });
+
+  it("refuses a receipt that arrives before the flow finishes delivery", async () => {
+    const runtime = new MockRuntime();
+    const flow = new DeferredFlow();
+    const transport = owner(runtime, flow);
+    const port = new MockPort();
+    runtime.onConnect.emit(port);
+    port.onMessage.emit(request());
+    await eventually(() => expect(flow.leases).toHaveLength(1));
+
+    flow.leases[0]!.postMessage(failure());
+    port.onMessage.emit(receiptFor(port));
+    await eventually(() => expect(port.disconnectCalls).toBe(1));
+
+    expect(flow.leases[0]!.owned.signal.aborted).toBe(true);
+    expect(flow.leases[0]!.finish()).toBe(false);
+    expect(transport.activeDocumentCount).toBe(0);
+  });
+
+  it("refuses settlement until the flow returns exact delivery proof", async () => {
+    const runtime = new MockRuntime();
+    const flow = new DeferredFlow();
+    const transport = owner(runtime, flow);
+    const port = new MockPort();
+    runtime.onConnect.emit(port);
+    port.onMessage.emit(request());
+    await eventually(() => expect(flow.leases).toHaveLength(1));
+    const lease = flow.leases[0]!;
+
+    lease.postMessage(failure());
+    expect(lease.finish()).toBe(true);
+    port.onMessage.emit(receiptFor(port));
+    await eventually(() => expect(port.disconnectCalls).toBe(1));
+
+    expect(lease.owned.signal.aborted).toBe(true);
+    expect(transport.activeDocumentCount).toBe(0);
+  });
+
+  it("refuses a forged receipt after terminal enqueue and flow completion", async () => {
+    const runtime = new MockRuntime();
+    const flow = new DeferredFlow();
+    const transport = owner(runtime, flow);
+    const port = new MockPort();
+    runtime.onConnect.emit(port);
+    port.onMessage.emit(request());
+    await eventually(() => expect(flow.leases).toHaveLength(1));
+    const lease = flow.leases[0]!;
+    lease.postMessage(failure());
+    expect(lease.finish()).toBe(true);
+    flow.resolvers[0]?.(Object.freeze({ kind: "delivered", replayed: false }));
+    const exact = receiptFor(port);
+
+    port.onMessage.emit(createProviderTransportReceiptEnvelope(
+      exact.correlationId,
+      `delivery_${"ff".repeat(32)}`,
+      exact.expiresAt,
+    ));
+    await eventually(() => expect(port.disconnectCalls).toBe(1));
+
+    expect(lease.owned.signal.aborted).toBe(true);
+    expect(transport.activeDocumentCount).toBe(0);
+  });
+
+  it("accepts only an exact identity-bound cancellation at the carried deadline", async () => {
+    let now = 1_000;
+    const runtime = new MockRuntime();
+    const flow = new DeferredFlow();
+    const transport = owner(runtime, flow, {
+      readNow: () => now,
+      requestTtlMs: 100,
+    });
+    const port = new MockPort();
+    const carried = request(CORRELATION_ID, [1, 2, 3], 1_100) as {
+      readonly payload: unknown;
+    };
+    runtime.onConnect.emit(port);
+    port.onMessage.emit(carried);
+    await eventually(() => expect(flow.leases).toHaveLength(1));
+
+    now = 1_100;
+    port.onMessage.emit(createProviderTransportCancelEnvelope(
+      1_100,
+      carried.payload,
+    ));
+    await eventually(() => expect(flow.leases[0]!.owned.signal.aborted).toBe(true));
+
+    expect(terminalPayloads(port)).toEqual([]);
+    expect(port.disconnectCalls).toBe(0);
+    expect(transport.activeDocumentCount).toBe(1);
     transport.dispose();
   });
 
@@ -496,6 +625,30 @@ describe("C21 background replacement-Port transport", () => {
     const replacement = new MockPort();
     runtime.onConnect.emit(replacement);
     replacement.onMessage.emit(request(CORRELATION_ID, [9, 9, 9]));
+    await eventually(() => expect(replacement.disconnectCalls).toBe(1));
+
+    expect(flow.leases).toHaveLength(1);
+    expect(flow.leases[0]!.owned.signal.aborted).toBe(true);
+    expect(transport.activeDocumentCount).toBe(0);
+  });
+
+  it("fails closed when an exact replay changes the carried deadline", async () => {
+    let now = 1_000;
+    const runtime = new MockRuntime();
+    const flow = new DeferredFlow();
+    const transport = owner(runtime, flow, {
+      readNow: () => now,
+      requestTtlMs: 100,
+    });
+    const first = new MockPort();
+    runtime.onConnect.emit(first);
+    first.onMessage.emit(request(CORRELATION_ID, [1, 2, 3], 1_100));
+    await eventually(() => expect(flow.leases).toHaveLength(1));
+
+    now = 1_050;
+    const replacement = new MockPort();
+    runtime.onConnect.emit(replacement);
+    replacement.onMessage.emit(request(CORRELATION_ID, [1, 2, 3], 1_149));
     await eventually(() => expect(replacement.disconnectCalls).toBe(1));
 
     expect(flow.leases).toHaveLength(1);
@@ -541,7 +694,7 @@ describe("C21 background replacement-Port transport", () => {
 
     expect(() => lease.postMessage(failure())).toThrow();
     expect(lease.finish()).toBe(false);
-    expect(first.posted).toEqual([failure()]);
+    expect(terminalPayloads(first)).toEqual([failure()]);
     expect(replacement.posted).toEqual([]);
     transport.dispose();
   });
@@ -588,17 +741,18 @@ describe("C21 background replacement-Port transport", () => {
     });
     const first = new MockPort();
     runtime.onConnect.emit(first);
-    first.onMessage.emit(request());
+    first.onMessage.emit(request(CORRELATION_ID, [1, 2, 3], 1_100));
     await eventually(() => expect(flow.leases).toHaveLength(1));
     expect(flow.leases[0]!.owned.expiresAt).toBe(1_100);
     flow.leases[0]!.postMessage(failure());
     expect(flow.leases[0]!.finish()).toBe(true);
     flow.resolvers[0]?.(Object.freeze({ kind: "delivered", replayed: false }));
+    first.onDisconnect.emit();
 
     now = 1_050;
     const replacement = new MockPort();
     runtime.onConnect.emit(replacement);
-    replacement.onMessage.emit(request());
+    replacement.onMessage.emit(request(CORRELATION_ID, [1, 2, 3], 1_100));
     await eventually(() => expect(flow.leases).toHaveLength(2));
     expect(flow.leases[1]!.owned.createdAt).toBe(1_050);
     expect(flow.leases[1]!.owned.expiresAt).toBe(1_100);
@@ -606,7 +760,7 @@ describe("C21 background replacement-Port transport", () => {
     now = 1_100;
     const afterDeadline = new MockPort();
     runtime.onConnect.emit(afterDeadline);
-    afterDeadline.onMessage.emit(request());
+    afterDeadline.onMessage.emit(request(CORRELATION_ID, [1, 2, 3], 1_100));
     await eventually(() => expect(afterDeadline.disconnectCalls).toBe(1));
     expect(flow.leases).toHaveLength(2);
     transport.dispose();

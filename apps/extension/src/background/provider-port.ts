@@ -388,7 +388,7 @@ export class ProviderPortSession {
 
   /**
    * Open a replacement delivery lease without extending the first accepted
-   * request's absolute deadline. Only the C21 document transport uses this;
+   * request's absolute deadline. Only the C21/C22 document transport uses this;
    * the production unavailable boundary continues to call open().
    */
   openUntil(value: unknown, absoluteExpiresAt: number): OwnedProviderRequest {
@@ -413,6 +413,17 @@ export class ProviderPortSession {
     const entry = this.pending.get(owned.id);
     if (entry === undefined || entry.owned !== owned) return false;
     this.remove(entry);
+    return true;
+  }
+
+  cancel(
+    owned: OwnedProviderRequest,
+    reason: ProviderCancellationReason,
+  ): boolean {
+    this.reapExpired();
+    const entry = this.pending.get(owned.id);
+    if (entry === undefined || entry.owned !== owned) return false;
+    this.cancelEntry(entry, reason);
     return true;
   }
 

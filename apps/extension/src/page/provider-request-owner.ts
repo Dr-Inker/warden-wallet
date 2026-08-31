@@ -28,6 +28,13 @@ import {
   type ProviderTerminalFailureCode,
   type ProviderTerminalFailureResponse,
 } from "../background/provider-terminal-protocol.js";
+import {
+  createPageProviderReceiptEnvelope,
+  createProviderTransportReceiptEnvelope,
+  createProviderTransportRequestEnvelope,
+  readProviderTransportTerminalEnvelope,
+  type ProviderTransportReceiptEnvelope,
+} from "../provider-delivery-protocol.js";
 
 export const DEFAULT_PAGE_PROVIDER_REQUEST_TTL_MS = 2 * 60 * 1_000;
 export const MAX_PAGE_PROVIDER_REQUEST_TTL_MS = 10 * 60 * 1_000;
@@ -151,6 +158,16 @@ interface PendingPageRequest {
   readonly resolve: (transaction: Uint8Array) => void;
   readonly reject: (error: Error) => void;
   expiryTimer: unknown;
+}
+
+interface SettledPageReceipt {
+  readonly receiptId: string;
+  readonly expiresAt: number;
+}
+
+interface ProviderPageTerminalDelivery {
+  readonly response: ProviderTerminalResponse;
+  readonly receipt: ProviderTransportReceiptEnvelope;
 }
 
 type ProviderTerminalResponse =
@@ -401,7 +418,9 @@ function hasExactDataFields(
   }
 }
 
-function readTerminalResponseEnvelope(value: unknown): ProviderTerminalResponse | null {
+function readTerminalResponseEnvelope(
+  value: unknown,
+): ProviderPageTerminalDelivery | null {
   try {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
       return null;
@@ -414,11 +433,27 @@ function readTerminalResponseEnvelope(value: unknown): ProviderTerminalResponse 
     ) {
       return null;
     }
-    const payload = envelope.payload;
-    if (isProviderUnavailableResponse(payload)) return payload;
-    if (isSignedTransactionProviderResponse(payload)) return payload;
-    if (isProviderTerminalFailureResponse(payload)) return payload;
-    return null;
+    const delivery = readProviderTransportTerminalEnvelope(envelope.payload);
+    if (delivery === null) return null;
+    const payload = delivery.payload;
+    const response = isProviderUnavailableResponse(payload)
+      ? payload
+      : isSignedTransactionProviderResponse(payload)
+      ? payload
+      : isProviderTerminalFailureResponse(payload)
+      ? payload
+      : null;
+    if (response === null || response.correlationId !== delivery.correlationId) {
+      return null;
+    }
+    return Object.freeze({
+      response,
+      receipt: createProviderTransportReceiptEnvelope(
+        delivery.correlationId,
+        delivery.receiptId,
+        delivery.expiresAt,
+      ),
+    });
   } catch {
     return null;
   }
@@ -448,6 +483,7 @@ export class ProviderPageRequestOwner {
   readonly #timerSource: ProviderPageTimerSource;
   readonly #pending = new Map<string, PendingPageRequest>();
   readonly #issued = new Set<string>();
+  readonly #settledReceipts = new Map<string, SettledPageReceipt>();
   #disposed = false;
   #listenerInstalled = false;
 
@@ -459,8 +495,9 @@ export class ProviderPageRequestOwner {
     ) {
       return;
     }
-    const response = readTerminalResponseEnvelope(event.data);
-    if (response === null) return;
+    const delivery = readTerminalResponseEnvelope(event.data);
+    if (delivery === null) return;
+    const { response, receipt } = delivery;
 
     let now: number;
     try {
@@ -471,18 +508,42 @@ export class ProviderPageRequestOwner {
     }
     this.#reapExpiredAt(now);
     const entry = this.#pending.get(response.correlationId);
-    if (entry === undefined) return;
+    if (entry === undefined) {
+      const settled = this.#settledReceipts.get(response.correlationId);
+      if (
+        settled !== undefined &&
+        settled.receiptId === receipt.receiptId &&
+        settled.expiresAt === receipt.expiresAt &&
+        now < settled.expiresAt
+      ) {
+        this.#postReceipt(receipt);
+      }
+      return;
+    }
+    if (receipt.expiresAt !== entry.expiresAt) {
+      this.#closeAfterFatal(
+        new ProviderPageRequestStateError("terminal delivery changed the request deadline"),
+      );
+      return;
+    }
     if (now >= entry.expiresAt) {
       this.#rejectEntry(entry, new ProviderPageRequestTimeoutError());
       return;
     }
 
+    this.#settledReceipts.set(entry.correlationId, Object.freeze({
+      receiptId: receipt.receiptId,
+      expiresAt: receipt.expiresAt,
+    }));
+
     if (isProviderUnavailableResponse(response)) {
       this.#rejectEntry(entry, new ProviderPageMethodUnavailableError());
+      this.#postReceipt(receipt);
       return;
     }
     if (isProviderTerminalFailureResponse(response)) {
       this.#rejectEntry(entry, new ProviderPageTerminalError(response.error.code));
+      this.#postReceipt(receipt);
       return;
     }
     let bytes: Uint8Array;
@@ -495,9 +556,11 @@ export class ProviderPageRequestOwner {
           cause: error,
         }),
       );
+      this.#postReceipt(receipt);
       return;
     }
     this.#resolveEntry(entry, bytes);
+    this.#postReceipt(receipt);
   };
 
   constructor(
@@ -624,6 +687,18 @@ export class ProviderPageRequestOwner {
     entry.reject(error);
   }
 
+  #postReceipt(receipt: ProviderTransportReceiptEnvelope): void {
+    try {
+      this.#page.postMessage(
+        createPageProviderReceiptEnvelope(receipt),
+        this.#documentOrigin,
+      );
+    } catch {
+      // The promise is already settled. A duplicate exact terminal delivery
+      // may retry this idempotent receipt while the document remains alive.
+    }
+  }
+
   #reapExpiredAt(now: number): void {
     for (const entry of [...this.#pending.values()]) {
       if (now >= entry.expiresAt) {
@@ -735,7 +810,10 @@ export class ProviderPageRequestOwner {
       if (this.#pending.get(correlationId) !== entry) return promise;
 
       try {
-        const request = createWireRequest(correlationId, input);
+        const request = createProviderTransportRequestEnvelope(
+          expiresAt,
+          createWireRequest(correlationId, input),
+        );
         this.#page.postMessage(
           Object.freeze({
             version: 1,

@@ -1,4 +1,4 @@
-//! Browser-only C21/C20/C14/C19 composition. Never copied into the product build.
+//! Browser-only C22/C20/C14/C19 composition. Never copied into the product build.
 
 import {
   ProviderOperationOwner,
@@ -73,6 +73,22 @@ const digest = new CountingDigest();
 const bootId = bootIdentity();
 let volatileCalls = 0;
 let releaseVolatile: (() => void) | null = null;
+let latestCorrelationId: string | null = null;
+let latestExpiresAt: number | null = null;
+const observedLeases = new Set<ProviderRuntimeTransportLease>();
+
+function ownedDeliveryCount(): number {
+  let count = 0;
+  for (const lease of observedLeases) {
+    try {
+      lease.assertActive();
+      count++;
+    } catch {
+      // Receipt settlement, expiry, or worker cleanup removed this lease.
+    }
+  }
+  return count;
+}
 
 async function preparationCalls(): Promise<number> {
   const stored = await chromeApi.storage.local.get(PREPARATION_CALLS_KEY);
@@ -94,6 +110,9 @@ async function neverFinishPreparation(): Promise<ProviderOperationPreparation> {
 
 const flow: ProviderRuntimeTransportFlow = {
   async deliver(lease: ProviderRuntimeTransportLease): Promise<unknown> {
+    observedLeases.add(lease);
+    latestCorrelationId = lease.owned.request.correlationId;
+    latestExpiresAt = lease.owned.expiresAt;
     if (lease.owned.request.correlationId.startsWith("browser_overlap_")) {
       volatileCalls++;
       await new Promise<void>((resolve) => {
@@ -108,11 +127,18 @@ const flow: ProviderRuntimeTransportFlow = {
       return Object.freeze({ kind: "delivered", replayed: false });
     }
 
-    await startup;
+    const startupInvalidated = await startup;
     try {
       await operations.prepare(lease, neverFinishPreparation);
       throw new Error("browser preparation unexpectedly completed");
     } catch {
+      if (
+        startupInvalidated > 0 &&
+        lease.owned.request.correlationId.startsWith("browser_deadline_")
+      ) {
+        const delayMs = Math.max(0, lease.owned.expiresAt - Date.now() + 50);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
       if (await terminal.deliver(lease) !== true) {
         throw new Error("durable restart failure was not delivered");
       }
@@ -134,6 +160,9 @@ Object.assign(globalThis, {
     identityDigestCalls: digest.calls,
     identityDigestCompletions: digest.completed,
     activeDocuments: transport.activeDocumentCount,
+    ownedDeliveries: ownedDeliveryCount(),
+    latestCorrelationId,
+    latestExpiresAt,
   }),
   __wardenProviderRuntimeTransportRelease: () => {
     const release = releaseVolatile;

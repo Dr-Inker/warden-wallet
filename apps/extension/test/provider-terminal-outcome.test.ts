@@ -49,11 +49,16 @@ import {
 import {
   PAGE_PROVIDER_RESPONSE_TYPE,
 } from "../src/provider-protocol.js";
+import {
+  createProviderTransportTerminalEnvelope,
+  readProviderTransportRequestEnvelope,
+} from "../src/provider-delivery-protocol.js";
 
 const EXTENSION_ID = "a".repeat(32);
 const ORIGIN = "https://dapp.example";
 const ACCOUNT = "29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2";
 const APPROVAL_ID = `req_${"22".repeat(16)}`;
+const DELIVERY_RECEIPT_ID = `delivery_${"ef".repeat(32)}`;
 
 function owned(
   overrides: Partial<OwnedProviderRequest["request"]["params"]> = {},
@@ -455,9 +460,14 @@ describe("C19 durable provider terminal outcome", () => {
       chain: "solana:devnet",
     });
     const envelope = page.posted[0]!.message as {
-      readonly payload: { readonly correlationId: string };
+      readonly payload: unknown;
     };
-    const value = owned({}, envelope.payload.correlationId);
+    const transportEnvelope = readProviderTransportRequestEnvelope(envelope.payload);
+    expect(transportEnvelope).not.toBeNull();
+    const request = transportEnvelope!.payload as {
+      readonly correlationId: string;
+    };
+    const value = owned({}, request.correlationId);
     const approval = terminalApproval(value, "rejected");
     const operation = await boundOperation(value, approval);
     let signedCalls = 0;
@@ -492,7 +502,12 @@ describe("C19 durable provider terminal outcome", () => {
         page.emit(Object.freeze({
           version: 1,
           type: PAGE_PROVIDER_RESPONSE_TYPE,
-          payload: message,
+          payload: createProviderTransportTerminalEnvelope(
+            message.correlationId,
+            DELIVERY_RECEIPT_ID,
+            transportEnvelope!.expiresAt,
+            message,
+          ),
         }));
       },
       finish: current.lease.finish.bind(current.lease),

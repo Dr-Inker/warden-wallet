@@ -42,7 +42,7 @@ export interface ProviderTerminalDeliveryLease {
   assertActive(): void;
   /** Synchronous Chrome Port enqueue; it is not a page receipt acknowledgment. */
   postMessage(message: ProviderTerminalResponse): void;
-  /** Release only this exact in-memory Port request after enqueue succeeds. */
+  /** Mark exact enqueue-side flow completion; receipt-aware transports retain ownership. */
   finish(): boolean;
 }
 
@@ -348,7 +348,8 @@ export class ProviderTerminalResultOwner {
       );
 
       // There is intentionally no await between the final live-lease check,
-      // Port enqueue, and exact in-memory release.
+      // Port enqueue, and exact flow completion. C22's adapter retains the
+      // in-memory lease until the page's identity-bound receipt returns.
       lease.assertActive();
       lease.postMessage(response);
       if (!lease.finish()) {

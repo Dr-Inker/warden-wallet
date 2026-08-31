@@ -15,9 +15,16 @@ import {
   type ProviderPageWindowMessageEvent,
   type ProviderPageWindowMessageListener,
 } from "../src/page/provider-request-owner.js";
+import {
+  PAGE_PROVIDER_RECEIPT_TYPE,
+  PROVIDER_TRANSPORT_REQUEST_TYPE,
+  createProviderTransportTerminalEnvelope,
+} from "../src/provider-delivery-protocol.js";
 
 const ORIGIN = "https://dapp.example";
 const ACCOUNT = "11111111111111111111111111111111";
+const RECEIPT_ID = `delivery_${"ab".repeat(32)}`;
+const DEADLINES = new Map<string, number>();
 
 function randomBytes(lastByte: number): Uint8Array {
   const bytes = new Uint8Array(16);
@@ -97,6 +104,29 @@ class MockPage implements ProviderPageWindowApi {
     this.postHook?.();
     if (this.throwOnPost) throw new Error("window disappeared");
     this.posted.push({ message, targetOrigin });
+    try {
+      const outer = message as {
+        readonly type?: unknown;
+        readonly payload?: {
+          readonly type?: unknown;
+          readonly expiresAt?: unknown;
+          readonly payload?: { readonly correlationId?: unknown };
+        };
+      };
+      if (
+        outer.type === "warden:provider:request" &&
+        outer.payload?.type === PROVIDER_TRANSPORT_REQUEST_TYPE &&
+        Number.isSafeInteger(outer.payload.expiresAt) &&
+        typeof outer.payload.payload?.correlationId === "string"
+      ) {
+        DEADLINES.set(
+          outer.payload.payload.correlationId,
+          outer.payload.expiresAt as number,
+        );
+      }
+    } catch {
+      // Tests also exercise hostile values; recording is observational only.
+    }
   }
 
   emit(data: unknown, overrides: Partial<ProviderPageWindowMessageEvent> = {}): void {
@@ -123,33 +153,45 @@ function input(transaction = new Uint8Array([1, 2, 3])) {
 }
 
 function successResponse(id: string, bytes: number[] = [9, 8, 7]) {
+  const payload = {
+    version: 1,
+    type: "response",
+    correlationId: id,
+    ok: true,
+    result: { signedTransaction: bytes },
+  };
   return {
     version: 1,
     type: "warden:provider:response",
-    payload: {
-      version: 1,
-      type: "response",
-      correlationId: id,
-      ok: true,
-      result: { signedTransaction: bytes },
-    },
+    payload: createProviderTransportTerminalEnvelope(
+      id,
+      RECEIPT_ID,
+      DEADLINES.get(id) ?? 1,
+      payload,
+    ),
   };
 }
 
 function unavailableResponse(id: string) {
+  const payload = {
+    version: 1,
+    type: "response",
+    correlationId: id,
+    ok: false,
+    error: {
+      code: "WARDEN_METHOD_UNAVAILABLE",
+      message: "Warden provider methods are not enabled",
+    },
+  };
   return {
     version: 1,
     type: "warden:provider:response",
-    payload: {
-      version: 1,
-      type: "response",
-      correlationId: id,
-      ok: false,
-      error: {
-        code: "WARDEN_METHOD_UNAVAILABLE",
-        message: "Warden provider methods are not enabled",
-      },
-    },
+    payload: createProviderTransportTerminalEnvelope(
+      id,
+      RECEIPT_ID,
+      DEADLINES.get(id) ?? 1,
+      payload,
+    ),
   };
 }
 
@@ -164,21 +206,32 @@ function terminalFailureResponse(
     WARDEN_REQUEST_EXPIRED: "Provider request expired",
     WARDEN_REQUEST_FAILED: "Provider request failed",
   } as const;
+  const payload = {
+    version: 1,
+    type: "response",
+    correlationId: id,
+    ok: false,
+    error: { code, message: messages[code] },
+  };
   return {
     version: 1,
     type: "warden:provider:response",
-    payload: {
-      version: 1,
-      type: "response",
-      correlationId: id,
-      ok: false,
-      error: { code, message: messages[code] },
-    },
+    payload: createProviderTransportTerminalEnvelope(
+      id,
+      RECEIPT_ID,
+      DEADLINES.get(id) ?? 1,
+      payload,
+    ),
   };
 }
 
 function postedPayload(page: MockPage, index = 0): Record<string, unknown> {
-  return (page.posted[index]!.message as { readonly payload: Record<string, unknown> }).payload;
+  const requests = page.posted.filter(({ message }) =>
+    (message as { readonly type?: unknown }).type === "warden:provider:request"
+  );
+  return (requests[index]!.message as {
+    readonly payload: { readonly payload: Record<string, unknown> };
+  }).payload.payload;
 }
 
 describe("C16 main-world provider request owner", () => {
@@ -200,16 +253,21 @@ describe("C16 main-world provider request owner", () => {
           type: "warden:provider:request",
           payload: {
             version: 1,
-            type: "request",
-            correlationId: id,
-            method: "solana:signTransaction",
-            params: {
-              accountAddress: ACCOUNT,
-              transaction: [1, 2, 3],
-              chain: "solana:devnet",
-              options: {
-                preflightCommitment: "confirmed",
-                minContextSlot: 42,
+            type: PROVIDER_TRANSPORT_REQUEST_TYPE,
+            expiresAt: DEADLINES.get(id),
+            payload: {
+              version: 1,
+              type: "request",
+              correlationId: id,
+              method: "solana:signTransaction",
+              params: {
+                accountAddress: ACCOUNT,
+                transaction: [1, 2, 3],
+                chain: "solana:devnet",
+                options: {
+                  preflightCommitment: "confirmed",
+                  minContextSlot: 42,
+                },
               },
             },
           },
@@ -321,7 +379,13 @@ describe("C16 main-world provider request owner", () => {
       ...exact,
       payload: {
         ...exact.payload,
-        error: { ...exact.payload.error, message: "internal exception" },
+        payload: {
+          ...(exact.payload.payload as { readonly error: Record<string, unknown> }),
+          error: {
+            ...(exact.payload.payload as { readonly error: Record<string, unknown> }).error,
+            message: "internal exception",
+          },
+        },
       },
     });
     expect(owner.pendingCount).toBe(1);
@@ -390,7 +454,9 @@ describe("C16 main-world provider request owner", () => {
     await expect(owner.signTransaction(input(new Uint8Array([2])))).rejects.toThrow(
       "too many pending requests",
     );
-    expect(page.posted).toHaveLength(1);
+    expect(page.posted.filter(({ message }) =>
+      (message as { readonly type?: unknown }).type === "warden:provider:request"
+    )).toHaveLength(1);
     page.emit(successResponse(correlationId(1), [1]));
     await first;
 
@@ -563,6 +629,8 @@ describe("C16 main-world provider request owner", () => {
     await expect(owner.signTransaction(input())).rejects.toThrow(
       "could not mint a unique correlation id",
     );
-    expect(page.posted).toHaveLength(1);
+    expect(page.posted.filter(({ message }) =>
+      (message as { readonly type?: unknown }).type === "warden:provider:request"
+    )).toHaveLength(1);
   });
 });

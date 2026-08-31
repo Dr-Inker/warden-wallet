@@ -1,4 +1,4 @@
-//! Still-unreachable C21 background replacement-Port transport owner.
+//! Still-unreachable C22 background delivery-settlement transport owner.
 //!
 //! One browser document may replace its current Port without relying on the
 //! relative delivery order of the old background/content onDisconnect events.
@@ -6,7 +6,9 @@
 //! complete Chrome provenance and exact cryptographic operation identity match.
 //! If background cleanup wins first, the old lease stays aborted forever and a
 //! later Port receives a fresh lease whose safety depends on the durable C13-C19
-//! replay graph. This module is deliberately absent from the production worker.
+//! replay graph. Terminal enqueue retains the exact lease until a matching page
+//! receipt returns through the current Port. This module is deliberately absent
+//! from the production worker.
 
 import {
   deriveProviderOperationIdentityFromRequest,
@@ -44,6 +46,16 @@ import {
   type ProviderProvenance,
 } from "./sender-provenance.js";
 import type { ProviderTerminalDeliveryLease } from "./provider-terminal-result.js";
+import {
+  createProviderTransportSettledEnvelope,
+  createProviderTransportTerminalEnvelope,
+  providerTransportReceiptIdFromOperationKey,
+  readProviderTransportCancelEnvelope,
+  readProviderTransportReceiptEnvelope,
+  readProviderTransportRequestEnvelope,
+  type ProviderTransportReceiptEnvelope,
+  type ProviderTransportTerminalEnvelope,
+} from "../provider-delivery-protocol.js";
 
 export const MAX_PROVIDER_RUNTIME_REPLAYS_PER_REQUEST = 1;
 export const MAX_PROVIDER_RUNTIME_ATTEMPTS_PER_REQUEST =
@@ -102,11 +114,15 @@ interface BoundPort {
 interface ActiveDelivery {
   readonly owned: OwnedProviderRequest;
   postedGeneration: number | null;
+  terminal: ProviderTransportTerminalEnvelope | null;
+  flowFinished: boolean;
+  flowProven: boolean;
 }
 
 interface CorrelationBinding {
   readonly correlationId: string;
   readonly operationKey: string;
+  readonly receiptId: string;
   readonly expiresAt: number;
   attempts: number;
   lastRequestGeneration: number;
@@ -647,23 +663,15 @@ export class ProviderRuntimeTransportOwner {
     ) {
       return;
     }
-    let request: ProviderSignTransactionRequest;
-    try {
-      request = snapshotSignRequest(value);
-    } catch {
+    const requestEnvelope = readProviderTransportRequestEnvelope(value);
+    const cancelEnvelope = requestEnvelope === null
+      ? readProviderTransportCancelEnvelope(value)
+      : null;
+    const receipt = requestEnvelope === null && cancelEnvelope === null
+      ? readProviderTransportReceiptEnvelope(value)
+      : null;
+    if (requestEnvelope === null && cancelEnvelope === null && receipt === null) {
       this.#closeRoute(route, true, "malformed");
-      return;
-    }
-    const wire = canonicalWireRequest(request);
-    let receivedExpiresAt: number;
-    try {
-      receivedExpiresAt = currentTime(this.#dependencies.readNow) +
-        this.#dependencies.requestTtlMs;
-      if (!Number.isSafeInteger(receivedExpiresAt)) {
-        stateError("request receive deadline overflowed");
-      }
-    } catch {
-      this.#closeRoute(route, true, "clock-failure");
       return;
     }
     if (route.queuedRequests >= MAX_PENDING_PROVIDER_REQUESTS) {
@@ -672,13 +680,36 @@ export class ProviderRuntimeTransportOwner {
     }
     route.queuedRequests++;
     route.queue = route.queue.then(async () => {
-      await this.#acceptRequest(
-        route,
-        owner,
-        request,
-        wire,
-        receivedExpiresAt,
-      );
+      if (requestEnvelope !== null) {
+        const request = snapshotSignRequest(requestEnvelope.payload);
+        const wire = canonicalWireRequest(request);
+        const now = currentTime(this.#dependencies.readNow);
+        if (
+          requestEnvelope.expiresAt <= now ||
+          requestEnvelope.expiresAt - now > this.#dependencies.requestTtlMs
+        ) {
+          stateError("request deadline is expired or exceeds the configured lifetime");
+        }
+        await this.#acceptRequest(
+          route,
+          owner,
+          request,
+          wire,
+          requestEnvelope.expiresAt,
+        );
+        return;
+      }
+      if (cancelEnvelope !== null) {
+        const request = snapshotSignRequest(cancelEnvelope.payload);
+        await this.#acceptCancellation(
+          route,
+          owner,
+          request,
+          cancelEnvelope.expiresAt,
+        );
+        return;
+      }
+      this.#acceptReceipt(route, owner, receipt!);
     }).catch(() => {
       this.#closeRoute(route, true, "malformed");
     }).finally(() => {
@@ -708,11 +739,12 @@ export class ProviderRuntimeTransportOwner {
     owner: BoundPort,
     request: ProviderSignTransactionRequest,
     wire: Readonly<Record<string, unknown>>,
-    receivedExpiresAt: number,
+    absoluteExpiresAt: number,
   ): Promise<void> {
     if (
       !route.open ||
       !owner.open ||
+      route.currentPort !== owner ||
       this.#documents.get(route.provenance.documentId) !== route
     ) {
       return;
@@ -720,6 +752,8 @@ export class ProviderRuntimeTransportOwner {
     const operationKey = await this.#operationKey(route.provenance, request);
     if (
       !route.open ||
+      !owner.open ||
+      route.currentPort !== owner ||
       this.#documents.get(route.provenance.documentId) !== route
     ) {
       return;
@@ -733,13 +767,14 @@ export class ProviderRuntimeTransportOwner {
       ) {
         stateError("document correlation capacity exhausted");
       }
-      const owned = route.session.openUntil(wire, receivedExpiresAt);
+      const owned = route.session.openUntil(wire, absoluteExpiresAt);
       if (owned.request.method !== "solana:signTransaction") {
         stateError("session changed the accepted request method");
       }
       const binding: CorrelationBinding = {
         correlationId: request.correlationId,
         operationKey,
+        receiptId: providerTransportReceiptIdFromOperationKey(operationKey),
         expiresAt: owned.expiresAt,
         attempts: 1,
         lastRequestGeneration: owner.generation,
@@ -753,6 +788,7 @@ export class ProviderRuntimeTransportOwner {
 
     if (
       existing.operationKey !== operationKey ||
+      existing.expiresAt !== absoluteExpiresAt ||
       now >= existing.expiresAt ||
       existing.lastRequestGeneration === owner.generation ||
       existing.attempts >= MAX_PROVIDER_RUNTIME_ATTEMPTS_PER_REQUEST
@@ -763,6 +799,9 @@ export class ProviderRuntimeTransportOwner {
     existing.lastRequestGeneration = owner.generation;
     if (existing.active !== null) {
       route.session.assertActive(existing.active.owned);
+      if (existing.active.terminal !== null) {
+        this.#postTerminal(route, existing, existing.active);
+      }
       return;
     }
     if (existing.deliveredGeneration === owner.generation) return;
@@ -770,12 +809,140 @@ export class ProviderRuntimeTransportOwner {
     this.#startFlow(route, existing, owned);
   }
 
+  async #acceptCancellation(
+    route: DocumentRoute,
+    owner: BoundPort,
+    request: ProviderSignTransactionRequest,
+    absoluteExpiresAt: number,
+  ): Promise<void> {
+    const operationKey = await this.#operationKey(route.provenance, request);
+    if (
+      !route.open ||
+      !owner.open ||
+      route.currentPort !== owner ||
+      this.#documents.get(route.provenance.documentId) !== route
+    ) {
+      return;
+    }
+    const now = currentTime(this.#dependencies.readNow);
+    const binding = route.correlations.get(request.correlationId);
+    if (
+      binding === undefined ||
+      binding.operationKey !== operationKey ||
+      binding.expiresAt !== absoluteExpiresAt ||
+      binding.lastRequestGeneration !== owner.generation ||
+      now < absoluteExpiresAt
+    ) {
+      stateError("request cancellation is early or changes identity");
+    }
+    const active = binding.active;
+    if (active !== null) {
+      try {
+        route.session.cancel(active.owned, "expired");
+      } finally {
+        binding.active = null;
+      }
+    }
+  }
+
+  #acceptReceipt(
+    route: DocumentRoute,
+    owner: BoundPort,
+    receipt: ProviderTransportReceiptEnvelope,
+  ): void {
+    if (
+      !route.open ||
+      !owner.open ||
+      route.currentPort !== owner ||
+      this.#documents.get(route.provenance.documentId) !== route
+    ) {
+      return;
+    }
+    const now = currentTime(this.#dependencies.readNow);
+    const binding = route.correlations.get(receipt.correlationId);
+    if (
+      binding === undefined ||
+      binding.receiptId !== receipt.receiptId ||
+      binding.expiresAt !== receipt.expiresAt ||
+      binding.lastRequestGeneration !== owner.generation ||
+      now >= binding.expiresAt
+    ) {
+      stateError("terminal receipt is stale or changes identity");
+    }
+    const active = binding.active;
+    if (active !== null) {
+      if (
+        !active.flowFinished ||
+        !active.flowProven ||
+        active.terminal === null ||
+        active.postedGeneration !== owner.generation
+      ) {
+        stateError("terminal receipt arrived before exact delivery");
+      }
+      if (!route.session.finish(active.owned)) {
+        stateError("terminal receipt lost delivery ownership");
+      }
+      binding.active = null;
+      binding.deliveredGeneration = owner.generation;
+    } else if (binding.deliveredGeneration !== owner.generation) {
+      stateError("terminal receipt has no matching delivery");
+    }
+    owner.postMessage(createProviderTransportSettledEnvelope(
+      binding.correlationId,
+      binding.receiptId,
+      binding.expiresAt,
+    ));
+    if (
+      !route.open ||
+      route.currentPort !== owner ||
+      !owner.open
+    ) {
+      stateError("delivery Port changed during settlement acknowledgment");
+    }
+  }
+
+  #postTerminal(
+    route: DocumentRoute,
+    binding: CorrelationBinding,
+    active: ActiveDelivery,
+  ): void {
+    const terminal = active.terminal;
+    if (terminal === null) stateError("delivery has no terminal value");
+    const port = route.currentPort;
+    if (port === null) stateError("delivery Port is unavailable");
+    const generation = port.generation;
+    if (binding.lastRequestGeneration !== generation) {
+      stateError("delivery Port has not presented the exact request");
+    }
+    if (active.postedGeneration === generation) return;
+    try {
+      port.postMessage(terminal);
+    } catch (error) {
+      stateError("terminal response enqueue failed", error);
+    }
+    if (
+      !route.open ||
+      route.currentPort !== port ||
+      !port.open ||
+      binding.active !== active
+    ) {
+      stateError("delivery Port changed during terminal enqueue");
+    }
+    active.postedGeneration = generation;
+  }
+
   #startFlow(
     route: DocumentRoute,
     binding: CorrelationBinding,
     owned: OwnedProviderRequest,
   ): void {
-    const active: ActiveDelivery = { owned, postedGeneration: null };
+    const active: ActiveDelivery = {
+      owned,
+      postedGeneration: null,
+      terminal: null,
+      flowFinished: false,
+      flowProven: false,
+    };
     binding.active = active;
     const assertActive = (): void => {
       if (
@@ -793,36 +960,23 @@ export class ProviderRuntimeTransportOwner {
       assertActive,
       postMessage: (value: ProviderTerminalResponse): void => {
         assertActive();
-        if (active.postedGeneration !== null) {
+        if (active.terminal !== null) {
           stateError("delivery lease already enqueued a terminal response");
         }
         const response = snapshotTerminal(value);
         if (response.correlationId !== binding.correlationId) {
           stateError("terminal response changed the request correlation");
         }
-        const port = route.currentPort;
-        if (port === null) stateError("delivery Port is unavailable");
-        const generation = port.generation;
-        if (binding.lastRequestGeneration !== generation) {
-          stateError("delivery Port has not presented the exact request");
-        }
-        try {
-          port.postMessage(response);
-        } catch (error) {
-          stateError("terminal response enqueue failed", error);
-        }
-        if (
-          !route.open ||
-          route.currentPort !== port ||
-          !port.open ||
-          binding.active !== active
-        ) {
-          stateError("delivery Port changed during terminal enqueue");
-        }
-        active.postedGeneration = generation;
+        active.terminal = createProviderTransportTerminalEnvelope(
+          binding.correlationId,
+          binding.receiptId,
+          binding.expiresAt,
+          response,
+        );
+        this.#postTerminal(route, binding, active);
       },
       finish: (): boolean => {
-        if (active.postedGeneration === null) return false;
+        if (active.postedGeneration === null || active.flowFinished) return false;
         try {
           assertActive();
         } catch {
@@ -831,15 +985,7 @@ export class ProviderRuntimeTransportOwner {
         if (route.currentPort?.generation !== active.postedGeneration) {
           return false;
         }
-        let finished: boolean;
-        try {
-          finished = route.session.finish(owned);
-        } catch {
-          return false;
-        }
-        if (!finished || binding.active !== active) return false;
-        binding.active = null;
-        binding.deliveredGeneration = active.postedGeneration;
+        active.flowFinished = true;
         return true;
       },
     });
@@ -851,9 +997,10 @@ export class ProviderRuntimeTransportOwner {
       delivery = Promise.reject(error);
     }
     void Promise.resolve(delivery).then((result) => {
-      if (!exactDeliveredResult(result) || binding.active === active) {
+      if (!exactDeliveredResult(result) || !active.flowFinished) {
         stateError("flow returned without exact delivery proof");
       }
+      active.flowProven = true;
     }).catch(() => {
       if (
         route.open &&

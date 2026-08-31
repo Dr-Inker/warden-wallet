@@ -35,6 +35,18 @@ import type {
   ContentWindowApi,
   ContentWindowMessageEvent,
 } from "./bridge.js";
+import {
+  createProviderTransportCancelEnvelope,
+  createProviderTransportReceiptEnvelope,
+  createProviderTransportRequestEnvelope,
+  createProviderTransportTerminalEnvelope,
+  readPageProviderReceiptEnvelope,
+  readProviderTransportRequestEnvelope,
+  readProviderTransportSettledEnvelope,
+  readProviderTransportTerminalEnvelope,
+  type ProviderTransportRequestEnvelope,
+  type ProviderTransportTerminalEnvelope,
+} from "../provider-delivery-protocol.js";
 
 export const MAX_PROVIDER_CONTENT_PENDING_REQUESTS = 32;
 export const MAX_PROVIDER_CONTENT_REQUESTS_PER_DOCUMENT =
@@ -93,10 +105,13 @@ interface CanonicalProviderWireRequest {
 
 interface PendingContentRequest {
   readonly correlationId: string;
-  readonly payload: CanonicalProviderWireRequest;
+  readonly payload: ProviderTransportRequestEnvelope;
   readonly expiresAt: number;
   recoveryAttempts: number;
   lastPortGeneration: number | null;
+  terminal: ProviderTransportTerminalEnvelope | null;
+  pageReceiptId: string | null;
+  receiptSentGeneration: number | null;
   expiryTimer: unknown;
 }
 
@@ -118,6 +133,16 @@ type ContentTerminalResponse =
   | ProviderUnavailableResponse
   | ProviderSignedTransactionResponse
   | ProviderTerminalFailureResponse;
+
+interface ContentTerminalDelivery {
+  readonly response: ContentTerminalResponse;
+  readonly envelope: ProviderTransportTerminalEnvelope;
+}
+
+interface ContentRequestSnapshot {
+  readonly request: CanonicalProviderWireRequest;
+  readonly envelope: ProviderTransportRequestEnvelope;
+}
 
 function stateError(message: string, cause?: unknown): never {
   throw new ProviderContentTransportStateError(
@@ -229,38 +254,90 @@ function canonicalWireRequest(
   }) as unknown as CanonicalProviderWireRequest;
 }
 
-function snapshotPageRequest(value: unknown): CanonicalProviderWireRequest | null {
+function snapshotPageRequest(value: unknown): ContentRequestSnapshot | null {
   try {
-    const request = parseProviderRequest(value);
+    const envelope = readProviderTransportRequestEnvelope(value);
+    if (envelope === null) return null;
+    const request = parseProviderRequest(envelope.payload);
     if (request.method !== "solana:signTransaction") return null;
-    return canonicalWireRequest(request);
+    const canonical = canonicalWireRequest(request);
+    return Object.freeze({
+      request: canonical,
+      envelope: createProviderTransportRequestEnvelope(
+        envelope.expiresAt,
+        canonical,
+      ),
+    });
   } catch {
     return null;
   }
 }
 
-function snapshotTerminalResponse(value: unknown): ContentTerminalResponse | null {
+function snapshotTerminalResponse(value: unknown): ContentTerminalDelivery | null {
   try {
-    if (isProviderUnavailableResponse(value)) {
-      return createUnavailableProviderResponse(value.correlationId);
-    }
-    if (isProviderTerminalFailureResponse(value)) {
-      return createProviderTerminalFailureResponse(
-        value.correlationId,
-        value.error.code,
+    const envelope = readProviderTransportTerminalEnvelope(value);
+    if (envelope === null) return null;
+    let response: ContentTerminalResponse;
+    if (isProviderUnavailableResponse(envelope.payload)) {
+      response = createUnavailableProviderResponse(envelope.payload.correlationId);
+    } else if (isProviderTerminalFailureResponse(envelope.payload)) {
+      response = createProviderTerminalFailureResponse(
+        envelope.payload.correlationId,
+        envelope.payload.error.code,
       );
+    } else {
+      if (!isSignedTransactionProviderResponse(envelope.payload)) return null;
+      let bytes: Uint8Array | undefined;
+      try {
+        bytes = Uint8Array.from(envelope.payload.result.signedTransaction);
+        response = createSignedTransactionProviderResponse(
+          envelope.payload.correlationId,
+          bytes,
+        );
+      } finally {
+        bytes?.fill(0);
+      }
     }
-    if (!isSignedTransactionProviderResponse(value)) return null;
-    let bytes: Uint8Array | undefined;
-    try {
-      bytes = Uint8Array.from(value.result.signedTransaction);
-      return createSignedTransactionProviderResponse(value.correlationId, bytes);
-    } finally {
-      bytes?.fill(0);
-    }
+    if (response.correlationId !== envelope.correlationId) return null;
+    return Object.freeze({
+      response,
+      envelope: createProviderTransportTerminalEnvelope(
+        envelope.correlationId,
+        envelope.receiptId,
+        envelope.expiresAt,
+        response,
+      ),
+    });
   } catch {
     return null;
   }
+}
+
+function terminalEnvelopesEqual(
+  left: ProviderTransportTerminalEnvelope,
+  right: ProviderTransportTerminalEnvelope,
+): boolean {
+  if (
+    left.correlationId !== right.correlationId ||
+    left.receiptId !== right.receiptId ||
+    left.expiresAt !== right.expiresAt
+  ) {
+    return false;
+  }
+  const leftValue = left.payload as ContentTerminalResponse;
+  const rightValue = right.payload as ContentTerminalResponse;
+  if (leftValue.ok !== rightValue.ok) return false;
+  if (!leftValue.ok && !rightValue.ok) {
+    return leftValue.error.code === rightValue.error.code &&
+      leftValue.error.message === rightValue.error.message;
+  }
+  if (leftValue.ok && rightValue.ok) {
+    const leftBytes = leftValue.result.signedTransaction;
+    const rightBytes = rightValue.result.signedTransaction;
+    return leftBytes.length === rightBytes.length &&
+      leftBytes.every((byte, index) => byte === rightBytes[index]);
+  }
+  return false;
 }
 
 function bindPortMethods(value: unknown): Omit<
@@ -349,14 +426,18 @@ export class ProviderContentTransportOwner {
       this.#close(true);
       return;
     }
-    if (envelope === null) return;
-    let payload: CanonicalProviderWireRequest | null;
-    try {
-      payload = snapshotPageRequest(envelope.payload);
-    } catch {
-      payload = null;
+    if (envelope === null) {
+      const receipt = readPageProviderReceiptEnvelope(event.data);
+      if (receipt !== null) this.#acceptPageReceipt(receipt.payload);
+      return;
     }
-    if (payload === null) {
+    let snapshot: ContentRequestSnapshot | null;
+    try {
+      snapshot = snapshotPageRequest(envelope.payload);
+    } catch {
+      snapshot = null;
+    }
+    if (snapshot === null) {
       this.#close(true);
       return;
     }
@@ -368,26 +449,27 @@ export class ProviderContentTransportOwner {
       return;
     }
     this.#reapExpiredAt(now);
+    const expiresAt = snapshot.envelope.expiresAt;
     if (
+      expiresAt <= now ||
+      expiresAt - now > this.#requestTtlMs ||
       this.#pending.size >= this.#pendingLimit ||
       this.#issued.size >= this.#requestLimit ||
-      this.#issued.has(payload.correlationId)
+      this.#issued.has(snapshot.request.correlationId)
     ) {
-      this.#close(true);
-      return;
-    }
-    const expiresAt = now + this.#requestTtlMs;
-    if (!Number.isSafeInteger(expiresAt)) {
       this.#close(true);
       return;
     }
 
     const entry: PendingContentRequest = {
-      correlationId: payload.correlationId,
-      payload,
+      correlationId: snapshot.request.correlationId,
+      payload: snapshot.envelope,
       expiresAt,
       recoveryAttempts: 0,
       lastPortGeneration: null,
+      terminal: null,
+      pageReceiptId: null,
+      receiptSentGeneration: null,
       expiryTimer: NO_EXPIRY_TIMER,
     };
     this.#issued.add(entry.correlationId);
@@ -508,9 +590,28 @@ export class ProviderContentTransportOwner {
     return true;
   }
 
+  #expireEntry(entry: PendingContentRequest): void {
+    if (this.#pending.get(entry.correlationId) !== entry) return;
+    const owner = this.#activePort;
+    if (
+      owner !== null &&
+      entry.lastPortGeneration === owner.generation
+    ) {
+      try {
+        owner.postMessage(createProviderTransportCancelEnvelope(
+          entry.expiresAt,
+          entry.payload.payload,
+        ));
+      } catch {
+        this.#releasePort(owner, true);
+      }
+    }
+    this.#removeEntry(entry);
+  }
+
   #reapExpiredAt(now: number): void {
     for (const entry of [...this.#pending.values()]) {
-      if (now >= entry.expiresAt) this.#removeEntry(entry);
+      if (now >= entry.expiresAt) this.#expireEntry(entry);
     }
   }
 
@@ -529,7 +630,7 @@ export class ProviderContentTransportOwner {
   #armExpiry(entry: PendingContentRequest): void {
     const remainingMs = entry.expiresAt - this.#currentTime();
     if (remainingMs <= 0) {
-      this.#removeEntry(entry);
+      this.#expireEntry(entry);
       return;
     }
     entry.expiryTimer = this.#timerSource.setTimeout(() => {
@@ -543,7 +644,7 @@ export class ProviderContentTransportOwner {
         return;
       }
       if (now >= entry.expiresAt) {
-        this.#removeEntry(entry);
+        this.#expireEntry(entry);
         return;
       }
       try {
@@ -639,6 +740,61 @@ export class ProviderContentTransportOwner {
     }
   }
 
+  #sendReceipt(entry: PendingContentRequest): void {
+    const owner = this.#activePort;
+    const terminal = entry.terminal;
+    if (
+      owner === null ||
+      terminal === null ||
+      entry.pageReceiptId !== terminal.receiptId ||
+      entry.lastPortGeneration !== owner.generation ||
+      entry.receiptSentGeneration === owner.generation
+    ) {
+      return;
+    }
+    entry.receiptSentGeneration = owner.generation;
+    try {
+      owner.postMessage(createProviderTransportReceiptEnvelope(
+        entry.correlationId,
+        terminal.receiptId,
+        entry.expiresAt,
+      ));
+    } catch {
+      if (entry.receiptSentGeneration === owner.generation) {
+        entry.receiptSentGeneration = null;
+      }
+      if (this.#activePort === owner) this.#releasePort(owner, true);
+      this.#recoverGeneration(owner.generation);
+      return;
+    }
+  }
+
+  #acceptPageReceipt(
+    receipt: ReturnType<typeof createProviderTransportReceiptEnvelope>,
+  ): void {
+    let now: number;
+    try {
+      now = this.#currentTime();
+    } catch {
+      this.#close(true);
+      return;
+    }
+    this.#reapExpiredAt(now);
+    const entry = this.#pending.get(receipt.correlationId);
+    if (entry === undefined) return;
+    const terminal = entry.terminal;
+    if (
+      terminal === null ||
+      receipt.receiptId !== terminal.receiptId ||
+      receipt.expiresAt !== entry.expiresAt
+    ) {
+      this.#close(true);
+      return;
+    }
+    entry.pageReceiptId = receipt.receiptId;
+    this.#sendReceipt(entry);
+  }
+
   #onPortMessage(owner: BoundContentPort, value: unknown): void {
     if (!this.#open || this.#activePort !== owner) return;
     let now: number;
@@ -649,12 +805,29 @@ export class ProviderContentTransportOwner {
       return;
     }
     this.#reapExpiredAt(now);
-    const response = snapshotTerminalResponse(value);
-    if (response === null) {
+    const settled = readProviderTransportSettledEnvelope(value);
+    if (settled !== null) {
+      const entry = this.#pending.get(settled.correlationId);
+      if (entry === undefined) return;
+      if (
+        entry.lastPortGeneration !== owner.generation ||
+        entry.receiptSentGeneration !== owner.generation ||
+        entry.pageReceiptId !== settled.receiptId ||
+        entry.terminal?.receiptId !== settled.receiptId ||
+        entry.expiresAt !== settled.expiresAt
+      ) {
+        this.#close(true);
+        return;
+      }
+      this.#removeEntry(entry);
+      return;
+    }
+    const delivery = snapshotTerminalResponse(value);
+    if (delivery === null) {
       this.#close(true);
       return;
     }
-    const entry = this.#pending.get(response.correlationId);
+    const entry = this.#pending.get(delivery.response.correlationId);
     if (
       entry === undefined ||
       entry.lastPortGeneration !== owner.generation
@@ -662,14 +835,26 @@ export class ProviderContentTransportOwner {
       return;
     }
 
-    // Remove before the re-entrant page boundary: first exact terminal wins.
-    this.#removeEntry(entry);
+    if (
+      delivery.envelope.expiresAt !== entry.expiresAt ||
+      (entry.terminal !== null &&
+        !terminalEnvelopesEqual(entry.terminal, delivery.envelope))
+    ) {
+      this.#close(true);
+      return;
+    }
+    entry.terminal = delivery.envelope;
+    if (entry.pageReceiptId === delivery.envelope.receiptId) {
+      this.#sendReceipt(entry);
+      return;
+    }
+
     try {
       this.#postPageMessage(
         Object.freeze({
           version: 1,
           type: PAGE_PROVIDER_RESPONSE_TYPE,
-          payload: response,
+          payload: delivery.envelope,
         }),
         this.#documentOrigin,
       );
