@@ -125,7 +125,25 @@
 > until that lane, a production RPC/release decision, MAIN-world registration,
 > and external release assurance are green.
 >
-> Ledger-inclusive full-repository evidence is not yet claimed for C22.
+> ### C22 full-gate addendum — afb0347 — 2026-08-31
+>
+> Ledger-inclusive SHA
+> `afb0347543820608ec3c100a07dc6073d6ede17a` passed this exact command from a
+> clean tree, exit **0**, and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> The executable gate passed core **699/699**, UI tokens **11/11**,
+> transaction-budget **8/8**, WebAuthn **1/1**, extension **473/473**,
+> typecheck/build, the Argon2 benchmark, real Chromium **9/9**, and the full
+> Rust workspace suite. Known Anchor key/cfg and Rust unused-code warnings were
+> non-fatal. This verdict belongs only to the exact SHA above; this
+> documentation-only addendum commit does not inherit it.
 
 > ## 2026-08-31 C21 BACKGROUND REPLACEMENT-PORT OWNERSHIP — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >

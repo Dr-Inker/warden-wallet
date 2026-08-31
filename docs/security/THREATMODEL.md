@@ -2672,4 +2672,14 @@ reviewed non-empty release, reads trusted RPC, consumes an unlocked signer,
 verifies exact signed bytes, or registers a Wallet Standard method. C22 closes
 the deadline/acknowledgment class internally; it does not make Warden deployable.
 
-Ledger-inclusive full-repository evidence is not yet claimed for C22.
+Ledger-inclusive SHA `afb0347543820608ec3c100a07dc6073d6ede17a` passed, from a
+clean tree, `git rev-parse HEAD && test -z "$(git status --porcelain)" && env
+npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && git diff
+--check && git rev-parse HEAD && test -z "$(git status --porcelain)"`, exit
+**0**, with the same SHA printed before and after. The executable gate passed
+core **699/699**, UI tokens **11/11**, transaction-budget **8/8**, WebAuthn
+**1/1**, extension **473/473**, typecheck/build, the Argon2 benchmark, real
+Chromium **9/9**, and the full Rust workspace suite. Known Anchor key/cfg and
+Rust unused-code warnings were non-fatal. This verdict belongs only to that
+exact SHA; the documentation-only addendum commit that records it does not
+inherit the result.
