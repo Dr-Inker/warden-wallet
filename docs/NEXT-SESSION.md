@@ -1,5 +1,55 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 CLEAN-BREAK PICKUP MEMO — C29 CLOSED; C30 NOT STARTED
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the next Warden implementation/review session.
+> - **TASK:** continue C6 from a fresh read-only map. Inventory the remaining
+>   mutable GitHub Actions references and the existing license/supply-chain
+>   machinery, then choose one bounded no-owner-decision slice: preferably an
+>   executable immutable-action-pin audit or deterministic extension
+>   SBOM/license attachment. Establish real RED before implementation. Do not
+>   fabricate a store-returned-package comparison without an authorized Web
+>   Store round trip.
+> - **CWD:** `/opt/warden`.
+> - **BASE:** C29 implementation/fix
+>   `305efb34b0179c85bf097b4ef03d98ad85d0a99b`; ledger-inclusive, fully gated
+>   SHA `90a9a7ea960aface4690a87d81ebfa80b81b4b12`. The documentation-only
+>   commit containing this memo is intentionally not described as gate green.
+> - **READ:** this memo and the C29 entry immediately below;
+>   `apps/extension/README.md`; `docs/security/RELEASE-INTEGRITY.md`;
+>   `docs/TOOLCHAIN.md`; C6 in
+>   `docs/superpowers/plans/2026-08-19-warden-client-security-hardening.md`;
+>   `.github/workflows/ci.yml`; and the incumbent supply-chain/license scripts
+>   and notices before adding another mechanism.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the smallest C6 source/test/docs set needed for one executable
+>   slice and commit it in-repo.
+> - **DO_NOT_TOUCH:** `.superpowers/**`,
+>   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
+>   publisher/account state, secrets, and the empty production release
+>   registry. Do not choose the C1a production extension-id/on-chain
+>   permitted-origin mechanism; that remains an owner decision.
+> - **ACCEPT:** one honestly scoped C6 contract with executable RED, exact-SHA
+>   focused evidence, harsh residuals, and a committed/full-gated ledger. Keep
+>   the provider fixed unavailable. Never call a locally generated ZIP a
+>   store-returned-package comparison or treat co-generated unsigned JSON as an
+>   authenticated review anchor.
+> - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
+>   extension artifacts, temporary test data, and git commits only; no deploy,
+>   upload, publishing, live service, external message, secret creation, or
+>   real-account/funds mutation.
+> - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
+>   and outcomes, artifact/SBOM/action-pin measurements, unchanged/promoted
+>   invariants, independent-review status, and remaining owner/external-state
+>   blockers.
+>
+> **Stop state:** C29 is closed and fully recorded below. C30 has no code, RED,
+> edit lease, deployment action, publisher action, or release-registry change.
+> The ignored local `apps/extension/release/` output may exist; it is
+> reproducible evidence, not a tracked or reviewed release candidate.
+
 > ## 2026-08-31 C29 DETERMINISTIC EXTENSION UPLOAD ARTIFACT — C6 PARTIAL, NO PUBLISH
 >
 > Implementation commit
@@ -100,9 +150,25 @@
 > no artifact; it is not counted. All temporary clone/cache paths were removed
 > after comparison and are recoverable by repeating the commands.
 >
-> **Full-repository gate is pending the ledger commit.** Focused C29 evidence
-> never substitutes for `.claude/test-gate.sh`, and no ledger SHA is described
-> as green before that executable gate runs on it.
+> Ledger-inclusive full-repository evidence belongs only to
+> `90a9a7ea960aface4690a87d81ebfa80b81b4b12`. From a clean tree, this exact
+> command exited **0** and the first/last SHA matched:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && if rg -n 'release-artifact|package-release|verify-release|warden\.extension-artifact\.v1' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The executable gate passed core **700/700**, extension **485/485**, UI tokens
+> **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, builds/typechecks, the provisional production Argon2 benchmark,
+> the complete Rust workspace suite, canonical release package/verifier,
+> independent Info-ZIP parse, artifact-tool exclusion, diff validation, and
+> clean-tree guards. At this ledger SHA the payload-tree and ZIP hashes remain
+> `f0e7ef2c...` and `ce1b3a47...`; the source-SHA-bearing artifact JSON hash is
+> `5dcace34442d00124a3eeea5bf05c8d02fce67b88071a7080cef73790158c129`.
+> Known Anchor test-middleman key mismatch, legacy macro-`cfg`, and Rust
+> unused-code warnings were non-fatal. The documentation-only clean-break memo
+> commit does not inherit this verdict or promote an invariant.
 >
 > Independent second-model review remains **UNVERIFIED**.
 >
