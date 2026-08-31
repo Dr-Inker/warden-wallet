@@ -3169,8 +3169,21 @@ checkpoint`. At exact clean implementation SHA
 extension **474/474**, typecheck, all six signing/recovery/settlement browser
 contracts repeated five times (**30/30**), production build, emitted-artifact
 exclusion, diff validation, and clean-tree guards passed. The ledger-inclusive
-full repository gate is not inferred from this focused evidence and remains
-pending for the subsequent ledger SHA.
+full repository gate is not inferred from this focused evidence.
+
+Ledger-inclusive full-repository evidence belongs only to
+`ed3f6d50104cf8ce014e868ee741464addab60f0`. From a clean tree, the exact
+commands in `docs/NEXT-SESSION.md` ran `.claude/test-gate.sh`, scanned the
+emitted extension for all C24-C28 checkpoint, marker, counter, fixture, and
+status strings, validated the diff, and guarded SHA/worktree before and after.
+They exited **0** with the same SHA. The executable gate passed core
+**700/700**, extension **474/474**, UI tokens **11/11**,
+transaction-budget **8/8**, WebAuthn **1/1**, real Chromium **15/15**,
+builds/typechecks, the production Argon2 benchmark, the complete Rust workspace
+suite, artifact exclusion, and clean-tree guards. Known Anchor test-program key,
+legacy macro-`cfg`, and Rust unused-code warnings were non-fatal. The
+documentation-only commit recording this evidence and the clean-break memo does
+not inherit the verdict or promote an invariant.
 
 Chrome's current messaging, service-worker lifecycle, extension end-to-end
 testing, and worker-termination testing references are linked in
