@@ -2,6 +2,48 @@
 
 This is a pre-alpha development extension. It must not be used with real funds.
 
+## Deterministic upload artifact
+
+From a clean committed tree, with the exact Node and pnpm versions pinned in the
+root `package.json` and `.node-version`, run:
+
+```sh
+pnpm --filter @warden/extension release:gate
+```
+
+The command rebuilds the extension and writes three ignored, local artifacts
+under `apps/extension/release/`:
+
+- `unpacked/`, with files normalized to mode `0644`, directories to `0755`, and
+  every mtime to `1980-01-01T00:00:00.000Z`;
+- `warden-extension-<version>.zip`, a classic non-ZIP64 STORE archive with
+  UTF-8 paths in byte-sorted order, no comments/extras, the same fixed metadata,
+  and `manifest.json` at the archive root; and
+- `warden-extension-<version>.artifact.json`, which binds the clean source SHA,
+  lockfile hash, exact Node/pnpm/esbuild versions, every path/size/mode/file
+  hash, a payload-tree hash, the reviewed permission/CSP/update-URL snapshot,
+  and the complete ZIP hash.
+
+The verifier reparses the ZIP under a deliberately strict canonical grammar,
+compares every file and release-policy field, checks the normalized unpacked
+tree, and runs `unzip -t` as an independent format reader. To compare another
+canonical upload ZIP against an already reviewed artifact manifest:
+
+```sh
+node apps/extension/scripts/verify-release.mjs \
+  /path/to/candidate.zip /path/to/reviewed.artifact.json
+```
+
+Chrome's current Web Store contract requires an upload ZIP with
+`manifest.json` at its root; see [Prepare your extension](https://developer.chrome.com/docs/webstore/prepare)
+and [Publish in the Chrome Web Store](https://developer.chrome.com/docs/webstore/publish).
+This lane creates and verifies that upload artifact only. It does **not** parse
+or normalize a Web-Store-returned CRX, authenticate the adjacent JSON, prove two
+independent builders agree, publish anything, or replace publisher-account and
+review controls. Replacing both a ZIP and its unsigned, co-generated JSON is not
+detected unless the reviewed JSON/hash is anchored somewhere the builder cannot
+rewrite.
+
 ## Manifest permissions
 
 - `storage` is used by the background service worker for encrypted persistent

@@ -46,8 +46,8 @@ env:
   # built from whatever HEAD happened to be on push day.
   AVM_GIT_TAG: "v1.1.2"
   CARGO_DENY_VERSION: "0.20.2"
-  NODE_VERSION: "22"
-  PNPM_VERSION: "11"
+  NODE_VERSION: "22.23.2"
+  PNPM_VERSION: "11.12.0"
 
 jobs:
   build-test-gate:
@@ -163,8 +163,8 @@ jobs:
           check "rustc"  "${{ env.RUST_TOOLCHAIN }}"    "$(rustc --version)"
           check "solana" "${{ env.SOLANA_CLI_VERSION }}" "$(solana --version)"
           check "anchor" "${{ env.ANCHOR_CLI_VERSION }}" "$(anchor --version)"
-          check "node"   "v${{ env.NODE_VERSION }}."     "$(node --version)"
-          check "pnpm"   "${{ env.PNPM_VERSION }}."      "$(pnpm --version)"
+          check "node"   "v${{ env.NODE_VERSION }}"      "$(node --version)"
+          check "pnpm"   "${{ env.PNPM_VERSION }}"       "$(pnpm --version)"
           if [ "$fail" -ne 0 ]; then
             echo "One or more toolchain versions do not match docs/TOOLCHAIN.md's pins — refusing to continue." >&2
             exit 1
@@ -179,6 +179,14 @@ jobs:
         env:
           WARDEN_SKIP_SPIKES: "1"
         run: ./.claude/test-gate.sh
+
+      # C6: this is deliberately separate from the developer test gate because
+      # release packaging refuses dirty source trees. It rebuilds the extension,
+      # emits the normalized unpacked tree and canonical Web Store upload ZIP,
+      # verifies every payload hash/policy field, and asks Info-ZIP to parse the
+      # archive independently. It does not publish or contact the Web Store.
+      - name: C6 deterministic extension upload-package gate
+        run: pnpm --filter @warden/extension release:gate
 
       - name: cargo clippy -p warden — deny arithmetic side effects
         run: cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects

@@ -6,6 +6,9 @@
   "scripts": {
     "bench:argon2": "node scripts/benchmark-argon2.mjs",
     "build": "node scripts/build.mjs",
+    "release:package": "node scripts/package-release.mjs",
+    "release:verify": "node scripts/verify-release.mjs",
+    "release:gate": "pnpm run release:package && pnpm run release:verify",
     "test": "vitest run",
     "test:browser": "pnpm run build && playwright test -c playwright.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"

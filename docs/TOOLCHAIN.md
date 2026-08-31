@@ -18,6 +18,12 @@ verbatim output of the listed command, run in sequence per Step 4 of Task 1
 
 ## Notes
 
+- The shipped-extension release path now treats Node `22.23.2`, pnpm `11.12.0`,
+  and esbuild `0.28.2` as exact inputs. The root `package.json`, `.node-version`,
+  CI setup, and `apps/extension/scripts/package-release.mjs` agree on those
+  pins; release packaging fails rather than accepting a compatible major or a
+  dirty tree. This is narrower than complete supply-chain immutability: the CI
+  workflow's third-party action references are still mutable major tags.
 - `avm install latest` resolved to Anchor `1.1.2` and completed almost instantly
   (avm fetched a prebuilt release rather than compiling from source), so the
   controller's fallback pin (`avm install 0.31.1`) was not needed.

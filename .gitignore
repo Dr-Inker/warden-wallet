@@ -5,6 +5,7 @@ target
 test-ledger
 /apps/extension/test-results/
 /apps/extension/playwright-report/
+/apps/extension/release/
 *.log
 .env
 .env.*

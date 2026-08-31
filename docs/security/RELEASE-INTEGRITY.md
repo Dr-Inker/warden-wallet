@@ -2,6 +2,29 @@
 
 **Status:** UNVERIFIED beyond the one dev row below — no tagged release exists yet.
 
+## Extension upload artifacts (C6 partial)
+
+`pnpm --filter @warden/extension release:gate` now produces a deterministic
+unpacked payload, canonical Chrome Web Store upload ZIP, and adjacent artifact
+manifest from a clean commit under the exact JavaScript toolchain pins in
+`docs/TOOLCHAIN.md`. The verifier independently asks `unzip -t` to parse the
+archive and then fail-closes on archive metadata, path-set, file-mode, file-size,
+file-hash, manifest permission, CSP, update URL, payload-tree hash, or whole-ZIP
+hash drift. Generated outputs are ignored; this document does not pretend an
+ordinary development build is a release row.
+
+For a real extension release, the reviewed `*.artifact.json` bytes and ZIP hash
+must be anchored in the release review/attestation system before comparing a
+candidate. The JSON is unsigned and co-generated with the ZIP, so replacing
+both defeats comparison if no independent reviewed anchor exists. The current
+verifier accepts the canonical **upload ZIP** only. A package downloaded back
+from the Web Store is a CRX/store-repackaged object and remains UNVERIFIED; a
+future lane must remove only documented store-added signing/packaging and then
+compare the entire payload. Two genuinely independent clean builders, SBOM and
+license attachment, immutable CI action SHAs, publisher MFA/least privilege,
+and an external security review also remain UNVERIFIED. No Web Store upload or
+publisher-account mutation is performed by this gate.
+
 This document is the addressable record `scripts/deploy-gate.sh` checks against
 (spec §17 item L7, plan Task 11 item 5): for every release SHA that is a
 deploy candidate, this table's row for that SHA must carry the artifact hash
