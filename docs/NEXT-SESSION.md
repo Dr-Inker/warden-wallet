@@ -101,6 +101,20 @@
 > approve/claim/sign UI action behind a non-empty committed release and trusted
 > RPC boundary. Production must remain fixed-unavailable until those pieces have
 > executable end-to-end gates; do not infer enablement from C15.
+>
+> **C15 full-gate addendum:** the ledger-inclusive SHA
+> `a2920004847b89e13385f4ea1689684dc4c60fbc` passed this exact command,
+> exit **0**: `git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && git
+> diff --check && git rev-parse HEAD && test -z "$(git status --porcelain)"`.
+> It printed the same SHA before and after, proved a clean worktree, and ran the
+> complete pnpm workspace, core **699/699**, extension **366/366**, production
+> Chromium **6/6**, the pinned Argon2 worker benchmark, core/extension builds
+> and typechecks, fixture/ledger/feature guards, and the complete Rust workspace.
+> The known Anchor test-program key mismatch notice and legacy macro `cfg`
+> notices were warnings, not skipped failures. This verdict belongs only to
+> `a292000…`; this evidence-only addendum commit does not inherit it or promote
+> an invariant.
 
 > ## 2026-08-31 C14 DURABLE PROVIDER OPERATION / SIGNED-RESULT REPLAY — INTERNAL ONLY, PROVIDER STILL UNAVAILABLE
 >

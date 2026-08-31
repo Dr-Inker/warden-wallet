@@ -2089,3 +2089,18 @@ delivery has no receipt/deduplication protocol. No success language is emitted,
 and release/RPC authority, approve/sign action, consequence review,
 send/confirmation, Wallet Standard, onboarding, and root ceremony remain absent.
 C15 closes one internal ordering defect; it does not make Warden deployable.
+
+### C15 full-gate addendum — a292000 — 2026-08-31
+
+The ledger-inclusive SHA `a2920004847b89e13385f4ea1689684dc4c60fbc`
+passed this exact command, exit **0**: `git rev-parse HEAD && test -z "$(git
+status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash
+.claude/test-gate.sh && git diff --check && git rev-parse HEAD && test -z
+"$(git status --porcelain)"`. It printed the same SHA before and after, proved
+a clean worktree, and ran the complete pnpm workspace, core **699/699**,
+extension **366/366**, production Chromium **6/6**, the pinned Argon2 worker
+benchmark, core/extension builds and typechecks, fixture/ledger/feature guards,
+and the complete Rust workspace. The known Anchor test-program key mismatch
+notice and legacy macro `cfg` notices were warnings, not skipped failures. This
+verdict belongs only to `a292000…`; the evidence-only follow-up does not inherit
+it or promote an invariant.
