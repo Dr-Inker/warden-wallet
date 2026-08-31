@@ -165,12 +165,15 @@ interface Counters {
   signingClaims: number;
   signingCompletions: number;
   signerLeaseUses: number;
+  signerResultsProduced: number;
   providerPortRoutes: number;
   latestApprovalId: string | null;
 }
 
 type KeyringStartup = "seeded" | "restored" | "locked";
-type WorkerCheckpoint = "after-signing-committed";
+type WorkerCheckpoint =
+  | "after-signature-produced"
+  | "after-signing-committed";
 
 function hexBytes(value: string): Uint8Array {
   const pairs = value.match(/../g);
@@ -351,6 +354,7 @@ const counters: Counters = {
   signingClaims: 0,
   signingCompletions: 0,
   signerLeaseUses: 0,
+  signerResultsProduced: 0,
   providerPortRoutes: 0,
   latestApprovalId: null,
 };
@@ -540,7 +544,10 @@ const approvalKeyring = Object.freeze({
     use: (lease: SessionApprovalSignerLease) => Promise<Uint8Array>,
   ): Promise<Uint8Array> => {
     counters.signerLeaseUses++;
-    return keyring.useSessionSignerBytes(operation, use);
+    const signed = await keyring.useSessionSignerBytes(operation, use);
+    counters.signerResultsProduced++;
+    await pauseAtCheckpoint("after-signature-produced");
+    return signed;
   },
 });
 
@@ -764,11 +771,14 @@ chromeApi.runtime.onConnect.addListener((port: ProviderRuntimePort): void => {
 
 Object.assign(globalThis, {
   __wardenProviderSignSuccessArmCheckpoint: (stage: unknown): void => {
-    if (stage !== "after-signing-committed") {
-      throw new Error("unsupported C24 worker checkpoint");
+    if (
+      stage !== "after-signature-produced" &&
+      stage !== "after-signing-committed"
+    ) {
+      throw new Error("unsupported signing worker checkpoint");
     }
     if (armedCheckpoint !== null || checkpointReached !== null) {
-      throw new Error("C24 worker checkpoint is already owned");
+      throw new Error("signing worker checkpoint is already owned");
     }
     armedCheckpoint = stage;
   },
@@ -799,10 +809,12 @@ Object.assign(globalThis, {
         signingClaims: counters.signingClaims,
         signingCompletions: counters.signingCompletions,
         signerLeaseUses: counters.signerLeaseUses,
+        signerResultsProduced: counters.signerResultsProduced,
         latestApprovalId: id,
         approvalState: approval?.state ?? null,
         signingState: signing?.outcome.state ?? null,
         signingAttemptNumber: signing?.outcome.attemptNumber ?? null,
+        signingFailureCode: signing?.outcome.failureCode ?? null,
         account: SMART_ACCOUNT.toBase58(),
         sessionSigner: SESSION_SIGNER.toBase58(),
         rawMessage: approval === null ? null : [...approval.rawMessage],

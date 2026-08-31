@@ -55,10 +55,12 @@ interface WorkerStatus {
   readonly signingClaims: number;
   readonly signingCompletions: number;
   readonly signerLeaseUses: number;
+  readonly signerResultsProduced: number;
   readonly latestApprovalId: string | null;
   readonly approvalState: string | null;
   readonly signingState: string | null;
   readonly signingAttemptNumber: number | null;
+  readonly signingFailureCode: string | null;
   readonly account: string;
   readonly sessionSigner: string;
   readonly rawMessage: number[] | null;
@@ -374,6 +376,7 @@ test("real Chromium returns exactly the reviewed message after one authenticated
       signingClaims: 0,
       signingCompletions: 0,
       signerLeaseUses: 0,
+      signerResultsProduced: 0,
       approvalState: "pending",
       signingState: null,
     });
@@ -455,6 +458,7 @@ test("real Chromium returns exactly the reviewed message after one authenticated
       signingClaims: 1,
       signingCompletions: 1,
       signerLeaseUses: 1,
+      signerResultsProduced: 1,
       approvalState: "approved",
       signingState: "signed",
       signingAttemptNumber: 1,
@@ -554,6 +558,7 @@ test("durable signed bytes replay after MV3 death without restoring signer autho
       signingClaims: 1,
       signingCompletions: 1,
       signerLeaseUses: 1,
+      signerResultsProduced: 1,
       approvalState: "approved",
       signingState: "signed",
       signingAttemptNumber: 1,
@@ -631,6 +636,7 @@ test("durable signed bytes replay after MV3 death without restoring signer autho
       signingClaims: 0,
       signingCompletions: 0,
       signerLeaseUses: 0,
+      signerResultsProduced: 0,
       latestApprovalId: committed.latestApprovalId,
       approvalState: "approved",
       signingState: "signed",
@@ -688,6 +694,201 @@ test("durable signed bytes replay after MV3 death without restoring signer autho
       publicKey,
       returned.signatures[0]!,
     )).toBe(true);
+  } finally {
+    try {
+      await context?.close();
+    } finally {
+      try {
+        await server?.close();
+      } finally {
+        const expectedPrefix =
+          `${resolve(tmpdir())}${sep}warden-provider-sign-success-browser-`;
+        if (resolve(extension.directory).startsWith(expectedPrefix)) {
+          await rm(extension.directory, { recursive: true, force: true });
+        }
+      }
+    }
+  }
+});
+
+test("uncommitted signature is abandoned after MV3 death without signer retry", async () => {
+  const extension = await createExtension();
+  let server: TestServer | undefined;
+  let context: BrowserContext | undefined;
+  try {
+    server = await startServer(extension.pageScript);
+    context = await chromium.launchPersistentContext("", {
+      headless: false,
+      args: [
+        `--disable-extensions-except=${extension.directory}`,
+        `--load-extension=${extension.directory}`,
+        "--headless=new",
+      ],
+    });
+    const firstWorker = await liveExtensionWorker(context);
+    const extensionOrigin =
+      `chrome-extension://${new URL(firstWorker.url()).hostname}`;
+    await firstWorker.evaluate(() => {
+      const arm = (globalThis as unknown as {
+        __wardenProviderSignSuccessArmCheckpoint?: (stage: string) => void;
+      }).__wardenProviderSignSuccessArmCheckpoint;
+      if (typeof arm !== "function") {
+        throw new Error("precommit checkpoint control is unavailable");
+      }
+      arm("after-signature-produced");
+    });
+
+    const page = await context.newPage();
+    await page.goto(server.origin);
+    await expect.poll(() => readWorkerStatus(context!)).toMatchObject({
+      bootId: expect.stringMatching(/^[0-9a-f]{32}$/),
+      keyringStartup: "seeded",
+      fatalErrors: [],
+      selectionCalls: 1,
+      approvalCreates: 1,
+      signingClaims: 0,
+      checkpointReached: null,
+    });
+    const existingPopup = context.pages().find((candidate) =>
+      candidate.url().startsWith(extensionOrigin) &&
+      candidate.url().includes("/approval.html?request=req_"));
+    const popup = existingPopup ?? await context.waitForEvent("page", {
+      predicate: (candidate) =>
+        candidate.url().startsWith(extensionOrigin) &&
+        candidate.url().includes("/approval.html?request=req_"),
+      timeout: 30_000,
+    });
+    await expect(popup.locator("#approval-status")).toHaveAttribute(
+      "data-state",
+      "review",
+    );
+    await popup.locator("[data-action=approve]").click();
+
+    await expect.poll(() => readWorkerStatus(context!)).toMatchObject({
+      fatalErrors: [],
+      checkpointReached: "after-signature-produced",
+      approvalCreates: 1,
+      signingClaims: 1,
+      signingCompletions: 0,
+      signerLeaseUses: 1,
+      signerResultsProduced: 1,
+      keyringUnlocked: true,
+      approvalState: "approved",
+      signingState: "signing",
+      signingAttemptNumber: 1,
+      signingFailureCode: null,
+      durableSignedTransaction: null,
+      activeActions: 1,
+      activeApprovalRequests: 1,
+      activeFlows: 1,
+      activeDocuments: 1,
+      rpc: {
+        genesisCalls: 8,
+        accountCalls: 6,
+        latestBlockhashCalls: 1,
+        blockhashValidityCalls: 1,
+      },
+    });
+    const produced = await readWorkerStatus(context);
+    if (produced.latestApprovalId === null || produced.rawMessage === null) {
+      throw new Error("precommit signing evidence is absent");
+    }
+    expect(produced.durableSignedTransaction).toBeNull();
+    expect(await page.evaluate(() =>
+      (globalThis as unknown as { __wardenPageSignStatus: PageSignStatus })
+        .__wardenPageSignStatus,
+    )).toMatchObject({
+      state: "pending",
+      signedTransaction: null,
+      error: null,
+      pendingCount: 0,
+      href: `${server.origin}/`,
+      navigationEntries: 1,
+    });
+    expect(await readContentPending(page)).toBe(1);
+
+    // Deny the replacement any signer authority. A signature that existed
+    // only in the killed worker must never be reconstructed or delivered.
+    await firstWorker.evaluate(async () => {
+      const storage = (globalThis as unknown as {
+        chrome: {
+          storage: {
+            session: { remove(key: string): Promise<void> };
+          };
+        };
+      }).chrome.storage.session;
+      await storage.remove("warden.unlock-session.v2");
+    });
+    const controlPage = await context.newPage();
+    const cdp = await context.newCDPSession(controlPage);
+    const targets = await cdp.send("Target.getTargets");
+    const target = targets.targetInfos.find((candidate) =>
+      candidate.type === "service_worker" &&
+      candidate.url.startsWith(extensionOrigin));
+    expect(target, "signing worker exists before the precommit cut").toBeDefined();
+    const closed = await cdp.send("Target.closeTarget", {
+      targetId: target!.targetId,
+    });
+    expect(closed.success).toBe(true);
+
+    await expect.poll(() => page.evaluate(() =>
+      (globalThis as unknown as { __wardenPageSignStatus: PageSignStatus })
+        .__wardenPageSignStatus,
+    )).toMatchObject({
+      state: "failed",
+      signedTransaction: null,
+      error: "ProviderPageTerminalError: Provider request failed",
+      pendingCount: 0,
+      href: `${server.origin}/`,
+      navigationEntries: 1,
+    });
+    const replacement = await readWorkerStatus(
+      context,
+      extensionOrigin,
+      produced.latestApprovalId,
+    );
+    expect(replacement).toMatchObject({
+      ready: true,
+      keyringStartup: "locked",
+      checkpointReached: null,
+      fatalErrors: [],
+      startupInvalidatedApprovals: 1,
+      startupInvalidatedOperations: 0,
+      keyringUnlocked: false,
+      providerPortRoutes: 1,
+      selectionCalls: 0,
+      identityReads: 0,
+      approvalCreates: 0,
+      signingClaims: 0,
+      signingCompletions: 0,
+      signerLeaseUses: 0,
+      signerResultsProduced: 0,
+      latestApprovalId: produced.latestApprovalId,
+      approvalState: "approved",
+      signingState: "failed",
+      signingAttemptNumber: 1,
+      signingFailureCode: "worker-restarted",
+      durableSignedTransaction: null,
+      activeActions: 0,
+      activeApprovalRequests: 0,
+      activeFlows: 0,
+      activeDocuments: 1,
+      rpc: {
+        genesisCalls: 0,
+        accountCalls: 0,
+        latestBlockhashCalls: 0,
+        blockhashValidityCalls: 0,
+      },
+    });
+    expect(replacement.bootId).not.toBe(produced.bootId);
+    expect(replacement.rawMessage).toEqual(produced.rawMessage);
+    expect(replacement.messageDigestHex).toBe(produced.messageDigestHex);
+    expect(produced.signerLeaseUses + replacement.signerLeaseUses).toBe(1);
+    expect(
+      produced.signerResultsProduced + replacement.signerResultsProduced,
+    ).toBe(1);
+    expect(produced.signingCompletions + replacement.signingCompletions).toBe(0);
+    expect(await readContentPending(page)).toBe(0);
   } finally {
     try {
       await context?.close();
