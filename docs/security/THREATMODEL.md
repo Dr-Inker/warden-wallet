@@ -2372,3 +2372,63 @@ and the complete Rust workspace. The known Anchor test-program key mismatch
 notice and legacy macro `cfg` notices were warnings, not skipped failures. This
 verdict belongs only to `eaeb26c…`; this evidence-only follow-up does not inherit
 it or promote an invariant.
+
+---
+
+## Client C19 closed provider terminal outcomes — 322c28b — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Threat closed internally:** C18 previously knew only “signed terminal true”
+versus an exception. That was insufficient for user rejection, cancellation,
+expiry, worker interruption, preparation failure, invalidation, or a durable
+failed signing attempt, and it invited an unsafe exception → page-error
+translation. C19 introduces a durable classifier that derives the exact
+browser-owned provider-operation identity and then rechecks the complete
+operation → approval → signing binding before selecting any response.
+
+Only an approval whose atomic signing outcome is exactly `signed` can delegate
+to C14. A merely `approved` row with no outcome or `signing` remains
+non-terminal and produces no response. Exact failed states map to four fixed
+public outcomes: user rejected, request cancelled, request expired, or generic
+request failed. Internal signing failure codes, raw exceptions, RPC failures,
+keyring state, and stack text are never serialized. C16 recognizes only the
+exact code/message pairs and removes the original pending entry before rejecting
+its owner-minted Promise; late success cannot reverse that tombstone.
+
+Harsh review found that C13 intentionally throws for a retained `failed`
+operation rather than returning C15's `replay-required`. C18 now attempts C19
+recovery after a rejected launch, but only C19's exact durable proof can turn
+that into delivery. If recovery is absent, non-terminal, malformed, inactive,
+or returns anything other than literal `true`, the path fails closed. A
+malformed successful launch is not eligible for this fallback. No catch around
+C14 translates a possibly-enqueued success into an error response.
+
+The missing-module RED exited 1 before collection. Focused C18/C19/C16 evidence
+is **46/46**; the complete extension lane is **430/430**. Exact clean-SHA
+evidence at `322c28b358528f53b76cb0d636f1bcb07d57b207` passed extension tests,
+typecheck, build, production Chromium **6/6**, emitted-artifact exclusion,
+`git diff --check`, identical before/after SHA, and clean-tree proof with the
+full command recorded in `docs/NEXT-SESSION.md`. Production build metadata and
+artifact scanning prove the C19 outcome owner, terminal error codes, and every
+C12–C18 provider/signing/page owner remain absent; emitted content/background
+retain only `WARDEN_METHOD_UNAVAILABLE`.
+
+Primary lifecycle/error evidence is linked in `docs/NEXT-SESSION.md`: Chrome's
+runtime, messaging, and MV3 service-worker contracts plus the Wallet Standard
+reference Solana wallet. The four Warden error codes are a closed internal
+protocol choice, not a claimed Wallet Standard taxonomy. Independent
+second-model review is **UNVERIFIED** because `codex review --commit
+322c28b358528f53b76cb0d636f1bcb07d57b207` failed before model startup on the
+host's read-only app-server state path.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+
+**Residual, stated as a threat:** all success/failure page integration remains
+fake-window only. The real content script intentionally rejects these terminal
+messages, stores no exact outstanding request, performs no bounded resend after
+Port loss, and has no receipt acknowledgment. A page Promise can still hang to
+its absolute timeout despite a durable result. There is no non-empty reviewed
+release, trusted production RPC, production coordinator/keyring graph,
+real-browser signature, Wallet Standard registration, send/confirmation,
+onboarding, production KDF policy, root ceremony, consequence review, or audit.
+C19 is a safer unreachable protocol primitive, not deployable wallet behavior.

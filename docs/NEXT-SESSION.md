@@ -1,5 +1,134 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C19 CLOSED PROVIDER TERMINAL OUTCOMES — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `322c28b358528f53b76cb0d636f1bcb07d57b207` replaces C18's implicit
+> signed-or-throw assumption with an explicit durable outcome boundary. The new
+> `ProviderTerminalOutcomeOwner` derives the exact C13 browser-request identity,
+> reads its journal row, rechecks the complete operation → approval binding, and
+> for an approved row also snapshots the atomic `signing` / `signed` / `failed`
+> outcome. Only an exact `signed` outcome reaches C14's existing cryptographic
+> replay owner. Rejected, cancelled, expired, invalidated, preparation-failed,
+> worker-restarted, request-cancelled, and failed-signing states map to only four
+> fixed page-safe codes: `WARDEN_USER_REJECTED`, `WARDEN_REQUEST_CANCELLED`,
+> `WARDEN_REQUEST_EXPIRED`, or `WARDEN_REQUEST_FAILED`. No raw exception,
+> persisted signing failure code, RPC detail, key state, or stack text crosses
+> this boundary.
+>
+> C18 now treats C12's boolean as terminal scheduling only: both `true` and
+> `false` delegate to C19, which independently decides signed versus failed from
+> durable state. Harsh review caught a second replay hole before commit: C13
+> deliberately throws when a retained operation is `failed`, so C15 cannot
+> return its normal `replay-required` discriminator for that row. C18 now
+> attempts recovery after a rejected C15 launch, but succeeds only when C19
+> independently proves and enqueues an exact durable terminal outcome. If both
+> launch and recovery fail, it returns an aggregate fail-closed error. A
+> malformed *successful* C15 result is still a contract violation and is never
+> masked by recovery. This does not translate arbitrary exceptions into page
+> errors.
+>
+> C16 now recognizes the four exact terminal-error envelopes and rejects its
+> original owner-minted Promise with `ProviderPageTerminalError` carrying only
+> the closed code and fixed message. The owner still removes the pending entry
+> before settlement and retains its correlation tombstone, so a later forged
+> success cannot reverse a rejection. Same-page code remains the caller
+> principal and can forge or suppress page traffic; these messages confer no
+> origin, account, approval, or signing authority. The real content bridge still
+> accepts and emits only `WARDEN_METHOD_UNAVAILABLE`.
+>
+> Executable RED and focused evidence:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run
+>   test/provider-terminal-outcome.test.ts` first exited **1** before test
+>   collection because `provider-terminal-outcome.js` did not exist.
+> - The final focused C18/C19/C16 lane is **46/46**. It covers all operation and
+>   approval terminal mappings, failed-signing redaction, refusal of `preparing`,
+>   `pending`, and `signing`, exact C14 `true` proof, request/approval/signing
+>   substitution, hostile-proxy cleanup, Port enqueue/release failure and replay,
+>   strict protocol shapes, C18 false-terminal scheduling, retained-failure
+>   recovery, and exact page-Promise rejection.
+> - The full extension lane at the implementation SHA is **430/430**. A
+>   cross-owner test carries C18's byte-free false terminal through real C19
+>   durable classification into C16's original Promise without invoking the
+>   signed deliverer. The cryptographic C14 reader remains covered separately;
+>   this test does not claim a real-browser signature.
+>
+> Primary contracts checked for this boundary:
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>,
+> <https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers>,
+> and the Wallet Standard reference Solana wallet at
+> <https://github.com/wallet-standard/wallet-standard/blob/master/packages/example/wallets/src/solanaWallet.ts>.
+> Chrome documents long-lived Ports with `onDisconnect`, while MV3 extension
+> service workers are ephemeral and must persist state rather than trust globals
+> or timers. The Wallet Standard example rejects declined signing with an Error
+> and returns bytes only on success; it does not define a Solana-wide public
+> error-code taxonomy. Warden's four codes are therefore an internal closed
+> protocol choice, not a claimed Wallet Standard requirement. The conclusion
+> that enqueue is not page consumption, and that durable exact identity permits
+> idempotent replay but not signing-authority resurrection, remains an explicit
+> architectural inference.
+>
+> `codex review --commit
+> 322c28b358528f53b76cb0d636f1bcb07d57b207` exited **1 before review**:
+> the in-process app-server client could not initialize on this host's read-only
+> state path. Independent second-model review remains **UNVERIFIED**.
+>
+> Exact implementation-SHA evidence at
+> `322c28b358528f53b76cb0d636f1bcb07d57b207`, with a clean tree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test:browser &&
+> node -e "const fs=require('node:fs');const path=require('node:path');const root='apps/extension/dist';const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=walk(root);const all=files.map(f=>fs.readFileSync(f,'utf8')).join('\n');const background=fs.readFileSync(path.join(root,'background.js'),'utf8');const content=fs.readFileSync(path.join(root,'content.js'),'utf8');const required=['WARDEN_METHOD_UNAVAILABLE'];const forbidden=['provider terminal outcome:','WARDEN_USER_REJECTED','provider signed result flow:','provider approval action:','provider page request:','page_validation_0000000000000000','provider approval operation:','provider operation:','warden-provider-operations-v1','provider terminal result:','provider terminal protocol:','provider approval request:','provider approval selection:','session approval coordinator:'];const missing=required.filter(s=>!background.includes(s)||!content.includes(s));const hit=forbidden.filter(s=>all.includes(s));if(missing.length||hit.length){console.error({missing,hit});process.exit(1)}console.log('extension dist remains fixed-unavailable; C12-C19 provider/signing/terminal/page owners are absent')" &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> exited **0** and printed the same SHA before and after: extension **430/430**,
+> typecheck, build, production Chromium **6/6**, emitted-artifact exclusion,
+> `git diff --check`, and clean-tree proof passed. The production background and
+> content bundles retain `WARDEN_METHOD_UNAVAILABLE`; C12–C19 terminal,
+> provider, signing, and page markers are absent. Ledger-inclusive full-repo
+> evidence is not claimed until the ledger SHA runs `.claude/test-gate.sh`.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
+> invariants JSONL is intentionally unchanged.
+>
+> **Harsh residual:** C19 is still unreachable internal composition. Its
+> cross-owner page test manually forwards a background result through a fake
+> window. The shipped content bridge rejects both signed and C19 failure
+> responses, has no bounded cache of outstanding exact requests, and does not
+> resend after Port/worker loss. A disconnect can therefore leave C16 pending
+> until its absolute timeout even though a durable terminal row exists. There
+> is no page receipt acknowledgment; duplicate replay is safe for settlement
+> only because C16 retains a tombstone. C19 classifies then C14 independently
+> rereads the signed branch, so a real integration must preserve both checks and
+> never add an exception-based fallback after C14 enqueue. There is still no
+> non-empty reviewed release, trusted production RPC, production
+> coordinator/keyring composition, real-browser exact-byte signing, Wallet
+> Standard registration, send/confirmation, onboarding, production KDF policy,
+> root ceremony, consequence review, or external audit. Production Chromium
+> proves only that signing remains disabled. C19 closes failure ambiguity; it
+> does not make Warden deployable.
+>
+> **Next load-bearing work:** C20 should add a still-unreachable, bounded
+> content transport-recovery owner. It must snapshot one exact page request,
+> reconnect only while a request is outstanding, resend the identical payload
+> at most a tightly bounded number of times, preserve C16's original Promise and
+> document-lifetime correlation tombstone, accept only the reviewed signed/C19
+> failure protocols, and prove worker/Port/navigation races without an eager
+> idle-worker wake loop or a second approval/sign attempt. Keep the production
+> bridge fixed-unavailable until that owner, a non-empty reviewed release,
+> trusted RPC, real coordinator/keyring composition, and real-browser
+> exact-byte signing evidence all exist.
+>
 > ## 2026-08-31 C18 SIGNED RESULT COMPOSITION — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit
