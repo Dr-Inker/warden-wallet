@@ -1,5 +1,138 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C8 DURABLE SIGNING OUTCOME — ATOMIC RESULT OWNER SHIPPED, SIGNING ROUTE STILL CLOSED
+>
+> Implementation commit `0dc769aaf43554c69b59ff04b11b534d0b022fd6`
+> replaces the ambiguous post-claim `approved` tombstone with a versioned
+> durable signing outcome. One strict atomic IndexedDB envelope owns the exact
+> approval plus one of `signing`, `signed`, or `failed`. Each attempt has a
+> background-minted 128-bit CAS token, bounded u32 attempt number, start and
+> resolution times, the approval digest, and either exact signed transaction
+> bytes plus SHA-256 or one closed machine-readable failure code. Missing,
+> extra, symbolic, accessor, custom-prototype, malformed, digest-tampered,
+> impossible-state, stale-token, empty/oversized-transaction, unknown-failure,
+> clock-regressed, and exhausted-counter inputs fail closed.
+>
+> Approval resolution and the first signing claim are one IndexedDB readwrite
+> transaction. A failed attempt may retry with a fresh token before approval
+> expiry. Completion/failure are CAS operations and idempotent only for the
+> exact existing token/result. Pre-C8 pending and non-approved terminal records
+> migrate on their next write; a legacy raw `approved` record is rejected and
+> deleted because it cannot prove whether any signed bytes existed. Tombstone
+> retention follows the latest signing resolution rather than the earlier
+> human decision.
+>
+> The still-opt-in coordinator persists completion before releasing a
+> signature, rereads after lost claim/completion/failure acknowledgements, and
+> reparses plus Ed25519-verifies every durable replay against the exact approved
+> message. A committed signed result replays without keyring, authority RPC, or
+> the volatile capsule. Post-claim errors persist a closed failure and retain
+> the capsule for a same-worker retry. Disposal during the completion await may
+> leave a valid replayable result but returns only `DISPOSED` to the old worker.
+> Transient approval/outcome reads no longer discard the sole capsule.
+>
+> Shipped MV3 startup now cancels pending approvals and changes unresolved
+> `signing` attempts to `failed/worker-restarted`; completed signed bytes survive
+> an actual forced worker stop/wake. A regressed startup clock preserves the CAS
+> record and keeps readiness failed instead of deleting evidence. The emitted
+> worker owns only this persistence boundary. Recursive artifact scanning proves
+> that the coordinator, session signer, C6 composition, C7 resolver, and success
+> state remain absent; every provider request is still unavailable.
+>
+> Behavioral REDs preceded and sharpened C8. The new outcome suite first exited
+> **1** before collection because the module did not exist. The extension-owner
+> unit suite then had **2 passed / 2 failed** before completion/failure methods
+> existed, and the coordinator had **24 passed / 13 failed** before attempt
+> ownership was wired through. The full browser lane later failed **1/2**
+> because its provider-restart assertion still measured the pre-C8 top-level
+> record shape; the corrected lane reads the atomic envelope while retaining
+> legacy compatibility. This was a QA measurement defect, not a product pass.
+>
+> Harsh review found further load-bearing bugs. Disposal could release bytes
+> after durable completion; transient reads could erase retry authority; invalid
+> transaction/failure inputs and time regressions could reach a broad malformed-
+> record catch and delete valid CAS state; startup rollback could delete an
+> unresolved attempt; and legacy approved records had no executable browser
+> measurement. Each now has a regression. Two final genuine REDs were captured:
+> the focused coordinator suite was **41 passed / 1 failed** because a committed
+> failure whose acknowledgement was lost discarded its capsule; recovery reread
+> now makes it **43/43**, including lost claim/completion/failure acknowledgements.
+> The real Chromium lane received `ApprovalRecordFormatError` instead of the
+> expected `ApprovalStateConflictError` for an expired wrong-digest claim and
+> deleted the record; expiry/clock ordering now preserves `expired` and the lane
+> is green.
+>
+> Research used the current IndexedDB 3.0 transaction/durability contract,
+> Chrome extension service-worker lifecycle guidance, and RFC 8032:
+> <https://www.w3.org/TR/IndexedDB/>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+> and <https://www.rfc-editor.org/info/rfc8032/>. IndexedDB readwrite completion
+> is the atomic logical commit and overlapping scopes serialize, but `strict`
+> durability is only a hint: it does not prove survival across browser/OS/device
+> rollback. Chrome explicitly discards worker globals, motivating durable result
+> ownership. Ed25519 deterministically signs one key/message, so exact retry does
+> not require fresh signature randomness. Independent second-model review is
+> **UNVERIFIED**: `codex review --uncommitted` exited **1** because its in-process
+> app-server client could not initialize on this host's read-only path.
+>
+> Exact-SHA evidence at `0dc769aaf43554c69b59ff04b11b534d0b022fd6`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/approval-signing-outcome.test.ts
+> test/session-approval-coordinator.test.ts
+> test/session-authority-resolver.test.ts test/session-rpc.test.ts
+> test/session-release.test.ts` passed **120/120**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test`
+> passed **686/686**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/core typecheck` and `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/core build` exited **0**. From `packages/core`, `node
+> --input-type=module -e "const m=await import('@warden/core/approval');for(const
+> name of ['createApprovalSigningAttempt','completeApprovalSigningAttempt','failApprovalSigningAttempt','retryApprovalSigningAttempt','snapshotApprovalSigningRecord'])if(typeof
+> m[name]!=='function')process.exit(1);console.log('approval subpath resolves
+> durable signing outcomes')"` exited **0**.
+>
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> test` passed **247/247**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension typecheck` and `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build`
+> exited **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension test:browser` passed the real Chromium lane **2/2**. After
+> build, this exact shipped-artifact command exited **0**:
+>
+> ```sh
+> node -e "const fs=require('node:fs'),path=require('node:path');const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=walk('apps/extension/dist');const background=fs.readFileSync('apps/extension/dist/background.js','utf8');const required=['approval signing outcome:','worker-restarted','transactionDigest does not authenticate transactionBytes'];const missing=required.filter(s=>!background.includes(s));const forbidden=/SessionApprovalCoordinator|session approval coordinator:|sign approved session transaction|signApprovedSessionMessage|createPinnedSessionApprovalCoordinator|resolveCommittedSessionRelease|APPROVAL_SIGNING_IN_PROGRESS/;const hit=files.find(f=>forbidden.test(fs.readFileSync(f,'utf8')));if(missing.length||hit){console.error({missing,hit});process.exit(1)}console.log('extension dist owns C8 outcomes; coordinator/release routes remain isolated')"
+> ```
+>
+> `git rev-parse HEAD` still returned the exact implementation SHA, `git status
+> --short` was empty, and `git diff --check` exited **0**. The C7 ledger SHA
+> `7431865ae749aa04c81c5e58928d60f8f2b5254c` passed the exact full command
+> `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit
+> **0**. The full gate for this new ledger-inclusive boundary is pending; do not
+> transfer the preceding verdict.
+>
+> **No invariant status changes.** `WRD-APR-01`, `WRD-APR-02`, and
+> `WRD-APR-03` remain `unimplemented`; their notes are refreshed with this
+> partial boundary. `WRD-TXI-01` and `WRD-KEY-04` also remain `unimplemented`.
+>
+> **Harsh residual:** atomic commit is not physical durability. Profile
+> corruption, storage eviction, OS/device rollback, and a compromised extension
+> origin remain out of scope. Signed bytes survive normal worker death; failed
+> and orphaned attempts lose their volatile authority capsule across death and
+> therefore report a closed failure rather than retrying. The production release
+> registry is empty, the coordinator/signer remain unshipped, and no provider
+> method succeeds. There is no extension-owned approval page, exact-byte intent
+> render, navigation/Port teardown composition, account/network-change binding,
+> success/event protocol, simulation/fee display, sender, confirmation owner, or
+> replay delivery route. Memo remains the only decoded verb. C8 removes the
+> tombstone ambiguity but is not a deployable wallet.
+>
+> **Next load-bearing slice:** build the extension-owned full-page approval
+> surface and its browser-proven UI route around the durable record. It must
+> render only locally decoded intent derived from the exact stored bytes, bind
+> one request to exact UI provenance and Port/navigation/account/cluster
+> lifetime, and make cancellation races executable in real Chromium. Keep the
+> provider success path and coordinator import closed while the committed
+> release registry is empty; UI presence is not authority to sign.
+
 > ## 2026-08-31 C7 COMMITTED RELEASE STATEMENT — PROVENANCE SHAPE CLOSED, PRODUCTION REGISTRY EMPTY
 >
 > Implementation commit `54bc05dc5adbbbd9b9a37f08cdf405b5fd66c4fa`

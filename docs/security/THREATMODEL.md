@@ -1358,3 +1358,100 @@ There is no approval UI, provider success route, simulation, fee presentation,
 sender, confirmation/replay owner, or token consequence model. Memo remains the
 only decoded verb. This is a fail-closed release trust boundary, not a deployable
 wallet.
+
+---
+
+## Client C8 durable approval signing outcome — 0dc769a — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** the emitted MV3 worker now owns a versioned durable
+signing-outcome record beside each approval in the existing IndexedDB object
+store. One atomic envelope binds the exact approval to one of `signing`,
+`signed`, or `failed`; a background-minted 128-bit attempt id is the CAS token,
+the attempt number is bounded to u32, failures use a closed code set, and a
+signed result stores copy-owned transaction bytes plus their SHA-256 digest.
+Legacy pending and non-approved terminal records migrate on their next write.
+A legacy raw `approved` tombstone is rejected and deleted because it cannot
+prove whether signing produced bytes.
+
+The still-opt-in coordinator claims approval and attempt ownership in the same
+readwrite transaction, persists completion before returning any signature,
+and reparses/verifies the durable transaction against the exact approved
+message before every release. A committed signed result can be replayed
+without the keyring, RPC, or volatile authority capsule. Lost acknowledgements
+after claim, completion, or failure are recovered by rereading the exact CAS
+record. A failed attempt can retry under a fresh token before approval expiry
+while its original coordinator still owns the volatile capsule. MV3 startup
+cancels pending approvals and converts unresolved `signing` attempts to
+`failed/worker-restarted`; already `signed` bytes survive worker death.
+
+**Removed / narrowed:** overlapping IndexedDB readwrite scopes have one atomic
+winner for pending approval resolution, attempt claim, retry, completion, and
+failure. Old attempt tokens cannot finish a newer retry. Empty/oversized
+transactions, unknown failure codes, u32 exhaustion, stale tokens, regressed
+clocks, malformed envelope/outcome shapes, digest tamper, and incompatible
+legacy approved records fail closed. Caller-controlled validation errors are
+checked before persistence or take explicit non-deleting branches. Clock
+regression on an unresolved attempt preserves the CAS record and makes startup
+fatal rather than erasing evidence. Disposal during completion may leave a
+replayable durable result but cannot release bytes from the disposed worker.
+Transient reads retain the only retry capsule instead of silently converting
+an availability error into permanent loss.
+
+The first outcome test was red before collection because the module did not
+exist. The extension owner then had **2 passed / 2 failed** before completion
+and failure methods existed, and the coordinator initially had **24 passed / 13
+failed** before attempt ownership was plumbed through. The real extension
+browser suite also exposed a QA defect: provider restart still read the old
+top-level approval shape and failed after the atomic envelope shipped; the
+reader now measures either the envelope or the legacy shape. Harsh review
+subsequently produced two more executable REDs. The coordinator focused suite
+was **41 passed / 1 failed** because a committed failure with a lost
+acknowledgement discarded its capsule; reread recovery closes it. The real
+Chromium approval lane received `ApprovalRecordFormatError` where it expected
+`ApprovalStateConflictError` because an expired wrong-digest claim attempted an
+impossible `invalidated` transition and deleted the record; expiry/clock checks
+now precede digest invalidation and preserve an `expired` record.
+
+Primary behavior evidence:
+<https://www.w3.org/TR/IndexedDB/>,
+<https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+and <https://www.rfc-editor.org/info/rfc8032/>. IndexedDB readwrite completion
+establishes an atomic logical commit and overlapping scopes serialize. The
+`strict` durability option is only a browser hint, not proof against OS/device
+rollback. Chrome documents that extension workers terminate and lose globals,
+which is why a signed result—not the key—is persisted. Ed25519 is deterministic
+for one key/message, so retrying exact finalization does not require a fresh
+random nonce. Independent second-model review remains **UNVERIFIED**:
+`codex review --uncommitted` exited **1** because its in-process app-server
+client could not initialize on this host's read-only path.
+
+Exact-SHA evidence at `0dc769aaf43554c69b59ff04b11b534d0b022fd6`:
+the focused outcome/coordinator/authority/RPC/release suites passed **120/120**;
+core passed **686/686**, typecheck, build, and compiled approval-subpath
+resolution; extension passed **247/247**, typecheck, build, and the real
+Chromium lane **2/2**. An emitted-artifact command required the outcome schema,
+worker-restart code, and transaction-digest check in `dist/background.js` while
+recursively forbidding the coordinator, signer, C6 composition, C7 resolver,
+and success-state strings; it exited **0**. Exact commands are in
+`docs/NEXT-SESSION.md`. The C7 ledger SHA
+`7431865ae749aa04c81c5e58928d60f8f2b5254c` passed `env
+npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit **0**.
+This C8 ledger-inclusive SHA has not yet run that gate; no prior verdict is
+inherited.
+
+**New invariants:** none. `WRD-APR-01`, `WRD-APR-02`, and `WRD-APR-03` remain
+`unimplemented`; their notes now record this partial boundary. No successful
+browser route composes it with navigation, UI provenance, or a real release.
+
+**Residual, stated honestly:** this is atomic logical ownership, not guaranteed
+physical durability. Browser/OS rollback, profile corruption, storage eviction,
+and a compromised extension origin remain outside the guarantee. A signed
+result survives normal worker death; a failed or orphaned attempt does not
+retain its volatile authority capsule across death, so the next worker reports
+the closed failure rather than retrying it. The coordinator and signer remain
+absent from emitted output, the C7 production release registry is empty, and
+every provider method still returns unavailable. There is no approval page,
+exact-byte render, navigation/Port cancellation composition, successful result
+protocol, simulation/fee surface, sender, confirmation owner, or replay
+delivery route. Memo is still the only decoded verb. This removes the approved-
+tombstone ambiguity; it does not make the wallet deployable.
