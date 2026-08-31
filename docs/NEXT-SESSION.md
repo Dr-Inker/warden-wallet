@@ -85,6 +85,26 @@
 > retains `WARDEN_METHOD_UNAVAILABLE`; C20 and earlier terminal/page markers are
 > absent. Ledger-inclusive full-repository evidence is not yet claimed.
 >
+> Ledger commit `66dd2cad0d79047ca5ca42e6a5414275ed7263b7`
+> then passed this exact full-repository command, exit **0**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It printed the same SHA before and after, proved a clean worktree, and ran the
+> complete pnpm workspace, core **699/699**, extension **446/446**, UI tokens
+> **11/11**, transaction-budget spike **8/8**, WebAuthn spike **1/1**,
+> production Chromium **6/6**, the pinned Argon2 worker benchmark, core and
+> extension builds/typechecks, fixture/ledger/feature guards, and the complete
+> Rust workspace. The known Anchor test-program key mismatch and legacy macro
+> `cfg` notices were warnings, not skipped failures. This verdict belongs only
+> to `66dd2ca…`; the evidence-only follow-up does not inherit it or promote an
+> invariant.
+>
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
 > `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
 > invariants JSONL is intentionally unchanged.

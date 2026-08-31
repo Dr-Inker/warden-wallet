@@ -2509,3 +2509,18 @@ volatile approval or signing capability, then compose and browser-test the
 deadline path. All non-empty release, trusted RPC, production keyring/
 coordinator, real-browser signing, Wallet Standard, send, onboarding, KDF,
 ceremony, consequence-review, and audit blockers remain.
+
+### C20 full-gate addendum — 66dd2ca — 2026-08-31
+
+The ledger-inclusive SHA `66dd2cad0d79047ca5ca42e6a5414275ed7263b7`
+passed this exact command, exit **0**: `git rev-parse HEAD && test -z "$(git
+status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash
+.claude/test-gate.sh && git diff --check && git rev-parse HEAD && test -z
+"$(git status --porcelain)"`. It printed the same SHA before and after, proved a
+clean worktree, and ran the complete pnpm workspace, core **699/699**, extension
+**446/446**, production Chromium **6/6**, the pinned Argon2 worker benchmark,
+core/extension builds and typechecks, fixture/ledger/feature guards, and the
+complete Rust workspace. The known Anchor test-program key mismatch and legacy
+macro `cfg` notices were warnings, not skipped failures. This verdict belongs
+only to `66dd2ca…`; this evidence-only follow-up does not inherit it or promote
+an invariant.
