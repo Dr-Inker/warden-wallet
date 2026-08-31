@@ -196,10 +196,12 @@ class FakeCoordinator implements ProviderApprovalCoordinator {
 
 class FakeSelectionResolver implements ProviderApprovalSelectionResolver {
   readonly calls: ProviderApprovalSelectionInput[] = [];
+  readonly authority = new AbortController();
   resolveImpl: ((input: ProviderApprovalSelectionInput) => Promise<{
     readonly account: Uint8Array;
     readonly chain: "solana:devnet";
     readonly coordinator: ProviderApprovalCoordinator;
+    readonly authoritySignal: AbortSignal;
   }>) | undefined;
 
   constructor(readonly coordinator: ProviderApprovalCoordinator) {}
@@ -211,6 +213,7 @@ class FakeSelectionResolver implements ProviderApprovalSelectionResolver {
       account: ACCOUNT.slice(),
       chain: "solana:devnet" as const,
       coordinator: this.coordinator,
+      authoritySignal: this.authority.signal,
     };
   }
 }
@@ -279,9 +282,10 @@ describe("provider-bound session approval preparation", () => {
     expect(installed.coordinator.prepareCalls[0]!.sourceTransactionBytes).toEqual(
       Uint8Array.of(1, 2, 3),
     );
-    expect(installed.launcher.calls).toEqual([
-      { id: APPROVAL_ID, signal: lease.owned.signal },
-    ]);
+    expect(installed.launcher.calls).toHaveLength(1);
+    expect(installed.launcher.calls[0]!.id).toBe(APPROVAL_ID);
+    expect(installed.launcher.calls[0]!.signal).not.toBe(lease.owned.signal);
+    expect(installed.launcher.calls[0]!.signal.aborted).toBe(false);
     expect(handle.id).toBe(APPROVAL_ID);
     expect(handle.id).not.toBe(lease.owned.id);
     expect(handle.account).toEqual(ACCOUNT);
@@ -337,6 +341,7 @@ describe("provider-bound session approval preparation", () => {
       account: new Uint8Array(32).fill(0x12),
       chain: "solana:devnet",
       coordinator: firstInstalled.coordinator,
+      authoritySignal: firstInstalled.resolver.authority.signal,
     });
     await expect(firstInstalled.owner.launch(first.lease)).rejects.toThrow(
       "selected account does not equal the requested account",
@@ -350,6 +355,7 @@ describe("provider-bound session approval preparation", () => {
       account: ACCOUNT.slice(),
       chain: "solana:mainnet" as "solana:devnet",
       coordinator: secondInstalled.coordinator,
+      authoritySignal: secondInstalled.resolver.authority.signal,
     });
     await expect(secondInstalled.owner.launch(second.lease)).rejects.toThrow(
       "selected chain does not equal the requested chain",
@@ -365,6 +371,7 @@ describe("provider-bound session approval preparation", () => {
       readonly account: Uint8Array;
       readonly chain: "solana:devnet";
       readonly coordinator: ProviderApprovalCoordinator;
+      readonly authoritySignal: AbortSignal;
     }>();
     installed.resolver.resolveImpl = () => selection.promise;
     const launching = installed.owner.launch(lease);
@@ -373,12 +380,77 @@ describe("provider-bound session approval preparation", () => {
       account: ACCOUNT.slice(),
       chain: "solana:devnet",
       coordinator: installed.coordinator,
+      authoritySignal: installed.resolver.authority.signal,
     });
 
     await expect(launching).rejects.toThrow("request is no longer owned");
     expect(installed.coordinator.prepareCalls).toEqual([]);
     expect(installed.launcher.calls).toEqual([]);
     expect(installed.approvals.records.size).toBe(0);
+  });
+
+  it("refuses a keyring authority revoked in the resolver Promise settlement gap", async () => {
+    const { session, lease } = providerLease();
+    const installed = install();
+    installed.resolver.resolveImpl = async () => {
+      queueMicrotask(() => installed.resolver.authority.abort());
+      return {
+        account: ACCOUNT.slice(),
+        chain: "solana:devnet" as const,
+        coordinator: installed.coordinator,
+        authoritySignal: installed.resolver.authority.signal,
+      };
+    };
+
+    await expect(installed.owner.launch(lease)).rejects.toThrow(
+      "selected keyring authority is revoked",
+    );
+    expect(installed.coordinator.prepareCalls).toEqual([]);
+    expect(installed.approvals.records.size).toBe(0);
+    expect(installed.launcher.calls).toEqual([]);
+    session.disconnect();
+  });
+
+  it("cancels an exact row when keyring authority is revoked during preparation", async () => {
+    const { session, lease } = providerLease();
+    const installed = install();
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    installed.coordinator.prepareImpl = async (request) => {
+      entered.resolve();
+      await release.promise;
+      const record = approvalFromRequest(request);
+      installed.approvals.records.set(record.id, record);
+      return preparedFromRecord(record);
+    };
+
+    const launching = installed.owner.launch(lease);
+    await entered.promise;
+    installed.resolver.authority.abort();
+    release.resolve();
+
+    await expect(launching).rejects.toThrow("selected keyring authority is revoked");
+    expect(installed.coordinator.cancelCalls).toEqual([APPROVAL_ID]);
+    expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("cancelled");
+    expect(installed.launcher.calls).toEqual([]);
+    session.disconnect();
+  });
+
+  it("aborts the window lifetime and cancels when keyring authority changes after launch", async () => {
+    const { session, lease } = providerLease();
+    const installed = install();
+    const handle = await installed.owner.launch(lease);
+    const windowSignal = installed.launcher.calls[0]!.signal;
+
+    installed.resolver.authority.abort();
+    expect(windowSignal.aborted).toBe(true);
+    await flush();
+
+    expect(installed.coordinator.cancelCalls).toEqual([APPROVAL_ID]);
+    expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("cancelled");
+    await expect(handle.cancel()).resolves.toBe(false);
+    expect(installed.owner.activeCount).toBe(0);
+    session.disconnect();
   });
 
   it("disconnect during window creation cancels only the exact durable request", async () => {
@@ -574,6 +646,7 @@ describe("provider-bound session approval preparation", () => {
       readonly account: Uint8Array;
       readonly chain: "solana:devnet";
       readonly coordinator: ProviderApprovalCoordinator;
+      readonly authoritySignal: AbortSignal;
     }>();
     installed.resolver.resolveImpl = () => selection.promise;
     const first = installed.owner.launch(lease);
@@ -585,6 +658,7 @@ describe("provider-bound session approval preparation", () => {
       account: ACCOUNT.slice(),
       chain: "solana:devnet",
       coordinator: installed.coordinator,
+      authoritySignal: installed.resolver.authority.signal,
     });
     const handle = await first;
     await expect(handle.cancel()).resolves.toBe(true);
@@ -599,6 +673,7 @@ describe("provider-bound session approval preparation", () => {
       readonly account: Uint8Array;
       readonly chain: "solana:devnet";
       readonly coordinator: ProviderApprovalCoordinator;
+      readonly authoritySignal: AbortSignal;
     }>();
     installed.resolver.resolveImpl = () => selection.promise;
     const leases = Array.from(
@@ -617,6 +692,7 @@ describe("provider-bound session approval preparation", () => {
       account: ACCOUNT.slice(),
       chain: "solana:devnet",
       coordinator: installed.coordinator,
+      authoritySignal: installed.resolver.authority.signal,
     });
     const results = await Promise.allSettled(launches);
     expect(results.every((result) => result.status === "rejected")).toBe(true);

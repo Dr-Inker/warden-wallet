@@ -136,6 +136,7 @@ describe("background-owned keyring context", () => {
       "account",
       "genesisHash",
       "programId",
+      "revocationSignal",
       "sessionSigner",
     ]);
     expect(identity.account).toEqual(CONTEXT.account);
@@ -154,6 +155,10 @@ describe("background-owned keyring context", () => {
     expect(second.sessionSigner).toEqual(
       hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"),
     );
+    expect(second.revocationSignal).toBe(identity.revocationSignal);
+    expect(identity.revocationSignal.aborted).toBe(false);
+    await lifecycle.lock();
+    expect(identity.revocationSignal.aborted).toBe(true);
   });
 
   it("suppresses a public identity snapshot and locks when account/chain context changes in flight", async () => {

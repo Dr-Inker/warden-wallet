@@ -63,6 +63,8 @@ export interface AuthenticatedSessionIdentity {
   readonly genesisHash: Uint8Array;
   /** Caller-owned Warden deployment id. */
   readonly programId: Uint8Array;
+  /** Aborts synchronously when this exact unlock generation is revoked. */
+  readonly revocationSignal: AbortSignal;
   /** Caller-owned public half derived from the authenticated signer seed. */
   readonly sessionSigner: Uint8Array;
 }
@@ -589,20 +591,37 @@ export class KeyringLifecycleOwner implements KeyringLifecycle {
   async readAuthenticatedSessionIdentity(
     operation: string,
   ): Promise<AuthenticatedSessionIdentity> {
-    const encoded = await this.useSessionSignerBytes(operation, async (lease) => {
-      const sessionSigner = deriveSessionSignerPublicKey(lease.seed);
-      try {
-        const identity = new Uint8Array(PUBKEY_BYTES * 4);
-        identity.set(lease.account, 0);
-        identity.set(lease.genesisHash, PUBKEY_BYTES);
-        identity.set(lease.programId, PUBKEY_BYTES * 2);
-        identity.set(sessionSigner, PUBKEY_BYTES * 3);
-        return identity;
-      } finally {
-        sessionSigner.fill(0);
-      }
-    });
+    const generation = this.transition;
+    let unlock: UnlockCheck | undefined;
+    let encoded: Uint8Array | undefined;
     try {
+      encoded = await this.useSessionSignerBytes(operation, async (lease) => {
+        unlock = lease.unlock;
+        const sessionSigner = deriveSessionSignerPublicKey(lease.seed);
+        try {
+          const identity = new Uint8Array(PUBKEY_BYTES * 4);
+          identity.set(lease.account, 0);
+          identity.set(lease.genesisHash, PUBKEY_BYTES);
+          identity.set(lease.programId, PUBKEY_BYTES * 2);
+          identity.set(sessionSigner, PUBKEY_BYTES * 3);
+          return identity;
+        } finally {
+          sessionSigner.fill(0);
+        }
+      });
+      if (unlock === undefined) {
+        throw new KeyringLifecycleConsistencyError(
+          "authenticated public identity has no unlock generation",
+        );
+      }
+      try {
+        assertUnlockCheck(unlock, operation);
+      } catch (error) {
+        if (this.transition === generation) {
+          return this.lockAfterFailure(error, generation);
+        }
+        throw error;
+      }
       if (encoded.length !== PUBKEY_BYTES * 4) {
         throw new KeyringLifecycleConsistencyError(
           "authenticated public identity has the wrong length",
@@ -612,10 +631,11 @@ export class KeyringLifecycleOwner implements KeyringLifecycle {
         account: encoded.slice(0, PUBKEY_BYTES),
         genesisHash: encoded.slice(PUBKEY_BYTES, PUBKEY_BYTES * 2),
         programId: encoded.slice(PUBKEY_BYTES * 2, PUBKEY_BYTES * 3),
+        revocationSignal: unlock.signal,
         sessionSigner: encoded.slice(PUBKEY_BYTES * 3, PUBKEY_BYTES * 4),
       });
     } finally {
-      encoded.fill(0);
+      encoded?.fill(0);
     }
   }
 }

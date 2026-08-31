@@ -85,6 +85,7 @@ interface OwnedSessionIdentity {
   readonly account: Uint8Array;
   readonly genesisHash: Uint8Array;
   readonly programId: Uint8Array;
+  readonly revocationSignal: AbortSignal;
   readonly sessionSigner: Uint8Array;
 }
 
@@ -149,6 +150,22 @@ function copyBytes(
   return value.slice();
 }
 
+function requireAbortSignal(
+  value: unknown,
+  name: string,
+  code: ProviderApprovalSelectionErrorCode,
+): AbortSignal {
+  if (
+    !isObject(value) ||
+    typeof value.aborted !== "boolean" ||
+    typeof value.addEventListener !== "function" ||
+    typeof value.removeEventListener !== "function"
+  ) {
+    fail(code, `${name} is malformed`);
+  }
+  return value as unknown as AbortSignal;
+}
+
 function snapshotRelease(pinsValue: SessionApprovalReleasePins): ReleaseIdentity {
   if (!isObject(pinsValue)) fail("RELEASE_INVALID", "committed release pins are malformed");
   let chainValue: unknown;
@@ -197,6 +214,7 @@ function snapshotIdentity(value: unknown): OwnedSessionIdentity {
   let account: Uint8Array | undefined;
   let genesisHash: Uint8Array | undefined;
   let programId: Uint8Array | undefined;
+  let revocationSignal: AbortSignal | undefined;
   let sessionSigner: Uint8Array | undefined;
   try {
     account = copyBytes(value.account, "authenticated account", "IDENTITY_INVALID");
@@ -208,6 +226,11 @@ function snapshotIdentity(value: unknown): OwnedSessionIdentity {
     programId = copyBytes(
       value.programId,
       "authenticated program id",
+      "IDENTITY_INVALID",
+    );
+    revocationSignal = requireAbortSignal(
+      value.revocationSignal,
+      "authenticated revocation signal",
       "IDENTITY_INVALID",
     );
     sessionSigner = copyBytes(
@@ -233,6 +256,7 @@ function snapshotIdentity(value: unknown): OwnedSessionIdentity {
       account,
       genesisHash,
       programId,
+      revocationSignal,
       sessionSigner,
     });
   } catch (error) {
@@ -295,15 +319,7 @@ function requestSignal(inputValue: ProviderApprovalSelectionInput): AbortSignal 
   if (method !== "solana:signTransaction") {
     fail("INVALID_REQUEST", "selection method is unsupported");
   }
-  if (
-    !isObject(signal) ||
-    typeof signal.aborted !== "boolean" ||
-    typeof signal.addEventListener !== "function" ||
-    typeof signal.removeEventListener !== "function"
-  ) {
-    fail("INVALID_REQUEST", "selection signal is malformed");
-  }
-  return signal as unknown as AbortSignal;
+  return requireAbortSignal(signal, "selection signal", "INVALID_REQUEST");
 }
 
 function assertActive(signal: AbortSignal): void {
@@ -330,6 +346,17 @@ function assertReleaseMatch(
   }
 }
 
+function assertIdentityActive(identity: OwnedSessionIdentity): void {
+  try {
+    if (identity.revocationSignal.aborted) {
+      fail("IDENTITY_CHANGED", "authenticated unlock generation was revoked");
+    }
+  } catch (error) {
+    if (error instanceof ProviderApprovalSelectionError) throw error;
+    fail("IDENTITY_INVALID", "authenticated revocation signal access failed", error);
+  }
+}
+
 function assertSameIdentity(
   first: OwnedSessionIdentity,
   second: OwnedSessionIdentity,
@@ -338,7 +365,8 @@ function assertSameIdentity(
     !bytesEqual(first.account, second.account) ||
     !bytesEqual(first.genesisHash, second.genesisHash) ||
     !bytesEqual(first.programId, second.programId) ||
-    !bytesEqual(first.sessionSigner, second.sessionSigner)
+    !bytesEqual(first.sessionSigner, second.sessionSigner) ||
+    first.revocationSignal !== second.revocationSignal
   ) {
     fail("IDENTITY_CHANGED", "authenticated account context changed during selection");
   }
@@ -388,6 +416,7 @@ implements ProviderApprovalSelectionResolver {
       first = snapshotIdentity(
         await keyring.readIdentity("select committed provider account"),
       );
+      assertIdentityActive(first);
       assertReleaseMatch(first, release);
       assertActive(signal);
 
@@ -440,10 +469,13 @@ implements ProviderApprovalSelectionResolver {
         await keyring.readIdentity("revalidate committed provider account"),
       );
       assertSameIdentity(first, second);
+      assertIdentityActive(first);
+      assertIdentityActive(second);
       assertReleaseMatch(second, release);
       assertActive(signal);
       return Object.freeze({
         account: first.account.slice(),
+        authoritySignal: first.revocationSignal,
         chain: release.chain,
         coordinator,
       });

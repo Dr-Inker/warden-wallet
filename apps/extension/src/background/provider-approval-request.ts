@@ -63,6 +63,8 @@ export interface ProviderApprovalSelectionInput {
 export interface ProviderApprovalSelection {
   /** Canonical current SmartAccount selected by trusted extension state. */
   readonly account: Uint8Array;
+  /** Revokes this exact authenticated keyring unlock generation. */
+  readonly authoritySignal: AbortSignal;
   /** Canonical current chain, backed by a committed release and trusted RPC. */
   readonly chain: ApprovalChain;
   readonly coordinator: ProviderApprovalCoordinator;
@@ -134,6 +136,8 @@ interface ActiveEntry {
   readonly owned: OwnedProviderRequest;
   readonly coordinator: ProviderApprovalCoordinator;
   readonly binding: ApprovalBinding;
+  readonly lifetimeController: AbortController;
+  readonly signals: readonly AbortSignal[];
   readonly onAbort: () => void;
   cancelPromise: Promise<boolean> | undefined;
   active: boolean;
@@ -197,7 +201,10 @@ function bindDependencies(value: unknown): BoundDependencies {
   });
 }
 
-function requireSignal(value: unknown): AbortSignal {
+function requireSignal(
+  value: unknown,
+  name = "provider request signal",
+): AbortSignal {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -205,9 +212,19 @@ function requireSignal(value: unknown): AbortSignal {
     typeof (value as { readonly addEventListener?: unknown }).addEventListener !== "function" ||
     typeof (value as { readonly removeEventListener?: unknown }).removeEventListener !== "function"
   ) {
-    stateError("provider request signal is malformed");
+    stateError(`${name} is malformed`);
   }
   return value as AbortSignal;
+}
+
+function assertAuthorityActive(signal: AbortSignal): void {
+  let aborted: boolean;
+  try {
+    aborted = signal.aborted;
+  } catch (error) {
+    stateError("selected keyring authority signal access failed", error);
+  }
+  if (aborted) stateError("selected keyring authority is revoked");
 }
 
 function bindLease(value: unknown): {
@@ -291,6 +308,7 @@ function snapshotSelection(
   requestedChain: ProviderChain | null,
 ): {
   readonly account: Uint8Array;
+  readonly authoritySignal: AbortSignal;
   readonly chain: ApprovalChain;
   readonly coordinator: ProviderApprovalCoordinator;
 } {
@@ -316,7 +334,12 @@ function snapshotSelection(
     stateError("selected chain does not equal the requested chain");
   }
   const coordinator = bindCoordinator(selection.coordinator);
-  return Object.freeze({ account, chain, coordinator });
+  const authoritySignal = requireSignal(
+    selection.authoritySignal,
+    "selected keyring authority signal",
+  );
+  assertAuthorityActive(authoritySignal);
+  return Object.freeze({ account, authoritySignal, chain, coordinator });
 }
 
 function snapshotPrepared(value: unknown): PreparedSnapshot {
@@ -513,11 +536,14 @@ export class ProviderApprovalRequestOwner {
     if (!entry.active) return;
     entry.active = false;
     this.#active.delete(entry);
-    try {
-      entry.owned.signal.removeEventListener("abort", entry.onAbort);
-    } catch {
-      // The AbortSignal state is already reflected in the durable transition.
+    for (const signal of entry.signals) {
+      try {
+        signal.removeEventListener("abort", entry.onAbort);
+      } catch {
+        // The signal state is already reflected in the durable transition.
+      }
     }
+    entry.lifetimeController.abort();
   }
 
   async #readTerminal(binding: ApprovalBinding): Promise<boolean> {
@@ -579,31 +605,53 @@ export class ProviderApprovalRequestOwner {
 
   #createEntry(
     owned: OwnedProviderRequest,
+    authoritySignal: AbortSignal,
     coordinator: ProviderApprovalCoordinator,
     binding: ApprovalBinding,
   ): ActiveEntry {
+    const lifetimeController = new AbortController();
+    const signals = Object.freeze(
+      authoritySignal === owned.signal
+        ? [owned.signal]
+        : [owned.signal, authoritySignal],
+    );
     let entry!: ActiveEntry;
     const onAbort = (): void => {
+      lifetimeController.abort();
       void this.#cancelEntry(entry).catch(() => undefined);
     };
     entry = {
       owned,
       coordinator,
       binding,
+      lifetimeController,
+      signals,
       onAbort,
       cancelPromise: undefined,
       active: true,
     };
     this.#active.add(entry);
+    const installed: AbortSignal[] = [];
     try {
-      owned.signal.addEventListener("abort", onAbort, { once: true });
+      for (const signal of signals) {
+        signal.addEventListener("abort", onAbort, { once: true });
+        installed.push(signal);
+      }
+      if (signals.some((signal) => signal.aborted)) onAbort();
     } catch (error) {
+      for (const signal of installed) {
+        try {
+          signal.removeEventListener("abort", onAbort);
+        } catch {
+          // Registration is already failing closed below.
+        }
+      }
       this.#active.delete(entry);
       entry.active = false;
+      lifetimeController.abort();
       clearBinding(binding);
-      stateError("provider abort listener registration failed", error);
+      stateError("approval lifetime signal binding failed", error);
     }
-    if (owned.signal.aborted) onAbort();
     return entry;
   }
 
@@ -614,6 +662,7 @@ export class ProviderApprovalRequestOwner {
    */
   async #recoverResolvedPreparation(
     owned: OwnedProviderRequest,
+    authoritySignal: AbortSignal,
     coordinator: ProviderApprovalCoordinator,
     request: RequestBinding,
     hint: PreparedCleanupHint,
@@ -647,7 +696,12 @@ export class ProviderApprovalRequestOwner {
         binding = undefined;
         return undefined;
       }
-      const entry = this.#createEntry(owned, coordinator, binding);
+      const entry = this.#createEntry(
+        owned,
+        authoritySignal,
+        coordinator,
+        binding,
+      );
       binding = undefined;
       return entry;
     } finally {
@@ -751,6 +805,7 @@ export class ProviderApprovalRequestOwner {
         input.requestedAccountAddress,
         input.requestedChain,
       );
+      assertAuthorityActive(selection.authoritySignal);
 
       request = Object.freeze({
         origin: owned.provenance.origin,
@@ -776,6 +831,7 @@ export class ProviderApprovalRequestOwner {
       prepared = snapshotPrepared(preparedValue);
       entry = await this.#recoverResolvedPreparation(
         owned,
+        selection.authoritySignal,
         selection.coordinator,
         requestBinding,
         cleanupHint,
@@ -784,6 +840,7 @@ export class ProviderApprovalRequestOwner {
         cleanupProven = true;
         stateError("prepared approval has no pending durable row");
       }
+      assertAuthorityActive(selection.authoritySignal);
       this.#assertUsable();
       lease.assertActive();
       if (!bytesEqual(prepared.account, entry.binding.account)) {
@@ -796,7 +853,11 @@ export class ProviderApprovalRequestOwner {
         stateError("prepared approval differs from the exact durable binding");
       }
 
-      await this.#dependencies.launchWindow(entry.binding.id, owned.signal);
+      await this.#dependencies.launchWindow(
+        entry.binding.id,
+        entry.lifetimeController.signal,
+      );
+      assertAuthorityActive(selection.authoritySignal);
       this.#assertUsable();
       lease.assertActive();
       if (!entry.active) stateError("approval was cancelled while its window opened");
@@ -818,6 +879,7 @@ export class ProviderApprovalRequestOwner {
         try {
           entry = await this.#recoverResolvedPreparation(
             owned,
+            selection.authoritySignal,
             selection.coordinator,
             requestBinding,
             cleanupHint,

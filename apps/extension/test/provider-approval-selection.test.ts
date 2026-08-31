@@ -37,6 +37,7 @@ const ACCOUNT = fill(0x41);
 const GENESIS = fill(0x52);
 const PROGRAM = fill(0x63);
 const SESSION_SIGNER = fill(0x74);
+const DEFAULT_REVOCATION = new AbortController();
 const PINS: SessionApprovalReleasePins = Object.freeze({
   chain: "solana:devnet",
   genesisHash: GENESIS,
@@ -55,6 +56,7 @@ function identity(
     account: (overrides.account ?? ACCOUNT).slice(),
     genesisHash: (overrides.genesisHash ?? GENESIS).slice(),
     programId: (overrides.programId ?? PROGRAM).slice(),
+    revocationSignal: overrides.revocationSignal ?? DEFAULT_REVOCATION.signal,
     sessionSigner: (overrides.sessionSigner ?? SESSION_SIGNER).slice(),
   });
 }
@@ -189,6 +191,7 @@ describe("source-owned committed provider selection", () => {
     expect(selected.account).not.toBe(ACCOUNT);
     expect(selected.chain).toBe("solana:devnet");
     expect(selected.coordinator).toBe(installed.coordinator);
+    expect(selected.authoritySignal).toBe(DEFAULT_REVOCATION.signal);
     expect(installed.selectorReads).toEqual({
       requestedAccountAddress: 0,
       requestedChain: 0,
@@ -204,8 +207,54 @@ describe("source-owned committed provider selection", () => {
     ["genesis hash", identity({ genesisHash: fill(0x92) })],
     ["program id", identity({ programId: fill(0x93) })],
     ["session signer", identity({ sessionSigner: fill(0x94) })],
+    [
+      "unlock generation",
+      identity({ revocationSignal: new AbortController().signal }),
+    ],
   ])("suppresses a composed coordinator when the authenticated %s changes in flight", async (_label, changed) => {
     const keyring = fakeKeyring([identity(), changed]);
+    const installed = install(keyring);
+
+    await expect(installed.resolver.resolve(installed.input)).rejects.toMatchObject({
+      name: "ProviderApprovalSelectionError",
+      code: "IDENTITY_CHANGED",
+    });
+    expect(installed.connectionFactory.create).toHaveBeenCalledTimes(1);
+    expect(releaseMocks.create).toHaveBeenCalledTimes(1);
+    expect(keyring.identityCalls).toHaveLength(2);
+  });
+
+  it("refuses an already-revoked authenticated identity before composition", async () => {
+    const revocation = new AbortController();
+    revocation.abort();
+    const keyring = fakeKeyring([
+      identity({ revocationSignal: revocation.signal }),
+    ]);
+    const installed = install(keyring);
+
+    await expect(installed.resolver.resolve(installed.input)).rejects.toMatchObject({
+      name: "ProviderApprovalSelectionError",
+      code: "IDENTITY_CHANGED",
+    });
+    expect(installed.connectionFactory.create).not.toHaveBeenCalled();
+    expect(releaseMocks.create).not.toHaveBeenCalled();
+    expect(keyring.identityCalls).toHaveLength(1);
+  });
+
+  it("suppresses composition when the stable identity generation revokes on revalidation", async () => {
+    const revocation = new AbortController();
+    const keyring = fakeKeyring([
+      identity({ revocationSignal: revocation.signal }),
+      identity({ revocationSignal: revocation.signal }),
+    ]);
+    const originalRead = keyring.readAuthenticatedSessionIdentity.bind(keyring);
+    let reads = 0;
+    keyring.readAuthenticatedSessionIdentity = async (operation: string) => {
+      const value = await originalRead(operation);
+      reads++;
+      if (reads === 2) revocation.abort();
+      return value;
+    };
     const installed = install(keyring);
 
     await expect(installed.resolver.resolve(installed.input)).rejects.toMatchObject({
