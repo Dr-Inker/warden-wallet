@@ -100,7 +100,25 @@
 > `git diff --check`, and clean-tree proof passed. Build metadata explicitly
 > forbids C21 and the prior provider/signing/terminal/page owners; emitted
 > background and content retain only `WARDEN_METHOD_UNAVAILABLE`.
-> Ledger-inclusive full-repository evidence is not yet claimed.
+> Ledger-inclusive full-repository evidence at
+> `4ffb49c0dad6618db7eb6b13f5096d7550e3d5d7`, with a clean tree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It exited **0** and printed the same SHA before and after. The gate ran the
+> complete pnpm workspace, core **699/699**, extension **462/462**, UI tokens
+> **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, Chromium **8/8**,
+> the pinned Argon2 worker benchmark, builds and typechecks, fixture/ledger/
+> feature guards, and the complete Rust workspace. The known Anchor
+> test-program key mismatch and legacy macro `cfg` notices were warnings, not
+> skipped failures. This verdict belongs only to `4ffb49c…`; the evidence-only
+> ledger commit that records it does not inherit the gate or promote an
+> invariant.
 >
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
 > `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the

@@ -2577,3 +2577,16 @@ enqueue is not a content/page receipt, `window.postMessage()` is not proof C16
 settled, and one replay may be exhausted after enqueue while the page still
 times out. Navigation remains unmeasured for this owner. C21 removes one Port
 ordering race; it does not make the provider or wallet deployable.
+
+Ledger-inclusive full-repository evidence belongs to
+`4ffb49c0dad6618db7eb6b13f5096d7550e3d5d7` only. From a clean tree,
+`git rev-parse HEAD && test -z "$(git status --porcelain)" && env
+npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && git diff
+--check && git rev-parse HEAD && test -z "$(git status --porcelain)"` exited
+**0** and printed the same SHA before and after. It covered the complete pnpm
+workspace, core **699/699**, extension **462/462**, UI tokens **11/11**,
+transaction-budget **8/8**, WebAuthn **1/1**, Chromium **8/8**, the pinned
+Argon2 worker benchmark, builds/typechecks, repository guards, and the complete
+Rust workspace. The Anchor test-program key mismatch and legacy macro `cfg`
+notices remained non-fatal warnings. The evidence-only ledger commit recording
+this result does not inherit that verdict or promote an invariant.
