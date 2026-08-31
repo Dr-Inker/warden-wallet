@@ -91,6 +91,16 @@
 > returned `7149b727c75476f4919a957c4866d21bdf0f3a1b`, `git status --short`
 > was empty, and `git diff --check` exited **0**.
 >
+> The ledger-inclusive C10 SHA
+> `f6fcde93d66694ed8e5b6da9cc73489ff1d39aea` then passed the exact full
+> command `env npm_config_cache=/tmp/warden-npm-cache bash
+> .claude/test-gate.sh`, exit **0**. It ran the complete pnpm workspace, core
+> **698/698**, extension **283/283**, production Chromium **4/4**, the pinned
+> Argon2 worker benchmark, core/extension builds and typechecks, fixture-drift
+> and feature-resolution guards, and the complete Rust workspace. Afterward
+> HEAD remained that exact SHA, `git status --short` was empty, and `git diff
+> --check` exited **0**. This verdict belongs only to `f6fcde93…`.
+>
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-EXT-02`, `WRD-APR-01`,
 > `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
 > C10 narrows only the review-lifetime and displayed-intent portions of those

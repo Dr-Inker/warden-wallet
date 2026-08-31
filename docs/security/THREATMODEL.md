@@ -1631,3 +1631,15 @@ cluster, or release state. There is no simulation, fee/balance/token
 consequence model, account/network switching contract, send/confirmation
 owner, result delivery, onboarding, or non-Memo verb. This makes the closed
 review more truthful; it does not make Warden deployable.
+
+### C10 full-gate addendum — f6fcde9 — 2026-08-31
+
+The ledger-inclusive SHA `f6fcde93d66694ed8e5b6da9cc73489ff1d39aea`
+passed the exact command `env npm_config_cache=/tmp/warden-npm-cache bash
+.claude/test-gate.sh`, exit **0**. The command ran the complete pnpm workspace,
+core **698/698**, extension **283/283**, production Chromium **4/4**, the pinned
+Argon2 worker benchmark, core/extension builds and typechecks, fixture-drift
+and feature-resolution guards, and the complete Rust workspace. Afterward
+HEAD remained that SHA, the worktree was clean, and `git diff --check` exited
+**0**. This verdict belongs only to `f6fcde9…`; it does not promote any C10
+invariant or remove the residuals above.
