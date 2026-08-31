@@ -313,19 +313,35 @@ page response, and receives settlement. Content pending falls from one to zero
 while the complete page observation stays unchanged at one Promise settlement,
 one receipt post, one navigation, and the independently verified signed bytes.
 
-These contracts still do not cover death during preparation, pending approval,
-after terminal enqueue but before page settlement, or while the final settled
-acknowledgment is in flight. Target termination within one loaded browser is not
-whole-browser restart or power loss. Chrome documents that `storage.session` is
-cleared on browser restart, and IndexedDB's `strict` durability setting remains
-a user-agent hint rather than a stable-media guarantee. The fixture markers,
-native-method hook, Port wrapper, counters, and inert control page are test
-instrumentation, not an onboarding or account-registry design. This graph still
-does not register or inject Wallet Standard, configure a live trusted RPC/release,
-define production KDF policy, send a transaction, or make the production provider
-reachable. Future activation must replace the fixed-unavailable provider behind
-the existing single central Port router, not install an independent
-`runtime.onConnect` listener.
+C28 cuts after the background has accepted that exact receipt, finished the
+delivery lease, cleared the active binding, and entered the final settlement
+send, but before the browser-only wrapper delegates that send to native
+`Port.postMessage`. The wrapper requires the settlement identity to equal the
+signed terminal already sent over the same real Port. At the cut the page still
+has one settlement and one receipt while content retains one pending entry. The
+actual worker target is killed, and a locked replacement replays the same
+durable terminal, receives the retained receipt, and clears content pending
+without a second page response or any selection, RPC, approval, key, or signing
+work. A unit-level post hook independently proves that the production delivery
+lease is already inactive when settlement enqueue begins.
+
+This is the nearest deterministic boundary Chrome exposes, not proof of a
+native settlement already enqueued but not yet delivered to content. Simulating
+that stronger claim by dropping an incoming event would test the fixture rather
+than worker lifecycle, so it remains explicitly unverified. These contracts
+also do not cover death during preparation, pending approval, or after terminal
+enqueue but before page settlement. Target termination within one loaded browser
+is not whole-browser restart or power loss. Chrome documents that
+`storage.session` is cleared on browser restart, and IndexedDB's `strict`
+durability setting remains a user-agent hint rather than a stable-media
+guarantee. The fixture markers, native-method hook, Port wrapper, counters, and
+inert control page are test instrumentation, not an onboarding or
+account-registry design. This graph still does not register or inject Wallet
+Standard, configure a live trusted RPC/release, define production KDF policy,
+send a transaction, or make the production provider reachable. Future
+activation must replace the fixed-unavailable provider behind the existing
+single central Port router, not install an independent `runtime.onConnect`
+listener.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during

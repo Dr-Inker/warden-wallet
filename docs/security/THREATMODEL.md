@@ -3125,3 +3125,76 @@ onboarding/account registry, production KDF decision, Wallet Standard
 registration, send/confirm path, external audit, or real-funds exercise. The
 next measured cut should isolate the settled-acknowledgment flight; after that,
 delivery micro-cuts must not substitute for production-enablement work.
+
+---
+
+## Client C28 pre-settlement-enqueue recovery — f9787ef — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Threat closed internally:** accepting a page receipt and finishing background
+delivery ownership cannot authorize the content owner to discard its retained
+request until the exact final settlement acknowledgment arrives. C28 cuts after
+the production background has accepted the exact receipt, called
+`session.finish()`, cleared the active binding, recorded the delivered Port
+generation, and entered the final settlement send, but before the browser-only
+wrapper delegates that send to native `Port.postMessage()`.
+
+The wrapper surrounds only the real provider Port passed into
+`ProviderRuntimeTransportOwner` and preserves its browser-owned sender, event
+objects, and disconnect behavior. It snapshots a parser-validated signed
+terminal only after native terminal enqueue returns. When the production owner
+later sends a settlement, the wrapper requires exact correlation, receipt, and
+deadline equality with that terminal before recording public signed bytes,
+boot/approval identity, sensitive-work counters, and RPC counts. A separate
+unit post hook observes that the delivery lease is already inactive at the
+instant the settlement send begins, making the critical production ordering an
+executable assertion rather than an inference from fixture prose.
+
+At the cut the page has exactly one signed settlement, one valid receipt post,
+one navigation, and bytes equal to the checkpoint marker. Content still owns
+one pending entry. An inert extension page removes the unlock session, and CDP
+closes the actual worker target before native settlement enqueue begins. A
+different ready-but-locked worker performs zero selection, identity, RPC,
+approval create/claim/complete, signer lease, or signing work. It replays the
+durable signed terminal; content exact-matches its retained terminal and page
+receipt, sends that receipt directly without forwarding another page response,
+and clears pending only after the replacement settlement arrives. The complete
+page observation is unchanged, while message/digest equality and the Ed25519
+signature are independently verified.
+
+The initial focused browser command was executable RED: it exited **1** because
+the worker rejected `before-settlement-enqueue` with `unsupported signing worker
+checkpoint`. At exact clean implementation SHA
+`f9787ef8b592fc78a2a06b7cab2842e1fc31a707`, the commands recorded in
+`docs/NEXT-SESSION.md` exited **0** with the same SHA before and after:
+extension **474/474**, typecheck, all six signing/recovery/settlement browser
+contracts repeated five times (**30/30**), production build, emitted-artifact
+exclusion, diff validation, and clean-tree guards passed. The ledger-inclusive
+full repository gate is not inferred from this focused evidence and remains
+pending for the subsequent ledger SHA.
+
+Chrome's current messaging, service-worker lifecycle, extension end-to-end
+testing, and worker-termination testing references are linked in
+`docs/NEXT-SESSION.md`. They support this bounded pre-enqueue target-termination
+test. They do not expose an end-to-end `Port.postMessage()` acknowledgment or a
+deterministic pause after native enqueue but before content listener dispatch.
+C28 therefore does not claim the literal post-enqueue/pre-content-delivery cut;
+dropping an already-dispatched event in a test wrapper would be synthetic
+message-loss evidence, not worker-lifecycle evidence.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the success graph and
+every C28 wrapper, checkpoint, marker, counter, fixture, and control resource
+remain absent from production artifacts. Independent second-model review
+remains **UNVERIFIED**.
+
+**Residual, stated as a threat:** this is browser-only instrumentation and a
+forced service-worker target close within one loaded profile. It is not normal
+idle eviction, renderer/browser/OS crash, restart, power loss, storage
+eviction/corruption, or stable-media evidence. Native settlement enqueue without
+content receipt remains unmeasured, as do preparation, pending approval, and
+terminal enqueue without page settlement. Production remains fixed unavailable:
+the committed release registry is empty, there is no onboarding/account
+registry, production KDF decision, Wallet Standard registration, trusted live
+RPC/release composition, send/confirm path, external audit, or real-funds
+exercise. Further delivery micro-cuts would now displace higher-value
+production-enablement work and are not the next lane.
