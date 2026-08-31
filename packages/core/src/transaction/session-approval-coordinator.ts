@@ -217,6 +217,14 @@ export interface SessionApprovalOwner {
   cancel(id: string): Promise<ApprovalRecord>;
 }
 
+/** Minimal durable reader needed to replay an already-committed signature. */
+export interface SessionApprovalResultReader {
+  readSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+  ): Promise<ApprovalSigningRecord | null>;
+}
+
 export interface SessionApprovalSignerLease {
   readonly account: Uint8Array;
   readonly genesisHash: Uint8Array;
@@ -967,6 +975,112 @@ function clearSigningRecord(value: ApprovalSigningRecord | undefined | null): vo
   value.outcome.transactionDigest?.fill(0);
 }
 
+function signedSessionApprovalValue(
+  signingValue: ApprovalSigningRecord,
+  expectedDigest: Uint8Array,
+  capsule?: ApprovalCapsule,
+): SignedSessionApproval {
+  const signing = snapshotApprovalSigningRecord(signingValue);
+  try {
+    if (
+      signing.outcome.state !== "signed" ||
+      signing.outcome.transactionBytes === null ||
+      !approvalDigestsEqual(signing.approval.messageDigest, expectedDigest) ||
+      !recordBindingEqual(signing.approval, capsule?.approval ?? signing.approval)
+    ) {
+      fail("SIGNED_RESULT_INVALID", "durable signing outcome is not replayable");
+    }
+    let envelope;
+    try {
+      envelope = parseSerializedTransactionEnvelope(
+        signing.outcome.transactionBytes,
+      );
+    } catch (error) {
+      fail("SIGNED_RESULT_INVALID", "durable signed result failed strict reparsing", error);
+    }
+    const recomputedDigest = digestApprovalMessage(envelope.messageBytes);
+    try {
+      const signer = envelope.requiredSignerKeys[0];
+      if (
+        envelope.version !== 0 ||
+        envelope.signatures.length !== 1 ||
+        envelope.requiredSignerKeys.length !== 1 ||
+        signer === undefined ||
+        allZero(envelope.signatures[0]!) ||
+        !bytesEqual(envelope.messageBytes, signing.approval.rawMessage) ||
+        !approvalDigestsEqual(recomputedDigest, signing.approval.messageDigest) ||
+        (capsule !== undefined &&
+          (!bytesEqual(signer, capsule.authority.sessionSigner.toBytes()) ||
+            !bytesEqual(envelope.recentBlockhash, capsule.blockhash.blockhash))) ||
+        !ed25519.verify(
+          envelope.signatures[0]!,
+          envelope.messageBytes,
+          signer,
+        )
+      ) {
+        fail(
+          "SIGNED_RESULT_INVALID",
+          "durable signed result does not authenticate the exact approval binding",
+        );
+      }
+      return new SignedSessionApprovalValue(
+        signing.approval.id,
+        signing.approval.messageDigest,
+        signing.outcome.transactionBytes,
+        envelope.signatures[0]!,
+      );
+    } finally {
+      recomputedDigest.fill(0);
+    }
+  } finally {
+    clearSigningRecord(signing);
+  }
+}
+
+/**
+ * Revalidate and release an already-committed signed result without rebuilding
+ * a coordinator, contacting RPC, or reopening the keyring. This is the MV3
+ * restart/reconnect path; it can never create or retry a signing attempt.
+ */
+export async function readSignedSessionApproval(
+  readerValue: SessionApprovalResultReader,
+  idValue: string,
+  expectedDigestValue: Uint8Array,
+): Promise<SignedSessionApproval> {
+  if (
+    typeof readerValue !== "object" ||
+    readerValue === null ||
+    typeof readerValue.readSigning !== "function"
+  ) {
+    fail("INVALID_DEPENDENCY", "signed-result reader must provide readSigning()");
+  }
+  const readSigning = readerValue.readSigning.bind(readerValue);
+  const id = requireApprovalId(idValue);
+  const expectedDigest = requireExpectedDigest(expectedDigestValue);
+  let ownerRecord: ApprovalSigningRecord | null | undefined;
+  let signing: ApprovalSigningRecord | undefined;
+  try {
+    try {
+      ownerRecord = await readSigning(id, expectedDigest);
+    } catch (error) {
+      fail("APPROVAL_RECORD_MISMATCH", "durable signing outcome read failed", error);
+    }
+    if (ownerRecord === null) {
+      fail("APPROVAL_NOT_ACTIVE", "approval has no durable signing outcome");
+    }
+    try {
+      signing = snapshotApprovalSigningRecord(ownerRecord);
+    } catch (error) {
+      fail("APPROVAL_RECORD_MISMATCH", "durable signing outcome is malformed", error);
+    }
+    return signedSessionApprovalValue(signing, expectedDigest);
+  } finally {
+    expectedDigest.fill(0);
+    clearSigningRecord(signing);
+    clearSigningRecord(ownerRecord);
+  }
+}
+
 function signingFailureCode(error: unknown): ApprovalSigningFailureCode {
   if (!(error instanceof SessionApprovalCoordinatorError)) return "signing-failed";
   switch (error.code) {
@@ -1125,61 +1239,7 @@ export class SessionApprovalCoordinator {
     // that await must not let the old worker release bytes, even though a new
     // worker may later replay the committed result.
     this.#assertUsable();
-    const signing = snapshotApprovalSigningRecord(signingValue);
-    try {
-      if (
-        signing.outcome.state !== "signed" ||
-        signing.outcome.transactionBytes === null ||
-        !approvalDigestsEqual(signing.approval.messageDigest, expectedDigest) ||
-        !recordBindingEqual(signing.approval, capsule?.approval ?? signing.approval)
-      ) {
-        fail("SIGNED_RESULT_INVALID", "durable signing outcome is not replayable");
-      }
-      let envelope;
-      try {
-        envelope = parseSerializedTransactionEnvelope(
-          signing.outcome.transactionBytes,
-        );
-      } catch (error) {
-        fail("SIGNED_RESULT_INVALID", "durable signed result failed strict reparsing", error);
-      }
-      const recomputedDigest = digestApprovalMessage(envelope.messageBytes);
-      try {
-        const signer = envelope.requiredSignerKeys[0];
-        if (
-          envelope.version !== 0 ||
-          envelope.signatures.length !== 1 ||
-          envelope.requiredSignerKeys.length !== 1 ||
-          signer === undefined ||
-          allZero(envelope.signatures[0]!) ||
-          !bytesEqual(envelope.messageBytes, signing.approval.rawMessage) ||
-          !approvalDigestsEqual(recomputedDigest, signing.approval.messageDigest) ||
-          (capsule !== undefined &&
-            (!bytesEqual(signer, capsule.authority.sessionSigner.toBytes()) ||
-              !bytesEqual(envelope.recentBlockhash, capsule.blockhash.blockhash))) ||
-          !ed25519.verify(
-            envelope.signatures[0]!,
-            envelope.messageBytes,
-            signer,
-          )
-        ) {
-          fail(
-            "SIGNED_RESULT_INVALID",
-            "durable signed result does not authenticate the exact approval binding",
-          );
-        }
-        return new SignedSessionApprovalValue(
-          signing.approval.id,
-          signing.approval.messageDigest,
-          signing.outcome.transactionBytes,
-          envelope.signatures[0]!,
-        );
-      } finally {
-        recomputedDigest.fill(0);
-      }
-    } finally {
-      clearSigningRecord(signing);
-    }
+    return signedSessionApprovalValue(signingValue, expectedDigest, capsule);
   }
 
   async #pruneInactiveCapsules(): Promise<void> {

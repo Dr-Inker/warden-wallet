@@ -35,6 +35,7 @@ import {
   SESSION_APPROVAL_COMMITMENT,
   SessionApprovalCoordinator,
   SessionApprovalCoordinatorError,
+  readSignedSessionApproval,
   type SessionApprovalAuthorityResolver,
   type SessionApprovalBlockhashClient,
   type SessionApprovalIntentGate,
@@ -673,6 +674,14 @@ describe("session approval coordinator", () => {
     expect(test.owner.outcomes.get(prepared.id)?.state).toBe("signed");
     expect(test.events.some((event) => event.startsWith("approval:fail:")))
       .toBe(false);
+
+    const replayed = await readSignedSessionApproval(
+      test.owner,
+      prepared.id,
+      prepared.messageDigest,
+    );
+    expect(replayed.transactionBytes.length).toBeGreaterThan(0);
+    expect(replayed.id).toBe(prepared.id);
   });
 
   it("rejects sign-and-send before authority/RPC work because no durable result owner exists", async () => {

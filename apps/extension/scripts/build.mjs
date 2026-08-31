@@ -51,10 +51,11 @@ const approvalResult = await build({
 });
 
 // C11 deliberately composes the exact-byte review projector and the internal
-// fixed-URL approval-window owner into the worker. C12 and C13 add test-only
-// provider preparation/selection owners, but keep both owners, the coordinator,
-// authority/RPC owners, signer, and release registry tree-shaken until a later
-// milestone opens them with executable contracts.
+// fixed-URL approval-window owner into the worker. C12-C14 add test-only
+// provider preparation/selection, durable operation, and terminal replay owners,
+// but keep those owners, the coordinator, authority/RPC owners, signer, and
+// release registry tree-shaken until a later milestone opens them with
+// executable contracts.
 const backgroundInputs = new Set(
   Object.keys(backgroundResult.metafile.inputs).map((input) => resolve(input)),
 );
@@ -66,6 +67,10 @@ const requiredBackgroundInputs = [
 const forbiddenBackgroundInputs = [
   join(appDirectory, "src/background/provider-approval-request.ts"),
   join(appDirectory, "src/background/provider-approval-selection.ts"),
+  join(appDirectory, "src/background/provider-operation.ts"),
+  join(appDirectory, "src/background/provider-operation-store.ts"),
+  join(appDirectory, "src/background/provider-terminal-protocol.ts"),
+  join(appDirectory, "src/background/provider-terminal-result.ts"),
   ...[
     "session-approval-coordinator.ts",
     "session-authority-resolver.ts",
