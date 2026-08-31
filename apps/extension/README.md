@@ -275,15 +275,29 @@ receipt protocol settles all non-document volatile owners.
 C24 also corrects the browser harness: fixture authority is initialized once,
 and later boots call the real authenticated restore path instead of reseeding
 and unlocking on every worker start. This proves only replacement inside one
-loaded browser session. It does not cover death during preparation, pending
-approval, signer use before durable commit, terminal enqueue, page receipt, or
-settled acknowledgment; Chrome documents that `storage.session` is cleared on
-browser restart. The fixture marker is not an onboarding or account-registry
-design. This graph still does not register or inject Wallet Standard, configure
-a live trusted RPC/release, define production KDF policy, send a transaction,
-or make the production provider reachable. Future activation must replace the
-fixed-unavailable provider behind the existing single central Port router, not
-install an independent `runtime.onConnect` listener.
+loaded browser session.
+
+C25 brackets the other side of that commit. It pauses after the contextual
+keyring callback has returned transaction bytes but before the coordinator can
+reparse them or call `completeSigning()`, removes the unlock session, and kills
+the real worker. At the cut, a new `signerResultsProduced` measurement is one
+while completion is zero and durable bytes are absent. The locked replacement
+atomically marks the unresolved attempt `failed/worker-restarted`, uses the
+retained bound operation to deliver one generic failure, and performs no
+selection, RPC, approval mutation beyond startup invalidation, key use, or
+signing. The attempt stays number 1; page and durable signed bytes remain null.
+
+These contracts still do not cover death during preparation, pending approval,
+the strict IndexedDB completion transaction itself, terminal enqueue, page
+receipt, or settled acknowledgment. Chrome documents that `storage.session` is
+cleared on browser restart, and IndexedDB's `strict` durability setting remains
+a user-agent hint rather than a power-loss guarantee. The fixture marker is not
+an onboarding or account-registry design. This graph still does not register or
+inject Wallet Standard, configure a live trusted RPC/release, define production
+KDF policy, send a transaction, or make the production provider reachable.
+Future activation must replace the fixed-unavailable provider behind the
+existing single central Port router, not install an independent
+`runtime.onConnect` listener.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during

@@ -1,5 +1,107 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C25 PRE-COMMIT SIGNATURE WORKER CUT — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `fef3860805787c1540720f78f7f53f386be45904` closes the opposite side of
+> C24's signing boundary. A real MV3 worker is now killed after the contextual
+> keyring callback has returned transaction bytes but before the coordinator
+> receives them, reparses them, or calls `completeSigning()`. Because no signed
+> outcome was committed, the only safe replacement behavior is a closed
+> failure—not reconstruction or retry.
+>
+> The first worker's measured state at the cut is one selection, one approval
+> creation, one signing claim, one signer lease, one returned signer result,
+> zero signing-completion calls, and a durable `approved/signing` attempt 1
+> with no transaction bytes or failure code. The page and content owners remain
+> pending. The test removes the serialized unlock session and closes the actual
+> service-worker CDP target.
+>
+> A different boot starts ready-but-locked. Startup atomically converts exactly
+> one unresolved approval attempt to `failed/worker-restarted`; the already-
+> bound provider operation is retained, so operation invalidation remains zero
+> and that locator routes the durable failure. The replacement performs zero
+> selection, identity, RPC, approval creation/claim/completion, key lease, or
+> signer-result work. It emits `WARDEN_REQUEST_FAILED`, the page settles once
+> as `ProviderPageTerminalError: Provider request failed`, and page/durable
+> signed bytes remain absent. Attempt number remains 1, old+new signer leases
+> and returned results each total exactly 1, signing completions total 0,
+> navigation remains 1, and every non-document volatile owner settles.
+>
+> Executable RED and review correction:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec playwright test -c playwright.config.ts
+>   provider-sign-success.pw.ts -g "uncommitted signature is abandoned"`
+>   first exited **1** because the real worker rejected the new stage with
+>   `unsupported C24 worker checkpoint`.
+> - The first implementation run then exposed a test-observation mistake: the
+>   page fixture snapshots `pendingCount` before `signTransaction()` registers
+>   its Promise, so that historical field is zero. C25 no longer treats it as
+>   live state; the independent content-owner probe measures one pending entry
+>   before the cut and zero after terminal settlement.
+>
+> Primary contracts checked:
+> <https://w3c.github.io/IndexedDB/>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+> and
+> <https://developer.chrome.com/docs/extensions/how-to/test/test-serviceworker-termination-with-puppeteer>.
+> IndexedDB defines transaction changes as atomic and distinguishes `strict`,
+> `relaxed`, and user-agent-default durability. Both Warden write repositories
+> already request `{ durability: "strict" }`; C25 observes the replacement read
+> the committed failure transaction. Because the specification calls this a
+> durability hint, C25 still makes no OS crash, power-loss, eviction,
+> corruption, or stable-media guarantee.
+>
+> Exact focused evidence at clean implementation SHA
+> `fef3860805787c1540720f78f7f53f386be45904`:
+>
+> ```sh
+> set -euo pipefail
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec playwright test -c playwright.config.ts provider-sign-success.pw.ts --repeat-each=5
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build
+> test -z "$(rg -n 'after-signing-committed|warden-provider-sign-success-keyring-initialized-v1|restart checkpoint control|C24 keyring|after-signature-produced|signerResultsProduced|signingFailureCode|precommit checkpoint control|unsupported signing worker checkpoint|signing worker checkpoint' apps/extension/dist || true)"
+> git diff --check
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It exited **0** and printed the same SHA before and after: extension
+> **473/473**, typecheck, all three success/recovery/fail-closed real-browser
+> contracts repeated five times (**15/15**), production build, emitted-artifact
+> exclusion, `git diff --check`, and clean-tree guards passed. The full
+> repository gate is deliberately not claimed by this implementation entry; it
+> must run on the subsequent ledger-inclusive SHA.
+>
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented` because
+> this composition and both checkpoints are still build-excluded fixtures.
+>
+> **Harsh residual:** C25 cuts after the keyring owner has returned bytes but
+> before coordinator validation. It does not cut inside seed use, during the
+> `completeSigning()` IndexedDB transaction, or between its request success and
+> transaction completion. C24 and C25 bracket that commit but do not measure
+> its ambiguous in-flight state. Preparation, pending approval, terminal
+> enqueue, page receipt, settled acknowledgment, whole-browser restart, and
+> storage loss remain uncut. Production still has an empty release registry,
+> fixed unavailable provider, deterministic test Connection only, no
+> onboarding/account registry, no production KDF decision, no Wallet Standard
+> registration, no send/confirm path, no external audit, and no real funds.
+>
+> **Next load-bearing work:** C26 should force death while the strict
+> `completeSigning()` transaction is in flight and accept only two durable
+> outcomes: exact committed-byte replay or one `worker-restarted` failure. It
+> must never retry, mix those outcomes, or deliver bytes absent from the
+> replacement's durable read. If a deterministic in-transaction cut cannot be
+> engineered honestly, document it as untestable and move to terminal-enqueue /
+> receipt cuts rather than simulating a commit.
+>
 > ## 2026-08-31 C24 COMMITTED-RESULT WORKER CUT — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit

@@ -2864,3 +2864,82 @@ suite, artifact exclusion, and clean-tree guards. Known Anchor test-program
 key, legacy macro-`cfg`, and Rust unused-code warnings were non-fatal. The
 evidence-only documentation commit recording this result does not inherit the
 verdict or promote an invariant.
+
+---
+
+## Client C25 pre-commit signature abandonment — fef3860 — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Threat closed internally:** a worker may die after computing a signature but
+before its bytes become durable. Treating the unresolved attempt as retryable
+could produce a second signature or deliver bytes the replacement cannot prove
+were committed. C25 pauses the browser fixture after
+`KeyringLifecycleOwner.useSessionSignerBytes()` has returned the contextual
+callback result, but before the coordinator receives, reparses, verifies, or
+passes those bytes to `completeSigning()`.
+
+At the cut, counters require one selection, approval creation, signing claim,
+keyring lease, and returned signer result, but zero signing-completion calls.
+The durable approval is `approved`, its attempt 1 is `signing`, and its failure
+code and transaction bytes are null. Page/content, action, request, and flow
+owners remain pending. The test removes the serialized unlock session and
+closes the actual service-worker target.
+
+Replacement startup uses the incumbent IndexedDB invalidation transaction to
+turn exactly that unresolved attempt into `failed/worker-restarted`. The bound
+operation is not a `preparing` operation and is intentionally retained, so it
+routes the durable failure and its invalidation count is zero. The different
+boot is locked and records zero selection, identity, RPC, approval
+create/claim/complete, key lease, or signer-result calls. It emits one closed
+`WARDEN_REQUEST_FAILED`; the unchanged page settles with
+`ProviderPageTerminalError: Provider request failed`, no signed bytes, one
+navigation, zero content pending, and no non-document volatile owners. Attempt
+number remains 1, old+new signer leases and returned results each total 1, and
+old+new completions total 0.
+
+The initial browser command was executable RED: it exited **1** because the
+worker rejected `after-signature-produced` with `unsupported C24 worker
+checkpoint`. The first implementation run also caught a measurement defect in
+the new test: the fixture's page-status object snapshots `pendingCount` before
+the request is registered. That historical zero is no longer presented as a
+live count; the independent content-owner status probe supplies the before/after
+pending measurement.
+
+Primary references checked were the IndexedDB specification
+<https://w3c.github.io/IndexedDB/>, Chrome's extension service-worker lifecycle
+<https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+and Chrome's official worker-termination testing guidance
+<https://developer.chrome.com/docs/extensions/how-to/test/test-serviceworker-termination-with-puppeteer>.
+IndexedDB transactions atomically write all changes or none, and its durability
+levels distinguish persistent-medium verification from operating-system or
+user-agent-default completion. Both Warden write owners already request
+`{ durability: "strict" }`; the replacement visibly reads the committed failure
+row. The setting remains a user-agent hint, so this is not evidence for an OS
+crash, power loss, eviction, corruption, or disk-loss claim.
+
+At exact clean implementation SHA
+`fef3860805787c1540720f78f7f53f386be45904`, the focused command recorded in
+`docs/NEXT-SESSION.md` exited **0** and printed that SHA before and after:
+extension **473/473**, typecheck, all three real-browser signing contracts
+repeated five times (**15/15**), production build, emitted-artifact exclusion,
+`git diff --check`, and clean-tree guards passed. The ledger-inclusive full
+repository gate is not inferred from focused evidence.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the success composition
+and every checkpoint, counter, fixture-authority marker, and status code remain
+absent from production artifacts. Independent second-model review remains
+**UNVERIFIED**.
+
+**Residual, stated as a threat:** C25 pauses after signer-result return but
+before coordinator-side validation. It does not interrupt seed use or the
+`completeSigning()` transaction, particularly the ambiguous interval between
+its write request and transaction completion. C24 and C25 bracket that interval
+without measuring it. No browser contract yet cuts preparation, pending
+approval, terminal enqueue, page receipt, settled acknowledgment, browser
+restart, or storage loss. The deterministic Connection is not endpoint trust;
+production remains fixed unavailable with no release registry, onboarding,
+account registry, production KDF policy, Wallet Standard registration,
+send/confirm path, external audit, or real-funds exercise. An honest next test
+must either force a real in-transaction death and accept only durable success or
+durable `worker-restarted` failure, or explicitly record that cut as
+uncontrollable rather than simulate commit semantics.
