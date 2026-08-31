@@ -109,11 +109,11 @@
 >
 > `git rev-parse HEAD` still returned the
 > exact implementation SHA, `git status --short` was empty, and `git diff
-> --check` exited **0**. The preceding ledger-inclusive C6 SHA
-> `351541877f6165dffe84dfda72666aeb56528cc5` passed the exact full command
+> --check` exited **0**. The ledger-inclusive C7 SHA
+> `7431865ae749aa04c81c5e58928d60f8f2b5254c` then passed the exact full command
 > `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit
-> **0**. This new ledger-inclusive C7 SHA has not yet run that full gate; do not
-> transfer the preceding verdict.
+> **0**. Afterward, `git rev-parse HEAD` returned that exact SHA, `git status
+> --short` was empty, and `git diff --check` exited **0**.
 >
 > **No invariant status changes.** `WRD-APR-01`, `WRD-APR-02`, `WRD-APR-03`,
 > `WRD-TXI-01`, and `WRD-KEY-04` remain `unimplemented`, so
