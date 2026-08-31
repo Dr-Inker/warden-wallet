@@ -36,6 +36,9 @@ import {
   type ProviderApprovalActionRegistration,
 } from "../src/background/provider-approval-action.js";
 import {
+  ProviderSignedResultFlowOwner,
+} from "../src/background/provider-signed-result-flow.js";
+import {
   ProviderOperationOwner,
   bindProviderOperation,
   createPreparingProviderOperation,
@@ -47,7 +50,22 @@ import {
   type ProviderOperationRecord,
   type ProviderOperationRepository,
 } from "../src/background/provider-operation.js";
+import {
+  ProviderTerminalResultOwner,
+  type ProviderTerminalDeliveryLease,
+} from "../src/background/provider-terminal-result.js";
+import type { ProviderSignedTransactionResponse } from "../src/background/provider-terminal-protocol.js";
 import { classifyProviderSender } from "../src/background/sender-provenance.js";
+import {
+  ProviderPageRequestOwner,
+  type ProviderPageWindowApi,
+  type ProviderPageWindowMessageEvent,
+  type ProviderPageWindowMessageListener,
+} from "../src/page/provider-request-owner.js";
+import {
+  PAGE_PROVIDER_RESPONSE_TYPE,
+  readPageProviderRequestEnvelope,
+} from "../src/provider-protocol.js";
 
 const EXTENSION_ID = "a".repeat(32);
 const DOCUMENT_ID = "123e4567-e89b-12d3-a456-426614174000";
@@ -144,6 +162,45 @@ class MemoryApprovals {
     if (this.readImpl !== undefined) return this.readImpl(id);
     const current = this.records.get(id);
     return current === undefined ? null : snapshotApprovalRecord(current);
+  }
+
+  async readSigning(): Promise<null> {
+    return null;
+  }
+}
+
+class FlowPage implements ProviderPageWindowApi {
+  readonly location = { origin: "https://iframe.example" };
+  readonly listeners = new Set<ProviderPageWindowMessageListener>();
+  readonly posted: Array<{ readonly message: unknown; readonly targetOrigin: string }> = [];
+
+  addEventListener(
+    type: "message",
+    listener: ProviderPageWindowMessageListener,
+  ): void {
+    expect(type).toBe("message");
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(
+    type: "message",
+    listener: ProviderPageWindowMessageListener,
+  ): void {
+    expect(type).toBe("message");
+    this.listeners.delete(listener);
+  }
+
+  postMessage(message: unknown, targetOrigin: string): void {
+    this.posted.push({ message, targetOrigin });
+  }
+
+  emit(data: unknown): void {
+    const event: ProviderPageWindowMessageEvent = {
+      data,
+      origin: this.location.origin,
+      source: this,
+    };
+    for (const listener of [...this.listeners]) listener(event);
   }
 }
 
@@ -398,6 +455,7 @@ describe("provider-bound session approval preparation", () => {
       "open",
       "settle",
       "signal",
+      "terminal",
     ]);
 
     const firstOpen = handle.open();
@@ -421,6 +479,7 @@ describe("provider-bound session approval preparation", () => {
     const concurrent = handle.approve();
     expect(concurrent).toBe(first);
     await expect(first).resolves.toBe(true);
+    await expect(handle.terminal).resolves.toBe(true);
 
     expect(installed.coordinator.approveCalls).toEqual([{
       id: APPROVAL_ID,
@@ -463,6 +522,7 @@ describe("provider-bound session approval preparation", () => {
     expect(returnedTransaction).toEqual(new Uint8Array(4));
     expect(returnedSignature).toEqual(new Uint8Array(64));
     expect(installed.fatals).toHaveLength(1);
+    await expect(handle.terminal).resolves.toBe(false);
     await flush();
     expect(installed.owner.activeCount).toBe(0);
     session.disconnect();
@@ -484,6 +544,7 @@ describe("provider-bound session approval preparation", () => {
     expect(handle.approve()).toBe(approval);
     expect(installed.coordinator.approveCalls).toHaveLength(1);
     expect(installed.fatals).toHaveLength(1);
+    await expect(handle.terminal).resolves.toBe(false);
     await flush();
     expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("cancelled");
     session.disconnect();
@@ -493,6 +554,10 @@ describe("provider-bound session approval preparation", () => {
     const { session, lease } = providerLease();
     const installed = install();
     const handle = await installed.owner.prepare(lease);
+    let terminalSettled = false;
+    void handle.terminal.then(() => {
+      terminalSettled = true;
+    });
     const signed = deferred<SignedSessionApproval>();
     const returnedTransaction = Uint8Array.of(7, 7, 7);
     const returnedSignature = new Uint8Array(64).fill(0x77);
@@ -513,7 +578,10 @@ describe("provider-bound session approval preparation", () => {
     const approving = handle.approve();
     await flush();
     expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("approved");
+    expect(terminalSettled).toBe(false);
     installed.resolver.authority.abort();
+    await flush();
+    expect(terminalSettled).toBe(false);
     signed.resolve(Object.freeze({
       id: APPROVAL_ID,
       messageDigest: handle.messageDigest,
@@ -522,6 +590,7 @@ describe("provider-bound session approval preparation", () => {
     }));
 
     await expect(approving).rejects.toThrow("selected keyring authority is revoked");
+    await expect(handle.terminal).resolves.toBe(true);
     expect(returnedTransaction).toEqual(new Uint8Array(3));
     expect(returnedSignature).toEqual(new Uint8Array(64));
     expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("approved");
@@ -540,6 +609,7 @@ describe("provider-bound session approval preparation", () => {
 
     expect(installed.coordinator.cancelCalls).toEqual([APPROVAL_ID]);
     expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("cancelled");
+    await expect(handle.terminal).resolves.toBe(false);
     expect(installed.launcher.calls).toEqual([]);
     await expect(handle.open()).rejects.toThrow("request is no longer owned");
     expect(installed.launcher.calls).toEqual([]);
@@ -1148,6 +1218,7 @@ describe("provider operation to approval composition", () => {
         result.approval.messageDigest,
       )).toBe(true);
       await expect(actionOwner.approve(result.approval.id)).resolves.toBe(true);
+      await expect(result.terminal).resolves.toBe(true);
       expect(installed.coordinator.approveCalls).toHaveLength(1);
       await expect(actionOwner.settle(result.approval.id)).resolves.toBe(true);
       expect(actionOwner.activeCount).toBe(0);
@@ -1222,6 +1293,7 @@ describe("provider operation to approval composition", () => {
               return handle.messageDigest;
             },
             signal: handle.signal,
+            terminal: handle.terminal,
             approve: handle.approve,
             open: undefined,
             settle: handle.settle,
@@ -1306,5 +1378,306 @@ describe("provider operation to approval composition", () => {
     expect(installed.coordinator.prepareCalls).toHaveLength(1);
     expect(installed.launcher.calls).toHaveLength(1);
     session.disconnect();
+  });
+
+  it("composes C17 approval proof through C14 into one C16 page Promise without routing signed bytes through the action", async () => {
+    const page = new FlowPage();
+    const pageOwner = new ProviderPageRequestOwner(page, {
+      randomSource: new FixedRandom(),
+      timerSource: new InertTimers(),
+      readNow: () => 1_000,
+    });
+    const pageResult = pageOwner.signTransaction({
+      accountAddress: ACCOUNT_ADDRESS,
+      transaction: Uint8Array.of(1, 2, 3),
+      chain: "solana:devnet",
+    });
+    const requestEnvelope = readPageProviderRequestEnvelope(page.posted[0]?.message);
+    expect(requestEnvelope).not.toBeNull();
+    const request = requestEnvelope!.payload as Record<string, unknown>;
+    const { session, owned } = providerLease(request);
+    const installed = install();
+    const operations = new MemoryProviderOperations();
+    const actions = new ProviderApprovalActionOwner();
+    const visible = deferred<void>();
+    const resultReadStarted = deferred<void>();
+    const releaseResultRead = deferred<void>();
+    installed.launcher.launchImpl = async () => visible.resolve();
+    const approvalFlow = composite(installed, operations, actions);
+    const resultOwner = new ProviderTerminalResultOwner({
+      operations,
+      approvals: installed.approvals,
+      readNow: () => 1_200,
+      readSigned: async (_approvals, id, digest) => {
+        resultReadStarted.resolve();
+        await releaseResultRead.promise;
+        return Object.freeze({
+          id,
+          messageDigest: digest.slice(),
+          transactionBytes: Uint8Array.of(1, 2, 3, 4),
+          signature: new Uint8Array(64).fill(0x55),
+        });
+      },
+    });
+    const resultFlow = new ProviderSignedResultFlowOwner({
+      approvals: approvalFlow,
+      results: resultOwner,
+    });
+    const deliveryLease: ProviderTerminalDeliveryLease = Object.freeze({
+      owned,
+      assertActive: () => session.assertActive(owned),
+      postMessage(message: ProviderSignedTransactionResponse): void {
+        page.emit(Object.freeze({
+          version: 1,
+          type: PAGE_PROVIDER_RESPONSE_TYPE,
+          payload: message,
+        }));
+      },
+      finish: () => session.finish(owned),
+    });
+
+    const delivering = resultFlow.deliver(deliveryLease);
+    await visible.promise;
+    const record = installed.approvals.records.get(APPROVAL_ID)!;
+    expect(actions.canApprove(APPROVAL_ID, record.messageDigest)).toBe(true);
+    await expect(actions.approve(APPROVAL_ID)).resolves.toBe(true);
+    await resultReadStarted.promise;
+    await expect(actions.settle(APPROVAL_ID)).resolves.toBe(true);
+    expect(installed.owner.activeCount).toBe(0);
+    expect(pageOwner.pendingCount).toBe(1);
+    releaseResultRead.resolve();
+    await expect(delivering).resolves.toEqual({
+      kind: "delivered",
+      replayed: false,
+    });
+    await expect(pageResult).resolves.toEqual(Uint8Array.of(1, 2, 3, 4));
+    expect(installed.coordinator.approveCalls).toHaveLength(1);
+    expect(session.pendingCount).toBe(0);
+
+    pageOwner.dispose();
+    session.disconnect();
+  });
+
+  it("delivers a committed result after keyring revocation while the byte-free approval action still reports lifetime loss", async () => {
+    const page = new FlowPage();
+    const pageOwner = new ProviderPageRequestOwner(page, {
+      randomSource: new FixedRandom(),
+      timerSource: new InertTimers(),
+      readNow: () => 1_000,
+    });
+    const pageResult = pageOwner.signTransaction({
+      accountAddress: ACCOUNT_ADDRESS,
+      transaction: Uint8Array.of(1, 2, 3),
+      chain: "solana:devnet",
+    });
+    const requestEnvelope = readPageProviderRequestEnvelope(page.posted[0]?.message);
+    const { session, owned } = providerLease(
+      requestEnvelope!.payload as Record<string, unknown>,
+    );
+    const installed = install();
+    const operations = new MemoryProviderOperations();
+    const actions = new ProviderApprovalActionOwner();
+    const visible = deferred<void>();
+    const signingReturned = deferred<void>();
+    const durableClaimed = deferred<void>();
+    installed.launcher.launchImpl = async () => visible.resolve();
+    installed.coordinator.approveImpl = async (id, digest) => {
+      const current = installed.approvals.records.get(id)!;
+      installed.approvals.records.set(
+        id,
+        resolveApprovalRecord(current, "approved", 1_100),
+      );
+      durableClaimed.resolve();
+      await signingReturned.promise;
+      return Object.freeze({
+        id,
+        messageDigest: digest,
+        transactionBytes: Uint8Array.of(7, 7, 7),
+        signature: new Uint8Array(64).fill(0x77),
+      });
+    };
+    const resultFlow = new ProviderSignedResultFlowOwner({
+      approvals: composite(installed, operations, actions),
+      results: new ProviderTerminalResultOwner({
+        operations,
+        approvals: installed.approvals,
+        readNow: () => 1_200,
+        readSigned: async (_approvals, id, digest) => Object.freeze({
+          id,
+          messageDigest: digest.slice(),
+          transactionBytes: Uint8Array.of(7, 7, 7),
+          signature: new Uint8Array(64).fill(0x77),
+        }),
+      }),
+    });
+    const deliveryLease: ProviderTerminalDeliveryLease = Object.freeze({
+      owned,
+      assertActive: () => session.assertActive(owned),
+      postMessage(message: ProviderSignedTransactionResponse): void {
+        page.emit(Object.freeze({
+          version: 1,
+          type: PAGE_PROVIDER_RESPONSE_TYPE,
+          payload: message,
+        }));
+      },
+      finish: () => session.finish(owned),
+    });
+
+    const delivering = resultFlow.deliver(deliveryLease);
+    await visible.promise;
+    const approving = actions.approve(APPROVAL_ID);
+    await durableClaimed.promise;
+    expect(pageOwner.pendingCount).toBe(1);
+    installed.resolver.authority.abort();
+    await flush();
+    expect(pageOwner.pendingCount).toBe(1);
+    signingReturned.resolve();
+
+    await expect(approving).rejects.toThrow("selected keyring authority is revoked");
+    await expect(delivering).resolves.toEqual({
+      kind: "delivered",
+      replayed: false,
+    });
+    await expect(pageResult).resolves.toEqual(Uint8Array.of(7, 7, 7));
+    expect(installed.approvals.records.get(APPROVAL_ID)?.state).toBe("approved");
+    expect(installed.fatals).toEqual([]);
+    expect(session.pendingCount).toBe(0);
+
+    pageOwner.dispose();
+    session.disconnect();
+  });
+
+  it("replays the exact committed result after provider loss through replacement worker owners without another prepare or sign", async () => {
+    const page = new FlowPage();
+    const pageOwner = new ProviderPageRequestOwner(page, {
+      randomSource: new FixedRandom(),
+      timerSource: new InertTimers(),
+      readNow: () => 1_000,
+    });
+    const pageResult = pageOwner.signTransaction({
+      accountAddress: ACCOUNT_ADDRESS,
+      transaction: Uint8Array.of(1, 2, 3),
+      chain: "solana:devnet",
+    });
+    const requestEnvelope = readPageProviderRequestEnvelope(page.posted[0]?.message);
+    const request = requestEnvelope!.payload as Record<string, unknown>;
+    const first = providerLease(request);
+    const installed = install();
+    const operations = new MemoryProviderOperations();
+    const actions = new ProviderApprovalActionOwner();
+    const visible = deferred<void>();
+    const signingReturned = deferred<void>();
+    const durableClaimed = deferred<void>();
+    installed.launcher.launchImpl = async () => visible.resolve();
+    installed.coordinator.approveImpl = async (id, digest) => {
+      const current = installed.approvals.records.get(id)!;
+      installed.approvals.records.set(
+        id,
+        resolveApprovalRecord(current, "approved", 1_100),
+      );
+      durableClaimed.resolve();
+      await signingReturned.promise;
+      return Object.freeze({
+        id,
+        messageDigest: digest,
+        transactionBytes: Uint8Array.of(6, 6, 6),
+        signature: new Uint8Array(64).fill(0x66),
+      });
+    };
+    const firstResultFlow = new ProviderSignedResultFlowOwner({
+      approvals: composite(installed, operations, actions),
+      results: new ProviderTerminalResultOwner({
+        operations,
+        approvals: installed.approvals,
+        readNow: () => 1_200,
+        readSigned: async (_approvals, id, digest) => Object.freeze({
+          id,
+          messageDigest: digest.slice(),
+          transactionBytes: Uint8Array.of(6, 6, 6),
+          signature: new Uint8Array(64).fill(0x66),
+        }),
+      }),
+    });
+    const firstLease: ProviderTerminalDeliveryLease = Object.freeze({
+      owned: first.owned,
+      assertActive: () => first.session.assertActive(first.owned),
+      postMessage(): void {
+        throw new Error("dead provider Port must not receive a result");
+      },
+      finish: () => first.session.finish(first.owned),
+    });
+
+    const firstDelivery = firstResultFlow.deliver(firstLease);
+    await visible.promise;
+    const approving = actions.approve(APPROVAL_ID);
+    await durableClaimed.promise;
+    first.session.disconnect();
+    signingReturned.resolve();
+    await expect(approving).rejects.toThrow("request is no longer owned");
+    await expect(firstDelivery).rejects.toThrow("request is no longer owned");
+
+    // Model a replacement MV3 worker: no previous C12/action/coordinator
+    // capability is retained. The bound C14 journal and durable signed result
+    // are sufficient, so these trap dependencies must remain untouched.
+    let unexpectedPreparations = 0;
+    let unexpectedRegistrations = 0;
+    const replacementApprovalFlow = new ProviderApprovalOperationOwner({
+      actions: {
+        register(): void {
+          unexpectedRegistrations++;
+          throw new Error("replacement worker must not register an action");
+        },
+      },
+      approvals: {
+        async prepare(): Promise<ProviderPreparedApprovalHandle> {
+          unexpectedPreparations++;
+          throw new Error("replacement worker must not prepare an approval");
+        },
+      },
+      operations: new ProviderOperationOwner(operations, {
+        readNow: () => 1_300,
+      }),
+    });
+    const replacementFlow = new ProviderSignedResultFlowOwner({
+      approvals: replacementApprovalFlow,
+      results: new ProviderTerminalResultOwner({
+        operations,
+        approvals: installed.approvals,
+        readNow: () => 1_300,
+        readSigned: async (_approvals, id, digest) => Object.freeze({
+          id,
+          messageDigest: digest.slice(),
+          transactionBytes: Uint8Array.of(6, 6, 6),
+          signature: new Uint8Array(64).fill(0x66),
+        }),
+      }),
+    });
+    const retry = providerLease(request);
+    const retryLease: ProviderTerminalDeliveryLease = Object.freeze({
+      owned: retry.owned,
+      assertActive: () => retry.session.assertActive(retry.owned),
+      postMessage(message: ProviderSignedTransactionResponse): void {
+        page.emit(Object.freeze({
+          version: 1,
+          type: PAGE_PROVIDER_RESPONSE_TYPE,
+          payload: message,
+        }));
+      },
+      finish: () => retry.session.finish(retry.owned),
+    });
+
+    await expect(replacementFlow.deliver(retryLease)).resolves.toEqual({
+      kind: "delivered",
+      replayed: true,
+    });
+    await expect(pageResult).resolves.toEqual(Uint8Array.of(6, 6, 6));
+    expect(installed.coordinator.prepareCalls).toHaveLength(1);
+    expect(installed.coordinator.approveCalls).toHaveLength(1);
+    expect(unexpectedPreparations).toBe(0);
+    expect(unexpectedRegistrations).toBe(0);
+    expect(retry.session.pendingCount).toBe(0);
+
+    pageOwner.dispose();
+    retry.session.disconnect();
   });
 });

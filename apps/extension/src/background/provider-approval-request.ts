@@ -5,7 +5,7 @@
 //! lease into the existing coordinator's exact request only after a trusted
 //! selection resolver proves the requested account and chain. Production keeps
 //! using the fixed-unavailable provider boundary while the committed release
-//! registry is empty and no result/replay protocol exists.
+//! registry is empty and no result/replay route is reachable in production.
 
 import {
   APPROVAL_DIGEST_BYTES,
@@ -98,6 +98,12 @@ export interface ProviderApprovalHandle {
 export interface ProviderPreparedApprovalHandle extends ProviderApprovalHandle {
   /** Ends when provider, keyring, or preparation ownership ends. */
   readonly signal: AbortSignal;
+  /**
+   * Byte-free terminal proof. `true` means the coordinator returned one exact
+   * shaped signed result and the bound row was independently observed approved;
+   * every other proven or uncertain terminal resolves false.
+   */
+  readonly terminal: Promise<boolean>;
   /** Invoke the exact bound coordinator once; signed bytes never leave here. */
   approve(): Promise<boolean>;
   /** Open at most once; C15 calls this only after its outer durable bind. */
@@ -163,9 +169,12 @@ interface ActiveEntry {
   readonly lifetimeController: AbortController;
   readonly signals: readonly AbortSignal[];
   readonly onAbort: () => void;
+  readonly terminal: Promise<boolean>;
+  readonly resolveTerminal: (signed: boolean) => void;
   approvePromise: Promise<boolean> | undefined;
   cancelPromise: Promise<boolean> | undefined;
   openPromise: Promise<void> | undefined;
+  terminalResolved: boolean;
   active: boolean;
 }
 
@@ -604,6 +613,7 @@ export class ProviderApprovalRequestOwner {
     this.#fatalReported = true;
     this.#disposed = true;
     for (const entry of [...this.#active]) {
+      this.#resolveTerminal(entry, false);
       void this.#cancelEntry(entry).catch(() => undefined);
     }
     try {
@@ -614,8 +624,18 @@ export class ProviderApprovalRequestOwner {
     }
   }
 
+  #resolveTerminal(entry: ActiveEntry, signed: boolean): void {
+    if (entry.terminalResolved) return;
+    entry.terminalResolved = true;
+    entry.resolveTerminal(signed === true);
+  }
+
   #removeEntry(entry: ActiveEntry): void {
     if (!entry.active) return;
+    // Removal without an earlier exact approved proof is fail-closed. This
+    // Promise deliberately never rejects, avoiding an unobserved rejection in
+    // legacy internal callers while withholding delivery authority.
+    this.#resolveTerminal(entry, false);
     entry.active = false;
     this.#active.delete(entry);
     for (const signal of entry.signals) {
@@ -708,15 +728,17 @@ export class ProviderApprovalRequestOwner {
           throw error;
         }
 
-        // A provider/keyring abort while the coordinator was awaiting durable
-        // completion suppresses page success. C14 may still replay the result.
-        this.#assertActionActive(entry, "during signing");
+        // Prove and publish the durable result before the post-await lifetime
+        // check. A provider/keyring abort still suppresses approval-UI success,
+        // but cannot erase a signature that already committed; C18/C14 may
+        // deliver or replay it without exposing bytes through this handle.
         try {
           await this.#proveApproved(binding);
         } catch (error) {
           this.#reportFatal(error);
           throw error;
         }
+        this.#resolveTerminal(entry, true);
         this.#assertActionActive(entry, "during signing proof");
         return true;
       } finally {
@@ -758,6 +780,13 @@ export class ProviderApprovalRequestOwner {
           throw failure;
         }
       } finally {
+        // `approved` can mean only that a signing attempt was claimed. Wait for
+        // this owner's exact coordinator Promise: only #approveEntry may turn
+        // the byte-free result proof true after durable signed completion.
+        if (entry.approvePromise !== undefined) {
+          await entry.approvePromise.catch(() => undefined);
+        }
+        this.#resolveTerminal(entry, false);
         clearApproval(cancelled);
         clearBinding(binding);
         this.#removeEntry(entry);
@@ -775,6 +804,10 @@ export class ProviderApprovalRequestOwner {
     binding: ApprovalBinding,
   ): ActiveEntry {
     const lifetimeController = new AbortController();
+    let resolveTerminal!: (signed: boolean) => void;
+    const terminal = new Promise<boolean>((resolve) => {
+      resolveTerminal = resolve;
+    });
     const signals = Object.freeze(
       authoritySignal === owned.signal
         ? [owned.signal]
@@ -794,9 +827,12 @@ export class ProviderApprovalRequestOwner {
       lifetimeController,
       signals,
       onAbort,
+      terminal,
+      resolveTerminal,
       approvePromise: undefined,
       cancelPromise: undefined,
       openPromise: undefined,
+      terminalResolved: false,
       active: true,
     };
     this.#active.add(entry);
@@ -906,6 +942,10 @@ export class ProviderApprovalRequestOwner {
         }
         if (observed === null) {
           clearBinding(binding);
+          if (entry.approvePromise !== undefined) {
+            await entry.approvePromise.catch(() => undefined);
+          }
+          this.#resolveTerminal(entry, false);
           this.#removeEntry(entry);
           clearBinding(entry.binding);
           return true;
@@ -913,6 +953,10 @@ export class ProviderApprovalRequestOwner {
         let terminal: ApprovalRecord | undefined;
         try {
           terminal = terminalBinding(observed, binding);
+          if (entry.approvePromise !== undefined) {
+            await entry.approvePromise.catch(() => undefined);
+          }
+          this.#resolveTerminal(entry, false);
         } catch (error) {
           if (
             error instanceof ProviderApprovalRequestStateError &&
@@ -985,6 +1029,7 @@ export class ProviderApprovalRequestOwner {
         return handle.messageDigest;
       },
       signal: entry.lifetimeController.signal,
+      terminal: entry.terminal,
       approve: (): Promise<boolean> => this.#approveEntry(entry),
       open: (): Promise<void> => this.#openEntry(entry),
       settle: handle.settle,

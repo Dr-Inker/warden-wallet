@@ -51,7 +51,7 @@ const approvalResult = await build({
 });
 
 // C11 deliberately composes the exact-byte review projector and the internal
-// fixed-URL approval-window owner into the worker. C12-C17 add test-only
+// fixed-URL approval-window owner into the worker. C12-C18 add test-only
 // provider preparation/selection, durable operation, bind-before-open, and
 // terminal replay/page-promise/action owners,
 // but keep those owners, the coordinator, authority/RPC owners, signer, and
@@ -71,6 +71,7 @@ const forbiddenBackgroundInputs = [
   join(appDirectory, "src/background/provider-approval-operation.ts"),
   join(appDirectory, "src/background/provider-approval-request.ts"),
   join(appDirectory, "src/background/provider-approval-selection.ts"),
+  join(appDirectory, "src/background/provider-signed-result-flow.ts"),
   join(appDirectory, "src/background/provider-operation.ts"),
   join(appDirectory, "src/background/provider-operation-store.ts"),
   join(appDirectory, "src/background/provider-terminal-protocol.ts"),

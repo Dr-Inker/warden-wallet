@@ -59,6 +59,8 @@ export type ProviderApprovalOperationLaunch =
   | Readonly<{
       readonly kind: "opened";
       readonly approval: ProviderApprovalHandle;
+      /** Byte-free C12 terminal proof consumed only by the C18 result owner. */
+      readonly terminal: Promise<boolean>;
     }>
   | Readonly<{
       readonly kind: "replay-required";
@@ -70,6 +72,7 @@ interface BoundPreparedApproval {
   readonly chain: ApprovalChain;
   readonly messageDigest: Uint8Array;
   readonly signal: AbortSignal;
+  readonly terminal: Promise<boolean>;
   readonly approve: () => Promise<boolean>;
   readonly open: () => Promise<void>;
   readonly settle: () => Promise<boolean>;
@@ -157,6 +160,13 @@ function requireSignal(value: unknown): AbortSignal {
   return value as AbortSignal;
 }
 
+function requireTerminal(value: unknown): Promise<boolean> {
+  if (!(value instanceof Promise)) {
+    stateError("prepared approval terminal must be a Promise");
+  }
+  return value as Promise<boolean>;
+}
+
 function requireBytes(value: unknown, length: number, name: string): Uint8Array {
   if (!(value instanceof Uint8Array) || value.length !== length) {
     stateError(`${name} must contain exactly ${length} bytes`);
@@ -217,6 +227,7 @@ async function bindPreparedApproval(value: unknown): Promise<BoundPreparedApprov
       chain,
       messageDigest,
       signal: requireSignal(handle.signal),
+      terminal: requireTerminal(handle.terminal),
       approve: requireMethod(handle, "approve", "prepared approval approve"),
       open: requireMethod(handle, "open", "prepared approval open"),
       settle: requireMethod(handle, "settle", "prepared approval settle"),
@@ -363,7 +374,11 @@ export class ProviderApprovalOperationOwner {
       }
       const approval = approvalFacade(prepared);
       await prepared.open();
-      return Object.freeze({ kind: "opened", approval });
+      return Object.freeze({
+        kind: "opened",
+        approval,
+        terminal: prepared.terminal,
+      });
     } catch (error) {
       if (prepared !== undefined) {
         try {
