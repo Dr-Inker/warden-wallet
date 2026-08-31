@@ -863,3 +863,55 @@ wrapped transaction would violate WYSIWYS; the next coordinator may create a
 record only after constructing and reparsing the exact final wrapped message and
 binding its recent-blockhash rules. Independent second-model review remains
 UNVERIFIED.
+
+---
+
+## Client C3/C4 exact session-message construction — 8c29a22 — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** core now exports the opt-in
+`@warden/core/transaction/session` structural rewrite. It accepts a strict
+serialized dApp transaction plus explicit SmartAccount, session delegate,
+SessionKey account, Registry, Warden program, and final blockhash. It returns
+copy-isolated source bytes, exact final message bytes, an unsigned transaction
+template, execute payload, and accounts hash. The shipped extension imports none
+of this path; permissions, pages, CSP, network access, and fixed-unavailable
+provider behavior are unchanged. The parser-only `@warden/core/transaction`
+subpath remains independent of web3.
+
+**Removed / narrowed:** the source must have exactly one zero-filled required
+signature for the advertised SmartAccount. Partial signatures, co-signers,
+empty/compute-only intent, durable nonce at instruction zero, Instructions-sysvar
+introspection, lookup tables, generic writable-PDA/writable-session-signer shapes,
+and an oversized final packet fail closed. The final wrapper is lookup-free v0,
+self-paid by the session delegate, and carries literal Anchor/Borsh session
+`execute` framing with explicit SessionKey/Registry accounts. Its complete
+serialized transaction must fit 1,232 bytes. The implementation reparses the
+final envelope and checks its sole zero signature slot, exact signing message,
+blockhash, execute data, effective account flags, and accounts hash before
+return. A real Ed25519 test proves the signature verifies over approval's message
+bytes, not over the transaction's mutable signature vector.
+
+Primary sources confirm that web3 signs `message.serialize()` and that Solana
+durable transactions are identified by an `AdvanceNonceAccount` System
+instruction at index zero:
+<https://github.com/solana-foundation/solana-web3.js/blob/master/src/transaction/versioned.ts>,
+<https://solana.com/developers/cookbook/transactions/durable-nonces>, and
+<https://solana.com/developers/cookbook/transactions/confirmation>.
+
+**New invariants:** none promoted. `WRD-APR-01`, `WRD-APR-02`, and
+`WRD-TXI-01` remain `unimplemented`. The exact final signing object now exists,
+but the compound approval, render/recheck/sign, and no-blind-sign product
+invariants do not.
+
+**Residual, stated honestly:** no shipped route consumes the builder. There is
+no authoritative cluster/genesis/program/account/session/policy resolution,
+blockhash-validity RPC check, semantic decode, allowlist decision, simulation,
+approval creation/UI, digest claim, keyring signature, send, or durable result
+replay. Any nonzero 32-byte final blockhash passes structurally; an expired hash
+must cancel and rebuild a new approval, never be replaced under the old digest.
+Inline-only output has no staging fallback; LUTs remain blocked. The generic
+wrapper's writable-PDA refusal makes common wallet-authority dApp shapes
+incompatible until typed Warden builders exist. Unknown programs can still be
+wrapped structurally, so this is not a benign semantic verdict. Fixed contracts
+and web3 plus noble Ed25519 are not an independent Rust final-message/fuzzer
+corpus. Independent second-model review remains UNVERIFIED.

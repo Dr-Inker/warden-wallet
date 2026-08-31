@@ -1,5 +1,102 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C3/C4 EXACT SESSION MESSAGE — WYSIWYS OBJECT CLOSED, COORDINATOR STILL OPEN
+>
+> Implementation commit `8c29a224780826c4e10f82667bc886da2bfa0acf`
+> adds the first exact final-message builder for Warden's deliberately narrow
+> session path. The contract was genuinely red before production code existed:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/session-transaction.test.ts` exited **1** before collection
+> because `../src/transaction/session-transaction.js` did not exist.
+>
+> Primary-source research pins the object being approved. `VersionedTransaction`
+> signs `message.serialize()`, while the transaction envelope also contains
+> mutable signature slots. Wallet Standard supplies and returns serialized
+> transactions, but Warden's advertised SmartAccount is a program-owned PDA and
+> has no Ed25519 key; the returned transaction must therefore be a different
+> session-signed `execute` wrapper. Approval's existing `rawMessage` field is now
+> documented unambiguously as the exact serialized Solana **message**, never the
+> whole transaction. Solana's durable-nonce contract additionally requires an
+> `AdvanceNonceAccount` System instruction at index zero, so that source shape is
+> detected and rejected before its lifetime can be silently replaced. Sources:
+> [web3.js `VersionedTransaction`](https://github.com/solana-foundation/solana-web3.js/blob/master/src/transaction/versioned.ts),
+> [Solana durable nonces](https://solana.com/developers/cookbook/transactions/durable-nonces),
+> [transaction confirmation/expiration](https://solana.com/developers/cookbook/transactions/confirmation),
+> and the Wallet Standard sources cited in the preceding envelope entry.
+>
+> `prepareSessionTransaction()` first runs the independent strict envelope
+> parser against the requested SmartAccount. It accepts only one zero-filled
+> source signature slot, so partial signatures and any other required signer
+> fail closed. It rejects empty/compute-only intent, a first durable-nonce
+> advance, and every instruction that names the Instructions sysvar. It then
+> decompiles the lookup-free legacy/v0 source, invokes `wrapForExecute` with the
+> real session delegate as signer and fee payer plus explicit SessionKey and
+> Registry accounts, and rejects every privilege shape that generic execute
+> cannot preserve.
+>
+> The builder emits the literal Anchor `execute` discriminator and exact Borsh
+> session framing (`root=None`, `payload=Some(Vec<u8>)`), places normalized
+> ComputeBudget instructions at top level, compiles a lookup-free v0 message with
+> an explicit caller-supplied nonzero 32-byte blockhash, and allocates exactly one
+> zero signature slot for the session delegate. The whole transaction—not merely
+> the message—must fit 1,232 bytes. Before returning, it reparses the serialized
+> final envelope and rechecks version, signer set, empty signature slot,
+> blockhash, exact message bytes, execute data, every runtime-coalesced account
+> key/flag, and reproduction of `accountsHash`. Every returned byte buffer is a
+> fresh copy. `@warden/core/transaction/session` is a separate opt-in export;
+> `@warden/core/transaction` remains the web3-independent parser-only boundary.
+>
+> The 12 focused contracts cover legacy and lookup-free-v0 sources, literal
+> discriminator/Borsh bytes and physical account keys/flags, source/final
+> blockhash separation, full-packet size, copy isolation, parser/export boundary
+> separation, a real Ed25519 signature over the approved message (and failure
+> after one-byte mutation), partial/co-signature refusal, requested-account and
+> authority-alias refusal, empty/compute-only, durable nonce, Instructions
+> sysvar, writable-PDA wrap incompatibility, malformed-source error provenance,
+> invalid final blockhashes, and a source that fits while its wrapper exceeds the
+> packet limit.
+>
+> Exact-SHA evidence at `8c29a224780826c4e10f82667bc886da2bfa0acf`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/session-transaction.test.ts` → **12/12**, exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test` →
+> **474/474**, exit **0**; core typecheck/build and extension typecheck/build all
+> exited **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension test` → **246/246**, exit **0**. Built-package checks resolve
+> `@warden/core/transaction/session` while proving the parser-only subpath does
+> not export the builder. The preceding ledger-inclusive SHA
+> `15315e64ce8d1de82f79d428d28dd42edc77a085` passed `env
+> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit **0**.
+> The full gate for this new ledger-inclusive boundary is still pending; do not
+> transfer the preceding SHA's verdict to this one.
+>
+> **Do not promote `WRD-APR-01`, `WRD-APR-02`, or `WRD-TXI-01`.** This module is
+> not imported by the shipped extension and no provider method can reach it.
+> There is still no authoritative account/cluster/genesis/program/session/policy
+> resolver, current blockhash-validity RPC check, semantic decoder, allowlist
+> verdict, simulation, record-creation coordinator, approval UI, digest claim,
+> signer, sender, or result replay. Any nonzero 32-byte blockhash is structurally
+> accepted; freshness must be checked against the bound cluster immediately
+> before signing, and expiry must cancel/rebuild/reapprove rather than mutate the
+> approved message. The builder is inline-only, rejects all LUTs, cannot stage an
+> oversized payload, and refuses the generic writable-PDA shape—so common dApp
+> transfers/authority instructions remain incompatible and need typed Warden
+> paths. It still structurally wraps syntactically valid unknown programs; this
+> is not C4 intent decode or a no-blind-sign verdict. There is no independent
+> Rust final-message golden/fuzzer corpus. Independent second-model review
+> remains **UNVERIFIED**.
+>
+> **Next load-bearing slice:** add an internal, still-unreachable approval
+> coordinator around this object. It must consume authoritative account/network/
+> program/session/policy context; fetch and bind a current blockhash; create the
+> record from `prepared.messageBytes` only; on claim, transactionally recheck the
+> exact digest plus current authority/policy and cluster blockhash validity;
+> borrow the matching session seed; sign exactly those message bytes; and reparse
+> the signed transaction before release. Keep provider methods closed until an
+> approval UI renders a local semantic decode of that same final message. Run
+> `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh` on the
+> final ledger-inclusive SHA before calling this loop boundary green.
+
 > ## 2026-08-30 C3/C4 EXACT-BYTE TRANSACTION ENVELOPE — SYNTAX CLOSED, FINAL WRAPPED INTENT STILL OPEN
 >
 > Implementation commit `d49529c5f1d0796c7b5adfbb6d71327c1ce1c74b`
