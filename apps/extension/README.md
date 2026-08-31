@@ -158,6 +158,15 @@ transaction serialization is evidence for the tested compare-and-set;
 process, or disk failure. Trusted same-extension contexts share this database
 and remain inside the trust boundary.
 
+A separate C12 provider-to-preparation owner is unit-tested but deliberately
+excluded by the production build graph. It can bind an exact live provider
+lease to a trusted account/chain selection, the strict coordinator, one durable
+approval id, and the window launcher; disconnect or open failure can cancel only
+that exact durable binding. It has no production selection resolver, release,
+RPC endpoint, signer, or provider result writer. The emitted worker must reject
+any accidental import of this module until those authorities are source-owned
+and reviewed.
+
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during
 ordinary browsing: an exact, same-document request envelope opens one lazily,

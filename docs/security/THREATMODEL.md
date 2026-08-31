@@ -1754,3 +1754,74 @@ the same SHA before and after the gate and proved a clean worktree. Anchor's
 test-program key mismatch notice and legacy macro `cfg` notices were warnings,
 not skipped failures. This verdict belongs only to `9c6f1c0…`; it promotes no
 C11 invariant and removes none of the residuals above.
+
+---
+
+## Client C12 provider lease-to-preparation owner — cdaa663 — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**New internal boundary:** `ProviderApprovalRequestOwner` can consume one exact
+live `ProviderPortSession` lease and, only after trusted account/chain
+selection, call the existing strict coordinator and C11 fixed-window launcher.
+It accepts no Connection, endpoint, release document, program id, deployment
+pin, approval decision, signer, send capability, or provider response writer.
+The production build lists this module as a forbidden background input, so this
+boundary is not reachable from a Port and every emitted provider method remains
+fixed unavailable.
+
+The owner independently requires the trusted 32-byte SmartAccount to Base58-
+encode to the untrusted page selector and requires any requested chain to match
+the trusted chain. Only copied transaction bytes plus Chrome-owned origin, tab,
+frame, and document provenance enter `prepare`. A strict returned id and digest
+are treated only as a lookup hint: the exact durable row must independently
+match that id, digest, provenance, method, account, and chain before the window
+opens. This prevents a malformed coordinator return from becoming its own
+cleanup proof.
+
+**Removed / narrowed:** duplicate ownership and more than 32 preparing/active
+requests reject before asynchronous resolution. Disconnect, open failure,
+disposal, or prepared/durable disagreement can affect only the bound durable
+id. Cancel success must return the exact terminal binding; a losing cancel is
+accepted only after an exact read proves the row terminal or absent. A malformed
+locator/digest, wrong browser-owned row, or cancel-plus-read failure is fatal:
+the owner locally poisons itself, begins cancellation of its other entries, and
+reports to the parent fatal lifecycle. Concurrent settlement and cancellation
+use independent proof-buffer snapshots, so one completion cannot zero another
+operation's binding during an await.
+
+The focused lane began RED because the module was absent. Its first behavioral
+implementation then failed **1/12** because a wrong prepared account made a
+correct durable cancellation look unproven; cleanup now rebinds from durable
+state. The final focused lane passes **20/20**, including wrong/malformed
+coordinator results, cross-browser durable locator, cap/duplicate, disconnect,
+window, authority, disposal, terminal-winner, and settle/cancel races. Official
+contracts reviewed: Chrome messaging/runtime and the Wallet Standard Solana
+extension at
+<https://developer.chrome.com/docs/extensions/develop/concepts/messaging>,
+<https://developer.chrome.com/docs/extensions/reference/api/runtime>, and
+<https://github.com/wallet-standard/wallet-standard/blob/master/extensions/solana.md>.
+Wallet Standard's signed-byte return and batching surface are not yet provided
+by Warden. Independent second-model review is **UNVERIFIED**; none ran for C12.
+
+Exact-SHA evidence at `cdaa6639edcc50fc68aca1923e198540aba9b9cf`:
+the exact command recorded in `docs/NEXT-SESSION.md` printed that SHA before and
+after, proved a clean tree, passed extension **330/330**, typecheck, production
+build, `git diff --check`, and an emitted-worker scan requiring
+`WARDEN_METHOD_UNAVAILABLE` while forbidding C12/coordinator/release/RPC/signer
+markers. The build's metafile guard independently rejects the C12 source file
+and coordinator/release/RPC modules if they become reachable. The forthcoming
+ledger-inclusive SHA has not yet run the full deploy gate.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the invariants JSONL is
+intentionally unchanged.
+
+**Residual, stated honestly:** this module is tree-shaken. There is no
+authenticated account/cluster selection owner, non-empty committed release,
+trusted production RPC/Connection factory, approve/sign method, durable
+provider result/replay protocol, simulation/consequence model, send/confirm
+owner, Wallet Standard registration/batching, onboarding, or root ceremony.
+The outer owner's transaction identity depends on the existing coordinator's
+tested transformation and digest; it does not independently duplicate that
+authority-dependent transformation. Local fatal poisoning prevents further C12
+work, but complete shutdown still requires the parent to honor `onFatal`. This
+is a fail-closed internal composition primitive, not deployable wallet behavior.

@@ -1,5 +1,118 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C12 PROVIDER LEASE→PREPARATION OWNER — INTERNAL ONLY, EMITTED PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `cdaa6639edcc50fc68aca1923e198540aba9b9cf` adds the still-unreachable
+> `ProviderApprovalRequestOwner`. It is the first owner that can translate one
+> exact live `ProviderPortSession` lease into the existing strict approval
+> coordinator and C11 window launcher. The production build explicitly rejects
+> this module as a background input, and the emitted provider still returns only
+> `WARDEN_METHOD_UNAVAILABLE`.
+>
+> The owner accepts only `solana:signTransaction`. It reserves exact object
+> ownership before any await, rejects duplicate ownership, and caps preparing
+> plus active requests at an independently test-pinned 32. A trusted resolver
+> must return the canonical current SmartAccount bytes, chain, and a bound
+> coordinator. The owner independently Base58-encodes those 32 account bytes
+> and requires exact equality with the untrusted page selector; a supplied page
+> chain must also equal the trusted chain. Browser-owned origin, tab, frame, and
+> document provenance, the proven account/chain, and a copied transaction are
+> the only values forwarded to `prepare`.
+>
+> A coordinator result is not enough to open a window. The owner snapshots a
+> strict background-minted id and digest hint, independently reads that exact
+> durable row, validates the row's id, digest, browser provenance, method,
+> account, and chain, and only then attaches the provider AbortSignal and opens
+> the exact C11 request id. Returned account/chain/time/digest disagreement is
+> cancelled against the durable binding, not trusted as its own cleanup oracle.
+> A malformed result with a valid id+digest can therefore still cancel the
+> exact proven row. A malformed locator/digest, a row belonging to another
+> browser request, or cancellation plus terminal-read failure is not guessed:
+> it reports fatal, poisons the owner against new work, and asks the parent to
+> close every privileged surface.
+>
+> Disconnect, window-open failure, owner disposal, and authority/preparation
+> failure cannot approve or sign. Once a row exists, cleanup calls `cancel` only
+> for that exact id; a losing cancel is accepted only when an exact durable read
+> proves the same binding terminal or absent. Settlement likewise releases
+> ownership only after an exact terminal/absent read. Harsh review found that a
+> settlement and disconnect cancellation could otherwise share and zero the
+> same proof buffers while either await was in flight. Each terminal operation
+> now uses an isolated copy, and a concurrent settle/cancel regression proves
+> both complete without weakening the binding.
+>
+> Meaningful RED and critique evidence:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run test/provider-approval-request.test.ts`
+>   first exited **1** before collection because
+>   `provider-approval-request.js` did not exist.
+> - After the first implementation, the focused lane exited **1**, **1 failed /
+>   11 passed**. A coordinator result with a wrong account caused a correctly
+>   cancelled durable row to be labelled unproven because cleanup compared it
+>   with the malformed return. Mandatory durable re-binding closes that flaw.
+> - The final adversarial lane has 20 cases: exact browser input, unsupported
+>   methods, account/chain disagreement, delayed disconnect, open failure,
+>   authority change, terminal winner, unproven cleanup, malformed coordinator
+>   result, missing locator, wrong durable browser owner, duplicate/cap races,
+>   disposal during preparation, concurrent settle/cancel, and exact terminal
+>   settlement. The 32-request cap oracle is hard-coded independently of the
+>   production constant.
+>
+> Current platform and standard gaps were checked against Chrome's official
+> messaging and runtime documentation and the Wallet Standard Solana extension:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>,
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime>, and
+> <https://github.com/wallet-standard/wallet-standard/blob/master/extensions/solana.md>.
+> Chrome documents long-lived Port lifetime, browser-owned `MessageSender`
+> metadata, disconnect semantics, and the need to treat content-script input as
+> less trustworthy. Wallet Standard returns signed transaction bytes and permits
+> batched feature inputs; Warden still has only a single-request, unavailable
+> transport and no terminal success/replay schema. No independent second-model
+> review ran for C12; it remains **UNVERIFIED**.
+>
+> Exact-SHA evidence at `cdaa6639edcc50fc68aca1923e198540aba9b9cf`:
+> the following exact command exited **0**, printed the same SHA before and
+> after, and proved a clean worktree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build && node -e "const fs=require('node:fs');const background=fs.readFileSync('apps/extension/dist/background.js','utf8');const required=['WARDEN_METHOD_UNAVAILABLE'];const forbidden=['provider approval request:','too many active provider approval requests','session approval coordinator:','createCommittedSessionApprovalCoordinator','resolveCommittedSessionRelease','sign approved session transaction'];const missing=required.filter(v=>!background.includes(v));const present=forbidden.filter(v=>background.includes(v));if(missing.length||present.length){console.error({missing,present});process.exit(1)}console.log('C12 owner absent from emitted worker; fixed provider-unavailable boundary remains')" && git diff --check && git rev-parse HEAD && test -z "$(git status --porcelain)"
+> ```
+>
+> The extension passed **330/330**, typecheck and build exited **0**,
+> the build graph rejected C12/coordinator/release/RPC reachability, and the
+> emitted worker contained `WARDEN_METHOD_UNAVAILABLE` while containing none of
+> the C12 owner, coordinator, committed-release, RPC, or signer markers. The
+> forthcoming ledger-inclusive SHA has not yet run the full deploy gate; no
+> prior verdict is inherited.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`, so
+> `docs/security/invariants.jsonl` is intentionally unchanged. C12 narrows only
+> an internal request/preparation/lifetime subclaim.
+>
+> **Harsh residual:** none of this code is emitted. There is no source-owned
+> account/cluster selection registry, authenticated account onboarding,
+> committed production release, trusted endpoint, Connection factory, provider
+> success/error terminal protocol, approval action, immediate-before-sign key
+> use, result replay, simulation, send/confirmation owner, or Wallet Standard
+> registration/batch contract. Exact source-transaction identity still rests on
+> the already-tested coordinator transformation and its returned digest; this
+> outer owner cannot independently rederive the transformed message without
+> duplicating authority resolution. The fatal path depends on the parent runtime
+> honoring `onFatal`, while local poisoning only prevents new C12 work. A tested
+> but tree-shaken owner is not a deployable wallet.
+>
+> **Next load-bearing slice:** define a still-unshipped, source-owned selection
+> resolver that can join authenticated extension account context to one
+> committed release name and one explicitly trusted Connection factory. Prove
+> the current empty release registry refuses before Connection, keyring, or
+> window access; close in-flight selection on account/chain change. Do not
+> accept a page RPC URL, release document, program id, or deployment pin, and do
+> not import this path into the emitted worker until real reviewed release/RPC
+> configuration exists.
+
 > ## 2026-08-31 C11 BACKGROUND-OWNED APPROVAL WINDOW LIFECYCLE — SHIPPED INTERNALLY, NO PROVIDER SUCCESS
 >
 > The C11 implementation set ends at
