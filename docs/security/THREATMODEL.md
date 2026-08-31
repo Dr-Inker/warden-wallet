@@ -2524,3 +2524,56 @@ complete Rust workspace. The known Anchor test-program key mismatch and legacy
 macro `cfg` notices were warnings, not skipped failures. This verdict belongs
 only to `66dd2ca…`; this evidence-only follow-up does not inherit it or promote
 an invariant.
+
+---
+
+## Client C21 background replacement-Port ownership — cd0cc9c — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Threat closed internally:** C20 could reconnect before the old background
+Port owner observed cleanup, while the production unavailable boundary rejects
+a second Port for the same `documentId`. C21 replaces that ordering assumption
+with one browser-provenance route. An overlapping exact Port generation
+preserves the existing volatile request lease; a cleanup-first disconnect
+aborts that lease permanently and a later generation must rely on the durable
+C13–C19 operation graph. Old callbacks are generation-stale, and no terminal
+response may cross a replacement until that generation has presented the same
+correlation and completed the same SHA-256 operation identity. Payload or
+provenance drift closes the route.
+
+Admission is bounded at 256 documents, 32 pending/hash-blocked messages, 1,024
+correlations, one replay per correlation, and 2,048 unique background request
+ids. Same-worker replay retains the initial background receive deadline;
+hashing that finishes at or after that deadline cannot mint a lease. A typed
+operation-identity input replaces the prior temptation to forge a partial
+`OwnedProviderRequest`. Build metadata forbids C21 and all earlier provider
+authority/result/page owners from production.
+
+The focused C21 lane is **15/15** and the complete extension lane is
+**462/462**. Chromium is **8/8**, including two new measured contracts: real
+overlapping content Ports preserve exactly one volatile flow and deliver only
+on the verified replacement; real CDP worker death composes C20, C21, the
+IndexedDB operation owner, and C19 so one preparing row becomes one fixed page
+cancellation without a second preparation. Exact clean-SHA command and
+artifact scan are recorded in `docs/NEXT-SESSION.md` at
+`cd0cc9cd1b7802fe99b78e6f7addeb8f2c0b8a21`.
+
+The first complete extension attempt was **red at 461/462** because the new
+test counted digest invocation rather than completion. That QA defect could
+reward unfinished state; unit and Chromium barriers now count completed
+digests. Independent second-model review remains **UNVERIFIED** because
+`codex review --commit cd0cc9c…` failed before model startup on the host's
+read-only app-server state path.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+
+**Residual, stated as a threat:** the browser worker-death proof deliberately
+delivers a durable failure; it never opens a real approval, reads trusted RPC,
+uses key material, or signs. C20 does not carry its original absolute deadline
+to a replacement worker. Death before a durable claim can therefore give the
+new background lease a fresh lifetime after the initiating page request has
+already spent most of its own. Content expiry sends no cancellation. A Port
+enqueue is not a content/page receipt, `window.postMessage()` is not proof C16
+settled, and one replay may be exhausted after enqueue while the page still
+times out. Navigation remains unmeasured for this owner. C21 removes one Port
+ordering race; it does not make the provider or wallet deployable.

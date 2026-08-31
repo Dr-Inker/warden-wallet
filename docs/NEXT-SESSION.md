@@ -1,5 +1,137 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C21 BACKGROUND REPLACEMENT-PORT OWNERSHIP — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `cd0cc9cd1b7802fe99b78e6f7addeb8f2c0b8a21` adds the still-unreachable
+> background half of C20's recovery. `ProviderRuntimeTransportOwner` accepts
+> only the provider Port name and Chrome-classified web-document provenance,
+> keys one route by the complete extension/origin/tab/frame/document tuple, and
+> serializes the exact closed `solana:signTransaction` request language. A
+> replacement that overlaps the incumbent Port becomes current before the old
+> endpoint is disconnected, so retained old callbacks are generation-stale.
+> The live volatile lease is retained, but a terminal value cannot cross the
+> replacement until that generation has presented the same correlation and the
+> same C14 SHA-256 operation identity. Same-correlation payload drift, a
+> same-generation duplicate, provenance drift, expiry, or excess replay closes
+> the entire document route.
+>
+> If background `onDisconnect` wins before the replacement arrives, the old
+> session and every volatile lease are aborted permanently. The later Port gets
+> a fresh random request id and signal; only C13–C19's durable operation graph
+> may prove an already-committed result. No dead lease or signing capability is
+> resurrected. A request may cross at most one replacement generation. The
+> owner caps active documents at 256, queued/hash-blocked requests at 32,
+> correlations at 1,024, and the corresponding background request-id budget at
+> 2,048. Initial authority is bound to the background receive deadline before
+> asynchronous hashing, and a finished same-worker replay keeps that first
+> absolute deadline. The shared operation-identity code now exposes a typed
+> provenance+request input so transport code does not forge a partial
+> `OwnedProviderRequest` cast.
+>
+> Executable RED, adversarial corrections, and focused evidence:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run
+>   test/provider-runtime-transport.test.ts` initially exited **1 before
+>   collection** because `provider-runtime-transport.js` did not exist.
+> - Source-level review found three load-bearing holes before freeze: 1,024
+>   correlations plus one replay need 2,048 unique background ids rather than
+>   the prior 1,024; requests queued behind a stalled digest needed a separate
+>   32-message admission cap; and starting TTL only after hashing could mint
+>   authority after the receive deadline. All three now have executable bounds
+>   and regressions.
+> - Delivery originally followed the newest same-provenance Port immediately.
+>   It now requires that exact Port generation's completed cryptographic
+>   request identity first. Tests cover replacement before verification,
+>   replacement while hashing, stale callbacks, disconnect-first recovery,
+>   changed payload, provenance drift, two simultaneous correlations,
+>   re-entrant replacement during enqueue, one-replay exhaustion, exact
+>   deadline retention, digest-deadline crossing, queue exhaustion, malformed
+>   dependencies, and disposal: **15/15**.
+> - The first complete extension attempt was correctly **red at 461/462**. Its
+>   new multi-correlation test counted calls to `subtle.digest()` rather than
+>   completed digests, so the alleged barrier could pass before route state was
+>   committed. Both unit and browser barriers now measure completed digests;
+>   the final complete extension lane is **462/462**.
+> - Two temporary-extension Chromium contracts are real browser evidence, not
+>   mocked Port prose. The first opens overlapping Ports from one HTTP content
+>   document, observes Chrome disconnect the old endpoint, waits for four
+>   completed identity digests, then proves one volatile flow and one response
+>   on generation 2. The second composes the real C20 content owner, C21 route,
+>   IndexedDB operation owner, and C19 terminal classifier; CDP kills the MV3
+>   worker after one durable preparing claim, C20 resends from the unchanged
+>   page, the replacement execution context invalidates exactly one row, and
+>   the page receives exactly one fixed cancellation with preparation count
+>   still **1**. The full Chromium lane is **8/8**.
+>
+> Primary contracts checked:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>,
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime/>, and
+> Chromium's runtime schema at
+> <https://chromium.googlesource.com/chromium/src/+/HEAD/extensions/common/api/runtime.json>.
+> Chrome documents immediate Port messaging, disconnect behavior, JSON message
+> serialization, and `MessageSender.documentId`; it does not document a
+> cross-context ordering guarantee that old background cleanup precedes a
+> content reconnect. The two safe branches above are therefore implemented and
+> measured rather than inferred from event order.
+>
+> `codex review --commit
+> cd0cc9cd1b7802fe99b78e6f7addeb8f2c0b8a21` failed **before review**:
+> `failed to initialize in-process app-server client: Read-only file system`.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> Exact implementation-SHA evidence at
+> `cd0cc9cd1b7802fe99b78e6f7addeb8f2c0b8a21`, with a clean tree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test:browser &&
+> node -e "const fs=require('node:fs');const path=require('node:path');const root='apps/extension/dist';const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=walk(root);const all=files.map(f=>fs.readFileSync(f,'utf8')).join('\n');const background=fs.readFileSync(path.join(root,'background.js'),'utf8');const content=fs.readFileSync(path.join(root,'content.js'),'utf8');const required=['WARDEN_METHOD_UNAVAILABLE'];const forbidden=['provider runtime transport:','provider content transport:','WARDEN_USER_REJECTED','provider terminal outcome:','provider signed result flow:','provider page request:','provider approval action:','provider operation:','warden-provider-operations-v1'];const missing=required.filter(s=>!background.includes(s)||!content.includes(s));const hit=forbidden.filter(s=>all.includes(s));if(missing.length||hit.length){console.error({missing,hit});process.exit(1)}console.log('extension dist remains fixed-unavailable; C20-C21 and prior provider signing/terminal/page owners are absent')" &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It exited **0** and printed the same SHA before and after: extension
+> **462/462**, typecheck, build, Chromium **8/8**, emitted-artifact exclusion,
+> `git diff --check`, and clean-tree proof passed. Build metadata explicitly
+> forbids C21 and the prior provider/signing/terminal/page owners; emitted
+> background and content retain only `WARDEN_METHOD_UNAVAILABLE`.
+> Ledger-inclusive full-repository evidence is not yet claimed.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
+> invariants JSONL is intentionally unchanged.
+>
+> **Harsh residual:** C21 is an 884-line unshipped owner plus test-only browser
+> composition. The death test deliberately reaches a durable cancellation; it
+> does not open a real approval, read trusted RPC, touch a key, or prove one
+> exact-byte signature. C21 binds same-worker hashing/replay to its first
+> background receive deadline, but C20 does not carry the original content
+> deadline across worker death. If the worker dies before the durable claim,
+> the replacement can mint a fresh background lifetime even while the page
+> request is near expiry. Content expiry also sends no cancellation, and
+> neither background Port enqueue nor content `window.postMessage()` proves
+> that C16 consumed the terminal value. A loss after enqueue can exhaust the
+> one replay while the page Promise still times out. Navigation is not covered
+> by the C21 Chromium lane. There is still no reviewed non-empty release,
+> trusted production RPC, production coordinator/keyring graph, real-browser
+> signature, Wallet Standard registration, send/confirmation, onboarding,
+> production KDF policy, root ceremony, consequence review, external audit, or
+> deployable wallet method. Production remains intentionally unavailable.
+>
+> **Next load-bearing work:** C22 should define one closed internal
+> content→background transport envelope that carries the original absolute
+> request deadline across every Port generation/worker, cannot be lengthened by
+> replay, and is bound into cancellation handling. It should then make terminal
+> receipt/settlement ownership explicit across C16→C20→C21 and browser-test
+> death immediately before deadline plus loss after enqueue. Keep all of it
+> build-excluded until real approval/RPC/keyring composition, exact-byte signing
+> in Chromium, receipt semantics, and a reviewed non-empty release are green.
+
 > ## 2026-08-31 C20 BOUNDED CONTENT TRANSPORT RECOVERY — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit
