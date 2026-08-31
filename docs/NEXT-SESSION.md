@@ -1,5 +1,122 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C6 CHAIN-BOUND BLOCKHASH RPC — REAL COMPOSITION CLOSED, RELEASE PROVENANCE ABSENT
+>
+> Implementation commit `933245dac0c95c2deb6bdfda72666aeb56528cc5`
+> adds the still-opt-in `@warden/core/transaction/session-rpc` boundary. The
+> `ConnectionSessionApprovalBlockhashClient` is permanently bound to one
+> supported chain and exact genesis pin, accepts only `confirmed` commitment,
+> copy-owns every byte input, and uses only contextual
+> `getLatestBlockhashAndContext` and `isBlockhashValid` calls with the exact
+> non-regressing `minContextSlot`. It rechecks `getGenesisHash` immediately
+> before every blockhash operation. Public chains require the canonical
+> mainnet/devnet/testnet genesis; localnet requires an explicit nonzero pin.
+> Malformed, zero, noncanonical, cross-chain, cross-genesis, unsafe-height, and
+> regressed-context inputs or responses fail closed. There is no retry,
+> endpoint selection, approved-hash refresh, send, or confirmation behavior.
+>
+> `createPinnedSessionApprovalCoordinator` is the smallest real composition
+> seam: it requires one explicit trusted Connection, an exact release pin set,
+> the current session signer, approval owner, and contextual keyring. It
+> installs the real six-account authority resolver, contextual blockhash
+> client, deterministic Memo-only intent gate, approval coordinator, and
+> exact-byte signer. Connection, approval-owner, keyring, resolver, blockhash,
+> and intent capabilities are captured and exposed internally only through
+> frozen bound facades. Mutable release arrays and PublicKeys are copied before
+> use. A full integration signs the exact 394-byte transaction while later
+> mutations of every supplied capability, release array, and the exported
+> blockhash/intent class prototypes are made hostile. The six authority reads
+> remain `[0, 52, 52, 52, 62, 62]`; the latest request is exactly
+> `{commitment: "confirmed", minContextSlot: 42}`, validity is exactly the
+> approved blockhash at slot 52, and the Connection sees eight genesis checks.
+>
+> Three behavioral REDs preceded the final boundary. First, `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest
+> run test/session-rpc.test.ts` exited **1** before collection because
+> `session-rpc.js` did not exist. Harsh getter review then made the same command
+> exit **1**, **17 passed / 2 failed**: later config/request getters could replace
+> earlier Connection references, and a response value getter could mutate the
+> context object before its slot was copied. Finally, after adding prototype
+> mutation to the real integration, `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest
+> run test/session-rpc.test.ts test/session-authority-resolver.test.ts` exited
+> **1**, **37 passed / 1 failed**, because the coordinator dynamically followed
+> the replaced internal latest-blockhash method. Sequential snapshots and
+> immutable bound capability facades close all three failures.
+>
+> Primary contracts were checked against Solana's latest-blockhash,
+> blockhash-validity, and genesis RPC documentation and the pinned web3.js v1
+> Connection API/source:
+> <https://solana.com/docs/rpc/http/getlatestblockhash>,
+> <https://solana.com/docs/rpc/http/isblockhashvalid>,
+> <https://solana.com/docs/rpc/http/getgenesishash>, and
+> <https://solana-foundation.github.io/solana-web3.js/v1.x/classes/Connection.html>.
+> The lockfile resolves `@solana/web3.js` to `1.98.4`; its local implementation
+> confirms that `getLatestBlockhash()` drops `context`, while
+> `getLatestBlockhashAndContext()` and `isBlockhashValid()` preserve and forward
+> the contextual config. Independent second-model review remains
+> **UNVERIFIED**: `codex review --uncommitted` exited **1** because its
+> in-process app-server client could not initialize on this read-only host.
+>
+> Exact-SHA evidence at `933245dac0c95c2deb6bdfda72666aeb56528cc5`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/session-rpc.test.ts test/session-authority-resolver.test.ts
+> test/session-intent.test.ts test/session-approval-coordinator.test.ts` passed
+> **161/161**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/core test` passed **640/640**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core typecheck`
+> and `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core
+> build` exited **0**. From `packages/core`, `node --input-type=module -e
+> "const module = await import('@warden/core/transaction/session-rpc'); if
+> (typeof module.ConnectionSessionApprovalBlockhashClient !== 'function' ||
+> typeof module.createPinnedSessionApprovalCoordinator !== 'function')
+> process.exit(1); console.log('session-rpc subpath resolves')"` exited **0**.
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> test` passed **246/246**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension typecheck` and `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build`
+> exited **0**. After build, `node -e "const fs=require('node:fs');const
+> path=require('node:path');const
+> pattern=/ConnectionSessionApprovalBlockhashClient|createPinnedSessionApprovalCoordinator|SessionApprovalRpcError|session-rpc|session
+> approval RPC|endpoint genesis
+> changed|PinnedSessionAuthorityResolver|ConnectionSessionAuthorityRpc|SESSION_AUTHORITY_PUBLIC_GENESIS_HASHES/;const
+> walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const
+> hit=walk('apps/extension/dist').find(f=>pattern.test(fs.readFileSync(f,'utf8')));if(hit){console.error(hit);process.exit(1)}console.log('extension
+> dist session substrate isolation: no matches')"` exited **0** with no match.
+> `git
+> rev-parse HEAD` still returned the exact implementation SHA, `git status
+> --short` was empty, and `git diff --check` exited **0**. The preceding
+> ledger-inclusive C5 SHA `7ce245336f5ed1e7d89a927c0872a37adc8d716d`
+> passed `env npm_config_cache=/tmp/warden-npm-cache bash
+> .claude/test-gate.sh`, exit **0**. The full gate for this new
+> ledger-inclusive boundary is pending; do not transfer the preceding verdict.
+>
+> **No invariant status changes.** `WRD-APR-01`, `WRD-APR-02`, `WRD-APR-03`,
+> `WRD-TXI-01`, and `WRD-KEY-04` remain `unimplemented`, so
+> `docs/security/invariants.jsonl` is intentionally unchanged.
+>
+> **Harsh residual:** this factory validates the shape and exact equality of
+> pins; it cannot prove that a human reviewed their provenance. No committed
+> production release pin set or trusted-RPC owner supplies it. Genesis and
+> contextual data are separate calls, so even an honest load-balanced endpoint
+> is not atomically bound; a malicious trusted endpoint can lie consistently.
+> Six full ProgramData reads and eight genesis calls per successful approval are
+> an availability cost. A governed upgrade, authority change, or blockhash
+> expiry can still occur after the last observation. Post-claim failure still
+> leaves the existing `approved` tombstone without a durable signed result.
+> There is no approval page, successful provider route, sender, simulation,
+> fee presentation, confirmation owner, replay, or recovery. Memo remains the
+> only decoded verb. The shipped extension imports none of this substrate and
+> remains intentionally unable to sign.
+>
+> **Next load-bearing slice:** research and build a repository-owned,
+> schema-validated release-pin registry/loader that can supply C6 only from an
+> exact reviewed manifest binding chain, genesis, Warden program/ProgramData,
+> upgrade authority, deployment slot, allocation, raw hash, and code hash.
+> Do not invent production pins: make their absence executable and preserve
+> provider closure until a real release candidate has independently reviewed
+> provenance.
+
 > ## 2026-08-31 C5 PINNED AUTHORITY SNAPSHOT — RPC/PROGRAM/TIME RESOLUTION CLOSED, RUNTIME COMPOSITION ABSENT
 >
 > Implementation commit `5edb932503fdeebb72c029eba49c5f79653599fc`

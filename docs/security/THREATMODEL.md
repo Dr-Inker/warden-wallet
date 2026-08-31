@@ -1173,3 +1173,99 @@ adapter, runtime composition, approval UI, successful provider route, sender,
 confirmation, or durable replay exists. Memo is still the only decoded verb;
 the extension cannot reach any of it. This is a strong authority primitive, not
 a deployable no-blind-sign product.
+
+---
+
+## Client C6 chain-bound blockhash RPC and pinned composition — 933245d — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** core exports the separate opt-in
+`@warden/core/transaction/session-rpc` module. One explicitly trusted web3.js
+Connection plus a complete caller-supplied release pin set can now construct
+the real authority resolver, contextual blockhash client, deterministic
+Memo-only gate, approval coordinator, and exact-byte session signer. The
+extension imports none of this module; recursive source and emitted-bundle
+checks find no RPC, resolver, or composition symbols/strings, and all provider
+methods remain unavailable.
+
+**Removed / narrowed:** the blockhash adapter is fixed to one supported chain,
+canonical public genesis or explicit localnet genesis, `confirmed` commitment,
+and caller-supplied non-regressing minimum context. It deliberately rejects the
+context-dropping `Connection.getLatestBlockhash()` convenience API and calls
+only `getLatestBlockhashAndContext()` and `isBlockhashValid()` with exact
+configs. Every operation first checks `getGenesisHash`; every request and
+response field is read once and every byte array is copy-owned. Cross-chain,
+cross-genesis, malformed/zero/noncanonical hashes, unsafe heights, malformed
+booleans, and context regression reject. It performs no retry, fallback,
+endpoint switch, refresh, send, or confirmation.
+
+The factory requires the literal shipped Warden program plus deployment slot,
+upgrade authority, code hash, full raw ProgramData hash, and exact allocation.
+It copy-owns those pins and the session signer and captures Connection,
+approval-owner, and keyring methods. The real integration additionally proves
+that later mutation of release arrays, supplied methods, and exported internal
+class prototypes cannot redirect the active coordinator: internal resolver,
+blockhash, and intent behavior is supplied through frozen bound capabilities.
+The successful path makes six authority snapshots with minimum contexts
+`[0, 52, 52, 52, 62, 62]`, one latest request at slot 42, one exact approved-
+hash validity request at slot 52, eight genesis checks, and returns the exact
+394-byte signed transaction.
+
+Three real red failures drove the boundary: missing module before collection;
+**17 passed / 2 failed** when later getters could replace earlier Connection
+references or mutate a context object before copying; and **37 passed / 1
+failed** when post-construction prototype replacement redirected the internal
+latest-blockhash method. All are now regression-covered. Independent
+second-model review is **UNVERIFIED** because `codex review --uncommitted`
+could not initialize its in-process app-server client on the host's read-only
+path.
+
+Primary contracts:
+<https://solana.com/docs/rpc/http/getlatestblockhash>,
+<https://solana.com/docs/rpc/http/isblockhashvalid>,
+<https://solana.com/docs/rpc/http/getgenesishash>, and
+<https://solana-foundation.github.io/solana-web3.js/v1.x/classes/Connection.html>.
+The lockfile-pinned web3.js `1.98.4` source confirms that the convenience
+latest-blockhash call discards the response context while the selected methods
+retain it.
+
+Exact-SHA evidence at `933245dac0c95c2deb6bdfda72666aeb56528cc5`:
+`env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+vitest run test/session-rpc.test.ts test/session-authority-resolver.test.ts
+test/session-intent.test.ts test/session-approval-coordinator.test.ts` passed
+**161/161**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+@warden/core test` passed **640/640**; `env
+npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core typecheck`
+and `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core
+build` exited **0**. From `packages/core`, `node --input-type=module -e "const
+module = await import('@warden/core/transaction/session-rpc'); if (typeof
+module.ConnectionSessionApprovalBlockhashClient !== 'function' || typeof
+module.createPinnedSessionApprovalCoordinator !== 'function') process.exit(1);
+console.log('session-rpc subpath resolves')"` exited **0**. `env
+npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test`
+passed **246/246**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+@warden/extension typecheck` and `env
+npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build`
+exited **0**. The exact recursive emitted-dist scan command is recorded in
+`docs/NEXT-SESSION.md`; it exited **0** with no match at the same SHA. The prior
+ledger-inclusive SHA `7ce245336f5ed1e7d89a927c0872a37adc8d716d` passed the
+exact full command `env npm_config_cache=/tmp/warden-npm-cache bash
+.claude/test-gate.sh`, exit **0**. This C6 ledger-inclusive SHA has not yet run
+that gate; the prior verdict is not inherited.
+
+**New invariants:** none. `WRD-APR-01`, `WRD-APR-02`, `WRD-APR-03`,
+`WRD-TXI-01`, and `WRD-KEY-04` remain `unimplemented`.
+`docs/security/invariants.jsonl` is intentionally unchanged.
+
+**Residual, stated honestly:** complete pin shape is not reviewed provenance.
+No committed production release manifest or trusted-RPC owner supplies this
+factory. Genesis and contextual state are separate, non-atomic RPC calls; a
+malicious trusted endpoint can lie consistently, and load-balanced honest
+backends can change between calls. Six full ProgramData reads and eight genesis
+queries on the successful path are an availability lever. Rechecking through
+signing cannot prevent a governed upgrade, authority change, or hash expiry
+after observation. The approval owner's `approved` state remains a claim
+tombstone, not durable evidence of signature success; post-claim failures have
+no replay/recovery owner. There is no approval render, successful provider
+route, simulation, fee surface, sender, confirmation, durable result, or token
+consequence model. Memo is the only decoded verb. This is a real but still
+unreachable composition primitive, not a deployable wallet.
