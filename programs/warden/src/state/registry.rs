@@ -198,6 +198,27 @@ mod tests {
         assert_eq!(Registry::LEN, 8 + hand);
     }
 
+    #[test]
+    fn client_intent_decoder_offsets_match_the_zero_copy_layout() {
+        // Absolute account-data offsets (including Anchor discriminator),
+        // paired with packages/core's deterministic session intent decoder.
+        assert_eq!(
+            Registry::DISCRIMINATOR,
+            [47, 174, 110, 246, 184, 182, 252, 218]
+        );
+        assert_eq!(8 + core::mem::offset_of!(Registry, version), 8);
+        assert_eq!(8 + core::mem::offset_of!(Registry, bump), 9);
+        assert_eq!(8 + core::mem::offset_of!(Registry, _pad), 10);
+        assert_eq!(8 + core::mem::offset_of!(Registry, authority), 16);
+        assert_eq!(8 + core::mem::offset_of!(Registry, treasury), 48);
+        assert_eq!(8 + core::mem::offset_of!(Registry, n_entries), 80);
+        assert_eq!(8 + core::mem::offset_of!(Registry, _pad2), 82);
+        assert_eq!(8 + core::mem::offset_of!(Registry, entries), 88);
+        assert_eq!(8 + core::mem::offset_of!(Registry, lists), 3160);
+        assert_eq!(8 + core::mem::offset_of!(Registry, allocated_lists), 3224);
+        assert_eq!(8 + core::mem::offset_of!(Registry, _reserved), 3225);
+    }
+
     fn pk(n: u8) -> Pubkey {
         let mut b = [0u8; 32];
         b[0] = n;

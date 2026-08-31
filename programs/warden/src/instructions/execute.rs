@@ -853,6 +853,14 @@ mod tests {
         assert_eq!(&buf[32..], &[0xBB; 32], "then accounts_hash");
     }
 
+    #[test]
+    fn client_intent_decoder_execute_discriminator_matches_anchor() {
+        assert_eq!(
+            crate::instruction::Execute::DISCRIMINATOR,
+            [130, 221, 242, 154, 13, 193, 189, 29]
+        );
+    }
+
     /// Cross-language pin: `action_hash(OP_EXECUTE_ACTION, borsh(ExecuteBody))`
     /// for a fixed body must equal the TS mirror's value
     /// (`packages/core/test/transcript.test.ts`, "OP_EXECUTE vector"). If this

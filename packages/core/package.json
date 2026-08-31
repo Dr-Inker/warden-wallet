@@ -32,6 +32,10 @@
     "./transaction/session-approval": {
       "types": "./dist/transaction/session-approval-coordinator.d.ts",
       "import": "./dist/transaction/session-approval-coordinator.js"
+    },
+    "./transaction/session-intent": {
+      "types": "./dist/transaction/session-intent.d.ts",
+      "import": "./dist/transaction/session-intent.js"
     }
   },
   "files": [

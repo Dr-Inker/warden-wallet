@@ -488,6 +488,38 @@ mod tests {
     }
 
     #[test]
+    fn client_intent_decoder_offsets_match_the_zero_copy_layout() {
+        // Absolute account-data offsets (including Anchor's 8-byte
+        // discriminator) consumed by packages/core/session-intent.ts. Length
+        // checks alone cannot catch a same-size field reorder.
+        assert_eq!(
+            SmartAccount::DISCRIMINATOR,
+            [186, 83, 247, 224, 59, 95, 223, 112]
+        );
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, version), 8);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, bump), 9);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, frozen_kind), 12);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, frozen_guardian_idx), 13);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, owner_seed), 14);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, cluster_tag), 175);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, registry), 239);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, _reserved), 271);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, _pad_align8), 527);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, generation), 528);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, root_nonce), 536);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, frozen_until), 544);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, frozen_at), 552);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, policy), 560);
+        assert_eq!(8 + core::mem::offset_of!(SmartAccount, buckets), 2008);
+
+        assert_eq!(core::mem::offset_of!(Policy, version), 0);
+        assert_eq!(core::mem::offset_of!(Policy, _pad_version), 4);
+        assert_eq!(core::mem::offset_of!(Policy, session_ops_ceiling), 1376);
+        assert_eq!(core::mem::offset_of!(Policy, _pad_ceiling), 1378);
+        assert_eq!(core::mem::offset_of!(Policy, _reserved), 1384);
+    }
+
+    #[test]
     fn policy_len_matches_size_of_with_documented_padding() {
         let hand_summed = 4 // version
             + 4 // _pad_version

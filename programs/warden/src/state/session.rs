@@ -148,6 +148,31 @@ mod tests {
         assert_eq!(OPS_MASK_KNOWN, 0b1111);
     }
 
+    #[test]
+    fn client_intent_decoder_offsets_match_borsh_serialization() {
+        // SessionKey is Borsh, not zero-copy: pin serialized BODY offsets. The
+        // browser account decoder adds Anchor's 8-byte discriminator to each.
+        assert_eq!(
+            SessionKey::DISCRIMINATOR,
+            [93, 186, 163, 139, 160, 255, 81, 112]
+        );
+        let value = session();
+        let mut bytes = Vec::new();
+        value.serialize(&mut bytes).unwrap();
+        assert_eq!(bytes.len(), SessionKey::LEN - 8);
+        assert_eq!(bytes[0], 1); // absolute 8: version
+        assert_eq!(bytes[1], 255); // absolute 9: bump
+        assert_eq!(&bytes[2..34], &[1u8; 32]); // absolute 10: account
+        assert_eq!(&bytes[34..66], &[2u8; 32]); // absolute 42: signer
+        assert_eq!(bytes[66], 0); // absolute 74: kind
+        assert_eq!(&bytes[67..75], &1_000i64.to_le_bytes()); // absolute 75: expiry
+        assert_eq!(&bytes[75..77], &OP_TRANSFER.to_le_bytes()); // absolute 83: ops
+        assert_eq!(&bytes[77..85], &4u64.to_le_bytes()); // absolute 85: generation
+        assert_eq!(&bytes[661..663], &0u16.to_le_bytes()); // absolute 669: allowlist
+        assert_eq!(&bytes[663..679], &[0u8; 16]); // absolute 671: label
+        assert_eq!(&bytes[679..743], &[0u8; 64]); // absolute 687: reserved
+    }
+
     /// Every field the hash claims to cover must actually change it —
     /// otherwise a re-grant could retain authority the signer never saw.
     #[test]
