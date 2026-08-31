@@ -1808,8 +1808,8 @@ after, proved a clean tree, passed extension **330/330**, typecheck, production
 build, `git diff --check`, and an emitted-worker scan requiring
 `WARDEN_METHOD_UNAVAILABLE` while forbidding C12/coordinator/release/RPC/signer
 markers. The build's metafile guard independently rejects the C12 source file
-and coordinator/release/RPC modules if they become reachable. The forthcoming
-ledger-inclusive SHA has not yet run the full deploy gate.
+and coordinator/release/RPC modules if they become reachable. Ledger-inclusive
+full-gate evidence is recorded below.
 
 **New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
 `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the invariants JSONL is
@@ -1825,3 +1825,18 @@ tested transformation and digest; it does not independently duplicate that
 authority-dependent transformation. Local fatal poisoning prevents further C12
 work, but complete shutdown still requires the parent to honor `onFatal`. This
 is a fail-closed internal composition primitive, not deployable wallet behavior.
+
+### C12 full-gate addendum — 537f325 — 2026-08-31
+
+The ledger-inclusive SHA `537f3254b72af593720f3f3d2e0dc9f8c664a7ef`
+passed this exact command, exit **0**: `git rev-parse HEAD && test -z "$(git
+status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash
+.claude/test-gate.sh && git diff --check && git rev-parse HEAD && test -z
+"$(git status --porcelain)"`. It printed the same SHA before and after, proved
+a clean worktree, and ran the complete pnpm workspace, core **698/698**,
+extension **330/330**, production Chromium **5/5**, the pinned Argon2 worker
+benchmark, core/extension builds and typechecks, fixture/ledger/feature guards,
+and the complete Rust workspace. The known Anchor test-program key mismatch
+notice and legacy macro `cfg` notices were warnings, not skipped failures. This
+verdict belongs only to `537f325…`; the evidence-only follow-up does not inherit
+it or promote an invariant.

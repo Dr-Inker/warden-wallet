@@ -84,8 +84,8 @@
 > the build graph rejected C12/coordinator/release/RPC reachability, and the
 > emitted worker contained `WARDEN_METHOD_UNAVAILABLE` while containing none of
 > the C12 owner, coordinator, committed-release, RPC, or signer markers. The
-> forthcoming ledger-inclusive SHA has not yet run the full deploy gate; no
-> prior verdict is inherited.
+> ledger-inclusive full-gate evidence is recorded below; no verdict transfers
+> to a different SHA.
 >
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
 > `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`, so
@@ -112,6 +112,20 @@
 > accept a page RPC URL, release document, program id, or deployment pin, and do
 > not import this path into the emitted worker until real reviewed release/RPC
 > configuration exists.
+>
+> **C12 full-gate addendum:** the ledger-inclusive SHA
+> `537f3254b72af593720f3f3d2e0dc9f8c664a7ef` passed this exact command,
+> exit **0**:
+> `git rev-parse HEAD && test -z "$(git status --porcelain)" && env
+> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && git diff
+> --check && git rev-parse HEAD && test -z "$(git status --porcelain)"`.
+> The command printed the same SHA before and after, proved a clean worktree,
+> and ran the complete pnpm workspace, core **698/698**, extension **330/330**,
+> production Chromium **5/5**, the pinned Argon2 worker benchmark, core and
+> extension builds/typechecks, fixture/ledger/feature guards, and the complete
+> Rust workspace. Anchor's test-program key mismatch notice and legacy macro
+> `cfg` notices were warnings, not skipped failures. This verdict belongs only
+> to `537f325…`; the follow-up evidence commit does not inherit it.
 
 > ## 2026-08-31 C11 BACKGROUND-OWNED APPROVAL WINDOW LIFECYCLE — SHIPPED INTERNALLY, NO PROVIDER SUCCESS
 >
