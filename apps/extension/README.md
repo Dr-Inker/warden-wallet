@@ -196,11 +196,18 @@ browser provenance, account, chain, and digest, then uses the core durable
 result verifier to reparse and cryptographically verify the committed signed
 transaction without RPC or keyring access. `Port.postMessage` is not treated as
 a page acknowledgment; a failed enqueue leaves the same result replayable and
-future page code must deduplicate its stable correlation id. C12 still opens its
-window before returning, so it must be split into prepare/bind/open phases before
-these owners can be safely composed. The build forbids all C12–C14 owners and
-the success response schema from the worker; the emitted provider remains fixed
-unavailable.
+future page code must deduplicate its stable correlation id.
+
+C15 splits C12 into hidden `prepare()` and idempotent `open()` phases, then
+composes them through C14: claim operation, prepare/prove the exact approval,
+commit its id/digest binding, and only then open the review window. Bind
+uncertainty, Port loss, authority revocation, malformed handles, and open failure
+cancel the exact approval; a retained binding is replay-only and never prepares
+or opens again. This ordering is still unit-level composition. Native C14
+IndexedDB/restart behavior is browser-tested separately, and raw C12 open/launch
+remains an internal bypass that must not be production-wired. The build forbids
+all C12–C15 owners and the success response schema from the worker; the emitted
+provider remains fixed unavailable.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during

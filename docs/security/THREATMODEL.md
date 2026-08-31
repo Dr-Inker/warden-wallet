@@ -2030,3 +2030,62 @@ and the complete Rust workspace. The known Anchor test-program key mismatch
 notice and legacy macro `cfg` notices were warnings, not skipped failures. This
 verdict belongs only to `19557ff…`; the evidence-only follow-up does not inherit
 it or promote an invariant.
+
+---
+
+## Client C15 bind-before-open composition — a9271c9 — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Closed ordering gap:** C12 now separates durable approval preparation from
+window visibility. `prepare()` proves the exact pending row and installs Port
+and keyring-generation cancellation ownership without invoking the window
+launcher. Its `open()` edge is Promise-idempotent and rechecks owner, Port,
+authority, and active-row state before and after the launcher. The compatibility
+`launch()` wrapper still performs prepare then open.
+
+C15 composes that split through C14. The operation journal claims the stable
+browser request before its callback. The callback stops after C12 preparation
+and returns only the approval id/digest. Only a newly created operation whose
+exact binding is durably proven may invoke `open()`. A retained binding returns
+`replay-required` without another preparation or window, including when the
+first window failed and the bound approval was subsequently cancelled.
+
+Every failure after a handle exists attempts its exact cancellation. The
+focused executable lane proves no window on an unproven bind, Port disconnect
+or authenticated-authority revocation during a delayed bind, and malformed
+visibility capability. It also proves binding remains the sole replay locator
+when open fails after commit. Harsh review found and fixed a draft cleanup hole
+where handle validation preceded retention of its cancel capability.
+
+The meaningful REDs were one missing `prepare()` case (**1 failed / 23 passed**)
+and then a missing C15 module collection failure. Final focused C12/C15 is
+**31/31**. Exact implementation-SHA evidence at
+`a9271c979ea2707f4d0c92ddd0d03db5e2e0ce3d` passed extension **366/366**,
+typecheck, build, real Chromium **6/6**, emitted-artifact exclusion,
+`git diff --check`, and clean-tree checks using the exact combined command in
+`docs/NEXT-SESSION.md`. The build metafile forbids C15 and all C12–C14 provider
+owner/result modules; emitted background/content remain fixed-unavailable and
+contain none of their markers. No ledger-inclusive SHA has yet run the full
+repository gate; no earlier verdict is inherited.
+
+Independent second-model review is **UNVERIFIED**. `codex review --commit
+a9271c979ea2707f4d0c92ddd0d03db5e2e0ce3d` exited before review because the
+in-process app-server client could not initialize on this host's read-only state
+path.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the invariants JSONL is
+intentionally unchanged.
+
+**Residual, stated honestly:** C15 is the intended ordering path, not a runtime
+capability proof against every internal caller. C12 still exports its legacy
+`launch()` and prepared `open()` edges; production is safe only because the
+build forbids this entire graph. Before enablement, composition must expose only
+C15 or remove/guard the bypass. Separate operation and approval databases still
+have a crash gap; worker death after a bound commit but before open also loses
+review liveness because replay may not reopen. C15 ordering is unit-tested with
+an in-memory journal while native IndexedDB and worker restart are separately
+browser-tested in C14; there is no single real-browser signature flow. Page
+delivery has no receipt/deduplication protocol. No success language is emitted,
+and release/RPC authority, approve/sign action, consequence review,
+send/confirmation, Wallet Standard, onboarding, and root ceremony remain absent.
+C15 closes one internal ordering defect; it does not make Warden deployable.

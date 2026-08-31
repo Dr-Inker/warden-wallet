@@ -1,5 +1,107 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C15 BIND-BEFORE-OPEN COMPOSITION — INTERNAL ONLY, PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `a9271c979ea2707f4d0c92ddd0d03db5e2e0ce3d` closes the C12/C14
+> ordering hole in still-unreachable extension code. C12 now has a distinct
+> `prepare()` phase that creates and independently proves one exact durable
+> pending approval without opening a window. Its prepared handle retains Port
+> ownership and the authenticated keyring-generation signal, cancels on either
+> revocation, and exposes an idempotent `open()` edge. The old `launch()` API is
+> only a compatibility wrapper over prepare then open.
+>
+> New C15 `ProviderApprovalOperationOwner.launch()` is the reviewed composition
+> path. It calls C14's claim-before-callback owner; that callback may call only
+> C12 `prepare()` and return the exact approval id/message digest. C14 must prove
+> the operation→approval binding durable before C15 calls `open()`. A retained
+> bound operation returns only `replay-required`: it never prepares or opens a
+> second approval. The opened result deliberately strips the raw `open`
+> capability, retaining only id/account/chain/digest plus settle/cancel.
+>
+> Every post-preparation failure attempts exact approval cancellation. This
+> includes an unproven journal bind, a disconnect after bind commit but before
+> return, authority revocation during that same gap, a malformed prepared
+> visibility capability, and window creation failure after a proven bind. If
+> binding may have committed, C15 does not rewrite the operation as a generic
+> failure: the retained locator remains the only replay identity, even when its
+> approval has been cancelled. That is deliberate at-most-once safety over
+> liveness.
+>
+> Meaningful RED and adversarial evidence:
+>
+> - `pnpm --filter @warden/extension exec vitest run
+>   test/provider-approval-request.test.ts` first exited **1**, with **1 failed /
+>   23 passed**: the new hidden-until-open case failed because
+>   `installed.owner.prepare` did not exist.
+> - After the split, the same command failed before collection because
+>   `provider-approval-operation.js` did not exist. That RED pinned the C15
+>   composition rather than merely testing C12 in isolation.
+> - Harsh self-review found a real cleanup hole in the first C15 draft: a
+>   malformed prepared handle could fail validation before C15 retained its
+>   cancellation method. Cancellation is now bound first; the executable case
+>   proves the exact row cancelled, no window call, and a durable
+>   `preparation-failed` operation.
+> - The final focused lane is **31/31**. It measures the order `operation claim
+>   commit → approval prepare → operation bind commit → window open`, concurrent
+>   and repeated open idempotence, hidden-row cancellation before open, unproven
+>   bind cleanup, Port and authority races in the bind gap, malformed-handle
+>   cleanup, and no reprepare/reopen after a bound operation's first window
+>   failure.
+>
+> `codex review --commit a9271c979ea2707f4d0c92ddd0d03db5e2e0ce3d`
+> exited **1** before review because the in-process app-server client could not
+> initialize on this host's read-only state path. Independent second-model
+> review therefore remains **UNVERIFIED**.
+>
+> Exact implementation-SHA evidence at
+> `a9271c979ea2707f4d0c92ddd0d03db5e2e0ce3d`, with a clean tree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> pnpm --filter @warden/extension test &&
+> pnpm --filter @warden/extension typecheck &&
+> pnpm --filter @warden/extension build &&
+> pnpm --filter @warden/extension test:browser &&
+> node -e "const fs=require('node:fs');const path=require('node:path');const root='apps/extension/dist';const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=walk(root);const text=files.map(f=>fs.readFileSync(f,'utf8')).join('\n');const background=fs.readFileSync(path.join(root,'background.js'),'utf8');const content=fs.readFileSync(path.join(root,'content.js'),'utf8');const required=['WARDEN_METHOD_UNAVAILABLE'];const forbidden=['provider approval operation:','provider operation:','warden-provider-operations-v1','provider terminal result:','provider terminal protocol:','provider approval request:','provider approval selection:','session approval coordinator:'];const missing=required.filter(s=>!background.includes(s)||!content.includes(s));const hit=forbidden.filter(s=>text.includes(s));if(missing.length||hit.length){console.error({missing,hit});process.exit(1)}console.log('extension dist remains fixed-unavailable; C12-C15 provider/signing owners are absent')" &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> exited **0** and printed the same SHA before and after: extension **366/366**,
+> typecheck, build, real Chromium **6/6**, emitted-artifact exclusion,
+> `git diff --check`, and clean-tree proof passed. The build metafile now forbids
+> the C15 module in addition to every C12–C14 owner/result module. Both emitted
+> bundles retain `WARDEN_METHOD_UNAVAILABLE` and contain no C12–C15/coordinator
+> markers. Ledger-inclusive full-gate evidence is not claimed until the ledger
+> SHA runs the repository gate.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
+> invariants JSONL is intentionally unchanged.
+>
+> **Harsh residual:** ordering is enforced only when future production code uses
+> the C15 composite. The still-exported C12 `launch()` and prepared `open()` are
+> internal bypass capabilities; the production build currently makes this safe
+> by forbidding both C12 and C15 entirely, but enablement must instantiate only
+> the composite or remove/guard the legacy edge. A worker death after approval
+> creation but before cross-database bind can strand an invisible pending row;
+> death after bind but before open can leave a replay-only binding with no
+> visible review. The focused composition uses an in-memory journal; native
+> IndexedDB CAS/restart is separately proven by C14's Chromium lane, not by one
+> end-to-end C15 browser/signature flow. Retention remains bounded. There is no
+> page receipt acknowledgment or correlation-id deduplication, non-empty
+> committed release, trusted endpoint, approve/sign action, simulation and
+> fee/balance consequence model, send/confirmation owner, Wallet Standard
+> registration/batching, onboarding, or root ceremony. C15 is not deployable
+> wallet behavior.
+>
+> **Next load-bearing work:** make successful page delivery correlation-
+> idempotent before any provider success route can ship, then add the real
+> approve/claim/sign UI action behind a non-empty committed release and trusted
+> RPC boundary. Production must remain fixed-unavailable until those pieces have
+> executable end-to-end gates; do not infer enablement from C15.
+
 > ## 2026-08-31 C14 DURABLE PROVIDER OPERATION / SIGNED-RESULT REPLAY — INTERNAL ONLY, PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit
