@@ -2,7 +2,7 @@
 //!
 //! This module deliberately owns ordering, not transport. It has no provider
 //! route, approval page, RPC implementation, account registry, semantic
-//! decoder, sender, or result store. Those capabilities are injected so the
+//! decoder or sender. Durable attempt/result ownership is injected so the
 //! only successful path is mechanically forced through: authoritative state,
 //! one final blockhash, exact-message construction, a synchronous local intent
 //! verdict, immutable approval creation, current-state revalidation, atomic
@@ -22,6 +22,11 @@ import {
   type ApprovalCreateParams,
   type ApprovalRecord,
 } from "../approval/record.js";
+import {
+  snapshotApprovalSigningRecord,
+  type ApprovalSigningFailureCode,
+  type ApprovalSigningRecord,
+} from "../approval/signing-outcome.js";
 import { MAX_TX_BYTES } from "../constants.js";
 import { parseSerializedTransactionEnvelope } from "./envelope.js";
 import {
@@ -62,6 +67,8 @@ export type SessionApprovalCoordinatorErrorCode =
   | "APPROVAL_RECORD_MISMATCH"
   | "APPROVAL_DIGEST_MISMATCH"
   | "APPROVAL_CLAIM_FAILED"
+  | "APPROVAL_SIGNING_IN_PROGRESS"
+  | "APPROVAL_SIGNING_FAILED"
   | "APPROVAL_RESOLUTION_FAILED"
   | "KEYRING_CONTEXT_MISMATCH"
   | "SIGNING_FAILED"
@@ -185,7 +192,27 @@ export interface SessionApprovalIntentGate {
 export interface SessionApprovalOwner {
   create(params: ApprovalCreateParams): Promise<ApprovalRecord>;
   read(id: string): Promise<ApprovalRecord | null>;
-  claimForSigning(id: string, expectedDigest: Uint8Array): Promise<ApprovalRecord>;
+  readSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+  ): Promise<ApprovalSigningRecord | null>;
+  claimForSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+    attemptId: string,
+  ): Promise<ApprovalSigningRecord>;
+  completeSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+    attemptId: string,
+    transactionBytes: Uint8Array,
+  ): Promise<ApprovalSigningRecord>;
+  failSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+    attemptId: string,
+    failureCode: ApprovalSigningFailureCode,
+  ): Promise<ApprovalSigningRecord>;
   reject(id: string): Promise<ApprovalRecord>;
   cancel(id: string): Promise<ApprovalRecord>;
 }
@@ -909,6 +936,63 @@ function mintApprovalId(): string {
   }
 }
 
+function mintSigningAttemptId(): string {
+  const bytes = new Uint8Array(16);
+  try {
+    const cryptoObject = globalThis.crypto;
+    if (
+      typeof cryptoObject !== "object" ||
+      cryptoObject === null ||
+      typeof cryptoObject.getRandomValues !== "function"
+    ) {
+      fail("APPROVAL_CLAIM_FAILED", "cryptographic attempt-id generation is unavailable");
+    }
+    cryptoObject.getRandomValues(bytes);
+    let hex = "";
+    for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
+    return `attempt_${hex}`;
+  } catch (error) {
+    if (error instanceof SessionApprovalCoordinatorError) throw error;
+    fail("APPROVAL_CLAIM_FAILED", "cryptographic attempt-id generation failed", error);
+  } finally {
+    bytes.fill(0);
+  }
+}
+
+function clearSigningRecord(value: ApprovalSigningRecord | undefined | null): void {
+  if (value === undefined || value === null) return;
+  clearApproval(value.approval);
+  value.outcome.messageDigest.fill(0);
+  value.outcome.transactionBytes?.fill(0);
+  value.outcome.transactionDigest?.fill(0);
+}
+
+function signingFailureCode(error: unknown): ApprovalSigningFailureCode {
+  if (!(error instanceof SessionApprovalCoordinatorError)) return "signing-failed";
+  switch (error.code) {
+    case "DISPOSED":
+      return "coordinator-disposed";
+    case "AUTHORITY_UNAVAILABLE":
+    case "AUTHORITY_INVALID":
+    case "AUTHORITY_CHANGED":
+      return "authority-check-failed";
+    case "BLOCKHASH_UNAVAILABLE":
+      return "blockhash-unavailable";
+    case "BLOCKHASH_INVALID":
+      return "blockhash-invalid";
+    case "INTENT_BLOCKED":
+      return "intent-blocked";
+    case "APPROVAL_RECORD_MISMATCH":
+      return "approval-record-mismatch";
+    case "KEYRING_CONTEXT_MISMATCH":
+      return "keyring-context-mismatch";
+    case "SIGNED_RESULT_INVALID":
+      return "signed-result-invalid";
+    default:
+      return "signing-failed";
+  }
+}
+
 function requireDependencies(value: unknown): CoordinatorDependencies {
   const dependencies = requireObject(
     value,
@@ -919,7 +1003,16 @@ function requireDependencies(value: unknown): CoordinatorDependencies {
     authority: ["resolve"],
     blockhash: ["getLatestBlockhash", "isBlockhashValid"],
     intent: ["assertAllowed"],
-    approvals: ["create", "read", "claimForSigning", "reject", "cancel"],
+    approvals: [
+      "create",
+      "read",
+      "readSigning",
+      "claimForSigning",
+      "completeSigning",
+      "failSigning",
+      "reject",
+      "cancel",
+    ],
     keyring: ["useSessionSignerBytes"],
   } as const;
   for (const [owner, methods] of Object.entries(requirements)) {
@@ -1000,6 +1093,95 @@ export class SessionApprovalCoordinator {
     );
   }
 
+  async #readSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+  ): Promise<ApprovalSigningRecord | null> {
+    const digest = expectedDigest.slice();
+    let ownerRecord: ApprovalSigningRecord | null;
+    try {
+      ownerRecord = await this.#approvals.readSigning(id, digest);
+    } catch (error) {
+      fail("APPROVAL_RECORD_MISMATCH", "durable signing outcome read failed", error);
+    } finally {
+      digest.fill(0);
+    }
+    if (ownerRecord === null) return null;
+    try {
+      return snapshotApprovalSigningRecord(ownerRecord);
+    } catch (error) {
+      fail("APPROVAL_RECORD_MISMATCH", "durable signing outcome is malformed", error);
+    } finally {
+      clearSigningRecord(ownerRecord);
+    }
+  }
+
+  #signedValue(
+    signingValue: ApprovalSigningRecord,
+    expectedDigest: Uint8Array,
+    capsule?: ApprovalCapsule,
+  ): SignedSessionApproval {
+    // Durable completion introduces an await after signing. Disposal during
+    // that await must not let the old worker release bytes, even though a new
+    // worker may later replay the committed result.
+    this.#assertUsable();
+    const signing = snapshotApprovalSigningRecord(signingValue);
+    try {
+      if (
+        signing.outcome.state !== "signed" ||
+        signing.outcome.transactionBytes === null ||
+        !approvalDigestsEqual(signing.approval.messageDigest, expectedDigest) ||
+        !recordBindingEqual(signing.approval, capsule?.approval ?? signing.approval)
+      ) {
+        fail("SIGNED_RESULT_INVALID", "durable signing outcome is not replayable");
+      }
+      let envelope;
+      try {
+        envelope = parseSerializedTransactionEnvelope(
+          signing.outcome.transactionBytes,
+        );
+      } catch (error) {
+        fail("SIGNED_RESULT_INVALID", "durable signed result failed strict reparsing", error);
+      }
+      const recomputedDigest = digestApprovalMessage(envelope.messageBytes);
+      try {
+        const signer = envelope.requiredSignerKeys[0];
+        if (
+          envelope.version !== 0 ||
+          envelope.signatures.length !== 1 ||
+          envelope.requiredSignerKeys.length !== 1 ||
+          signer === undefined ||
+          allZero(envelope.signatures[0]!) ||
+          !bytesEqual(envelope.messageBytes, signing.approval.rawMessage) ||
+          !approvalDigestsEqual(recomputedDigest, signing.approval.messageDigest) ||
+          (capsule !== undefined &&
+            (!bytesEqual(signer, capsule.authority.sessionSigner.toBytes()) ||
+              !bytesEqual(envelope.recentBlockhash, capsule.blockhash.blockhash))) ||
+          !ed25519.verify(
+            envelope.signatures[0]!,
+            envelope.messageBytes,
+            signer,
+          )
+        ) {
+          fail(
+            "SIGNED_RESULT_INVALID",
+            "durable signed result does not authenticate the exact approval binding",
+          );
+        }
+        return new SignedSessionApprovalValue(
+          signing.approval.id,
+          signing.approval.messageDigest,
+          signing.outcome.transactionBytes,
+          envelope.signatures[0]!,
+        );
+      } finally {
+        recomputedDigest.fill(0);
+      }
+    } finally {
+      clearSigningRecord(signing);
+    }
+  }
+
   async #pruneInactiveCapsules(): Promise<void> {
     for (const [id, capsule] of [...this.#capsules]) {
       let record: ApprovalRecord | null;
@@ -1015,15 +1197,31 @@ export class SessionApprovalCoordinator {
         continue;
       }
       let current: ApprovalRecord | undefined;
+      let signing: ApprovalSigningRecord | null | undefined;
       try {
         current = record === null
           ? undefined
           : snapshotOwnerRecord(record, "APPROVAL_RECORD_MISMATCH", "stored approval");
+        let retain =
+          current !== undefined &&
+          current.state === "pending" &&
+          recordBindingEqual(current, capsule.approval);
         if (
-          current === undefined ||
-          current.state !== "pending" ||
-          !recordBindingEqual(current, capsule.approval)
+          current !== undefined &&
+          current.state === "approved" &&
+          recordBindingEqual(current, capsule.approval)
         ) {
+          try {
+            signing = await this.#readSigning(id, capsule.approval.messageDigest);
+          } catch {
+            // An uncertain durable read is not authority to discard the only
+            // retry capsule. Capacity remains closed until a later observation.
+            continue;
+          }
+          retain = signing?.outcome.state === "failed";
+        }
+        if (this.#capsules.get(id) !== capsule) continue;
+        if (!retain) {
           this.#capsules.delete(id);
           clearCapsule(capsule);
         }
@@ -1032,6 +1230,7 @@ export class SessionApprovalCoordinator {
         clearCapsule(capsule);
       } finally {
         clearApproval(current);
+        clearSigningRecord(signing);
         clearApproval(record ?? undefined);
       }
     }
@@ -1329,23 +1528,55 @@ export class SessionApprovalCoordinator {
     this.#assertUsable();
     const id = requireApprovalId(idValue);
     const expectedDigest = requireExpectedDigest(expectedDigestValue);
-    const capsule = this.#capsules.get(id);
-    if (capsule === undefined || this.#activeSigning.has(id)) {
-      expectedDigest.fill(0);
-      fail("APPROVAL_NOT_ACTIVE", "approval has no active worker-owned capsule");
-    }
-    this.#capsules.delete(id);
-    this.#activeSigning.add(id);
-
-    let pending: ApprovalRecord | undefined;
-    let preclaimAuthority: SessionAuthoritySnapshot | undefined;
-    let claimed: ApprovalRecord | undefined;
-    let postclaimAuthority: SessionAuthoritySnapshot | undefined;
-    let postValidityAuthority: SessionAuthoritySnapshot | undefined;
-    let signedBytes: Uint8Array | undefined;
-    let shouldCancelPending = false;
-    let claimStarted = false;
     try {
+      if (this.#activeSigning.has(id)) {
+        fail("APPROVAL_NOT_ACTIVE", "approval already has an active signing worker");
+      }
+      const capsule = this.#capsules.get(id);
+      if (capsule === undefined) {
+        const durable = await this.#readSigning(id, expectedDigest);
+        try {
+          if (durable?.outcome.state === "signed") {
+            return this.#signedValue(durable, expectedDigest);
+          }
+          if (durable?.outcome.state === "signing") {
+            fail(
+              "APPROVAL_SIGNING_IN_PROGRESS",
+              "approval is durably owned by an unresolved signing attempt",
+            );
+          }
+          if (durable?.outcome.state === "failed") {
+            fail(
+              "APPROVAL_SIGNING_FAILED",
+              `approval's last signing attempt failed as ${durable.outcome.failureCode}`,
+            );
+          }
+          fail("APPROVAL_NOT_ACTIVE", "approval has no active worker-owned capsule");
+        } finally {
+          clearSigningRecord(durable);
+        }
+      }
+
+      this.#capsules.delete(id);
+      this.#activeSigning.add(id);
+
+      let current: ApprovalRecord | undefined;
+      let durable: ApprovalSigningRecord | null | undefined;
+      let preclaimAuthority: SessionAuthoritySnapshot | undefined;
+      let claimedState: ApprovalSigningRecord | undefined;
+      let claimed: ApprovalRecord | undefined;
+      let postclaimAuthority: SessionAuthoritySnapshot | undefined;
+      let postValidityAuthority: SessionAuthoritySnapshot | undefined;
+      let signedBytes: Uint8Array | undefined;
+      let completedState: ApprovalSigningRecord | undefined;
+      let attemptId: string | undefined;
+      let shouldCancelPending = false;
+      let retryFromFailed = false;
+      let attemptClaimed = false;
+      let retainCapsule = false;
+      let preserveCapsuleOnFailure = true;
+
+      try {
       let ownerRecord: ApprovalRecord | null;
       try {
         ownerRecord = await this.#approvals.read(id);
@@ -1353,43 +1584,79 @@ export class SessionApprovalCoordinator {
         fail("APPROVAL_RECORD_MISMATCH", "approval read failed", error);
       }
       if (ownerRecord === null) {
+        preserveCapsuleOnFailure = false;
         fail("APPROVAL_NOT_ACTIVE", "approval record is absent");
       }
-      pending = snapshotOwnerRecord(
+      current = snapshotOwnerRecord(
         ownerRecord,
         "APPROVAL_RECORD_MISMATCH",
-        "pending approval",
+        "current approval",
       );
       clearApproval(ownerRecord);
       if (
-        pending.state !== "pending" ||
-        pending.resolvedAt !== null ||
-        !recordBindingEqual(pending, capsule.approval)
+        !recordBindingEqual(current, capsule.approval) ||
+        (current.state !== "pending" && current.state !== "approved")
       ) {
+        preserveCapsuleOnFailure = false;
         fail(
           "APPROVAL_RECORD_MISMATCH",
           "stored approval no longer matches the worker-owned exact binding",
         );
       }
-      shouldCancelPending = true;
+      shouldCancelPending = current.state === "pending";
 
-      if (!approvalDigestsEqual(expectedDigest, pending.messageDigest)) {
-        claimStarted = true;
-        shouldCancelPending = false;
-        try {
-          const unexpected = await this.#approvals.claimForSigning(id, expectedDigest);
-          clearApproval(unexpected);
-        } catch (error) {
+      if (!approvalDigestsEqual(expectedDigest, current.messageDigest)) {
+        preserveCapsuleOnFailure = false;
+        if (current.state === "pending") {
+          attemptId = mintSigningAttemptId();
+          shouldCancelPending = false;
+          try {
+            const unexpected = await this.#approvals.claimForSigning(
+              id,
+              expectedDigest,
+              attemptId,
+            );
+            clearSigningRecord(unexpected);
+          } catch (error) {
+            fail(
+              "APPROVAL_DIGEST_MISMATCH",
+              "UI digest did not match and the atomic claim invalidated the attempt",
+              error,
+            );
+          }
           fail(
             "APPROVAL_DIGEST_MISMATCH",
-            "UI digest did not match and the atomic claim invalidated the attempt",
-            error,
+            "approval owner accepted a mismatched UI digest",
           );
         }
         fail(
           "APPROVAL_DIGEST_MISMATCH",
-          "approval owner accepted a mismatched UI digest",
+          "UI digest does not match the durable claimed approval",
         );
+      }
+
+      if (current.state === "approved") {
+        durable = await this.#readSigning(id, current.messageDigest);
+        if (
+          durable === null ||
+          !recordBindingEqual(durable.approval, capsule.approval)
+        ) {
+          preserveCapsuleOnFailure = false;
+          fail(
+            "APPROVAL_RECORD_MISMATCH",
+            "approved record has no matching durable signing outcome",
+          );
+        }
+        if (durable.outcome.state === "signed") {
+          return this.#signedValue(durable, expectedDigest, capsule);
+        }
+        if (durable.outcome.state === "signing") {
+          fail(
+            "APPROVAL_SIGNING_IN_PROGRESS",
+            "approval is durably owned by another signing attempt",
+          );
+        }
+        retryFromFailed = true;
       }
 
       preclaimAuthority = await this.#resolveAuthority(
@@ -1398,36 +1665,66 @@ export class SessionApprovalCoordinator {
       );
       this.#assertUsable();
       assertAuthorityUnchanged(capsule.authority, preclaimAuthority);
-      this.#assertIntentAllowed(pending.rawMessage, preclaimAuthority);
+      this.#assertIntentAllowed(current.rawMessage, preclaimAuthority);
       this.#assertUsable();
 
-      claimStarted = true;
+      attemptId = mintSigningAttemptId();
       shouldCancelPending = false;
-      let ownerClaimed: ApprovalRecord;
+      let ownerClaimed: ApprovalSigningRecord | undefined;
       try {
         ownerClaimed = await this.#approvals.claimForSigning(
           id,
-          pending.messageDigest,
+          current.messageDigest,
+          attemptId,
         );
       } catch (error) {
-        fail("APPROVAL_CLAIM_FAILED", "atomic approval claim failed", error);
+        let observed: ApprovalSigningRecord | null | undefined;
+        try {
+          observed = await this.#readSigning(id, current.messageDigest);
+        } catch {
+          // Preserve the claim error below; a failed observation cannot prove
+          // whether the transaction committed.
+        }
+        if (
+          observed?.outcome.state === "signing" &&
+          observed.outcome.attemptId === attemptId
+        ) {
+          ownerClaimed = observed;
+          observed = undefined;
+        } else if (observed?.outcome.state === "signed") {
+          try {
+            return this.#signedValue(observed, expectedDigest, capsule);
+          } finally {
+            clearSigningRecord(observed);
+          }
+        } else {
+          clearSigningRecord(observed);
+          fail("APPROVAL_CLAIM_FAILED", "atomic approval claim failed", error);
+        }
+      }
+      claimedState = snapshotApprovalSigningRecord(ownerClaimed);
+      clearSigningRecord(ownerClaimed);
+      if (claimedState.outcome.state === "signed") {
+        return this.#signedValue(claimedState, expectedDigest, capsule);
       }
       claimed = snapshotOwnerRecord(
-        ownerClaimed,
+        claimedState.approval,
         "APPROVAL_RECORD_MISMATCH",
         "claimed approval",
       );
-      clearApproval(ownerClaimed);
       if (
         claimed.state !== "approved" ||
         claimed.resolvedAt === null ||
-        !recordBindingEqual(claimed, pending)
+        claimedState.outcome.state !== "signing" ||
+        claimedState.outcome.attemptId !== attemptId ||
+        !recordBindingEqual(claimed, current)
       ) {
         fail(
           "APPROVAL_RECORD_MISMATCH",
-          "atomic claim changed or failed to approve the exact binding",
+          "atomic claim changed or failed to own the exact binding",
         );
       }
+      attemptClaimed = true;
 
       // Do network-bound validity work before borrowing plaintext key bytes.
       // A final monotonic authority observation still occurs inside the lease,
@@ -1579,30 +1876,157 @@ export class SessionApprovalCoordinator {
             "signed result does not authenticate the claimed exact binding",
           );
         }
-        return new SignedSessionApprovalValue(
-          id,
-          claimed.messageDigest,
-          signedBytes,
-          envelope.signatures[0]!,
-        );
       } finally {
         recomputedDigest.fill(0);
       }
+
+      let ownerCompleted: ApprovalSigningRecord | undefined;
+      try {
+        ownerCompleted = await this.#approvals.completeSigning(
+          id,
+          claimed.messageDigest,
+          attemptId,
+          signedBytes,
+        );
+      } catch (error) {
+        let observed: ApprovalSigningRecord | null | undefined;
+        try {
+          observed = await this.#readSigning(id, claimed.messageDigest);
+        } catch {
+          // The signed bytes remain unreleased when durable state is uncertain.
+        }
+        if (
+          observed?.outcome.state === "signed" &&
+          observed.outcome.attemptId === attemptId &&
+          observed.outcome.transactionBytes !== null &&
+          bytesEqual(observed.outcome.transactionBytes, signedBytes)
+        ) {
+          attemptClaimed = false;
+          try {
+            return this.#signedValue(observed, expectedDigest, capsule);
+          } finally {
+            clearSigningRecord(observed);
+          }
+        }
+        clearSigningRecord(observed);
+        fail(
+          "APPROVAL_RESOLUTION_FAILED",
+          "signed result could not be durably completed",
+          error,
+        );
+      }
+      completedState = snapshotApprovalSigningRecord(ownerCompleted);
+      clearSigningRecord(ownerCompleted);
+      if (
+        completedState.outcome.state !== "signed" ||
+        completedState.outcome.attemptId !== attemptId ||
+        completedState.outcome.transactionBytes === null ||
+        !bytesEqual(completedState.outcome.transactionBytes, signedBytes) ||
+        !recordBindingEqual(completedState.approval, claimed)
+      ) {
+        fail(
+          "SIGNED_RESULT_INVALID",
+          "approval owner completed a different signed result",
+        );
+      }
+      attemptClaimed = false;
+      return this.#signedValue(completedState, expectedDigest, capsule);
     } catch (error) {
-      if (shouldCancelPending && !claimStarted) {
+      if (attemptClaimed && attemptId !== undefined && claimed !== undefined) {
+        const failureCode = signingFailureCode(error);
+        let failedState: ApprovalSigningRecord | undefined;
+        let failurePersistenceError: unknown;
+        try {
+          const ownerFailed = await this.#approvals.failSigning(
+            id,
+            claimed.messageDigest,
+            attemptId,
+            failureCode,
+          );
+          try {
+            failedState = snapshotApprovalSigningRecord(ownerFailed);
+          } finally {
+            clearSigningRecord(ownerFailed);
+          }
+        } catch (cleanupError) {
+          failurePersistenceError = cleanupError;
+          let observed: ApprovalSigningRecord | null | undefined;
+          try {
+            observed = await this.#readSigning(id, claimed.messageDigest);
+            if (
+              observed?.outcome.state === "failed" &&
+              observed.outcome.attemptId === attemptId &&
+              observed.outcome.failureCode === failureCode &&
+              recordBindingEqual(observed.approval, claimed)
+            ) {
+              failedState = snapshotApprovalSigningRecord(observed);
+            }
+          } catch (recoveryError) {
+            failurePersistenceError = new AggregateError(
+              [cleanupError, recoveryError],
+              "failure acknowledgement and durable recovery read both failed",
+            );
+          } finally {
+            clearSigningRecord(observed);
+          }
+        }
+        try {
+          if (
+            failedState === undefined ||
+            failedState.outcome.state !== "failed" ||
+            failedState.outcome.attemptId !== attemptId ||
+            failedState.outcome.failureCode !== failureCode ||
+            !recordBindingEqual(failedState.approval, claimed)
+          ) {
+            const resolutionError = failurePersistenceError ??
+              new Error("approval owner recorded a different signing failure");
+            if (error instanceof SessionApprovalCoordinatorError) {
+              throw new SessionApprovalCoordinatorError(
+                error.code,
+                error.message.replace("session approval coordinator: ", ""),
+                {
+                  cause: new AggregateError(
+                    [error, resolutionError],
+                    "signing failed and durable failure recording also failed",
+                  ),
+                },
+              );
+            }
+            fail(
+              "APPROVAL_RESOLUTION_FAILED",
+              "signing failed and durable failure recording also failed",
+              new AggregateError([error, resolutionError]),
+            );
+          }
+          retainCapsule = !this.#disposed;
+        } finally {
+          clearSigningRecord(failedState);
+        }
+      } else if (shouldCancelPending) {
         return this.#cancelAfterPreclaimFailure(id, error);
+      } else if (retryFromFailed || preserveCapsuleOnFailure) {
+        retainCapsule = !this.#disposed;
       }
       throw error;
     } finally {
       this.#activeSigning.delete(id);
-      expectedDigest.fill(0);
-      clearApproval(pending);
+      if (retainCapsule && !this.#disposed) {
+        this.#capsules.set(id, capsule);
+      } else {
+        clearCapsule(capsule);
+      }
+      clearApproval(current);
+      clearSigningRecord(durable);
       clearAuthority(preclaimAuthority);
+      clearSigningRecord(claimedState);
       clearApproval(claimed);
       clearAuthority(postclaimAuthority);
       clearAuthority(postValidityAuthority);
       signedBytes?.fill(0);
-      clearCapsule(capsule);
+      clearSigningRecord(completedState);
+    }
+    } finally {
+      expectedDigest.fill(0);
     }
   }
 

@@ -681,13 +681,19 @@ function bindApprovalOwner(value: unknown): SessionApprovalOwner {
   try {
     const create = value.create;
     const read = value.read;
+    const readSigning = value.readSigning;
     const claimForSigning = value.claimForSigning;
+    const completeSigning = value.completeSigning;
+    const failSigning = value.failSigning;
     const reject = value.reject;
     const cancel = value.cancel;
     if (
       typeof create !== "function" ||
       typeof read !== "function" ||
+      typeof readSigning !== "function" ||
       typeof claimForSigning !== "function" ||
+      typeof completeSigning !== "function" ||
+      typeof failSigning !== "function" ||
       typeof reject !== "function" ||
       typeof cancel !== "function"
     ) {
@@ -696,7 +702,10 @@ function bindApprovalOwner(value: unknown): SessionApprovalOwner {
     return Object.freeze({
       create: create.bind(value),
       read: read.bind(value),
+      readSigning: readSigning.bind(value),
       claimForSigning: claimForSigning.bind(value),
+      completeSigning: completeSigning.bind(value),
+      failSigning: failSigning.bind(value),
       reject: reject.bind(value),
       cancel: cancel.bind(value),
     }) as SessionApprovalOwner;

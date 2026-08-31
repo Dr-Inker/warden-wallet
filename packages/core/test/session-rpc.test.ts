@@ -98,10 +98,10 @@ function inertApprovals(): SessionApprovalOwner {
   return {
     create: unavailable as (params: ApprovalCreateParams) => Promise<ApprovalRecord>,
     read: unavailable as (id: string) => Promise<ApprovalRecord | null>,
-    claimForSigning: unavailable as (
-      id: string,
-      expectedDigest: Uint8Array,
-    ) => Promise<ApprovalRecord>,
+    readSigning: unavailable as SessionApprovalOwner["readSigning"],
+    claimForSigning: unavailable as SessionApprovalOwner["claimForSigning"],
+    completeSigning: unavailable as SessionApprovalOwner["completeSigning"],
+    failSigning: unavailable as SessionApprovalOwner["failSigning"],
     reject: unavailable as (id: string) => Promise<ApprovalRecord>,
     cancel: unavailable as (id: string) => Promise<ApprovalRecord>,
   };

@@ -22,7 +22,7 @@ async function liveExtensionWorker(context: BrowserContext, origin?: string) {
   });
 }
 
-test("IndexedDB approval claims are atomic and pending records die with the worker", async () => {
+test("IndexedDB owns approval claims, durable results, retries, and worker death", async () => {
   const temporaryParent = resolve(tmpdir());
   const extensionDirectory = await mkdtemp(
     join(temporaryParent, "warden-approval-browser-"),
@@ -96,9 +96,35 @@ test("IndexedDB approval claims are atomic and pending records die with the work
       mismatchRetry: Array<{ status: string; errorName?: string }>;
       expiryResult: Array<{ status: string; errorName?: string }>;
       expiryState: string;
+      mismatchedExpiryResult: Array<{ status: string; errorName?: string }>;
+      mismatchedExpiryState: string | null;
       identicalDigestMatches: boolean;
       identicalStates: string[];
-      restartId: string;
+      completedState: string;
+      completedBytes: number[];
+      completedAttemptStable: boolean;
+      invalidCompletion: Array<{ status: string; errorName?: string }>;
+      afterInvalidCompletionState: string;
+      invalidFailure: Array<{ status: string; errorName?: string }>;
+      afterInvalidFailureState: string;
+      failedState: string;
+      failedCode: string;
+      retryState: string;
+      retryAttemptNumber: number;
+      staleCompletion: Array<{ status: string; errorName?: string }>;
+      retriedCompletionState: string;
+      rollbackCompletion: Array<{ status: string; errorName?: string }>;
+      afterRollbackState: string;
+      regressedStartup: Array<{ status: string; errorName?: string }>;
+      afterRegressedStartupState: string;
+      legacyApprovedRead: Array<{ status: string; errorName?: string }>;
+      legacyApprovedAfter: unknown;
+      restartPendingId: string;
+      restartPendingDigest: number[];
+      restartSigningId: string;
+      restartSigningDigest: number[];
+      completedId: string;
+      completedDigest: number[];
     };
 
     expect(before.initialInvalidated).toBe(0);
@@ -124,8 +150,43 @@ test("IndexedDB approval claims are atomic and pending records die with the work
       { status: "rejected", errorName: "ApprovalStateConflictError" },
     ]);
     expect(before.expiryState).toBe("expired");
+    expect(before.mismatchedExpiryResult).toEqual([
+      { status: "rejected", errorName: "ApprovalStateConflictError" },
+    ]);
+    expect(before.mismatchedExpiryState).toBe("expired");
     expect(before.identicalDigestMatches).toBe(true);
-    expect(before.identicalStates).toEqual(["approved", "rejected"]);
+    expect(before.identicalStates).toEqual(["signing", "rejected"]);
+    expect(before.completedState).toBe("signed");
+    expect(before.completedBytes).toEqual([1, 2, 3, 4]);
+    expect(before.completedAttemptStable).toBe(true);
+    expect(before.invalidCompletion).toEqual([
+      { status: "rejected", errorName: "ApprovalRecordFormatError" },
+    ]);
+    expect(before.afterInvalidCompletionState).toBe("signing");
+    expect(before.invalidFailure).toEqual([
+      { status: "rejected", errorName: "ApprovalSigningOutcomeFormatError" },
+    ]);
+    expect(before.afterInvalidFailureState).toBe("signing");
+    expect(before.failedState).toBe("failed");
+    expect(before.failedCode).toBe("blockhash-invalid");
+    expect(before.retryState).toBe("signing");
+    expect(before.retryAttemptNumber).toBe(2);
+    expect(before.staleCompletion).toEqual([
+      { status: "rejected", errorName: "ApprovalStateConflictError" },
+    ]);
+    expect(before.retriedCompletionState).toBe("signed");
+    expect(before.rollbackCompletion).toEqual([
+      { status: "rejected", errorName: "ApprovalClockError" },
+    ]);
+    expect(before.afterRollbackState).toBe("signing");
+    expect(before.regressedStartup).toEqual([
+      { status: "rejected", errorName: "ApprovalClockError" },
+    ]);
+    expect(before.afterRegressedStartupState).toBe("signing");
+    expect(before.legacyApprovedRead).toEqual([
+      { status: "rejected", errorName: "ApprovalRecordFormatError" },
+    ]);
+    expect(before.legacyApprovedAfter).toBeNull();
 
     const marker = "must-not-survive-approval-worker-death";
     await worker.evaluate((value) => {
@@ -163,14 +224,28 @@ test("IndexedDB approval claims are atomic and pending records die with the work
     expect(await replacement.evaluate(() =>
       (globalThis as unknown as { __wardenApprovalWorkerMarker?: string })
         .__wardenApprovalWorkerMarker ?? null)).toBeNull();
-    const after = await replacement.evaluate(async (id) => {
+    const after = await replacement.evaluate(async (input) => {
       const runner = (globalThis as unknown as {
-        __wardenApprovalAfterRestart?: (recordId: string) => Promise<unknown>;
+        __wardenApprovalAfterRestart?: (value: typeof input) => Promise<unknown>;
       }).__wardenApprovalAfterRestart;
       if (typeof runner !== "function") throw new Error("approval restart runner unavailable");
-      return runner(id);
-    }, before.restartId);
-    expect(after).toMatchObject({ invalidated: 1, state: "cancelled" });
+      return runner(input);
+    }, {
+      pendingId: before.restartPendingId,
+      pendingDigest: before.restartPendingDigest,
+      signingId: before.restartSigningId,
+      signingDigest: before.restartSigningDigest,
+      completedId: before.completedId,
+      completedDigest: before.completedDigest,
+    });
+    expect(after).toEqual({
+      invalidated: 2,
+      pendingState: "cancelled",
+      signingState: "failed",
+      signingFailureCode: "worker-restarted",
+      completedState: "signed",
+      completedBytes: [1, 2, 3, 4],
+    });
   } finally {
     await context?.close();
     await rm(extensionDirectory, { recursive: true, force: true });

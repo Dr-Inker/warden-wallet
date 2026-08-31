@@ -2,18 +2,38 @@ import {
   APPROVAL_DIGEST_BYTES,
   ApprovalRecordFormatError,
   createPendingApprovalRecord,
+  parseApprovalSigningFailureCode,
   type ApprovalCreateParams,
   type ApprovalRecord,
+  type ApprovalSigningFailureCode,
+  type ApprovalSigningRecord,
   type ApprovalTerminalState,
 } from "@warden/core/approval";
+import { MAX_TX_BYTES } from "@warden/core/constants";
 import type { SessionApprovalOwner } from "@warden/core/transaction/session-approval";
 
 export interface ApprovalTransition {
   readonly id: string;
-  readonly state: ApprovalTerminalState;
+  readonly state: Exclude<ApprovalTerminalState, "approved">;
   readonly now: number;
-  /** Required for the signing claim; absent for explicit rejection/cancellation. */
-  readonly expectedDigest?: Uint8Array;
+}
+
+export interface ApprovalSigningLookup {
+  readonly id: string;
+  readonly expectedDigest: Uint8Array;
+  readonly now: number;
+}
+
+export interface ApprovalSigningClaim extends ApprovalSigningLookup {
+  readonly attemptId: string;
+}
+
+export interface ApprovalSigningCompletion extends ApprovalSigningClaim {
+  readonly transactionBytes: Uint8Array;
+}
+
+export interface ApprovalSigningFailure extends ApprovalSigningClaim {
+  readonly failureCode: ApprovalSigningFailureCode;
 }
 
 /** Transactional persistence boundary. Production uses one IndexedDB object store. */
@@ -21,7 +41,11 @@ export interface ApprovalRecordRepository {
   create(record: ApprovalRecord, now: number): Promise<ApprovalRecord>;
   read(id: string, now: number): Promise<ApprovalRecord | null>;
   transition(transition: ApprovalTransition): Promise<ApprovalRecord>;
-  /** Pending records belonged to Ports in a dead worker and cannot be resumed. */
+  readSigning(lookup: ApprovalSigningLookup): Promise<ApprovalSigningRecord | null>;
+  claimSigning(claim: ApprovalSigningClaim): Promise<ApprovalSigningRecord>;
+  completeSigning(completion: ApprovalSigningCompletion): Promise<ApprovalSigningRecord>;
+  failSigning(failure: ApprovalSigningFailure): Promise<ApprovalSigningRecord>;
+  /** Pending records and unresolved attempts belonged to a dead worker. */
   invalidatePending(now: number): Promise<number>;
   close(): void;
 }
@@ -42,6 +66,10 @@ function requireRepository(value: unknown): ApprovalRecordRepository {
     "create",
     "read",
     "transition",
+    "readSigning",
+    "claimSigning",
+    "completeSigning",
+    "failSigning",
     "invalidatePending",
     "close",
   ] as const) {
@@ -110,7 +138,8 @@ export class ApprovalOwner implements SessionApprovalOwner {
   async claimForSigning(
     id: string,
     expectedDigest: Uint8Array,
-  ): Promise<ApprovalRecord> {
+    attemptId: string,
+  ): Promise<ApprovalSigningRecord> {
     if (
       !(expectedDigest instanceof Uint8Array) ||
       expectedDigest.length !== APPROVAL_DIGEST_BYTES
@@ -121,15 +150,96 @@ export class ApprovalOwner implements SessionApprovalOwner {
     }
     const digest = expectedDigest.slice();
     try {
-      return await this.repository.transition({
+      return await this.repository.claimSigning({
         id,
-        state: "approved",
-        now: this.currentTime(),
         expectedDigest: digest,
+        attemptId,
+        now: this.currentTime(),
       });
     } finally {
       digest.fill(0);
     }
+  }
+
+  async readSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+  ): Promise<ApprovalSigningRecord | null> {
+    const digest = this.snapshotDigest(expectedDigest);
+    try {
+      return await this.repository.readSigning({
+        id,
+        expectedDigest: digest,
+        now: this.currentTime(),
+      });
+    } finally {
+      digest.fill(0);
+    }
+  }
+
+  async completeSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+    attemptId: string,
+    transactionBytesValue: Uint8Array,
+  ): Promise<ApprovalSigningRecord> {
+    const digest = this.snapshotDigest(expectedDigest);
+    if (
+      !(transactionBytesValue instanceof Uint8Array) ||
+      transactionBytesValue.length === 0 ||
+      transactionBytesValue.length > MAX_TX_BYTES
+    ) {
+      digest.fill(0);
+      throw new ApprovalRecordFormatError(
+        `signed transaction must contain 1 to ${MAX_TX_BYTES} bytes`,
+      );
+    }
+    const transactionBytes = transactionBytesValue.slice();
+    try {
+      return await this.repository.completeSigning({
+        id,
+        expectedDigest: digest,
+        attemptId,
+        transactionBytes,
+        now: this.currentTime(),
+      });
+    } finally {
+      digest.fill(0);
+      transactionBytes.fill(0);
+    }
+  }
+
+  async failSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+    attemptId: string,
+    failureCode: ApprovalSigningFailureCode,
+  ): Promise<ApprovalSigningRecord> {
+    const parsedFailureCode = parseApprovalSigningFailureCode(failureCode);
+    const digest = this.snapshotDigest(expectedDigest);
+    try {
+      return await this.repository.failSigning({
+        id,
+        expectedDigest: digest,
+        attemptId,
+        failureCode: parsedFailureCode,
+        now: this.currentTime(),
+      });
+    } finally {
+      digest.fill(0);
+    }
+  }
+
+  private snapshotDigest(value: Uint8Array): Uint8Array {
+    if (
+      !(value instanceof Uint8Array) ||
+      value.length !== APPROVAL_DIGEST_BYTES
+    ) {
+      throw new ApprovalRecordFormatError(
+        `expected digest must contain exactly ${APPROVAL_DIGEST_BYTES} bytes`,
+      );
+    }
+    return value.slice();
   }
 
   reject(id: string): Promise<ApprovalRecord> {

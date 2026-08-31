@@ -21,6 +21,15 @@ import {
   type ApprovalRecord,
 } from "../src/approval/record.js";
 import {
+  completeApprovalSigningAttempt,
+  createApprovalSigningAttempt,
+  failApprovalSigningAttempt,
+  snapshotApprovalSigningRecord,
+  type ApprovalSigningFailureCode,
+  type ApprovalSigningOutcome,
+  type ApprovalSigningRecord,
+} from "../src/approval/signing-outcome.js";
+import {
   PROGRAMDATA_METADATA_LEN,
 } from "../src/deploy/accounts.js";
 import { BPF_UPGRADEABLE_LOADER } from "../src/deploy/config.js";
@@ -348,6 +357,7 @@ async function captureError(
 
 class MemoryApprovalOwner implements SessionApprovalOwner {
   readonly records = new Map<string, ApprovalRecord>();
+  readonly outcomes = new Map<string, ApprovalSigningOutcome>();
 
   async create(params: ApprovalCreateParams): Promise<ApprovalRecord> {
     const record = createPendingApprovalRecord(params);
@@ -360,7 +370,24 @@ class MemoryApprovalOwner implements SessionApprovalOwner {
     return record === undefined ? null : snapshotApprovalRecord(record);
   }
 
-  async claimForSigning(id: string, digest: Uint8Array): Promise<ApprovalRecord> {
+  async readSigning(
+    id: string,
+    digest: Uint8Array,
+  ): Promise<ApprovalSigningRecord | null> {
+    const approval = this.records.get(id);
+    const outcome = this.outcomes.get(id);
+    if (approval === undefined || outcome === undefined) return null;
+    if (!approval.messageDigest.every((byte, index) => byte === digest[index])) {
+      throw new Error("digest mismatch");
+    }
+    return snapshotApprovalSigningRecord({ approval, outcome });
+  }
+
+  async claimForSigning(
+    id: string,
+    digest: Uint8Array,
+    attemptId: string,
+  ): Promise<ApprovalSigningRecord> {
     const record = this.records.get(id);
     if (record === undefined || record.state !== "pending") {
       throw new Error("not pending");
@@ -369,8 +396,66 @@ class MemoryApprovalOwner implements SessionApprovalOwner {
       throw new Error("digest mismatch");
     }
     const approved = resolveApprovalRecord(record, "approved", 1_900_000_000_001);
+    const outcome = createApprovalSigningAttempt({
+      id,
+      messageDigest: digest,
+      attemptId,
+      attemptNumber: 1,
+      startedAt: 1_900_000_000_001,
+    });
     this.records.set(id, approved);
-    return snapshotApprovalRecord(approved);
+    this.outcomes.set(id, outcome);
+    return snapshotApprovalSigningRecord({ approval: approved, outcome });
+  }
+
+  async completeSigning(
+    id: string,
+    digest: Uint8Array,
+    attemptId: string,
+    transactionBytes: Uint8Array,
+  ): Promise<ApprovalSigningRecord> {
+    const approval = this.records.get(id);
+    const outcome = this.outcomes.get(id);
+    if (
+      approval === undefined ||
+      outcome?.state !== "signing" ||
+      outcome.attemptId !== attemptId ||
+      !approval.messageDigest.every((byte, index) => byte === digest[index])
+    ) {
+      throw new Error("completion refused");
+    }
+    const completed = completeApprovalSigningAttempt(
+      outcome,
+      transactionBytes,
+      1_900_000_000_002,
+    );
+    this.outcomes.set(id, completed);
+    return snapshotApprovalSigningRecord({ approval, outcome: completed });
+  }
+
+  async failSigning(
+    id: string,
+    digest: Uint8Array,
+    attemptId: string,
+    failureCode: ApprovalSigningFailureCode,
+  ): Promise<ApprovalSigningRecord> {
+    const approval = this.records.get(id);
+    const outcome = this.outcomes.get(id);
+    if (
+      approval === undefined ||
+      outcome?.state !== "signing" ||
+      outcome.attemptId !== attemptId ||
+      !approval.messageDigest.every((byte, index) => byte === digest[index])
+    ) {
+      throw new Error("failure refused");
+    }
+    const failed = failApprovalSigningAttempt(
+      outcome,
+      failureCode,
+      1_900_000_000_002,
+    );
+    this.outcomes.set(id, failed);
+    return snapshotApprovalSigningRecord({ approval, outcome: failed });
   }
 
   async reject(id: string): Promise<ApprovalRecord> {
@@ -1094,8 +1179,17 @@ describe("pinned session authority resolver", () => {
     approvals.read = async () => {
       throw new Error("mutated approval read method");
     };
+    approvals.readSigning = async () => {
+      throw new Error("mutated signing read method");
+    };
     approvals.claimForSigning = async () => {
       throw new Error("mutated approval claim method");
+    };
+    approvals.completeSigning = async () => {
+      throw new Error("mutated approval completion method");
+    };
+    approvals.failSigning = async () => {
+      throw new Error("mutated approval failure method");
     };
     keyring.useSessionSignerBytes = async () => {
       throw new Error("mutated keyring method");

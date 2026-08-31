@@ -585,8 +585,12 @@ test("real MV3 bridge binds frames, wakes after worker death, and revokes change
                   request.error ?? new Error("approval restart read failed"),
                 );
                 request.onsuccess = () => {
-                  const result = request.result as { readonly state?: unknown } | undefined;
-                  resolveRead(typeof result?.state === "string" ? result.state : null);
+                  const result = request.result as {
+                    readonly state?: unknown;
+                    readonly approval?: { readonly state?: unknown };
+                  } | undefined;
+                  const state = result?.approval?.state ?? result?.state;
+                  resolveRead(typeof state === "string" ? state : null);
                 };
               });
             } finally {

@@ -19,6 +19,17 @@ import {
   type ApprovalCreateParams,
   type ApprovalRecord,
 } from "../src/approval/record.js";
+import {
+  completeApprovalSigningAttempt,
+  createApprovalSigningAttempt,
+  failApprovalSigningAttempt,
+  retryApprovalSigningAttempt,
+  snapshotApprovalSigningOutcome,
+  snapshotApprovalSigningRecord,
+  type ApprovalSigningFailureCode,
+  type ApprovalSigningOutcome,
+  type ApprovalSigningRecord,
+} from "../src/approval/signing-outcome.js";
 import { parseSerializedTransactionEnvelope } from "../src/transaction/envelope.js";
 import {
   SESSION_APPROVAL_COMMITMENT,
@@ -115,8 +126,15 @@ function request(source = sourceTransaction()) {
 
 class MemoryApprovalOwner implements SessionApprovalOwner {
   readonly records = new Map<string, ApprovalRecord>();
+  readonly outcomes = new Map<string, ApprovalSigningOutcome>();
   readonly events: string[];
   now = 1_001;
+  claimThenThrow = false;
+  completeThenThrow = false;
+  failThenThrow = false;
+  readFailures = 0;
+  readSigningFailures = 0;
+  afterCompleteCommit: (() => void) | undefined;
 
   constructor(events: string[]) {
     this.events = events;
@@ -132,27 +150,150 @@ class MemoryApprovalOwner implements SessionApprovalOwner {
 
   async read(id: string): Promise<ApprovalRecord | null> {
     this.events.push("approval:read");
+    if (this.readFailures > 0) {
+      this.readFailures--;
+      throw new Error("transient approval read failure");
+    }
     const record = this.records.get(id);
     return record === undefined ? null : snapshotApprovalRecord(record);
+  }
+
+  async readSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+  ): Promise<ApprovalSigningRecord | null> {
+    this.events.push("approval:signing-read");
+    if (this.readSigningFailures > 0) {
+      this.readSigningFailures--;
+      throw new Error("transient signing read failure");
+    }
+    const record = this.records.get(id);
+    const outcome = this.outcomes.get(id);
+    if (record === undefined || outcome === undefined) return null;
+    if (!approvalDigestsEqual(record.messageDigest, expectedDigest)) {
+      throw new Error("approval signing digest mismatch");
+    }
+    return snapshotApprovalSigningRecord({ approval: record, outcome });
   }
 
   async claimForSigning(
     id: string,
     expectedDigest: Uint8Array,
-  ): Promise<ApprovalRecord> {
+    attemptId: string,
+  ): Promise<ApprovalSigningRecord> {
     this.events.push("approval:claim");
-    const current = this.records.get(id);
-    if (current === undefined || current.state !== "pending") {
+    let current = this.records.get(id);
+    if (current === undefined) {
       throw new Error("approval claim refused");
     }
     if (!approvalDigestsEqual(current.messageDigest, expectedDigest)) {
-      const invalidated = resolveApprovalRecord(current, "invalidated", this.now++);
-      this.records.set(id, invalidated);
+      if (current.state === "pending") {
+        const invalidated = resolveApprovalRecord(current, "invalidated", this.now++);
+        this.records.set(id, invalidated);
+      }
       throw new Error("approval digest mismatch");
     }
-    const approved = resolveApprovalRecord(current, "approved", this.now++);
-    this.records.set(id, approved);
-    return snapshotApprovalRecord(approved);
+    let outcome = this.outcomes.get(id);
+    if (current.state === "pending") {
+      const resolvedAt = this.now++;
+      current = resolveApprovalRecord(current, "approved", resolvedAt);
+      outcome = createApprovalSigningAttempt({
+        id,
+        messageDigest: expectedDigest,
+        attemptId,
+        attemptNumber: 1,
+        startedAt: resolvedAt,
+      });
+      this.records.set(id, current);
+      this.outcomes.set(id, outcome);
+    } else if (current.state === "approved" && outcome?.state === "failed") {
+      outcome = retryApprovalSigningAttempt(outcome, attemptId, this.now++);
+      this.outcomes.set(id, outcome);
+    } else if (
+      current.state !== "approved" ||
+      outcome === undefined ||
+      (outcome.state === "signing" && outcome.attemptId !== attemptId)
+    ) {
+      throw new Error("approval claim refused");
+    }
+    if (this.claimThenThrow) {
+      this.claimThenThrow = false;
+      throw new Error("claim acknowledgement lost");
+    }
+    return snapshotApprovalSigningRecord({ approval: current, outcome });
+  }
+
+  async completeSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+    attemptId: string,
+    transactionBytes: Uint8Array,
+  ): Promise<ApprovalSigningRecord> {
+    this.events.push("approval:complete");
+    const record = this.records.get(id);
+    const outcome = this.outcomes.get(id);
+    if (
+      record?.state !== "approved" ||
+      outcome === undefined ||
+      !approvalDigestsEqual(record.messageDigest, expectedDigest)
+    ) {
+      throw new Error("approval completion refused");
+    }
+    if (outcome.state === "signed") {
+      if (
+        outcome.attemptId !== attemptId ||
+        outcome.transactionBytes === null ||
+        !bytesEqual(outcome.transactionBytes, transactionBytes)
+      ) {
+        throw new Error("approval completion conflict");
+      }
+      return snapshotApprovalSigningRecord({ approval: record, outcome });
+    }
+    if (outcome.state !== "signing" || outcome.attemptId !== attemptId) {
+      throw new Error("approval completion stale");
+    }
+    const completed = completeApprovalSigningAttempt(
+      outcome,
+      transactionBytes,
+      this.now++,
+    );
+    this.outcomes.set(id, completed);
+    this.afterCompleteCommit?.();
+    if (this.completeThenThrow) {
+      this.completeThenThrow = false;
+      throw new Error("completion acknowledgement lost");
+    }
+    return snapshotApprovalSigningRecord({ approval: record, outcome: completed });
+  }
+
+  async failSigning(
+    id: string,
+    expectedDigest: Uint8Array,
+    attemptId: string,
+    failureCode: ApprovalSigningFailureCode,
+  ): Promise<ApprovalSigningRecord> {
+    this.events.push(`approval:fail:${failureCode}`);
+    const record = this.records.get(id);
+    const outcome = this.outcomes.get(id);
+    if (
+      record?.state !== "approved" ||
+      outcome?.state !== "signing" ||
+      outcome.attemptId !== attemptId ||
+      !approvalDigestsEqual(record.messageDigest, expectedDigest)
+    ) {
+      throw new Error("approval failure refused");
+    }
+    const failed = failApprovalSigningAttempt(
+      outcome,
+      failureCode,
+      this.now++,
+    );
+    this.outcomes.set(id, failed);
+    if (this.failThenThrow) {
+      this.failThenThrow = false;
+      throw new Error("failure acknowledgement lost");
+    }
+    return snapshotApprovalSigningRecord({ approval: record, outcome: failed });
   }
 
   async reject(id: string): Promise<ApprovalRecord> {
@@ -184,7 +325,7 @@ interface HarnessOptions {
     call: number,
     minContextSlot: number,
   ) => SessionAuthoritySnapshot | Promise<SessionAuthoritySnapshot>;
-  readonly valid?: boolean;
+  readonly valid?: boolean | ((call: number) => boolean);
   readonly latestBlockhash?: Uint8Array;
   readonly validityContextSlot?: number;
   readonly forceValidityContextSlot?: number;
@@ -196,13 +337,22 @@ interface HarnessOptions {
     seed: Uint8Array;
   }>;
   readonly mutateKeyringResult?: (result: Uint8Array) => void;
+  readonly claimThenThrow?: boolean;
+  readonly completeThenThrow?: boolean;
+  readonly failThenThrow?: boolean;
+  readonly afterCompleteCommit?: () => void;
 }
 
 function harness(options: HarnessOptions = {}) {
   const events: string[] = [];
   const intentMessages: Uint8Array[] = [];
   const owner = new MemoryApprovalOwner(events);
+  owner.claimThenThrow = options.claimThenThrow ?? false;
+  owner.completeThenThrow = options.completeThenThrow ?? false;
+  owner.failThenThrow = options.failThenThrow ?? false;
+  owner.afterCompleteCommit = options.afterCompleteCommit;
   let resolveCalls = 0;
+  let validityCalls = 0;
   const resolver: SessionApprovalAuthorityResolver = {
     async resolve(input) {
       resolveCalls++;
@@ -227,13 +377,16 @@ function harness(options: HarnessOptions = {}) {
       };
     },
     async isBlockhashValid(input) {
+      validityCalls++;
       events.push(`blockhash:valid:${input.minContextSlot}`);
       expect(input.commitment).toBe(SESSION_APPROVAL_COMMITMENT);
       expect(input.chain).toBe("solana:devnet");
       expect(input.genesisHash).toEqual(GENESIS_HASH);
       expect(input.blockhash).toEqual(FINAL_BLOCKHASH);
       return {
-        valid: options.valid ?? true,
+        valid: typeof options.valid === "function"
+          ? options.valid(validityCalls)
+          : options.valid ?? true,
         contextSlot: options.forceValidityContextSlot ?? Math.max(
           input.minContextSlot,
           options.validityContextSlot ?? 50,
@@ -362,17 +515,164 @@ describe("session approval coordinator", () => {
       "authority:6:50",
       "intent:60",
       "keyring:end",
+      "approval:complete",
     ]);
 
+    const expectedTransaction = signed.transactionBytes;
+    const expectedSignature = signed.signature;
+    const eventsBeforeReplay = [...events];
     prepared.messageDigest.fill(0);
     signed.transactionBytes.fill(0);
+    signed.signature.fill(0);
     expect(owner.records.get(prepared.id)?.messageDigest).toEqual(
       pending.messageDigest,
     );
-    await captureError(
-      coordinator.approve(prepared.id, pending.messageDigest),
-      "APPROVAL_NOT_ACTIVE",
+    const replayed = await coordinator.approve(prepared.id, pending.messageDigest);
+    expect(replayed.transactionBytes).toEqual(expectedTransaction);
+    expect(replayed.signature).toEqual(expectedSignature);
+    expect(events).toEqual([...eventsBeforeReplay, "approval:signing-read"]);
+    replayed.transactionBytes.fill(0);
+    expect(owner.outcomes.get(prepared.id)?.transactionBytes).toEqual(
+      expectedTransaction,
     );
+  });
+
+  it("persists a failed attempt and retries it under a fresh CAS token", async () => {
+    const test = harness({ valid: (call) => call > 1 });
+    const prepared = await test.coordinator.prepare(request());
+
+    await captureError(
+      test.coordinator.approve(prepared.id, prepared.messageDigest),
+      "BLOCKHASH_INVALID",
+    );
+    const failed = snapshotApprovalSigningOutcome(
+      test.owner.outcomes.get(prepared.id),
+    );
+    expect(failed.state).toBe("failed");
+    expect(failed.failureCode).toBe("blockhash-invalid");
+    expect(failed.attemptNumber).toBe(1);
+    expect(test.events).toContain("approval:fail:blockhash-invalid");
+
+    const signed = await test.coordinator.approve(
+      prepared.id,
+      prepared.messageDigest,
+    );
+    const completed = test.owner.outcomes.get(prepared.id)!;
+    expect(completed.state).toBe("signed");
+    expect(completed.attemptNumber).toBe(2);
+    expect(completed.attemptId).not.toBe(failed.attemptId);
+    expect(completed.transactionBytes).toEqual(signed.transactionBytes);
+    expect(test.events.filter((event) => event === "approval:claim")).toHaveLength(2);
+    expect(test.events.filter((event) => event === "approval:complete"))
+      .toHaveLength(1);
+  });
+
+  it("recovers a committed claim after its acknowledgement is lost", async () => {
+    const test = harness({ claimThenThrow: true });
+    const prepared = await test.coordinator.prepare(request());
+
+    const signed = await test.coordinator.approve(
+      prepared.id,
+      prepared.messageDigest,
+    );
+    expect(signed.transactionBytes.length).toBeGreaterThan(0);
+    expect(test.owner.outcomes.get(prepared.id)?.state).toBe("signed");
+    expect(test.events.filter((event) => event === "approval:claim")).toHaveLength(1);
+    expect(test.events.filter((event) => event === "approval:signing-read"))
+      .toHaveLength(1);
+    expect(test.events.some((event) => event.startsWith("approval:fail:")))
+      .toBe(false);
+  });
+
+  it("recovers a committed completion after its acknowledgement is lost", async () => {
+    const test = harness({ completeThenThrow: true });
+    const prepared = await test.coordinator.prepare(request());
+
+    const signed = await test.coordinator.approve(
+      prepared.id,
+      prepared.messageDigest,
+    );
+    const durable = test.owner.outcomes.get(prepared.id)!;
+    expect(durable.state).toBe("signed");
+    expect(durable.transactionBytes).toEqual(signed.transactionBytes);
+    expect(test.events.slice(-2)).toEqual([
+      "approval:complete",
+      "approval:signing-read",
+    ]);
+    expect(test.events.some((event) => event.startsWith("approval:fail:")))
+      .toBe(false);
+  });
+
+  it("recovers a committed failure after its acknowledgement is lost", async () => {
+    const test = harness({ valid: (call) => call > 1, failThenThrow: true });
+    const prepared = await test.coordinator.prepare(request());
+
+    await captureError(
+      test.coordinator.approve(prepared.id, prepared.messageDigest),
+      "BLOCKHASH_INVALID",
+    );
+    expect(test.owner.outcomes.get(prepared.id)).toMatchObject({
+      state: "failed",
+      failureCode: "blockhash-invalid",
+      attemptNumber: 1,
+    });
+
+    const signed = await test.coordinator.approve(
+      prepared.id,
+      prepared.messageDigest,
+    );
+    expect(signed.transactionBytes.length).toBeGreaterThan(0);
+    expect(test.owner.outcomes.get(prepared.id)).toMatchObject({
+      state: "signed",
+      attemptNumber: 2,
+    });
+    expect(test.events.filter((event) => event === "approval:signing-read"))
+      .toHaveLength(2);
+  });
+
+  it("retains the sole authority capsule across uncertain durable reads", async () => {
+    const pendingRead = harness();
+    const pending = await pendingRead.coordinator.prepare(request());
+    pendingRead.owner.readFailures = 1;
+    await captureError(
+      pendingRead.coordinator.approve(pending.id, pending.messageDigest),
+      "APPROVAL_RECORD_MISMATCH",
+    );
+    await expect(pendingRead.coordinator.approve(
+      pending.id,
+      pending.messageDigest,
+    )).resolves.toBeDefined();
+
+    const failedRead = harness({ valid: (call) => call > 1 });
+    const failed = await failedRead.coordinator.prepare(request());
+    await captureError(
+      failedRead.coordinator.approve(failed.id, failed.messageDigest),
+      "BLOCKHASH_INVALID",
+    );
+    failedRead.owner.readSigningFailures = 1;
+    await captureError(
+      failedRead.coordinator.approve(failed.id, failed.messageDigest),
+      "APPROVAL_RECORD_MISMATCH",
+    );
+    await expect(failedRead.coordinator.approve(
+      failed.id,
+      failed.messageDigest,
+    )).resolves.toBeDefined();
+  });
+
+  it("releases no signed bytes when disposal races durable completion", async () => {
+    let dispose = (): void => {};
+    const test = harness({ afterCompleteCommit: () => dispose() });
+    dispose = () => test.coordinator.dispose();
+    const prepared = await test.coordinator.prepare(request());
+
+    await captureError(
+      test.coordinator.approve(prepared.id, prepared.messageDigest),
+      "DISPOSED",
+    );
+    expect(test.owner.outcomes.get(prepared.id)?.state).toBe("signed");
+    expect(test.events.some((event) => event.startsWith("approval:fail:")))
+      .toBe(false);
   });
 
   it("rejects sign-and-send before authority/RPC work because no durable result owner exists", async () => {
@@ -472,6 +772,9 @@ describe("session approval coordinator", () => {
       "AUTHORITY_CHANGED",
     );
     expect(test.owner.records.get(prepared.id)?.state).toBe("approved");
+    expect(test.owner.outcomes.get(prepared.id)?.state).toBe("failed");
+    expect(test.owner.outcomes.get(prepared.id)?.failureCode)
+      .toBe("authority-check-failed");
     expect(test.events.some((event) => event.startsWith("keyring:"))).toBe(false);
   });
 
@@ -515,6 +818,9 @@ describe("session approval coordinator", () => {
       "AUTHORITY_CHANGED",
     );
     expect(test.owner.records.get(prepared.id)?.state).toBe("approved");
+    expect(test.owner.outcomes.get(prepared.id)?.state).toBe("failed");
+    expect(test.owner.outcomes.get(prepared.id)?.failureCode)
+      .toBe("authority-check-failed");
     expect(test.events).not.toContain("keyring:end");
   });
 
@@ -526,6 +832,9 @@ describe("session approval coordinator", () => {
       "BLOCKHASH_INVALID",
     );
     expect(test.owner.records.get(prepared.id)?.state).toBe("approved");
+    expect(test.owner.outcomes.get(prepared.id)?.state).toBe("failed");
+    expect(test.owner.outcomes.get(prepared.id)?.failureCode)
+      .toBe("blockhash-invalid");
     expect(test.events.filter((event) => event.startsWith("blockhash:latest")))
       .toHaveLength(1);
     expect(test.events.filter((event) => event.startsWith("blockhash:valid")))
@@ -554,6 +863,8 @@ describe("session approval coordinator", () => {
       "BLOCKHASH_INVALID",
     );
     expect(validityRegression.owner.records.get(prepared.id)?.state).toBe("approved");
+    expect(validityRegression.owner.outcomes.get(prepared.id)?.failureCode)
+      .toBe("blockhash-invalid");
     expect(validityRegression.resolveCalls).toBe(4);
   });
 
@@ -604,6 +915,8 @@ describe("session approval coordinator", () => {
       "KEYRING_CONTEXT_MISMATCH",
     );
     expect(test.owner.records.get(prepared.id)?.state).toBe("approved");
+    expect(test.owner.outcomes.get(prepared.id)?.failureCode)
+      .toBe("keyring-context-mismatch");
     expect(test.resolveCalls).toBe(5);
     expect(test.events).not.toContain("keyring:end");
   });
@@ -643,6 +956,8 @@ describe("session approval coordinator", () => {
       "SIGNED_RESULT_INVALID",
     );
     expect(test.owner.records.get(prepared.id)?.state).toBe("approved");
+    expect(test.owner.outcomes.get(prepared.id)?.failureCode)
+      .toBe("signed-result-invalid");
   });
 
   it("lets a concurrent cancellation win before claim and never enters the keyring", async () => {
