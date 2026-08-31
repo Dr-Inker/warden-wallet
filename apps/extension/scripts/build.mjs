@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -172,11 +172,21 @@ for (const result of [backgroundResult, contentResult, popupResult, approvalResu
   }
 }
 
-await copyFile(join(appDirectory, "manifest.json"), join(outputDirectory, "manifest.json"));
+const sourceManifestText = await readFile(join(appDirectory, "manifest.json"), "utf8");
+const sourceManifest = JSON.parse(sourceManifestText);
+await writeFile(
+  join(outputDirectory, "manifest.json"),
+  `${JSON.stringify(sourceManifest, null, 2)}\n`,
+  { mode: 0o644 },
+);
 await copyFile(join(appDirectory, "popup.html"), join(outputDirectory, "popup.html"));
 await copyFile(join(appDirectory, "approval.html"), join(outputDirectory, "approval.html"));
 await copyFile(join(appDirectory, "approval.css"), join(outputDirectory, "approval.css"));
-const manifest = JSON.parse(await readFile(join(outputDirectory, "manifest.json"), "utf8"));
+const emittedManifestText = await readFile(join(outputDirectory, "manifest.json"), "utf8");
+if (emittedManifestText !== `${JSON.stringify(sourceManifest, null, 2)}\n`) {
+  throw new Error("extension build did not emit the canonical manifest serialization");
+}
+const manifest = JSON.parse(emittedManifestText);
 if (manifest.background?.service_worker !== "background.js") {
   throw new Error("extension manifest does not name the emitted background worker");
 }
