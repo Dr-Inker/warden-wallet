@@ -1,5 +1,140 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C29 DETERMINISTIC EXTENSION UPLOAD ARTIFACT — C6 PARTIAL, NO PUBLISH
+>
+> Implementation commit
+> `4546fc099241745af90dd0d7de2a78f0dc69831d` adds the canonical artifact
+> library, release-only clean-tree/toolchain guard, normalized unpacked tree,
+> Web Store upload ZIP, adjacent artifact manifest, verifier, tamper lane,
+> exact Node/pnpm pins, CI release step, and release-integrity documentation.
+> Fix commit `305efb34b0179c85bf097b4ef03d98ad85d0a99b` makes the production build
+> emit `manifest.json` in the canonical serialization the release parser
+> requires. The first real clean-HEAD package run at `4546fc0` exposed that
+> mismatch and failed closed; it was not called green.
+>
+> The artifact boundary follows Chrome's current primary contract:
+> <https://developer.chrome.com/docs/webstore/prepare> and
+> <https://developer.chrome.com/docs/webstore/publish> require an upload ZIP
+> containing all extension files with `manifest.json` at the archive root.
+> C29 deliberately creates that ZIP, not a CRX and not a Web-Store-returned
+> package. No network, publisher API, account, or Web Store state is touched.
+>
+> The package command requires a clean full Git SHA and exact Node `22.23.2`,
+> pnpm `11.12.0`, and esbuild `0.28.2`; it rebuilds rather than trusting stale
+> `dist`. It admits only the eight reviewed payload paths, rejects symlinks and
+> non-regular/unsafe/duplicate paths, pins the current `[storage]` permission,
+> local-code-only CSP, and absent `update_url`, and scans emitted files for a
+> bounded set of direct network primitives and high-signal secret formats. It
+> writes files as `0644`, directories as `0755`, and all mtimes as
+> `1980-01-01T00:00:00.000Z`.
+>
+> The ZIP writer uses sorted canonical UTF-8 paths, STORE/no compression,
+> classic non-ZIP64 headers, fixed DOS timestamps, Unix `0644` external modes,
+> and no extras/comments. The strict parser rejects any deviation, validates
+> local/central agreement and CRC-32, and compares every path, size, mode, and
+> SHA-256 against canonical JSON. Both extension and artifact manifests reject
+> ambiguous/noncanonical JSON, including duplicate-key encodings. The verifier
+> also calls independent Info-ZIP `unzip -t`.
+>
+> Executable RED was captured before implementation:
+>
+> ```sh
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec vitest run test/release-artifact.test.mjs
+> ```
+>
+> It exited **1** because `../scripts/release-artifact.mjs` did not exist. The
+> implemented lane now has **11/11** contracts. They prove byte identity under
+> input reorder and source mtime/mode drift, normalized unpacked metadata,
+> canonical archive parsing, unsafe-path/duplicate/symlink/mode refusal,
+> canonical manifest/attestation JSON, complete payload verification, and
+> fail-closed rejection after a valid canonical ZIP is recomputed with: exactly
+> one JavaScript byte changed; an added manifest permission; a relaxed CSP; an
+> introduced update URL; a changed dependency-produced `background.js`; or a
+> missing/extra file.
+>
+> The release-only dirty-tree guard was separately red before the implementation
+> commit: `pnpm --filter @warden/extension release:package` exited **1** and
+> listed the tracked/untracked implementation paths rather than packaging them.
+> The first clean package run then found the canonical-manifest integration bug
+> described above. Those failures are evidence that both gates measure their
+> intended boundary, not release verdicts.
+>
+> Exact focused evidence belongs only to clean implementation SHA
+> `305efb34b0179c85bf097b4ef03d98ad85d0a99b`. This command exited **0** with
+> matching first/last SHA:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && if rg -n 'release-artifact|package-release|verify-release|warden\.extension-artifact\.v1' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed extension **485/485**, typecheck, production build, canonical
+> package and verifier, Info-ZIP interoperability, artifact-tool exclusion,
+> diff validation, and clean-tree guards. The measured payload has **8 files**
+> and **925,564 bytes**; the STORE ZIP is **926,374 bytes**. Its payload-tree
+> SHA-256 is
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`,
+> ZIP SHA-256 is
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`,
+> and artifact-manifest SHA-256 is
+> `2d8deac4958fc5ba873527106fa747631a221489b3702be0e912a51d3a389803`.
+> `zipinfo -l apps/extension/release/warden-extension-0.0.1.zip` independently
+> reported eight STORE entries, `-rw-r--r--`, and `80-Jan-01 00:00`; `unzip
+> -Z1` reported the sorted paths with root `manifest.json`.
+>
+> A second same-tree release gate reproduced all three hashes. Two additional
+> clean local clones at the exact implementation SHA installed from the pinned
+> lockfile with separate copied dependency materializations:
+>
+> ```sh
+> env npm_config_cache=/tmp/warden-npm-cache pnpm install --offline --frozen-lockfile --store-dir /tmp/warden-c29-pnpm-store --package-import-method=copy
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate
+> cmp /tmp/warden-c29-builder-a.H0eOHa/apps/extension/release/warden-extension-0.0.1.zip /tmp/warden-c29-builder-b.3pMhPa/apps/extension/release/warden-extension-0.0.1.zip
+> cmp /tmp/warden-c29-builder-a.H0eOHa/apps/extension/release/warden-extension-0.0.1.artifact.json /tmp/warden-c29-builder-b.3pMhPa/apps/extension/release/warden-extension-0.0.1.artifact.json
+> diff -qr /tmp/warden-c29-builder-a.H0eOHa/apps/extension/release/unpacked /tmp/warden-c29-builder-b.3pMhPa/apps/extension/release/unpacked
+> ```
+>
+> Both package gates and all three comparisons exited **0** and both ZIP hashes
+> were `ce1b3a47...`. The builders had separate clean source and `node_modules`
+> trees but shared this host, Node binary, and copied package cache. The first
+> attempt without a writable store failed with `ERR_SQLITE_ERROR` and produced
+> no artifact; it is not counted. All temporary clone/cache paths were removed
+> after comparison and are recoverable by repeating the commands.
+>
+> **Full-repository gate is pending the ledger commit.** Focused C29 evidence
+> never substitutes for `.claude/test-gate.sh`, and no ledger SHA is described
+> as green before that executable gate runs on it.
+>
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+> Production provider routing remains fixed unavailable; C29 changes build and
+> release evidence only.
+>
+> **Harsh residual:** this is a competent upload-ZIP generator, not a release
+> system and emphatically not a deployable wallet. The extension still calls
+> itself development/pre-alpha `0.0.1`; there is no production extension id,
+> account onboarding, deployed release registry, trusted RPC/account
+> composition, provider activation, send/confirm path, external audit, or
+> real-funds evidence. The custom ZIP grammar has interoperability evidence
+> from one Info-ZIP implementation but has never been accepted by the Chrome
+> Web Store. It intentionally rejects store-repacked CRX input, so C6's
+> downloaded-package normalization/comparison remains absent. The adjacent
+> artifact JSON is unsigned and co-generated: if a reviewer does not anchor its
+> exact bytes/hash elsewhere, replacing both JSON and ZIP defeats the verifier.
+> Same-host clean clones are not independent infrastructure or builder identity.
+> Direct-network and secret regexes are guardrails, not semantic no-I/O proof or
+> secret provenance. GitHub Actions still use mutable major tags. There is no
+> extension SBOM/license attachment, provenance signature, publisher
+> MFA/least-privilege evidence, or independent review.
+>
+> **Next load-bearing work:** stay in C6 and keep production unavailable. The
+> next autonomous slice should inventory immutable GitHub Actions SHA pins and
+> deterministic extension SBOM/license attachment, then choose one bounded
+> executable gate. Store-returned-package comparison cannot honestly close
+> until an authorized Web Store round trip exists; do not fake it with a locally
+> wrapped CRX.
+
 > ## 2026-08-31 CLEAN-BREAK PICKUP MEMO — C28 CLOSED; C29 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
