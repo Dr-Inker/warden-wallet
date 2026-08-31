@@ -26,8 +26,9 @@ const approvalOwner = new ApprovalOwner(
 );
 const background = startBackground(backgroundChrome, approvalOwner);
 
-// Every reachable message surface returns only its closed unavailable response
-// after strict provenance and schema checks. Keep initialization failure visible.
+// Provider and popup surfaces remain fixed-unavailable. The separately routed
+// approval page can only read/reject/cancel one URL-bound durable request after
+// readiness; it has no signing capability. Keep initialization failure visible.
 void background.runtimeBoundariesReady.catch((error: unknown) => {
   console.error("Warden extension background initialization failed", error);
 });

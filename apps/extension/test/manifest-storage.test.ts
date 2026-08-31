@@ -50,6 +50,16 @@ describe("MV3 manifest keeps explicit, permission-minimal reachability boundarie
     expect(JSON.stringify(manifest)).not.toContain("unsafe-eval");
     expect(JSON.stringify(manifest)).not.toContain("wasm-unsafe-eval");
   });
+
+  it("keeps the approval document on emitted local assets with no inline handlers", async () => {
+    const html = await readFile(new URL("../approval.html", import.meta.url), "utf8");
+    expect(html).toContain('<link rel="stylesheet" href="approval.css">');
+    expect(html).toContain('<script src="approval.js"></script>');
+    expect(html.match(/<script\b/gi)).toHaveLength(1);
+    expect(html).not.toMatch(/<script(?:\s[^>]*)?>\s*[^<\s]/i);
+    expect(html).not.toMatch(/\son[a-z]+\s*=/i);
+    expect(html).not.toMatch(/(?:src|href)=["']https?:/i);
+  });
 });
 
 describe("storage access is explicitly restricted before runtime use", () => {

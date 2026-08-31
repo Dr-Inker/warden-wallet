@@ -1,0 +1,282 @@
+import { chromium, expect, test, type BrowserContext } from "@playwright/test";
+import {
+  createPendingApprovalRecord,
+  type ApprovalRecord,
+} from "@warden/core/approval";
+import { resolve } from "node:path";
+
+import {
+  APPROVAL_DATABASE_NAME,
+  APPROVAL_DATABASE_VERSION,
+  APPROVAL_OBJECT_STORE_NAME,
+} from "../src/background/approval-store.js";
+
+const EXTENSION_DIRECTORY = resolve(import.meta.dirname, "../dist");
+const SMART_ACCOUNT = "FTPSf3Po3uMpD9KRxWZtaqM27t7zCR8k7oAgz22u2eEC";
+const SMART_ACCOUNT_BYTES = Uint8Array.from(Buffer.from(
+  "d6c617f8f9b6efa8f53b8e3519b87ce86c0d4b8bf97da710769c395d7a6225f9",
+  "hex",
+));
+const WARDEN_PROGRAM_BYTES = Uint8Array.from(Buffer.from(
+  "017b5f72e2c074fa8555206db7ccf465c1db513c725913ca7ce685f135f8bd51",
+  "hex",
+));
+const GOLDEN_MESSAGE_HEX =
+  "80010004072222222222222222222222222222222222222222222222222222222222222222" +
+  "d6c617f8f9b6efa8f53b8e3519b87ce86c0d4b8bf97da710769c395d7a6225f97016a12" +
+  "f469df2029c389bc4a61caf34c1e8f290b01d1971bd12853c70b6a49b0306466fe521173" +
+  "2ffecadba72c39be7bc8ce5bbc5f7126b2c439b3a40000000017b5f72e2c074fa855520" +
+  "6db7ccf465c1db513c725913ca7ce685f135f8bd51bb58ca5e9f58c81171d832ad015248" +
+  "304e438e6b9a0ab891f53c5286275046f7054a535a992921064d24e87160da387c7c35b5" +
+  "ddbc92bb81e41fa8404105448d888888888888888888888888888888888888888888888888" +
+  "88888888888888880303000502c02709000300050100000200040801000204040504062b82" +
+  "ddf29a0dc1bd1d00011d000000010200180077617264656e2072656c656173652063616e64" +
+  "696461746500";
+
+async function liveExtensionWorker(context: BrowserContext) {
+  const current = [...context.serviceWorkers()].reverse().find((worker) =>
+    worker.url().startsWith("chrome-extension://"));
+  if (current !== undefined) return current;
+  return context.waitForEvent("serviceworker", {
+    predicate: (worker) => worker.url().startsWith("chrome-extension://"),
+    timeout: 30_000,
+  });
+}
+
+function approval(idByte: string): ApprovalRecord {
+  const now = Date.now();
+  return createPendingApprovalRecord({
+    id: `req_${idByte.repeat(16)}`,
+    origin: "https://dapp.example",
+    tabId: 7,
+    frameId: 0,
+    documentId: `browser-provider-${idByte}`,
+    account: SMART_ACCOUNT_BYTES,
+    method: "solana:signTransaction",
+    chain: "solana:devnet",
+    genesisHash: new Uint8Array(32).fill(0x99),
+    programId: WARDEN_PROGRAM_BYTES,
+    rawMessage: Uint8Array.from(Buffer.from(GOLDEN_MESSAGE_HEX, "hex")),
+    policyVersion: 1,
+    createdAt: now,
+    expiresAt: now + 120_000,
+  });
+}
+
+function portable(record: ApprovalRecord): Record<string, unknown> {
+  return {
+    ...record,
+    account: Array.from(record.account),
+    genesisHash: Array.from(record.genesisHash),
+    programId: Array.from(record.programId),
+    rawMessage: Array.from(record.rawMessage),
+    messageDigest: Array.from(record.messageDigest),
+  };
+}
+
+async function seedRecord(
+  worker: Awaited<ReturnType<typeof liveExtensionWorker>>,
+  record: ApprovalRecord,
+): Promise<void> {
+  await worker.evaluate(async ({ databaseName, databaseVersion, objectStoreName, value }) => {
+    const database = await new Promise<IDBDatabase>((resolveOpen, rejectOpen) => {
+      const request = indexedDB.open(databaseName, databaseVersion);
+      request.onerror = () => rejectOpen(
+        request.error ?? new Error("approval review database open failed"),
+      );
+      request.onsuccess = () => resolveOpen(request.result);
+    });
+    try {
+      const approval = {
+        ...value,
+        account: new Uint8Array(value.account as number[]),
+        genesisHash: new Uint8Array(value.genesisHash as number[]),
+        programId: new Uint8Array(value.programId as number[]),
+        rawMessage: new Uint8Array(value.rawMessage as number[]),
+        messageDigest: new Uint8Array(value.messageDigest as number[]),
+      };
+      await new Promise<void>((resolveWrite, rejectWrite) => {
+        const transaction = database.transaction(objectStoreName, "readwrite", {
+          durability: "strict",
+        });
+        transaction.oncomplete = () => resolveWrite();
+        transaction.onabort = () => rejectWrite(
+          transaction.error ?? new Error("approval review seed aborted"),
+        );
+        transaction.onerror = () => {};
+        transaction.objectStore(objectStoreName).add({
+          id: value.id,
+          approval,
+          signing: null,
+        });
+      });
+    } finally {
+      database.close();
+    }
+  }, {
+    databaseName: APPROVAL_DATABASE_NAME,
+    databaseVersion: APPROVAL_DATABASE_VERSION,
+    objectStoreName: APPROVAL_OBJECT_STORE_NAME,
+    value: portable(record),
+  });
+}
+
+async function readState(
+  worker: Awaited<ReturnType<typeof liveExtensionWorker>>,
+  id: string,
+): Promise<string | null> {
+  return worker.evaluate(async ({ databaseName, databaseVersion, objectStoreName, id }) => {
+    const database = await new Promise<IDBDatabase>((resolveOpen, rejectOpen) => {
+      const request = indexedDB.open(databaseName, databaseVersion);
+      request.onerror = () => rejectOpen(
+        request.error ?? new Error("approval review database open failed"),
+      );
+      request.onsuccess = () => resolveOpen(request.result);
+    });
+    try {
+      return await new Promise<string | null>((resolveRead, rejectRead) => {
+        const transaction = database.transaction(objectStoreName, "readonly");
+        const request = transaction.objectStore(objectStoreName).get(id);
+        request.onerror = () => rejectRead(
+          request.error ?? new Error("approval review read failed"),
+        );
+        request.onsuccess = () => {
+          const result = request.result as {
+            readonly approval?: { readonly state?: unknown };
+          } | undefined;
+          resolveRead(typeof result?.approval?.state === "string"
+            ? result.approval.state
+            : null);
+        };
+      });
+    } finally {
+      database.close();
+    }
+  }, {
+    databaseName: APPROVAL_DATABASE_NAME,
+    databaseVersion: APPROVAL_DATABASE_VERSION,
+    objectStoreName: APPROVAL_OBJECT_STORE_NAME,
+    id,
+  });
+}
+
+test("approval page renders exact bytes and terminalizes navigation/rejection races", async () => {
+  const context = await chromium.launchPersistentContext("", {
+    headless: false,
+    args: [
+      `--disable-extensions-except=${EXTENSION_DIRECTORY}`,
+      `--load-extension=${EXTENSION_DIRECTORY}`,
+      "--headless=new",
+    ],
+  });
+  try {
+    const worker = await liveExtensionWorker(context);
+    const extensionOrigin = `chrome-extension://${new URL(worker.url()).hostname}`;
+
+    const navigated = approval("a1");
+    await seedRecord(worker, navigated);
+    const reviewPage = await context.newPage();
+    await reviewPage.setViewportSize({ width: 720, height: 900 });
+    await reviewPage.goto(
+      `${extensionOrigin}/approval.html?request=${navigated.id}`,
+    );
+    await expect(reviewPage.locator("#approval-status")).toHaveAttribute(
+      "data-state",
+      "review",
+    );
+    await expect(reviewPage.locator("#request-origin")).toHaveText(
+      "https://dapp.example",
+    );
+    await expect(reviewPage.locator("#memo-value")).toHaveText(
+      "warden release candidate",
+    );
+    await expect(reviewPage.locator("#network-value")).toHaveText("Solana Devnet");
+    await expect(reviewPage.locator("#account-value")).toHaveText(
+      SMART_ACCOUNT,
+    );
+    await expect(reviewPage.locator("#digest-value")).toHaveText(
+      Buffer.from(navigated.messageDigest).toString("hex"),
+    );
+    await expect(reviewPage.locator("[data-action=approve]")).toBeDisabled();
+    const desktopLayout = await reviewPage.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>(".shell")!.getBoundingClientRect();
+      const reject = document.querySelector<HTMLButtonElement>("[data-action=reject]")!
+        .getBoundingClientRect();
+      return {
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: document.documentElement.clientWidth,
+        shellLeft: shell.left,
+        shellRight: shell.right,
+        rejectHeight: reject.height,
+      };
+    });
+    expect(desktopLayout.documentWidth).toBe(desktopLayout.viewportWidth);
+    expect(desktopLayout.shellLeft).toBeGreaterThanOrEqual(0);
+    expect(desktopLayout.shellRight).toBeLessThanOrEqual(desktopLayout.viewportWidth);
+    expect(desktopLayout.rejectHeight).toBeGreaterThanOrEqual(44);
+    await reviewPage.screenshot({
+      path: test.info().outputPath("approval-review-desktop.png"),
+      fullPage: true,
+    });
+
+    await reviewPage.setViewportSize({ width: 390, height: 844 });
+    const mobileLayout = await reviewPage.evaluate(() => {
+      const reject = document.querySelector<HTMLButtonElement>("[data-action=reject]")!
+        .getBoundingClientRect();
+      const approve = document.querySelector<HTMLButtonElement>("[data-action=approve]")!
+        .getBoundingClientRect();
+      return {
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: document.documentElement.clientWidth,
+        rejectHeight: reject.height,
+        approveHeight: approve.height,
+        rejectBottom: reject.bottom,
+        approveTop: approve.top,
+      };
+    });
+    expect(mobileLayout.documentWidth).toBe(mobileLayout.viewportWidth);
+    expect(mobileLayout.rejectHeight).toBeGreaterThanOrEqual(44);
+    expect(mobileLayout.approveHeight).toBeGreaterThanOrEqual(44);
+    expect(mobileLayout.approveTop).toBeGreaterThan(mobileLayout.rejectBottom);
+    await reviewPage.screenshot({
+      path: test.info().outputPath("approval-review-mobile.png"),
+      fullPage: true,
+    });
+    await reviewPage.goto("about:blank");
+    await expect.poll(() => readState(worker, navigated.id)).toBe("cancelled");
+
+    const rejected = approval("b2");
+    await seedRecord(worker, rejected);
+    const rejectionPage = await context.newPage();
+    await rejectionPage.goto(
+      `${extensionOrigin}/approval.html?request=${rejected.id}`,
+    );
+    await expect(rejectionPage.locator("#approval-status")).toHaveAttribute(
+      "data-state",
+      "review",
+    );
+    await rejectionPage.locator("[data-action=reject]").click();
+    await expect(rejectionPage.locator("#approval-status")).toHaveAttribute(
+      "data-state",
+      "rejected",
+    );
+    await expect.poll(() => readState(worker, rejected.id)).toBe("rejected");
+    await rejectionPage.close();
+
+    const raced = approval("c3");
+    await seedRecord(worker, raced);
+    const racePage = await context.newPage();
+    await racePage.goto(`${extensionOrigin}/approval.html?request=${raced.id}`);
+    await expect(racePage.locator("#approval-status")).toHaveAttribute(
+      "data-state",
+      "review",
+    );
+    await Promise.allSettled([
+      racePage.locator("[data-action=reject]").click(),
+      racePage.close(),
+    ]);
+    await expect.poll(() => readState(worker, raced.id)).toMatch(/^(rejected|cancelled)$/);
+  } finally {
+    await context.close();
+  }
+});

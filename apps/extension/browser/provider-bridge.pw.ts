@@ -774,6 +774,29 @@ test("real MV3 bridge binds frames, wakes after worker death, and revokes change
     expect(forgedPopup.exceptionDetails).toBeUndefined();
     expect(forgedPopup.result.value).toEqual({ kind: "disconnect" });
 
+    const forgedApproval = await cdp.send("Runtime.evaluate", {
+      contextId: contentContextId,
+      awaitPromise: true,
+      returnByValue: true,
+      expression: `new Promise((resolve) => {
+        const port = chrome.runtime.connect({ name: "warden:approval-ui:v1" });
+        port.onMessage.addListener((message) => resolve({ kind: "message", message }));
+        port.onDisconnect.addListener(() => {
+          void chrome.runtime.lastError;
+          resolve({ kind: "disconnect" });
+        });
+        port.postMessage({
+          version: 1,
+          type: "request",
+          correlationId: "browser_forged_approval_01",
+          method: "approval:getReview",
+          params: { requestId: "req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        });
+      })`,
+    });
+    expect(forgedApproval.exceptionDetails).toBeUndefined();
+    expect(forgedApproval.result.value).toEqual({ kind: "disconnect" });
+
     const liveWorkers = [...context.serviceWorkers()].reverse();
     let actionWorker: (typeof liveWorkers)[number] | undefined;
     for (const candidate of liveWorkers) {

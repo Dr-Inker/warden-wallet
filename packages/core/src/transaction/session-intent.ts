@@ -20,6 +20,10 @@ import {
 import { BPF_UPGRADEABLE_LOADER } from "../deploy/config.js";
 import { MAX_TX_BYTES } from "../constants.js";
 import { decodeExecutePayload } from "../execute/payload.js";
+import {
+  snapshotApprovalRecord,
+  type ApprovalMethod,
+} from "../approval/record.js";
 import { parseSerializedTransactionEnvelope } from "./envelope.js";
 import type {
   SessionApprovalIntentGate,
@@ -125,7 +129,9 @@ export type SessionIntentErrorCode =
   | "EXECUTE_PAYLOAD_INVALID"
   | "REGISTRY_DENIED"
   | "INSTRUCTION_UNSUPPORTED"
-  | "MEMO_INVALID";
+  | "MEMO_INVALID"
+  | "APPROVAL_RECORD_INVALID"
+  | "APPROVAL_NOT_ACTIVE";
 
 export class SessionIntentError extends Error {
   readonly code: SessionIntentErrorCode;
@@ -192,6 +198,40 @@ export interface SessionMemoIntent {
   readonly programAllowlistId: number;
   readonly observedUnixTimestamp: number;
   readonly contextSlot: number;
+}
+
+/**
+ * Primitive-only projection of one already-authorized durable approval.
+ *
+ * This is intentionally narrower than `SessionMemoIntent`: it proves that the
+ * exact digest-authenticated bytes still have the canonical Warden/Memo wire
+ * shape and binds every displayed account to those bytes. It does not replace
+ * the authority/registry verdict performed before record creation and again
+ * before signing.
+ */
+export interface SessionApprovalReview {
+  readonly kind: "memo-v1";
+  readonly requestId: string;
+  readonly origin: string;
+  readonly method: Extract<ApprovalMethod, "solana:signTransaction">;
+  readonly chain: SessionAuthoritySnapshot["chain"];
+  readonly genesisHash: string;
+  readonly account: string;
+  readonly sessionSigner: string;
+  readonly sessionAccount: string;
+  readonly registry: string;
+  readonly wardenProgram: string;
+  readonly memoProgram: string;
+  readonly recentBlockhash: string;
+  readonly memo: string;
+  readonly memoByteLength: number;
+  readonly computeUnitLimit: number;
+  readonly heapFrameBytes: number;
+  readonly messageByteLength: number;
+  readonly messageDigest: string;
+  readonly policyVersion: number;
+  readonly createdAt: number;
+  readonly expiresAt: number;
 }
 
 /** Reject a session that may expire during approval/signing/network latency. */
@@ -1038,6 +1078,185 @@ export function assertUsableSessionAuthority(
     fail("INVALID_INPUT", "nowUnixSeconds must not be negative");
   }
   validateAuthorityContext(input.authority, nowUnixSeconds);
+}
+
+/**
+ * Reparse the exact bytes owned by one pending durable approval for display.
+ * No page-supplied label or account enters this projection. The approval owner
+ * must perform its clock-aware read first so expired records are terminalized
+ * before this synchronous decoder is called.
+ */
+export function decodeSessionApprovalReview(
+  value: unknown,
+): SessionApprovalReview {
+  let approval;
+  try {
+    approval = snapshotApprovalRecord(value);
+  } catch (error) {
+    fail(
+      "APPROVAL_RECORD_INVALID",
+      "durable approval record is malformed",
+      error,
+    );
+  }
+
+  let unsigned: Uint8Array | undefined;
+  let staticAccountKeys: readonly Uint8Array[] | undefined;
+  let instructions: ReturnType<
+    typeof parseSerializedTransactionEnvelope
+  >["instructions"] | undefined;
+  let recentBlockhash: Uint8Array | undefined;
+  let memoData: Uint8Array | undefined;
+  try {
+    if (approval.state !== "pending") {
+      fail("APPROVAL_NOT_ACTIVE", "only a pending approval may be reviewed");
+    }
+    if (approval.method !== "solana:signTransaction") {
+      fail(
+        "APPROVAL_RECORD_INVALID",
+        "approval method has no reviewable signing route",
+      );
+    }
+    if (
+      allZero(approval.account) ||
+      allZero(approval.genesisHash) ||
+      allZero(approval.programId) ||
+      !bytesEqual(approval.programId, CANONICAL_WARDEN_PROGRAM.toBytes())
+    ) {
+      fail(
+        "APPROVAL_RECORD_INVALID",
+        "approval authority fields are not canonical",
+      );
+    }
+
+    // The durable object is the serialized message, not a transaction. Wrap it
+    // in the unique unsigned one-signature envelope used by the authority gate
+    // so the same strict ShortU16/version/index/end-of-input parser is reused.
+    unsigned = new Uint8Array(1 + 64 + approval.rawMessage.length);
+    unsigned[0] = 1;
+    unsigned.set(approval.rawMessage, 65);
+    let envelope;
+    try {
+      envelope = parseSerializedTransactionEnvelope(unsigned);
+    } catch (error) {
+      fail(
+        "MESSAGE_INVALID",
+        "approved message failed the strict Solana parser",
+        error,
+      );
+    }
+    staticAccountKeys = envelope.staticAccountKeys;
+    instructions = envelope.instructions;
+    recentBlockhash = envelope.recentBlockhash;
+
+    if (
+      envelope.version !== 0 ||
+      envelope.header.numRequiredSignatures !== 1 ||
+      envelope.header.numReadonlySignedAccounts !== 0 ||
+      envelope.header.numReadonlyUnsignedAccounts !== 4 ||
+      instructions.length !== 3 ||
+      staticAccountKeys.length !== 7 ||
+      !bytesEqual(staticAccountKeys[1]!, approval.account) ||
+      !bytesEqual(staticAccountKeys[3]!, COMPUTE_BUDGET_PROGRAM.toBytes()) ||
+      !bytesEqual(staticAccountKeys[4]!, approval.programId) ||
+      !bytesEqual(staticAccountKeys[6]!, MEMO_PROGRAM.toBytes()) ||
+      allZero(staticAccountKeys[0]!) ||
+      allZero(staticAccountKeys[2]!) ||
+      allZero(staticAccountKeys[5]!) ||
+      allZero(recentBlockhash)
+    ) {
+      fail(
+        "MESSAGE_SHAPE_UNSUPPORTED",
+        "approval message authority, account set, or canonical ordering changed",
+      );
+    }
+
+    const unitInstruction = instructions[0]!;
+    const heapInstruction = instructions[1]!;
+    const executeInstruction = instructions[2]!;
+    if (
+      unitInstruction.programIdIndex !== 3 ||
+      unitInstruction.accountKeyIndexes.length !== 0 ||
+      unitInstruction.data.length !== 5 ||
+      unitInstruction.data[0] !== COMPUTE_SET_UNIT_LIMIT
+    ) {
+      fail(
+        "COMPUTE_BUDGET_INVALID",
+        "first approval instruction must be one SetComputeUnitLimit",
+      );
+    }
+    const computeUnitLimit = readU32le(unitInstruction.data, 1);
+    if (
+      computeUnitLimit < MIN_COMPUTE_UNIT_LIMIT ||
+      computeUnitLimit > MAX_COMPUTE_UNIT_LIMIT
+    ) {
+      fail(
+        "COMPUTE_BUDGET_INVALID",
+        "approval compute-unit limit is outside the supported range",
+      );
+    }
+    if (
+      heapInstruction.programIdIndex !== 3 ||
+      heapInstruction.accountKeyIndexes.length !== 0 ||
+      heapInstruction.data.length !== 5 ||
+      heapInstruction.data[0] !== COMPUTE_REQUEST_HEAP_FRAME ||
+      readU32le(heapInstruction.data, 1) !== MEMO_HEAP_FRAME_BYTES
+    ) {
+      fail(
+        "COMPUTE_BUDGET_INVALID",
+        `second approval instruction must request exactly ${MEMO_HEAP_FRAME_BYTES} heap bytes`,
+      );
+    }
+    if (executeInstruction.programIdIndex !== 4) {
+      fail("EXECUTE_LAYOUT_INVALID", "approval instruction is not Warden execute");
+    }
+    requireExactIndexes(
+      executeInstruction.accountKeyIndexes,
+      [1, 0, 2, 4, 4, 5, 4, 6],
+      "approval execute",
+    );
+    memoData = decodeMemoPayload(executeInstruction.data);
+    const memo = decodePrintableMemo(memoData);
+
+    return Object.freeze({
+      kind: "memo-v1",
+      requestId: approval.id,
+      origin: approval.origin,
+      method: approval.method,
+      chain: approval.chain,
+      genesisHash: new PublicKey(approval.genesisHash).toBase58(),
+      account: new PublicKey(approval.account).toBase58(),
+      sessionSigner: new PublicKey(staticAccountKeys[0]!).toBase58(),
+      sessionAccount: new PublicKey(staticAccountKeys[2]!).toBase58(),
+      registry: new PublicKey(staticAccountKeys[5]!).toBase58(),
+      wardenProgram: new PublicKey(approval.programId).toBase58(),
+      memoProgram: MEMO_PROGRAM.toBase58(),
+      recentBlockhash: new PublicKey(recentBlockhash).toBase58(),
+      memo,
+      memoByteLength: memoData.length,
+      computeUnitLimit,
+      heapFrameBytes: MEMO_HEAP_FRAME_BYTES,
+      messageByteLength: approval.rawMessage.length,
+      messageDigest: bytesToHex(approval.messageDigest),
+      policyVersion: approval.policyVersion,
+      createdAt: approval.createdAt,
+      expiresAt: approval.expiresAt,
+    });
+  } finally {
+    approval.account.fill(0);
+    approval.genesisHash.fill(0);
+    approval.programId.fill(0);
+    approval.rawMessage.fill(0);
+    approval.messageDigest.fill(0);
+    unsigned?.fill(0);
+    recentBlockhash?.fill(0);
+    memoData?.fill(0);
+    for (const key of staticAccountKeys ?? []) key.fill(0);
+    for (const instruction of instructions ?? []) {
+      instruction.accountKeyIndexes.fill(0);
+      instruction.data.fill(0);
+    }
+  }
 }
 
 /** Decode and authorize one exact final message without RPC or asynchronous work. */

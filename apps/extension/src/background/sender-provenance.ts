@@ -1,6 +1,8 @@
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
 const DOCUMENT_ID_PATTERN = /^[\x21-\x7e]+$/;
 const UI_PATH_PATTERN = /^\/[A-Za-z0-9._/-]+$/;
+const APPROVAL_REQUEST_ID_PATTERN = /^req_[0-9a-f]{32}$/;
+const APPROVAL_UI_PATH = "/approval.html";
 
 const MAX_DOCUMENT_ID_LENGTH = 128;
 const MAX_ORIGIN_LENGTH = 2_048;
@@ -33,6 +35,17 @@ export interface PrivilegedUiProvenance {
   readonly path: string;
   readonly tabId: number | null;
   readonly frameId: number | null;
+}
+
+export interface ApprovalUiProvenance {
+  readonly kind: "approval-ui";
+  readonly extensionId: string;
+  readonly documentId: string;
+  readonly extensionOrigin: string;
+  readonly path: typeof APPROVAL_UI_PATH;
+  readonly requestId: string;
+  readonly tabId: number;
+  readonly frameId: 0;
 }
 
 export interface SenderClassifierInput {
@@ -281,5 +294,60 @@ export function classifyPrivilegedUiSender(
     path: parsed.pathname,
     tabId,
     frameId,
+  });
+}
+
+/**
+ * Bind one full-page approval document to the exact request id in Chrome's
+ * sender URL. Unlike the tabless action popup, this surface always requires a
+ * browser document id, tab id, and top-frame identity. The page repeats the id
+ * in its strict protocol message, but that value never overrides this tuple.
+ */
+export function classifyApprovalUiSender(
+  input: SenderClassifierInput,
+): ApprovalUiProvenance {
+  const runtimeId = requireRuntimeId(input.runtimeId);
+  const sender = requireRecord(input.sender, "sender");
+  requireExtensionOwner(sender, runtimeId);
+  rejectAmbiguousSenderKinds(sender);
+  const documentId = requireDocumentId(sender);
+  requireActiveLifecycle(sender);
+
+  const extensionOrigin = `chrome-extension://${runtimeId}`;
+  if (sender.origin !== extensionOrigin) {
+    invalid("approval UI origin does not match this extension");
+  }
+  const value = requireBoundedString(sender.url, "sender URL", MAX_SENDER_URL_LENGTH);
+  const parsed = parseUrl(value, "sender URL");
+  const requestId = parsed.search.startsWith("?request=")
+    ? parsed.search.slice("?request=".length)
+    : "";
+  if (
+    parsed.protocol !== "chrome-extension:" ||
+    parsed.hostname !== runtimeId ||
+    parsed.port !== "" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.pathname !== APPROVAL_UI_PATH ||
+    parsed.hash !== "" ||
+    !APPROVAL_REQUEST_ID_PATTERN.test(requestId) ||
+    value !== `${extensionOrigin}${APPROVAL_UI_PATH}?request=${requestId}`
+  ) {
+    invalid("approval UI URL is not one exact request page");
+  }
+
+  const tabId = requireTabId(sender);
+  const frameId = requireNonNegativeInteger(sender.frameId, "frame id");
+  if (frameId !== 0) invalid("approval UI must be the tab's top frame");
+
+  return Object.freeze({
+    kind: "approval-ui",
+    extensionId: runtimeId,
+    documentId,
+    extensionOrigin,
+    path: APPROVAL_UI_PATH,
+    requestId,
+    tabId,
+    frameId: 0,
   });
 }

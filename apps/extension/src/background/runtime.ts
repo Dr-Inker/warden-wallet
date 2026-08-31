@@ -1,3 +1,5 @@
+import { decodeSessionApprovalReview } from "@warden/core/transaction/session-intent";
+
 import {
   restrictStorageToTrustedContexts,
   type ExtensionStorageAccessApi,
@@ -9,9 +11,10 @@ import {
   type ProviderRuntimeApi,
 } from "./provider-port.js";
 import {
-  installUnavailableRuntimeBoundaries,
-  type UnavailableRuntimeBoundaries,
+  installRuntimeBoundaries,
+  type RuntimeBoundaries,
 } from "./runtime-ports.js";
+import type { ApprovalReviewOwner } from "./approval-port.js";
 import {
   KEYRING_RECORD_STORAGE_KEY,
   type KeyringRecordStorageArea,
@@ -61,14 +64,14 @@ export interface ExtensionBackgroundChromeApi {
 }
 
 export interface ExtensionBackgroundApplication extends ExtensionBackgroundRuntime {
-  readonly runtimeBoundariesReady: Promise<UnavailableRuntimeBoundaries>;
+  readonly runtimeBoundariesReady: Promise<RuntimeBoundaries>;
   /** Rejects on a post-startup record-change cleanup failure. */
   readonly fatal: Promise<never>;
   dispose(): void;
 }
 
 /** Shipped startup owns this lifecycle, but exposes none of its record methods. */
-export interface ApprovalStartupLifecycle {
+export interface ApprovalStartupLifecycle extends ApprovalReviewOwner {
   invalidateAfterWorkerRestart(): Promise<number>;
   close(): void;
 }
@@ -92,11 +95,14 @@ function requireApprovalStartupLifecycle(value: unknown): ApprovalStartupLifecyc
   }
   const lifecycle = value as Partial<ApprovalStartupLifecycle>;
   if (
+    typeof lifecycle.read !== "function" ||
+    typeof lifecycle.reject !== "function" ||
+    typeof lifecycle.cancel !== "function" ||
     typeof lifecycle.invalidateAfterWorkerRestart !== "function" ||
     typeof lifecycle.close !== "function"
   ) {
     throw new TypeError(
-      "extension background: approval lifecycle must support invalidation and close",
+      "extension background: approval lifecycle must support review, rejection, cancellation, invalidation, and close",
     );
   }
   return value as ApprovalStartupLifecycle;
@@ -247,9 +253,10 @@ export function bootstrapBackground(
  * Register the zero-privilege wake listener during top-level worker evaluation.
  * MV3 can dispatch the event that starts a worker before any promise settles, so
  * asynchronous listener registration would miss connections after suspension.
- * These boundaries can only return fixed unavailable responses; background.ready
- * remains the mandatory gate for every future storage-backed or privileged
- * subsystem.
+ * Provider and popup boundaries return fixed unavailable responses. The approval
+ * page can read/reject/cancel only after `background.ready`; its listener is
+ * still registered synchronously so a wake connection is queued behind that
+ * mandatory gate rather than missed.
  */
 export function startBackground(
   chromeApi: ExtensionBackgroundChromeApi,
@@ -264,10 +271,29 @@ export function startBackground(
     approvalClosed = true;
     approvalLifecycle.close();
   };
-  let boundary: UnavailableRuntimeBoundaries;
+  let resolveApprovalRuntimeReady!: () => void;
+  let rejectApprovalRuntimeReady!: (error: unknown) => void;
+  const approvalRuntimeReady = new Promise<void>((resolve, reject) => {
+    resolveApprovalRuntimeReady = resolve;
+    rejectApprovalRuntimeReady = reject;
+  });
+  // A failed bootstrap can occur before any approval page connects. Keep the
+  // deferred gate observed while preserving its rejection for future handlers.
+  void approvalRuntimeReady.catch(() => undefined);
+  const queuedApprovalFatals: unknown[] = [];
+  let reportApprovalFatal = (error: unknown): void => {
+    if (queuedApprovalFatals.length === 0) queuedApprovalFatals.push(error);
+  };
+  let boundary: RuntimeBoundaries;
   try {
-    boundary = installUnavailableRuntimeBoundaries(chromeApi.runtime);
+    boundary = installRuntimeBoundaries(chromeApi.runtime, {
+      approvals: approvalLifecycle,
+      ready: approvalRuntimeReady,
+      projectReview: decodeSessionApprovalReview,
+      onFatal: (error) => reportApprovalFatal(error),
+    });
   } catch (error) {
+    rejectApprovalRuntimeReady(error);
     try {
       closeApproval();
     } catch (closeError) {
@@ -298,7 +324,12 @@ export function startBackground(
     );
     background = initialized.runtime;
     keyringOwner = initialized.owner;
+    void background.ready.then(
+      () => resolveApprovalRuntimeReady(),
+      (error: unknown) => rejectApprovalRuntimeReady(error),
+    );
   } catch (error) {
+    rejectApprovalRuntimeReady(error);
     const cleanupErrors: unknown[] = [];
     try {
       boundary.dispose();
@@ -360,6 +391,9 @@ export function startBackground(
     disposed = true;
     rejectFatal(closeFailure(error, "record invalidation and runtime cleanup both failed"));
   };
+  reportApprovalFatal = failClosed;
+  if (queuedApprovalFatals.length > 0) failClosed(queuedApprovalFatals[0]);
+  queuedApprovalFatals.length = 0;
   const onStorageChanged = (
     changes: unknown,
     areaName: string,

@@ -1,4 +1,9 @@
 import {
+  installApprovalReviewBoundary,
+  type ApprovalReviewBoundary,
+  type ApprovalReviewBoundaryOptions,
+} from "./approval-port.js";
+import {
   installUnavailablePopupBoundary,
   type UnavailablePopupBoundary,
 } from "./popup-port.js";
@@ -11,9 +16,10 @@ import {
   type UnavailableProviderBoundary,
 } from "./provider-port.js";
 import { POPUP_PORT_NAME } from "../popup-protocol.js";
+import { APPROVAL_UI_PORT_NAME } from "../approval-protocol.js";
 import { PROVIDER_PORT_NAME } from "../provider-protocol.js";
 
-export interface UnavailableRuntimeBoundaries {
+export interface RuntimeBoundaries {
   dispose(): void;
 }
 
@@ -55,10 +61,11 @@ function safeDisconnectUnknown(value: unknown): void {
  * child schema runs. This prevents independent listeners from disconnecting
  * one another's Ports while keeping unknown channels fail-closed.
  */
-export function installUnavailableRuntimeBoundaries(
+export function installRuntimeBoundaries(
   runtime: ProviderRuntimeApi,
+  approvalOptions: ApprovalReviewBoundaryOptions,
   providerOptions: ProviderPortSessionOptions = {},
-): UnavailableRuntimeBoundaries {
+): RuntimeBoundaries {
   if (
     typeof runtime !== "object" ||
     runtime === null ||
@@ -72,8 +79,10 @@ export function installUnavailableRuntimeBoundaries(
 
   const providerEvents = new RoutedConnectEvent();
   const popupEvents = new RoutedConnectEvent();
+  const approvalEvents = new RoutedConnectEvent();
   let providerBoundary: UnavailableProviderBoundary | null = null;
   let popupBoundary: UnavailablePopupBoundary | null = null;
+  let approvalBoundary: ApprovalReviewBoundary | null = null;
   try {
     providerBoundary = installUnavailableProviderBoundary(
       { id: runtime.id, onConnect: providerEvents },
@@ -83,7 +92,12 @@ export function installUnavailableRuntimeBoundaries(
       id: runtime.id,
       onConnect: popupEvents,
     });
+    approvalBoundary = installApprovalReviewBoundary(
+      { id: runtime.id, onConnect: approvalEvents },
+      approvalOptions,
+    );
   } catch (error) {
+    approvalBoundary?.dispose();
     popupBoundary?.dispose();
     providerBoundary?.dispose();
     throw error;
@@ -99,6 +113,8 @@ export function installUnavailableRuntimeBoundaries(
       providerEvents.emit(port);
     } else if (port.name === POPUP_PORT_NAME) {
       popupEvents.emit(port);
+    } else if (port.name === APPROVAL_UI_PORT_NAME) {
+      approvalEvents.emit(port);
     } else {
       safeDisconnectUnknown(port);
     }
@@ -107,6 +123,7 @@ export function installUnavailableRuntimeBoundaries(
   try {
     runtime.onConnect.addListener(onConnect);
   } catch (error) {
+    approvalBoundary.dispose();
     popupBoundary.dispose();
     providerBoundary.dispose();
     throw error;
@@ -120,9 +137,13 @@ export function installUnavailableRuntimeBoundaries(
         runtime.onConnect.removeListener(onConnect);
       } finally {
         try {
-          popupBoundary.dispose();
+          approvalBoundary.dispose();
         } finally {
-          providerBoundary.dispose();
+          try {
+            popupBoundary.dispose();
+          } finally {
+            providerBoundary.dispose();
+          }
         }
       }
     },

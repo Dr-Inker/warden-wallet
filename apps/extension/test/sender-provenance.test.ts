@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  classifyApprovalUiSender,
   classifyPrivilegedUiSender,
   classifyProviderSender,
   SenderProvenanceError,
@@ -222,5 +223,70 @@ describe("privileged extension UI Port.sender provenance", () => {
         allowedPaths,
       }),
     ).toThrow(SenderProvenanceError);
+  });
+});
+
+describe("full-page approval UI Port.sender provenance", () => {
+  const requestId = `req_${"ab".repeat(16)}`;
+  const approvalUrl =
+    `chrome-extension://${EXTENSION_ID}/approval.html?request=${requestId}`;
+
+  function approvalSender(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return uiSender({
+      frameId: 0,
+      tab: { id: 23, url: approvalUrl },
+      url: approvalUrl,
+      ...overrides,
+    });
+  }
+
+  it("binds one exact request id to one browser-owned top-frame document", () => {
+    const result = classifyApprovalUiSender({
+      runtimeId: EXTENSION_ID,
+      sender: approvalSender(),
+    });
+
+    expect(result).toEqual({
+      kind: "approval-ui",
+      extensionId: EXTENSION_ID,
+      documentId: DOCUMENT_ID,
+      extensionOrigin: `chrome-extension://${EXTENSION_ID}`,
+      path: "/approval.html",
+      requestId,
+      tabId: 23,
+      frameId: 0,
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it.each([
+    ["content script", providerSender()],
+    ["tabless page", approvalSender({ tab: undefined, frameId: undefined })],
+    ["missing document", approvalSender({ documentId: undefined })],
+    ["nested frame", approvalSender({ frameId: 2 })],
+    ["missing query", approvalSender({
+      url: `chrome-extension://${EXTENSION_ID}/approval.html`,
+    })],
+    ["extra query", approvalSender({ url: `${approvalUrl}&mode=approve` })],
+    ["duplicate query", approvalSender({
+      url: `${approvalUrl}&request=${requestId}`,
+    })],
+    ["fragment", approvalSender({ url: `${approvalUrl}#approve` })],
+    ["encoded id", approvalSender({
+      url: `chrome-extension://${EXTENSION_ID}/approval.html?request=req_%61b${"ab".repeat(15)}`,
+    })],
+    ["malformed id", approvalSender({
+      url: `chrome-extension://${EXTENSION_ID}/approval.html?request=req_short`,
+    })],
+    ["other page", approvalSender({
+      url: `chrome-extension://${EXTENSION_ID}/popup.html?request=${requestId}`,
+    })],
+  ])("rejects a %s", (_label, sender) => {
+    expect(() => classifyApprovalUiSender({
+      runtimeId: EXTENSION_ID,
+      sender,
+    })).toThrow(SenderProvenanceError);
   });
 });

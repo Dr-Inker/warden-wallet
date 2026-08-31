@@ -23,6 +23,15 @@ export default defineConfig({
         ),
       },
       {
+        find: "@warden/core/transaction/session-intent",
+        replacement: fileURLToPath(
+          new URL(
+            "../../packages/core/src/transaction/session-intent.ts",
+            import.meta.url,
+          ),
+        ),
+      },
+      {
         find: "@warden/core",
         replacement: fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)),
       },

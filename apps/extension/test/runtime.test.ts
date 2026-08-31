@@ -230,6 +230,9 @@ function observableStorage(
 function startBackground(
   chromeApi: ExtensionBackgroundChromeApi,
   approvalLifecycle: ApprovalStartupLifecycle = {
+    read: async () => null,
+    reject: async () => Promise.reject(new Error("approval unavailable")),
+    cancel: async () => Promise.reject(new Error("approval unavailable")),
     invalidateAfterWorkerRestart: async () => 0,
     close: () => {},
   },
@@ -505,6 +508,9 @@ describe("MV3 background bootstrap", () => {
     const calls: string[] = [];
     let approvalCloses = 0;
     const approvalStartup = {
+      read: async () => null,
+      reject: async () => Promise.reject(new Error("approval unavailable")),
+      cancel: async () => Promise.reject(new Error("approval unavailable")),
       async invalidateAfterWorkerRestart(): Promise<number> {
         calls.push("approval:invalidate");
         await approvalGate.promise;
@@ -565,6 +571,9 @@ describe("MV3 background bootstrap", () => {
       storage: observableStorage(storage, onStorageChanged),
       runtime: { id: "a".repeat(32), onConnect },
     }, {
+      read: async () => null,
+      reject: async () => Promise.reject(new Error("approval unavailable")),
+      cancel: async () => Promise.reject(new Error("approval unavailable")),
       invalidateAfterWorkerRestart: async () => {
         throw new Error("approval database unavailable");
       },

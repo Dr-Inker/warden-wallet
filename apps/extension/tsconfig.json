@@ -7,7 +7,8 @@
       "@warden/core": ["../../packages/core/src/index.ts"],
       "@warden/core/approval": ["../../packages/core/src/approval/index.ts"],
       "@warden/core/constants": ["../../packages/core/src/constants.ts"],
-      "@warden/core/keyring": ["../../packages/core/src/keyring/index.ts"]
+      "@warden/core/keyring": ["../../packages/core/src/keyring/index.ts"],
+      "@warden/core/transaction/session-intent": ["../../packages/core/src/transaction/session-intent.ts"]
     },
     "types": ["node"]
   },

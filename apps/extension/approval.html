@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Review request · Warden</title>
+    <link rel="stylesheet" href="approval.css">
+  </head>
+  <body>
+    <main class="shell" aria-labelledby="page-title">
+      <header class="brand-row">
+        <div class="brand-mark" aria-hidden="true">W</div>
+        <div>
+          <p class="eyebrow">Warden wallet</p>
+          <h1 id="page-title">Review request</h1>
+        </div>
+        <span class="build-badge">Pre-alpha</span>
+      </header>
+
+      <section class="request-card" aria-describedby="approval-status">
+        <div class="origin-block">
+          <span class="label">Request from</span>
+          <strong id="request-origin" class="origin">Waiting for the background…</strong>
+        </div>
+
+        <div class="intent-block">
+          <span class="label">Exact decoded action</span>
+          <p id="memo-value" class="memo">—</p>
+          <p class="intent-caption">Post one account-less Memo through Warden execute.</p>
+        </div>
+
+        <dl class="facts">
+          <div>
+            <dt>Network</dt>
+            <dd id="network-value">—</dd>
+          </div>
+          <div>
+            <dt>Method</dt>
+            <dd id="method-value">—</dd>
+          </div>
+          <div class="wide">
+            <dt>Smart account</dt>
+            <dd id="account-value" class="mono">—</dd>
+          </div>
+          <div class="wide">
+            <dt>Message SHA-256</dt>
+            <dd id="digest-value" class="mono digest">—</dd>
+          </div>
+          <div>
+            <dt>Policy version</dt>
+            <dd id="policy-value">—</dd>
+          </div>
+          <div>
+            <dt>Expires</dt>
+            <dd id="expiry-value">—</dd>
+          </div>
+          <div class="wide subtle-fact">
+            <dt>Request id</dt>
+            <dd id="request-id-value" class="mono">—</dd>
+          </div>
+        </dl>
+
+        <p id="approval-status" class="status" role="status" data-state="loading">
+          Loading the exact durable request…
+        </p>
+
+        <div class="warning" role="note">
+          <strong>Review only.</strong>
+          Signing and provider success are disabled in this build. This page cannot approve,
+          sign, send, or change the account or network.
+        </div>
+
+        <div class="actions">
+          <button type="button" class="button secondary" data-action="reject" disabled>
+            Reject request
+          </button>
+          <button type="button" class="button primary" data-action="approve" disabled>
+            Signing unavailable
+          </button>
+        </div>
+      </section>
+    </main>
+    <script src="approval.js"></script>
+  </body>
+</html>
