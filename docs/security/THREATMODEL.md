@@ -2999,6 +2999,20 @@ five times (**20/20**), production build, emitted-artifact exclusion,
 `git diff --check`, and clean-tree guards passed. The ledger-inclusive full
 repository gate is not inferred from this focused evidence.
 
+Ledger-inclusive full-repository evidence belongs only to
+`a9127d978d645a91df4cb79161ff01bcbe5789b2`. From a clean tree, the exact
+command in `docs/NEXT-SESSION.md` ran `.claude/test-gate.sh`, scanned the emitted
+extension for all C24-C26 checkpoint, marker, counter, fixture, and status
+strings, validated the diff, and guarded SHA and worktree on both sides. It
+exited **0** with the same SHA printed before and after. The executable gate
+passed core **700/700**, extension **473/473**, UI tokens **11/11**,
+transaction-budget **8/8**, WebAuthn **1/1**, real Chromium **13/13**,
+builds/typechecks, the production Argon2 benchmark, the complete Rust workspace
+suite, artifact exclusion, and clean-tree guards. Known Anchor test-program key,
+legacy macro-`cfg`, and Rust unused-code warnings were non-fatal. The
+evidence-only documentation commit recording this result does not inherit the
+verdict or promote an invariant.
+
 Primary references checked were the IndexedDB specification
 <https://w3c.github.io/IndexedDB/>, Chrome's extension service-worker lifecycle
 <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
