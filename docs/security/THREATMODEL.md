@@ -1033,3 +1033,56 @@ inside the abortable lease. State can change immediately after observation and
 blockhashes can expire immediately after a true response. Sender, confirmation,
 fees/simulation, Chrome-floor/Brave/device matrices, independent Rust
 differential/fuzzing, and independent second-model review remain UNVERIFIED.
+
+---
+
+## Client C4 deterministic Memo intent gate — fa71bf3 — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** core exports a separate opt-in
+`@warden/core/transaction/session-intent` module. It accepts exact final message
+bytes plus a fixed-width raw observation of SmartAccount, SessionKey, and
+Registry state and returns a frozen primitive-only description. It also exports
+a synchronous coordinator gate and the canonical packet encoder. No extension
+source imports this subpath; no provider method, page, permission, CSP rule,
+storage schema, or network path changed.
+
+**Removed / narrowed:** a benign verdict now exists for exactly one
+account-less printable-ASCII Memo inner instruction. The decoder pins the
+lookup-free-v0 signer/header/static-key layout, ComputeBudget order and bounds,
+Warden program/discriminator/account indices, exact Borsh inline-session shape,
+single inner payload, Memo id/data bounds, canonical state owners/lengths/
+discriminators/versions/PDAs/reserved bytes, unfrozen/generation/policy/session
+authority, and selected Registry membership. Unknown, malformed, ambiguous,
+future-versioned, aliased, staged/root, extra-instruction, or account-bearing
+shapes throw; there is no permissive fallback. Inputs are read once, bounded
+before copying, and copy-owned. A fixed 333-byte golden equals the production
+session builder's output. Rust pins the client-consumed account offsets plus all
+four Anchor discriminators.
+
+Research against Solana transactions, Agave ComputeBudget parsing, the Memo
+program, and SPL Token's instruction source establishes the scope boundary:
+program bytes are enough to describe an account-less Memo, but not enough to
+state the actual consequence of a token transfer without message-keyed account
+state (mint, owner, balance, and destination). Token and every other instruction
+therefore remain denied.
+
+**New invariants:** none promoted. `WRD-TXI-01` remains `unimplemented`: one
+narrow decoder exists, but the shipped extension still has no real resolver,
+approval render/recheck path, or successful signing route, and the compound
+invariant requires all supported instructions to be locally decoded with no
+blind fallback.
+
+**Residual, stated honestly:** the packet binds only the supplied raw
+SmartAccount/SessionKey/Registry observation; no real RPC implementation proves
+those bytes came from one canonical cluster context. It does not attest the
+Warden executable/ProgramData bytes, loader/upgrade state, or public-chain
+genesis-label mapping. Registry state is exact-compared during approval, but
+only the selected Memo entry is interpreted here; complete reviewed Registry
+configuration remains the deploy gate's job. The synchronous clock is locally
+injected and not cluster-authenticated. Lamports/rent epoch are omitted as
+non-authorizing fields, but absent accounts still need explicit resolver
+handling. There is no simulation or on-chain Memo landing test, real authority
+resolver, approval UI, provider composition, send/confirmation/replay owner, or
+token consequence model. The decoder's size and Memo-only utility are poor.
+Independent second-model review and fuzz/differential coverage remain
+UNVERIFIED.

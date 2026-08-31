@@ -1,5 +1,120 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C4 DETERMINISTIC MEMO INTENT — ONE SAFE VERB CLOSED, RUNTIME AUTHORITY STILL ABSENT
+>
+> Implementation commit `fa71bf3aef0269a73bb1881b29ba1a69ed932993`
+> adds the separate opt-in `@warden/core/transaction/session-intent` boundary.
+> The first contract was genuinely red: `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest
+> run test/session-intent.test.ts` exited **1** before collection because
+> `../src/transaction/session-intent.js` did not exist. A later hostile-getter
+> regression was also red under that command: **83 passed / 2 failed**, exit
+> **1**, because repeated property reads let bounded validation and subsequent
+> copying observe different `messageBytes`/`authorizationState` arrays.
+>
+> The decoder returns a benign verdict for exactly one consequence: one
+> account-less, 1–256-byte printable-ASCII Memo CPI. It accepts only an exact
+> lookup-free v0 message with the session signer as its sole writable signer,
+> seven canonical static keys, a nonzero blockhash, one SetComputeUnitLimit in
+> the measured 120,000–1,400,000 range, one exact 128-KiB heap request, and one
+> final Warden `execute`. The execute account indices, literal shipped Warden
+> program id/discriminator, `root=None`, `payload=Some`, Borsh vector length,
+> one inner instruction, logical Memo-program index, zero inner accounts, and
+> end-of-input are all exact. Price/data-size/unknown/duplicate/reordered budget
+> instructions, root/staged variants, lookups, extra instructions, aliases,
+> account-role drift, unknown programs, multiple payloads, and non-printable or
+> oversized Memo data fail closed. The result is a frozen primitive-only render
+> object; it exposes no mutable byte alias.
+>
+> The resolver-state packet is fixed-width and versioned (`WRDAUTH` + v1) and
+> copy-owns the owner, executable flag, and exact raw data of SmartAccount,
+> SessionKey, and Registry. The decoder requires exact canonical lengths,
+> owners, non-executable containers, account discriminators/versions, highest
+> valid PDA bumps, SmartAccount cluster tag/Registry/generation/policy, a fully
+> unfrozen state, policy version 1 with only known session-op bits and execute
+> enabled, SessionKey identity/signer/generation/expiry/execute/list, canonical
+> reserved bytes, and a structurally canonical Registry whose selected list
+> contains exactly one tagless/no-role Memo entry. It pins the shipped Warden
+> program literal rather than letting the resolver redefine the executable.
+> Single-read snapshots close hostile-getter allocation/TOCTOU behavior at the
+> public decoder boundary.
+>
+> The golden lookup-free v0 message is hand-pinned at 333 bytes. A production
+> integration contract now constructs a SmartAccount-paid source Memo through
+> `prepareSessionTransaction` and proves that the resulting final approval
+> bytes equal that golden and decode successfully. Rust tests independently pin
+> the exact SmartAccount, SessionKey, Registry, and `execute` discriminators and
+> every client-consumed account offset/Borsh field. This prevents a same-size
+> Rust layout reorder or Anchor discriminator drift from becoming a silent
+> browser decoder bug.
+>
+> Primary-source research deliberately stopped this first decoder short of SPL
+> Token. Solana's transaction format and Agave's ComputeBudget parser establish
+> the outer shape; the Memo repository/IDL establishes its tagless account-less
+> instruction; and the SPL Token instruction source establishes why program
+> bytes alone cannot identify a transfer's actual mint, token-account owner,
+> balance, or destination consequence. Sources:
+> <https://solana.com/docs/core/transactions>,
+> <https://github.com/anza-xyz/agave/blob/master/compute-budget-instruction/src/compute_budget_instruction_details.rs>,
+> <https://github.com/solana-program/memo>,
+> <https://github.com/solana-program/memo/blob/main/idl.json>, and
+> <https://github.com/solana-program/token/blob/main/interface/src/instruction.rs>.
+> A token verdict before a message-keyed account-state resolver exists would be
+> blind-signing with nicer labels, so it remains blocked.
+>
+> Harsh review found and corrected load-bearing defects before the commit. The
+> first account parser confused SmartAccount `root_nonce` at absolute offset
+> 536 with freeze state and failed to inspect `frozen_at` at 552; the fixture now
+> carries a used nonzero root nonce and Rust pins both offsets. The first PDA
+> helper proved only that *a* supplied bump derived the address while calling it
+> canonical; it now recomputes Anchor's highest valid bump, with an alternate
+> valid-bump mutation that the old logic accepted. Earlier cuts also let a
+> resolver self-consistently redefine the Warden program, accepted a matching
+> future policy version, and copied byte inputs before their exact bounds were
+> established. All were narrowed. No independent second-model review occurred;
+> it remains **UNVERIFIED**.
+>
+> Exact-SHA evidence at `fa71bf3aef0269a73bb1881b29ba1a69ed932993`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/session-intent.test.ts` → **85/85**, exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test` →
+> **593/593**, exit **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/core run typecheck` and `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core run build`
+> both exited **0**; `cargo test -p warden client_intent_decoder --lib` →
+> **4/4**, exit **0**. The preceding ledger-inclusive coordinator SHA
+> `f7232e1ddebc59df259875566397099023a23345` passed `env
+> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit **0**.
+> The full gate for this new ledger-inclusive boundary is pending; do not
+> transfer the preceding verdict.
+>
+> **Do not promote `WRD-APR-01`, `WRD-APR-02`, `WRD-APR-03`,
+> `WRD-TXI-01`, or `WRD-KEY-04`.** This is a narrow deterministic decoder, not
+> the compound no-blind-sign product. No extension source imports it. There is
+> no real resolver/RPC client, program-binary or ProgramData attestation,
+> public-chain genesis-label mapping, cluster-authenticated time, approval UI,
+> provider route, simulation, sender, confirmation owner, or durable replay.
+> The fixed authority packet intentionally omits lamports/rent epoch because
+> they do not authorize these three state accounts, but a real resolver must
+> still reject absent/malformed accounts and obtain all three from one
+> non-regressing authoritative context. Registry bytes are exact-compared but
+> the decoder attests only the selected Memo rule; the deploy gate remains the
+> complete-config control. A locally injected wall clock can be stale. A
+> counterfeit/upgraded program at the pinned address is outside this packet.
+> The module is 1,095 lines for one low-utility verb and is runtime-unreachable;
+> compatibility and user value remain poor even though the byte contract is
+> strong.
+>
+> **Next load-bearing slice:** implement a still-unreachable, fail-closed
+> authority/RPC resolver that obtains SmartAccount, SessionKey, Registry, Warden
+> Program/ProgramData identity, genesis, and a conservative time observation at
+> fixed commitment/non-regressing context; emits this canonical packet; and is
+> exercised through the real coordinator. First research the upgradeable-loader
+> account contract and RPC snapshot guarantees. Keep every provider route
+> closed. Do not add token semantics until the resolver also returns the exact
+> transaction-referenced account state needed to identify mint/owner/balance/
+> destination consequences.
+
 > ## 2026-08-31 C3 SESSION-APPROVAL COORDINATOR — ORDERING CLOSED, REAL AUTHORITIES STILL ABSENT
 >
 > Implementation commit `cafced9c2f4725e0a95afc792fd0290acc01d28b`
