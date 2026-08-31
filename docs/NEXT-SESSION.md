@@ -1,5 +1,89 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C3 EXACT APPROVED-BYTE SIGNING — CRYPTOGRAPHIC SEAM CLOSED, AUTHORIZATION STILL OPEN
+>
+> Implementation commit `349e73aac0ea710c748d33fff151e0dd83a514c0`
+> adds the first exact-message Ed25519 finalizer to the opt-in
+> `@warden/core/transaction/session` boundary. The focused contract was
+> genuinely red first: `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/core exec vitest run test/session-transaction.test.ts`
+> exited **1** with four failing signing contracts because
+> `signApprovedSessionMessage` and its typed error did not exist.
+>
+> `signApprovedSessionMessage(rawMessage, sessionSeed)` accepts no blockhash
+> override, caller-supplied public key, transaction builder, or mutable signature
+> vector. It copy-owns the exact approval message and 32-byte seed, derives the
+> Ed25519 public key, constructs the canonical one-signature/zero-slot envelope
+> around those message bytes, and runs the independent strict parser. Only a
+> lookup-free v0 message with exactly that derived key as its sole signer and a
+> nonzero recent blockhash proceeds. Legacy, future versions, address lookups,
+> malformed/trailing bytes, a whole transaction passed in place of a message,
+> extra signers, mismatched seeds, zero blockhashes, and packets over 1,232 bytes
+> fail with typed errors.
+>
+> Signing uses the exact-pinned `@noble/curves` 1.9.7 Ed25519 implementation,
+> now an explicit production dependency rather than a dev-only direct import.
+> The finalizer verifies the signature, changes only bytes 1..64 of the canonical
+> transaction envelope, and reparses both strict-wire and web3 SDK views before
+> returning. Message, transaction, signature, signer, and blockhash getters all
+> return isolated copies; temporary seed/message/signature buffers are wiped in
+> `finally` (JavaScript zeroization remains best effort). A Node/OpenSSL Ed25519
+> verifier independently accepts the output over the approval message and
+> rejects a one-byte mutation; it also rejects treating the whole unsigned
+> transaction as the signed object.
+>
+> Current Solana primary RPC contracts sharpen the still-missing coordinator:
+> [`getLatestBlockhash`](https://solana.com/docs/rpc/http/getlatestblockhash)
+> returns the hash plus last-valid block height and a context slot;
+> [`isBlockhashValid`](https://solana.com/docs/rpc/http/isblockhashvalid) checks
+> that exact hash at a requested commitment and supports `minContextSlot`; and
+> [`sendTransaction`](https://solana.com/docs/rpc/http/sendtransaction) relays
+> bytes unchanged but an accepted response is not confirmation, blockhash expiry
+> can still prevent landing, and status must be tracked separately. The next
+> coordinator must bind these responses to the approval's canonical cluster and
+> must never refresh the blockhash under an existing digest.
+>
+> Exact-SHA evidence at `349e73aac0ea710c748d33fff151e0dd83a514c0`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/session-transaction.test.ts` → **17/17**, exit **0**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test` →
+> **479/479**, exit **0**; core typecheck/build and extension typecheck/build all
+> exited **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension test` → **246/246**, exit **0**. A built-module import resolves
+> both prepare/sign functions and `pnpm --filter @warden/core list --depth 0`
+> reports `@noble/curves@1.9.7` under production dependencies. The preceding
+> ledger-inclusive SHA `b42432728a5f8ddee11950998581012c36ae05f8`
+> passed `env npm_config_cache=/tmp/warden-npm-cache bash
+> .claude/test-gate.sh`, exit **0**. The full gate for this new ledger-inclusive
+> boundary is pending; do not transfer the preceding verdict.
+>
+> **Do not promote `WRD-APR-01`, `WRD-APR-02`, `WRD-APR-03`,
+> `WRD-TXI-01`, or `WRD-KEY-04`.** No shipped extension code imports this
+> finalizer; every provider method is still fixed unavailable. The function is
+> intentionally a cryptographic primitive, not a semantic authorization
+> boundary: absent a privileged decoder/coordinator it can sign a structurally
+> valid unknown-program v0 message. There is no local program/discriminator/
+> account-role decoder, allowlist decision, authoritative account/network/
+> program/session/policy resolver, approval UI, live blockhash RPC client,
+> transactional composition of claim+revalidation, keyring lease consumption,
+> sender, confirmation tracker, or replay-safe result owner. The native verifier
+> is independent of the production JS implementation but there is still no Rust
+> golden/fuzzer corpus or independent second-model review; both are
+> **UNVERIFIED**.
+>
+> **Next load-bearing slice:** add an internal and still-unreachable session
+> approval coordinator with injected authority, RPC, approval-owner, and keyring
+> dependencies. Preparation must resolve and snapshot account/chain/genesis/
+> program/session/registry/policy, fetch one latest blockhash with a context slot,
+> build the final message, obtain a blocking local-decode verdict, and persist
+> only that exact message. Approval must revalidate the same authority/policy,
+> atomically claim the exact digest, check that bound blockhash with the same
+> commitment and a non-regressing context, borrow the matching session seed,
+> sign the claimed record bytes, and revalidate/reparse before release. Any
+> expiry or mismatch consumes/cancels the attempt; it never rebuilds behind the
+> user's approval. Keep provider methods closed and do not add send until durable
+> result ownership exists.
+
 > ## 2026-08-31 C3/C4 EXACT SESSION MESSAGE — WYSIWYS OBJECT CLOSED, COORDINATOR STILL OPEN
 >
 > Implementation commit `8c29a224780826c4e10f82667bc886da2bfa0acf`

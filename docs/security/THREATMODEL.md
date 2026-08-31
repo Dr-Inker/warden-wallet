@@ -915,3 +915,52 @@ incompatible until typed Warden builders exist. Unknown programs can still be
 wrapped structurally, so this is not a benign semantic verdict. Fixed contracts
 and web3 plus noble Ed25519 are not an independent Rust final-message/fuzzer
 corpus. Independent second-model review remains UNVERIFIED.
+
+---
+
+## Client C3 exact approved-byte signing — 349e73a — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** the opt-in core session subpath now directly depends on
+exact-pinned `@noble/curves` 1.9.7 and exports a synchronous Ed25519 finalizer.
+It accepts exact message bytes plus a leased 32-byte seed and returns a
+copy-isolated signed transaction, signature, derived signer, and bound
+blockhash. The shipped extension imports none of it and every provider path
+remains fixed unavailable.
+
+**Removed / narrowed:** the caller cannot supply or refresh a public key,
+blockhash, compiled transaction, or signature slot at signing time. The
+finalizer derives the public key from the seed and requires it to be the sole
+signer of a strict lookup-free-v0 approval message with a nonzero blockhash. It
+constructs the canonical empty envelope, proves web3 and the independent parser
+see the same bytes, signs those bytes, changes only the sole 64-byte signature
+slot, and reparses/verifies both views before release. Typed failures cover
+malformed/trailing bytes, whole-transaction confusion, legacy/future versions,
+lookups, extra or wrong signers, invalid seed width, zero blockhash, and packet
+overflow. A Node/OpenSSL verifier accepts the emitted signature over the
+approval message and rejects a one-byte message mutation independently of the
+production Noble implementation.
+
+Solana's current primary RPC documentation says `getLatestBlockhash` returns a
+hash, last-valid height, and context; `isBlockhashValid` evaluates an exact hash
+at a requested commitment and can require `minContextSlot`; `sendTransaction`
+relays bytes unchanged but acceptance is not confirmation and an expiring hash
+can still prevent landing:
+<https://solana.com/docs/rpc/http/getlatestblockhash>,
+<https://solana.com/docs/rpc/http/isblockhashvalid>, and
+<https://solana.com/docs/rpc/http/sendtransaction>.
+
+**New invariants:** none promoted. This closes a low-level exact-byte signing
+seam only. The compound approval, atomic resolution, contextual key-use, and
+no-blind-sign product invariants remain `unimplemented`.
+
+**Residual, stated honestly:** no coordinator reads an approved record or calls
+the keyring lease and no authoritative resolver/RPC client exists. The
+finalizer has no semantic knowledge of Warden execute, supported programs,
+discriminators, account roles, policy, or simulation; a privileged caller could
+feed it a structurally valid unknown-program message. Therefore it must remain
+unreachable until a blocking local decoder verdict and current authority/policy/
+blockhash checks surround it. Claim and signing are not transactionally
+composed, expiry has no durable result, send/confirmation/replay are absent, and
+JavaScript secret zeroization is only best effort. There is no independent Rust
+final-message/signature golden or fuzzer corpus. Independent second-model review
+remains UNVERIFIED.
