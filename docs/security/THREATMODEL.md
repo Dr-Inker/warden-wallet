@@ -2445,3 +2445,67 @@ explicit first-preparation signal. The exact clean-SHA command recorded in
 extension 430/430, production Chromium 6/6, the remaining TypeScript workspace,
 build/type checks, KDF benchmark, and Rust workspace. This ledger addendum is an
 evidence-only commit and does not inherit that verdict.
+
+---
+
+## Client C20 bounded content transport recovery — b09f41b — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**New internal transport surface:** C20 adds a build-excluded content owner for
+C16's exact `solana:signTransaction` request. It closes over one canonical copy
+of each accepted request and can resend that same object once after loss of its
+active Chrome Port generation. It never changes the correlation, account,
+transaction, chain, or options, and it grants no browser provenance, approval,
+RPC, release, key, or signing authority. Background owners must still rederive
+the request identity from Chrome-owned sender provenance and durable state.
+
+The owner caps pending requests at 32, document-lifetime correlations at 1,024,
+automatic recovery attempts at one, and retention at a two-minute default /
+ten-minute maximum absolute TTL. It opens lazily, never reconnects an idle
+document, and spends recovery budget before opening the replacement, so
+synchronous disconnect/setup behavior cannot create an unbounded MV3 wake
+loop. Expiry removes volatile content state without claiming the durable
+request failed; C16's independent deadline remains the page settlement owner.
+
+Only exact unavailable, signed, or C19 terminal-failure responses are accepted.
+A response must match a pending correlation and that request's active Port
+generation. It is reconstructed before forwarding, and pending state is
+removed before `window.postMessage()`, making first exact terminal settlement
+authoritative under reentrancy. Malformed background data closes the boundary
+without reflecting private detail. Stale Port callbacks, unknown correlations,
+late terminal values, and duplicates cannot reach the page.
+
+The meaningful REDs were the missing module, a **13 pass / 1 fail** review that
+exposed time-unbounded retention, and a **15 pass / 1 fail** review that exposed
+one final `Port.postMessage()` after a delayed connect crossed the deadline.
+The focused lane is now **16/16** and the complete extension lane is **446/446**.
+Exact clean-SHA evidence at
+`b09f41b08736285512209935435a7d2b4c264976` passed extension tests, typecheck,
+build, production Chromium **6/6**, emitted-artifact exclusion, `git diff
+--check`, identical before/after SHA, and clean-tree proof with the full command
+recorded in `docs/NEXT-SESSION.md`. The emitted content bundle retains only the
+fixed-unavailable path; C20 and the earlier terminal/page owners are absent.
+
+Chrome service-worker lifecycle, messaging, and runtime Port contracts are
+linked in `docs/NEXT-SESSION.md`. They support demand-bound reconnection and
+strict handling of disconnected Ports; they do **not** prove that content-side
+enqueue is page consumption or promise a safe cross-context order between the
+old Port's cleanup and a replacement connection. Independent second-model
+review is **UNVERIFIED** because `codex review --commit b09f41b…` exited before
+review when its in-process app-server client could not initialize on the
+host's read-only state path.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+
+**Residual, stated as a threat:** the immediate content reconnect can arrive
+while the incumbent background boundary still owns the old Port for the same
+browser `documentId`; that boundary rejects the replacement. C20 has no real
+Chromium worker-death or old/new-Port ordering evidence, no page receipt ACK,
+and no per-request cancellation message. Page, content, and background TTLs are
+separate clocks/configurations. Its 1,401 lines are unit-tested complexity in
+unreachable code, not shipped value. A future background replacement/replay
+owner must make either disconnect ordering safe without resurrecting a dead
+volatile approval or signing capability, then compose and browser-test the
+deadline path. All non-empty release, trusted RPC, production keyring/
+coordinator, real-browser signing, Wallet Standard, send, onboarding, KDF,
+ceremony, consequence-review, and audit blockers remain.

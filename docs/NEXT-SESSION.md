@@ -1,5 +1,121 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C20 BOUNDED CONTENT TRANSPORT RECOVERY — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `b09f41b08736285512209935435a7d2b4c264976` adds a still-unreachable
+> `ProviderContentTransportOwner` for C16's closed
+> `solana:signTransaction` request only. It parses attacker-owned page input
+> once, rebuilds one immutable canonical wire request, and retains that exact
+> object for at most one automatic Port-loss resend. A document may retain at
+> most 32 pending requests and issue at most 1,024 correlations. Each entry has
+> a two-minute default / ten-minute maximum absolute TTL and an active timer;
+> expiry drops only volatile transport state and deliberately does not invent a
+> page error. C16's original absolute deadline remains the page-Promise
+> authority when no durable terminal response arrives.
+>
+> Recovery is demand-bound: an idle disconnect never reopens a Port. Every
+> eligible request spends its single recovery budget before a replacement Port
+> is opened, preventing synchronous setup/disconnect reentrancy from becoming a
+> worker-wake loop. A terminal response must have one exact reviewed unavailable,
+> signed, or C19 failure shape, match a pending correlation, and arrive on that
+> entry's active Port generation. The owner reconstructs/copies the response,
+> removes its pending entry and timer before the re-entrant page boundary, and
+> then posts it. A stale Port, unknown correlation, late response, or duplicate
+> terminal cannot settle a page request. Same-page code remains the caller
+> principal; this owner grants no provenance, account, approval, RPC, release,
+> key, or signing authority.
+>
+> Executable RED and focused evidence:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run
+>   test/provider-content-transport.test.ts` first exited **1** before
+>   collection because `provider-content-transport.js` did not exist.
+> - Harsh review then produced **13 pass / 1 fail**: the cache was size-bounded
+>   but had no active expiry timer, so a request could remain retained for the
+>   document lifetime after C16 timed out. The final absolute timer rechecks
+>   early firings and never fabricates a terminal response.
+> - A final side-effect audit produced **15 pass / 1 fail**: a delayed initial
+>   connect could cross the exact deadline and still call `Port.postMessage()`.
+>   Both initial and recovery paths now recheck absolute time immediately after
+>   connection and before each send. The focused lane is **16/16**.
+> - The complete extension lane at the implementation SHA is **446/446**. It
+>   includes one cross-owner test that preserves C16's original Promise over
+>   one lost Port, reuses the identical canonical payload, accepts a C19 fixed
+>   terminal failure on the replacement generation, and proves only one page
+>   request was minted. This is a fake-window/Port test, not a real-browser
+>   signing or worker-restart claim.
+>
+> Primary lifecycle contracts checked for this boundary:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>, and
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime/>. Chrome
+> documents that MV3 workers terminate after inactivity and that state must be
+> persisted rather than kept in globals. It also documents Port disconnects,
+> JSON serialization for extension messages, and `postMessage()` throwing on a
+> disconnected Port. Chrome 114 changed long-lived messaging so merely opening
+> a Port no longer resets worker timers. Demand-bound reconnect is therefore a
+> deliberate lifecycle constraint. The conclusion that an enqueue is not page
+> consumption, and that identical transport replay grants no new wallet
+> authority, remains an explicit architectural inference.
+>
+> `codex review --commit
+> b09f41b08736285512209935435a7d2b4c264976` exited **1 before review**:
+> the in-process app-server client could not initialize on this host's read-only
+> state path. Independent second-model review remains **UNVERIFIED**.
+>
+> Exact implementation-SHA evidence at
+> `b09f41b08736285512209935435a7d2b4c264976`, with a clean tree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test:browser &&
+> node -e "const fs=require('node:fs');const path=require('node:path');const root='apps/extension/dist';const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=walk(root);const all=files.map(f=>fs.readFileSync(f,'utf8')).join('\n');const content=fs.readFileSync(path.join(root,'content.js'),'utf8');const required=['WARDEN_METHOD_UNAVAILABLE'];const forbidden=['provider content transport:','content_request_0123456789','WARDEN_USER_REJECTED','provider terminal outcome:','provider signed result flow:','provider page request:'];const missing=required.filter(s=>!content.includes(s));const hit=forbidden.filter(s=>all.includes(s));if(missing.length||hit.length){console.error({missing,hit});process.exit(1)}console.log('extension dist remains fixed-unavailable; C20 and prior provider terminal/page owners are absent')" &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It exited **0** and printed the same SHA before and after: extension **446/446**,
+> typecheck, build, production Chromium **6/6**, emitted-artifact exclusion,
+> `git diff --check`, and clean-tree proof passed. The emitted content bundle
+> retains `WARDEN_METHOD_UNAVAILABLE`; C20 and earlier terminal/page markers are
+> absent. Ledger-inclusive full-repository evidence is not yet claimed.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
+> invariants JSONL is intentionally unchanged.
+>
+> **Harsh residual:** C20 is 1,401 new test/source lines for an unreachable
+> transport primitive and has only fake-window/Port coverage. It does not prove
+> MV3 worker death, navigation, or old/new Port ordering in Chrome. More
+> importantly, its immediate reconnect can race the incumbent background
+> boundary's old-Port cleanup: production currently rejects a second active
+> Port for the same browser `documentId`, and Chrome does not promise the
+> cross-context disconnect ordering this design would need. There is no page
+> receipt acknowledgment; successful Port enqueue still does not prove page
+> consumption. C16, content, and background TTLs are separately instantiated,
+> and content expiry sends no per-request cancellation to the background. There
+> is still no reviewed non-empty release, trusted production RPC, production
+> coordinator/keyring graph, real-browser exact-byte signature, Wallet Standard
+> registration, send/confirmation, onboarding, production KDF policy, root
+> ceremony, consequence review, external audit, or deployable wallet method.
+> Production Chromium proves only that C20 remains absent and signing disabled.
+>
+> **Next load-bearing work:** C21 must define a still-unreachable background
+> replacement-Port/replay owner keyed by browser-owned document provenance and
+> exact durable operation identity. It must make a new Port safe whether it
+> arrives before or after old-Port cleanup, never let a page correlation alias a
+> different canonical request, never resurrect an old volatile signing lease,
+> and browser-test worker death plus old/new Port ordering. It must also bind or
+> explicitly carry the request deadline/cancellation semantics across page,
+> content, and background owners. Keep production fixed-unavailable until this
+> composition, a reviewed non-empty release, trusted RPC, real coordinator/
+> keyring composition, and real-browser exact-byte signing evidence all exist.
+>
 > ## 2026-08-31 C19 CLOSED PROVIDER TERMINAL OUTCOMES — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit
