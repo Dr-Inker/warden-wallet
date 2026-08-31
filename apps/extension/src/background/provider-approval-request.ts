@@ -89,6 +89,11 @@ export interface ProviderApprovalHandle {
   cancel(): Promise<boolean>;
 }
 
+export interface ProviderPreparedApprovalHandle extends ProviderApprovalHandle {
+  /** Open at most once; C15 calls this only after its outer durable bind. */
+  open(): Promise<void>;
+}
+
 export interface ProviderApprovalRequestOwnerOptions {
   readonly selection: ProviderApprovalSelectionResolver;
   readonly approvals: ProviderApprovalRecordReader;
@@ -134,12 +139,15 @@ interface RequestBinding {
 
 interface ActiveEntry {
   readonly owned: OwnedProviderRequest;
+  readonly assertRequestActive: () => void;
+  readonly authoritySignal: AbortSignal;
   readonly coordinator: ProviderApprovalCoordinator;
   readonly binding: ApprovalBinding;
   readonly lifetimeController: AbortController;
   readonly signals: readonly AbortSignal[];
   readonly onAbort: () => void;
   cancelPromise: Promise<boolean> | undefined;
+  openPromise: Promise<void> | undefined;
   active: boolean;
 }
 
@@ -605,6 +613,7 @@ export class ProviderApprovalRequestOwner {
 
   #createEntry(
     owned: OwnedProviderRequest,
+    assertRequestActive: () => void,
     authoritySignal: AbortSignal,
     coordinator: ProviderApprovalCoordinator,
     binding: ApprovalBinding,
@@ -622,12 +631,15 @@ export class ProviderApprovalRequestOwner {
     };
     entry = {
       owned,
+      assertRequestActive,
+      authoritySignal,
       coordinator,
       binding,
       lifetimeController,
       signals,
       onAbort,
       cancelPromise: undefined,
+      openPromise: undefined,
       active: true,
     };
     this.#active.add(entry);
@@ -662,6 +674,7 @@ export class ProviderApprovalRequestOwner {
    */
   async #recoverResolvedPreparation(
     owned: OwnedProviderRequest,
+    assertRequestActive: () => void,
     authoritySignal: AbortSignal,
     coordinator: ProviderApprovalCoordinator,
     request: RequestBinding,
@@ -698,6 +711,7 @@ export class ProviderApprovalRequestOwner {
       }
       const entry = this.#createEntry(
         owned,
+        assertRequestActive,
         authoritySignal,
         coordinator,
         binding,
@@ -763,7 +777,65 @@ export class ProviderApprovalRequestOwner {
     });
   }
 
-  async launch(leaseValue: ProviderRequestLease): Promise<ProviderApprovalHandle> {
+  #openEntry(entry: ActiveEntry): Promise<void> {
+    if (entry.openPromise !== undefined) return entry.openPromise;
+    // Schedule the first dependency call so the shared Promise is installed
+    // before even a synchronously re-entrant launcher can ask to open again.
+    entry.openPromise = Promise.resolve().then(async () => {
+      try {
+        this.#assertUsable();
+        entry.assertRequestActive();
+        assertAuthorityActive(entry.authoritySignal);
+        if (!entry.active) stateError("approval was cancelled before its window opened");
+
+        await this.#dependencies.launchWindow(
+          entry.binding.id,
+          entry.lifetimeController.signal,
+        );
+        assertAuthorityActive(entry.authoritySignal);
+        this.#assertUsable();
+        entry.assertRequestActive();
+        if (!entry.active) stateError("approval was cancelled while its window opened");
+      } catch (error) {
+        if (entry.active) {
+          try {
+            await this.#cancelEntry(entry);
+          } catch (cleanupError) {
+            if (cleanupError instanceof ProviderApprovalRequestStateError) {
+              throw cleanupError;
+            }
+            throw new ProviderApprovalRequestStateError(
+              "durable approval cancellation is unproven",
+              { cause: new AggregateError([error, cleanupError]) },
+            );
+          }
+        }
+        throw error;
+      }
+    });
+    return entry.openPromise;
+  }
+
+  #preparedHandle(entry: ActiveEntry): ProviderPreparedApprovalHandle {
+    const handle = this.#handle(entry);
+    return Object.freeze({
+      id: handle.id,
+      get account(): Uint8Array {
+        return handle.account;
+      },
+      chain: handle.chain,
+      get messageDigest(): Uint8Array {
+        return handle.messageDigest;
+      },
+      open: (): Promise<void> => this.#openEntry(entry),
+      settle: handle.settle,
+      cancel: handle.cancel,
+    });
+  }
+
+  async prepare(
+    leaseValue: ProviderRequestLease,
+  ): Promise<ProviderPreparedApprovalHandle> {
     this.#assertUsable();
     const lease = bindLease(leaseValue);
     const { owned } = lease;
@@ -831,6 +903,7 @@ export class ProviderApprovalRequestOwner {
       prepared = snapshotPrepared(preparedValue);
       entry = await this.#recoverResolvedPreparation(
         owned,
+        lease.assertActive,
         selection.authoritySignal,
         selection.coordinator,
         requestBinding,
@@ -853,15 +926,7 @@ export class ProviderApprovalRequestOwner {
         stateError("prepared approval differs from the exact durable binding");
       }
 
-      await this.#dependencies.launchWindow(
-        entry.binding.id,
-        entry.lifetimeController.signal,
-      );
-      assertAuthorityActive(selection.authoritySignal);
-      this.#assertUsable();
-      lease.assertActive();
-      if (!entry.active) stateError("approval was cancelled while its window opened");
-      return this.#handle(entry);
+      return this.#preparedHandle(entry);
     } catch (error) {
       if (preparationResolved && entry === undefined && !cleanupProven) {
         if (
@@ -879,6 +944,7 @@ export class ProviderApprovalRequestOwner {
         try {
           entry = await this.#recoverResolvedPreparation(
             owned,
+            lease.assertActive,
             selection.authoritySignal,
             selection.coordinator,
             requestBinding,
@@ -921,6 +987,23 @@ export class ProviderApprovalRequestOwner {
       request?.sourceTransactionBytes.fill(0);
       selection?.account.fill(0);
     }
+  }
+
+  async launch(leaseValue: ProviderRequestLease): Promise<ProviderApprovalHandle> {
+    const prepared = await this.prepare(leaseValue);
+    await prepared.open();
+    return Object.freeze({
+      id: prepared.id,
+      get account(): Uint8Array {
+        return prepared.account;
+      },
+      chain: prepared.chain,
+      get messageDigest(): Uint8Array {
+        return prepared.messageDigest;
+      },
+      settle: prepared.settle,
+      cancel: prepared.cancel,
+    });
   }
 
   /**
