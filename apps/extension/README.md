@@ -241,6 +241,35 @@ overlap, forced MV3 worker death, and a replacement lease expiring at the
 initiating deadline without a fabricated terminal. The build input graph and
 artifact scan keep this entire protocol absent from shipped code.
 
+C23 adds one browser-only success composition without changing that production
+boundary. A temporary MV3 extension routes one HTTP-page request through the
+real C16 MAIN-world owner, C20 content owner, C21/C22 background transport,
+C12–C19 durable operation and approval owners, IndexedDB repositories, a
+password-authenticated keyring generation, the pinned authority resolver, and
+the production approval UI. Its `Connection`, release pins, seed, password, and
+low-cost Argon2id parameters are deterministic fixtures and are never copied
+into `dist`. The popup renders the exact origin, account, network, memo, and
+SHA-256 digest before enabling approval.
+
+After approval, the Chromium contract deserializes the page result and proves
+that its message bytes equal the durable pre-approval bytes, independently
+recomputes the digest, verifies the Ed25519 signature against the authenticated
+session public key, and compares the complete result with the durable IndexedDB
+result. It also proves one create/claim/complete/signer use, one navigation, the
+expected RPC calls, and settled volatile owners. Core transaction construction
+now uses browser-native `Uint8Array` instead of two Node-only `Buffer`
+constructors; the focused core test deletes the global `Buffer` before invoking
+the real rewrite path.
+
+This is uninterrupted test provenance only. It does not survive a service-
+worker death during preparation, signing, result delivery, or receipt
+settlement; seed/release initialization on worker restart is intentionally not
+a production design. It does not register or inject Wallet Standard, configure
+a live trusted RPC/release, define production KDF policy, send a transaction,
+or make the production provider reachable. Future activation must replace the
+fixed-unavailable provider behind the existing single central Port router, not
+install an independent `runtime.onConnect` listener.
+
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during
 ordinary browsing: an exact, same-document request envelope opens one lazily,

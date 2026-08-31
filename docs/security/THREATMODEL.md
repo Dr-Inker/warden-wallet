@@ -2683,3 +2683,85 @@ Chromium **9/9**, and the full Rust workspace suite. Known Anchor key/cfg and
 Rust unused-code warnings were non-fatal. This verdict belongs only to that
 exact SHA; the documentation-only addendum commit that records it does not
 inherit the result.
+
+---
+
+## Client C23 exact-byte browser signing spine — 5b32e1b — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Threat closed internally:** C12–C22 had strong unit and failure-path browser
+contracts but no one browser execution proved that a reviewed, non-empty
+transaction could consume an authenticated signer and return exactly those
+message bytes with a valid signature. C23 adds a temporary-extension contract
+that composes the real MAIN-world request owner, content/background receipt
+transport, durable operation and approval repositories, authenticated keyring
+generation, pinned authority resolver, deterministic intent gate, approval
+window/UI, exact approval action, signed-result verifier, and terminal replay
+owner. It is the first real Chromium success through that internal graph.
+
+The transaction message and digest are read from the durable approval before
+the user action. After approval, the test independently deserializes the bytes
+received by the HTTP page, requires exact message equality, recomputes SHA-256,
+verifies the Ed25519 signature with Node crypto against the public half of the
+sealed session seed, and compares the complete result with the durable signed
+outcome. Counters require one approval creation, signing claim, signing
+completion, and key lease use; two identical authenticated identity reads share
+one live revocation signal. The test also fixes the local RPC call cardinality,
+one navigation entry, one page settlement, and zero live actions, requests,
+flows, or content-pending entries at completion. The Port remains live only with the
+document.
+
+**Browser authority boundary:** the temporary worker has one
+`runtime.onConnect` listener and routes only the exact provider and approval
+Port names. This was required by a real failure: independent child listeners
+treated the other valid name as unknown and disconnected it. Any production
+activation must therefore replace the fixed-unavailable provider under the
+incumbent central router; adding a second listener would recreate a measured
+cross-boundary denial of service. Chrome-owned origin/tab/frame/document
+provenance remains authoritative; same-page MAIN-world messages remain hostile
+caller input.
+
+**Key and release boundary:** the release pins, account data, Connection, seed,
+password, and Argon2id `64 KiB / t=1 / p=1` parameters are deterministic test
+fixtures. The password buffer is zeroed after unlock, signer use remains inside
+the keyring lease, and a public-key/seed mismatch is rejected rather than
+adapted. These values are not a production release assertion or acceptable
+production KDF policy. They must remain outside the emitted extension artifact.
+
+**Browser portability correction:** real Chromium found two core transaction
+constructors that referenced Node's global `Buffer`. They now supply
+browser-native `Uint8Array` values to web3.js. The focused core regression
+stubs `Buffer` to `undefined` and exercises the complete rewrite, including both
+the privilege-resolution placeholder and final execute instruction.
+
+At exact clean implementation SHA
+`5b32e1b16b76f8a229364ac404b9801791dbbad1`, the focused command recorded in
+`docs/NEXT-SESSION.md` exited **0** and printed the same SHA before and after:
+core transaction rewrite **18/18**, extension typecheck, real Chromium C23
+**1/1**, `git diff --check`, and clean-tree guards passed. This is focused
+evidence only; the ledger-inclusive full repository gate is not inferred.
+
+Primary references checked were the Wallet Standard Solana example
+<https://github.com/wallet-standard/wallet-standard/blob/master/packages/example/wallets/src/solanaWallet.ts>,
+Chrome extension messaging
+<https://developer.chrome.com/docs/extensions/develop/concepts/messaging>, and
+Chrome's service-worker migration contracts
+<https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers>.
+Returning signed transaction bytes matches the reference shape. Chrome's
+worker termination/reinitialization rules mean uninterrupted success cannot be
+extrapolated to a restart boundary.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`. C23 is excluded test
+provenance and does not make a production provider method reachable.
+
+**Residual, stated as a threat:** this lane never kills the worker. The test
+worker currently initializes fixture authority on boot, so blindly restarting
+it would be a test-harness reset, not proof that an incumbent authenticated
+generation survived. There is no measured cut during preparation, signing,
+durable-result commit, page receipt, or settled acknowledgment. The Connection
+does not contact a live RPC and cannot prove endpoint integrity, production
+release pins, liveness, or mainnet semantics. No production MAIN-world script
+is injected or registered with Wallet Standard; there is no onboarding,
+account/release registry, send/confirm path, production KDF policy, browser-
+crash/disk-failure claim, published-artifact assurance, external audit, or real
+funds exercise. Production remains fixed unavailable.

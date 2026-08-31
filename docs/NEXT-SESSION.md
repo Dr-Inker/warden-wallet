@@ -1,5 +1,114 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C23 EXACT-BYTE BROWSER SIGNING SPINE — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `5b32e1b16b76f8a229364ac404b9801791dbbad1` composes one successful
+> `solana:signTransaction` request through the real, still-build-excluded
+> C12–C22 owners in a temporary MV3 extension. An HTTP page uses the real
+> MAIN-world request owner; the production content transport reaches one
+> centrally routed background Port; the operation is durably claimed in
+> IndexedDB; a password-authenticated keyring generation selects the exact
+> test account/release; the pinned authority resolver and deterministic intent
+> gate read a local `Connection` fixture; and the production approval page
+> reviews and approves the resulting non-empty transaction before one signer
+> lease completes the durable result and receipt handshake.
+>
+> This closes C22's “no browser exact signed bytes” evidence gap for the
+> uninterrupted internal graph. The test snapshots the durable message and its
+> digest before approval, then independently deserializes the page result,
+> proves the returned message bytes are byte-for-byte identical, recomputes the
+> SHA-256 digest, verifies the Ed25519 signature against the authenticated
+> session public key with Node crypto, and proves the durable signed bytes equal
+> the page bytes. It also measures one navigation, one create/claim/complete/
+> signer use, two authenticated identity reads on one revocation signal, the
+> exact deterministic RPC call counts, no second page settlement, and zero
+> remaining actions, requests, flows, or content-pending entries after success. The document
+> Port remains intentionally live until page teardown.
+>
+> Harsh implementation findings were load-bearing:
+>
+> - Independent `runtime.onConnect` listeners disconnected each other's valid
+>   approval/provider Ports. The test composition now has the same architectural
+>   requirement as production: one exact-name router owns the Chrome event and
+>   rejects every unknown channel.
+> - The first fixture signer did not match the sealed seed. The authenticated
+>   keyring rejected it; the test now derives the public key independently from
+>   the seed instead of weakening the equality check.
+> - Real Chromium exposed two Node-only `Buffer` constructors in core
+>   transaction preparation. Both are now browser-native `Uint8Array`; an
+>   18-test core lane includes a regression that deletes the global `Buffer`
+>   before rewriting a transaction.
+> - The first temporary approval bundle used ESM despite production loading it
+>   as a classic script; that masked a top-level `window.status` collision.
+>   C23 now uses the production-correct ESM background and IIFE content,
+>   approval, and MAIN-world formats.
+> - The approval success copy previously claimed provider delivery remained
+>   unavailable even when its injected capability was true. Only the true
+>   branch now describes the durable return; the shipped false branch remains
+>   fixed unavailable.
+>
+> Primary contracts checked:
+> <https://github.com/wallet-standard/wallet-standard/blob/master/packages/example/wallets/src/solanaWallet.ts>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>,
+> <https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers>,
+> and <https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3>.
+> The Wallet Standard reference returns signed transaction bytes for
+> `solana:signTransaction`; Chrome documents named Port routing and that MV3
+> workers terminate and reinitialize, requiring durable state and synchronous
+> listener registration. Therefore uninterrupted C23 success is not evidence
+> for any worker-restart cut.
+>
+> Exact focused evidence at clean implementation SHA
+> `5b32e1b16b76f8a229364ac404b9801791dbbad1`:
+>
+> ```sh
+> set -euo pipefail
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest run test/session-transaction.test.ts
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec playwright test -c playwright.config.ts provider-sign-success.pw.ts
+> git diff --check
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It exited **0** and printed the same SHA before and after: core rewrite
+> **18/18**, extension typecheck, real Chromium exact-byte success **1/1**,
+> `git diff --check`, and clean-tree guards passed. The full repository gate is
+> deliberately not claimed by this implementation entry; it must run on the
+> subsequent ledger-inclusive SHA.
+>
+> Independent second-model review remains **UNVERIFIED**. No new review is
+> inferred from the prior host app-server read-only failure.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+> Production still excludes the provider/coordinator/action/result/page graph
+> and has an empty release registry and fixed unavailable provider.
+>
+> **Harsh residual:** C23 uses deterministic local RPC/account fixtures, a
+> fixture seed/password/pin set, and deliberately cheap test-only Argon2id
+> parameters. Artifact exclusion is required to prove none ship. It is not a
+> live endpoint, production release assertion, production KDF policy, or
+> published-artifact assurance. It proves only an uninterrupted worker: no
+> death occurs during preparation, approval/signing, durable result recovery,
+> page receipt, or settled acknowledgment. It does not inject/register Wallet
+> Standard in production, onboard or migrate accounts, send/confirm a
+> transaction, survive a browser crash/disk fault, undergo an external audit,
+> or protect real funds.
+>
+> **Next load-bearing work:** C24 should compose restart-safe test authority
+> instead of reseeding the keyring on every boot, then kill the real MV3 worker
+> at preparation, signing, committed-result, and receipt/settlement cuts. Each
+> cut must retain the initiating deadline, measure page navigation, prove at
+> most one approval/signature/result, and fail closed where continuity cannot
+> be proven. Never activate production by adding a parallel Port listener; any
+> eventual activation must replace the fixed-unavailable branch under the one
+> central router. After restart safety, commit the production RPC/release/KDF
+> decision and prove single-evaluation MAIN-world Wallet Standard registration.
+>
 > ## 2026-08-31 C22 IMMUTABLE DEADLINE + DELIVERY SETTLEMENT — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit
