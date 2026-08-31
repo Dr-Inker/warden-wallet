@@ -8,6 +8,7 @@ import {
   ProviderPageRequestOwner,
   ProviderPageRequestStateError,
   ProviderPageRequestTimeoutError,
+  ProviderPageTerminalError,
   type ProviderPageRandomSource,
   type ProviderPageTimerSource,
   type ProviderPageWindowApi,
@@ -152,6 +153,30 @@ function unavailableResponse(id: string) {
   };
 }
 
+function terminalFailureResponse(
+  id: string,
+  code: "WARDEN_USER_REJECTED" | "WARDEN_REQUEST_CANCELLED" |
+    "WARDEN_REQUEST_EXPIRED" | "WARDEN_REQUEST_FAILED",
+) {
+  const messages = {
+    WARDEN_USER_REJECTED: "User rejected the request",
+    WARDEN_REQUEST_CANCELLED: "Provider request was cancelled",
+    WARDEN_REQUEST_EXPIRED: "Provider request expired",
+    WARDEN_REQUEST_FAILED: "Provider request failed",
+  } as const;
+  return {
+    version: 1,
+    type: "warden:provider:response",
+    payload: {
+      version: 1,
+      type: "response",
+      correlationId: id,
+      ok: false,
+      error: { code, message: messages[code] },
+    },
+  };
+}
+
 function postedPayload(page: MockPage, index = 0): Record<string, unknown> {
   return (page.posted[index]!.message as { readonly payload: Record<string, unknown> }).payload;
 }
@@ -253,6 +278,56 @@ describe("C16 main-world provider request owner", () => {
 
     await expect(result).rejects.toBeInstanceOf(ProviderPageMethodUnavailableError);
     expect(owner.pendingCount).toBe(0);
+  });
+
+  it.each([
+    ["WARDEN_USER_REJECTED", "User rejected the request"],
+    ["WARDEN_REQUEST_CANCELLED", "Provider request was cancelled"],
+    ["WARDEN_REQUEST_EXPIRED", "Provider request expired"],
+    ["WARDEN_REQUEST_FAILED", "Provider request failed"],
+  ] as const)("maps exact terminal %s without accepting background detail", async (code, message) => {
+    const page = new MockPage();
+    const owner = new ProviderPageRequestOwner(page, {
+      randomSource: new SequenceRandom(randomBytes(1)),
+    });
+    const result = owner.signTransaction(input());
+
+    page.emit(terminalFailureResponse(correlationId(1), code));
+
+    await expect(result).rejects.toMatchObject({
+      name: "ProviderPageTerminalError",
+      code,
+      message,
+    } satisfies Partial<ProviderPageTerminalError>);
+    expect(owner.pendingCount).toBe(0);
+  });
+
+  it("ignores open or mismatched terminal failure messages", async () => {
+    const page = new MockPage();
+    const owner = new ProviderPageRequestOwner(page, {
+      randomSource: new SequenceRandom(randomBytes(1)),
+    });
+    const result = owner.signTransaction(input());
+    const exact = terminalFailureResponse(
+      correlationId(1),
+      "WARDEN_USER_REJECTED",
+    );
+
+    page.emit({
+      ...exact,
+      payload: { ...exact.payload, detail: "must not cross" },
+    });
+    page.emit({
+      ...exact,
+      payload: {
+        ...exact.payload,
+        error: { ...exact.payload.error, message: "internal exception" },
+      },
+    });
+    expect(owner.pendingCount).toBe(1);
+
+    page.emit(exact);
+    await expect(result).rejects.toBeInstanceOf(ProviderPageTerminalError);
   });
 
   it("ignores wrong-context, unknown, open, accessor, and malformed terminal messages", async () => {

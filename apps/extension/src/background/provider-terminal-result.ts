@@ -32,7 +32,7 @@ import {
 } from "./provider-operation.js";
 import {
   createSignedTransactionProviderResponse,
-  type ProviderSignedTransactionResponse,
+  type ProviderTerminalResponse,
 } from "./provider-terminal-protocol.js";
 
 const APPROVAL_ID_PATTERN = /^req_[0-9a-f]{32}$/;
@@ -41,7 +41,7 @@ export interface ProviderTerminalDeliveryLease {
   readonly owned: OwnedProviderRequest;
   assertActive(): void;
   /** Synchronous Chrome Port enqueue; it is not a page receipt acknowledgment. */
-  postMessage(message: ProviderSignedTransactionResponse): void;
+  postMessage(message: ProviderTerminalResponse): void;
   /** Release only this exact in-memory Port request after enqueue succeeds. */
   finish(): boolean;
 }
@@ -136,7 +136,7 @@ function requireReadSigned(value: unknown): ProviderSignedResultReader {
 function bindLease(value: unknown): {
   readonly owned: OwnedProviderRequest;
   readonly assertActive: () => void;
-  readonly postMessage: (message: ProviderSignedTransactionResponse) => void;
+  readonly postMessage: (message: ProviderTerminalResponse) => void;
   readonly finish: () => boolean;
 } {
   if (typeof value !== "object" || value === null) {

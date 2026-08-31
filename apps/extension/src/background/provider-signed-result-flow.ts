@@ -1,14 +1,15 @@
-//! Still-unreachable C18 approval-terminal -> signed-result composition owner.
+//! Still-unreachable C18/C19 approval-terminal -> result composition owner.
 //!
-//! C12/C15 publish only a boolean terminal proof; signed transaction bytes stay
-//! in the durable approval result store and can leave the worker only through
-//! C14's strict replay verifier. A retained C14 operation bypasses preparation
-//! and takes the same delivery path. This module owns no Port listener, release,
-//! RPC endpoint, keyring, signer, approval page, or page acknowledgment.
+//! C12/C15 publish only a boolean terminal proof. C19 consumes the durable
+//! journal/approval/signing state and chooses either C14's strict signed replay
+//! or one closed failure; this scheduling owner must not infer the outcome from
+//! the boolean. A retained operation bypasses preparation and takes the same
+//! terminal-delivery path. This module owns no Port listener, release, RPC
+//! endpoint, keyring, signer, approval page, or page acknowledgment.
 
 import type { OwnedProviderRequest } from "./provider-port.js";
 import type { ProviderTerminalDeliveryLease } from "./provider-terminal-result.js";
-import type { ProviderSignedTransactionResponse } from "./provider-terminal-protocol.js";
+import type { ProviderTerminalResponse } from "./provider-terminal-protocol.js";
 
 export const MAX_ACTIVE_PROVIDER_SIGNED_RESULT_FLOWS = 32;
 
@@ -27,7 +28,7 @@ export interface ProviderSignedResultFlowOwnerOptions {
 
 export interface ProviderSignedResultFlowResult {
   readonly kind: "delivered";
-  /** True only when C15 found an already-retained operation binding. */
+  /** True when delivery used an already-retained or independently recovered row. */
   readonly replayed: boolean;
 }
 
@@ -140,7 +141,7 @@ function bindLease(value: unknown): BoundDeliveryLease {
   return Object.freeze({
     owned: owned as OwnedProviderRequest,
     assertActive,
-    postMessage: postMessage as (message: ProviderSignedTransactionResponse) => void,
+    postMessage: postMessage as (message: ProviderTerminalResponse) => void,
     finish,
   });
 }
@@ -221,9 +222,10 @@ function snapshotLaunch(value: unknown): ApprovalLaunchSnapshot {
 }
 
 /**
- * Join one C15 approval flow to one C14 delivery lease without ever receiving
- * signed bytes. Repeated calls for the same exact in-memory request share one
- * Promise, while reconnects use C14's durable operation identity.
+ * Join one C15 approval flow to one C19 terminal-delivery lease without ever
+ * receiving signed bytes or a failure reason. Repeated calls for the same exact
+ * in-memory request share one Promise, while reconnects use the durable
+ * operation identity.
  */
 export class ProviderSignedResultFlowOwner {
   readonly #dependencies: BoundDependencies;
@@ -256,20 +258,45 @@ export class ProviderSignedResultFlowOwner {
       flow = Promise.resolve().then(async () => {
         try {
           lease.assertActive();
-          const launch = snapshotLaunch(
-            await this.#dependencies.launchApproval(lease),
-          );
+          let launchValue: unknown;
+          try {
+            launchValue = await this.#dependencies.launchApproval(lease);
+          } catch (launchError) {
+            // A retained failed operation makes C13/C15 throw instead of
+            // returning replay-required. The C19 owner may recover only when
+            // the exact durable state independently proves a terminal outcome.
+            // Never translate the exception itself into a page error.
+            try {
+              lease.assertActive();
+              const delivered = await this.#dependencies.deliverResult(lease);
+              if (delivered !== true) {
+                stateError("terminal recovery returned no proof");
+              }
+              return Object.freeze({ kind: "delivered", replayed: true });
+            } catch (deliveryError) {
+              stateError(
+                "approval launch failed and terminal recovery is unproven",
+                new AggregateError(
+                  [launchError, deliveryError],
+                  "approval launch and terminal recovery both failed",
+                ),
+              );
+            }
+          }
+          // Malformed successful output is a dependency-contract violation and
+          // must not be masked by recovery from durable state.
+          const launch = snapshotLaunch(launchValue);
           const replayed = launch.kind === "replay-required";
           if (!replayed) {
-            const signed = await launch.terminal;
-            if (typeof signed !== "boolean") {
+            const terminal = await launch.terminal;
+            if (typeof terminal !== "boolean") {
               stateError("approval terminal proof is not boolean");
             }
-            if (!signed) stateError("approval terminal has no signed result");
           }
 
-          // C14 rechecks every durable binding and the live lease. The boolean
-          // terminal is a scheduling proof, never authority to construct bytes.
+          // C19 rechecks every durable binding and the live lease, then selects
+          // C14 success or a closed failure. The boolean is only a scheduling
+          // proof and is never outcome or byte authority.
           lease.assertActive();
           const delivered = await this.#dependencies.deliverResult(lease);
           if (delivered !== true) {

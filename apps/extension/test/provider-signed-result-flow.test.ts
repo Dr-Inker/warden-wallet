@@ -6,7 +6,7 @@ import {
   ProviderSignedResultFlowOwner,
   ProviderSignedResultFlowStateError,
 } from "../src/background/provider-signed-result-flow.js";
-import type { ProviderSignedTransactionResponse } from "../src/background/provider-terminal-protocol.js";
+import type { ProviderTerminalResponse } from "../src/background/provider-terminal-protocol.js";
 
 const EXTENSION_ID = "a".repeat(32);
 
@@ -55,7 +55,7 @@ function owned(): OwnedProviderRequest {
 
 function lease(value = owned()) {
   let active = true;
-  const posts: ProviderSignedTransactionResponse[] = [];
+  const posts: ProviderTerminalResponse[] = [];
   return {
     value,
     posts,
@@ -64,7 +64,7 @@ function lease(value = owned()) {
       assertActive(): void {
         if (!active || value.signal.aborted) throw new Error("inactive request");
       },
-      postMessage(message: ProviderSignedTransactionResponse): void {
+      postMessage(message: ProviderTerminalResponse): void {
         posts.push(message);
       },
       finish(): boolean {
@@ -76,7 +76,7 @@ function lease(value = owned()) {
   };
 }
 
-describe("C18 signed provider result composition", () => {
+describe("C18/C19 provider terminal result composition", () => {
   it("waits for byte-free durable approval proof, then delivers once through one shared Promise", async () => {
     const current = lease();
     const terminal = deferred<boolean>();
@@ -142,7 +142,53 @@ describe("C18 signed provider result composition", () => {
     expect(deliveries).toBe(1);
   });
 
-  it("releases no result when the exact approval terminal has no signed proof", async () => {
+  it("lets C19 recover only exact durable terminal state after C15 throws", async () => {
+    const current = lease();
+    const launchFailure = new Error("operation previously failed as worker-restarted");
+    let deliveries = 0;
+    const owner = new ProviderSignedResultFlowOwner({
+      approvals: {
+        async launch() {
+          throw launchFailure;
+        },
+      },
+      results: {
+        async deliver(received) {
+          deliveries++;
+          expect(received.owned).toBe(current.value);
+          return true;
+        },
+      },
+    });
+
+    await expect(owner.deliver(current.lease)).resolves.toEqual({
+      kind: "delivered",
+      replayed: true,
+    });
+    expect(deliveries).toBe(1);
+  });
+
+  it("does not translate a launch exception when durable terminal recovery is unproven", async () => {
+    const current = lease();
+    const owner = new ProviderSignedResultFlowOwner({
+      approvals: {
+        async launch() {
+          throw new Error("preparation failed");
+        },
+      },
+      results: {
+        async deliver() {
+          throw new Error("durable operation is absent");
+        },
+      },
+    });
+
+    await expect(owner.deliver(current.lease)).rejects.toThrow(
+      "approval launch failed and terminal recovery is unproven",
+    );
+  });
+
+  it("delegates a proven false terminal to C19 instead of guessing its outcome", async () => {
     const current = lease();
     let deliveries = 0;
     const owner = new ProviderSignedResultFlowOwner({
@@ -163,14 +209,16 @@ describe("C18 signed provider result composition", () => {
       },
     });
 
-    await expect(owner.deliver(current.lease)).rejects.toThrow(
-      "approval terminal has no signed result",
-    );
-    expect(deliveries).toBe(0);
+    await expect(owner.deliver(current.lease)).resolves.toEqual({
+      kind: "delivered",
+      replayed: false,
+    });
+    expect(deliveries).toBe(1);
   });
 
   it("rejects malformed completion and delivery proofs without guessing success", async () => {
     const current = lease();
+    let malformedDeliveries = 0;
     const malformedTerminal = new ProviderSignedResultFlowOwner({
       approvals: {
         async launch() {
@@ -181,11 +229,17 @@ describe("C18 signed provider result composition", () => {
           } as never;
         },
       },
-      results: { deliver: async () => true },
+      results: {
+        async deliver() {
+          malformedDeliveries++;
+          return true;
+        },
+      },
     });
     await expect(malformedTerminal.deliver(current.lease)).rejects.toThrow(
       ProviderSignedResultFlowStateError,
     );
+    expect(malformedDeliveries).toBe(0);
 
     const replay = lease(owned());
     const malformedDelivery = new ProviderSignedResultFlowOwner({

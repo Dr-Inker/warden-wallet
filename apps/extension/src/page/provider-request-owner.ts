@@ -21,8 +21,12 @@ import {
   type ProviderSignTransactionRequest,
 } from "../background/provider-message.js";
 import {
+  isProviderTerminalFailureResponse,
   isSignedTransactionProviderResponse,
+  providerTerminalFailureMessage,
   type ProviderSignedTransactionResponse,
+  type ProviderTerminalFailureCode,
+  type ProviderTerminalFailureResponse,
 } from "../background/provider-terminal-protocol.js";
 
 export const DEFAULT_PAGE_PROVIDER_REQUEST_TTL_MS = 2 * 60 * 1_000;
@@ -110,6 +114,16 @@ export class ProviderPageMethodUnavailableError extends Error {
   }
 }
 
+export class ProviderPageTerminalError extends Error {
+  readonly code: ProviderTerminalFailureCode;
+
+  constructor(code: ProviderTerminalFailureCode) {
+    super(providerTerminalFailureMessage(code));
+    this.name = "ProviderPageTerminalError";
+    this.code = code;
+  }
+}
+
 export class ProviderPageRequestTimeoutError extends Error {
   constructor() {
     super("provider request timed out");
@@ -141,7 +155,8 @@ interface PendingPageRequest {
 
 type ProviderTerminalResponse =
   | ProviderUnavailableResponse
-  | ProviderSignedTransactionResponse;
+  | ProviderSignedTransactionResponse
+  | ProviderTerminalFailureResponse;
 
 const DEFAULT_TIMER_SOURCE: ProviderPageTimerSource = {
   setTimeout: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
@@ -402,6 +417,7 @@ function readTerminalResponseEnvelope(value: unknown): ProviderTerminalResponse 
     const payload = envelope.payload;
     if (isProviderUnavailableResponse(payload)) return payload;
     if (isSignedTransactionProviderResponse(payload)) return payload;
+    if (isProviderTerminalFailureResponse(payload)) return payload;
     return null;
   } catch {
     return null;
@@ -461,8 +477,12 @@ export class ProviderPageRequestOwner {
       return;
     }
 
-    if (response.ok === false) {
+    if (isProviderUnavailableResponse(response)) {
       this.#rejectEntry(entry, new ProviderPageMethodUnavailableError());
+      return;
+    }
+    if (isProviderTerminalFailureResponse(response)) {
+      this.#rejectEntry(entry, new ProviderPageTerminalError(response.error.code));
       return;
     }
     let bytes: Uint8Array;
