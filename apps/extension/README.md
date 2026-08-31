@@ -218,14 +218,28 @@ page even after disposal; absolute TTL checks, 32 pending / 1,024 issued limits,
 and collision failure bound the registry. Duplicate or conflicting terminal
 responses cannot attach to a later owner-created request.
 
-This is page-Promise idempotence, not page authentication or transport
-recovery. Same-page scripts can observe, forge, suppress, or disrupt main-world
-traffic and are the caller trust principal. C16 receives no Port-disconnect
-notification, sends no receipt acknowledgment, and performs no retry. It is not
+This is page-Promise idempotence, not page authentication. Same-page scripts can
+observe, forge, suppress, or disrupt main-world traffic and are the caller trust
+principal. C22 now extends this excluded owner with the initiating absolute
+deadline and an identity-bound receipt: the first exact terminal settles once,
+and an exact duplicate re-sends the same receipt without re-settling. It is not
 injected, registered, or included in any production bundle; the future
 MAIN-world lane must prove single evaluation in real Chromium before relying on
 its module-scoped one-owner guard. The emitted provider remains fixed
 unavailable.
+
+C20–C22 add excluded content/background recovery and settlement owners. C20
+retains the canonical request through one Port replacement and does not remove
+it after terminal forwarding or page receipt; only the background's exact
+settled acknowledgment releases it. C21 permits an overlapping replacement
+Port only after the complete Chrome provenance and SHA-256 operation identity
+match. C22 carries C16's original deadline unchanged through both owners, sends
+an identity-bound expiry cancellation, and keeps the background request lease
+until the current generation presents the deterministic operation receipt after
+the delivery flow has returned exact completion proof. Real Chromium covers an
+overlap, forced MV3 worker death, and a replacement lease expiring at the
+initiating deadline without a fabricated terminal. The build input graph and
+artifact scan keep this entire protocol absent from shipped code.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during

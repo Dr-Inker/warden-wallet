@@ -1,5 +1,132 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C22 IMMUTABLE DEADLINE + DELIVERY SETTLEMENT — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `43b6b12a8914414a9d68ab7ae97006e8541ad9eb` closes C21's
+> cross-worker lifetime and enqueue-without-consumption gaps in still-unreachable
+> code. C16 now mints the one absolute deadline and wraps its closed request in a
+> strict transport envelope. C20 retains and replays that exact object. C21
+> passes the unchanged timestamp to every `ProviderPortSession.openUntil()`;
+> hashing, worker boot, Port replacement, and durable replay cannot extend it.
+> At expiry C20 sends a cancellation containing the same canonical request and
+> deadline, and C21 cancels only after recomputing the exact C14 operation
+> identity on the current Port generation.
+>
+> C22 also replaces the implicit “send means delivered” assumption with a
+> four-step settlement state: request → immutable terminal → page receipt →
+> background settled acknowledgment. The terminal carries a deterministic
+> receipt id derived from the complete operation key. C16 stores that receipt
+> tombstone before settling the original Promise and re-acks an exact duplicate
+> without settling twice. C20 keeps pending state after both page forwarding and
+> receipt send; only the exact settled ack removes it. If the Port dies after
+> page consumption, C20 resends the original request, C21 replays the same
+> terminal, and C20 sends the retained receipt without forwarding a second page
+> terminal.
+>
+> Background terminal enqueue no longer releases the live request lease.
+> C14/C19 must enqueue exactly once, mark enqueue-side completion, and return the
+> exact closed delivery proof. Only then can a receipt matching correlation,
+> operation-derived id, original deadline, and current generation finish the
+> session lease. Early, forged, expired, wrong-generation, or changed-identity
+> receipts fail closed. An exact duplicate receipt after settlement is
+> idempotently acknowledged.
+>
+> Executable RED, harsh corrections, and focused evidence:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run
+>   test/provider-delivery-protocol.test.ts` first exited **1 before
+>   collection** because `provider-delivery-protocol.js` did not exist.
+> - The first complete extension compatibility run was correctly **red at
+>   463/467**: three C17→C14→C16 compositions still stripped the new request
+>   envelope, and one C19→C16 composition injected an old raw terminal. The
+>   tests now exercise the nested transport instead of bypassing it.
+> - Harsh source review found a stale-Port authority race. If operation hashing
+>   began on generation 1 and generation 2 replaced it before the digest
+>   completed, generation 1 could still start the flow. The new regression was
+>   red with one unauthorized lease; current-Port identity is now rechecked
+>   after every asynchronous identity derivation.
+> - A second review found receipt settlement trusted `finish()` before the flow
+>   Promise returned its delivery proof. `flowProven` now gates receipt release,
+>   and a malformed or rejected dependency result closes the route even if
+>   other state was cleared. Tests distinguish terminal enqueue, flow finish,
+>   returned proof, page receipt, and settled ack.
+> - Focused lanes cover strict/open/accessor/revoked-proxy envelopes, immutable
+>   replay deadlines, exact cancellation, terminal/result substitution, early
+>   and forged receipts, duplicate settlement, synchronous/re-entrant acks,
+>   loss after page receipt, stale hash completion, deadline crossing, and
+>   cleanup: protocol **5/5**, page **19/19**, content **17/17**, background
+>   **20/20**. The complete extension lane is **473/473**.
+> - Real Chromium is now **9/9**. The runtime lane proves one lease across
+>   overlapping Ports through receipt settlement; real CDP worker death still
+>   produces one durable fixed cancellation with one preparation; and a
+>   near-deadline death proves the replacement lease carries the initiating
+>   timestamp, loses ownership exactly there, leaves C20 pending count zero,
+>   and emits no fabricated terminal or receipt.
+>
+> Primary contracts checked:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>, and
+> <https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers>.
+> Chrome requires state to survive unexpected MV3 worker termination and
+> documents Port messaging/lifecycle behavior. It does not elevate either Port
+> or Window send into an end-to-end page Promise acknowledgment. Warden's
+> conservative enqueue interpretation is therefore explicit and executable.
+>
+> Independent second-model review remains **UNVERIFIED**. The immediately
+> preceding C21 `codex review` attempt failed before model startup because the
+> host app-server state path is read-only; no C22 review claim is inferred from
+> that failure.
+>
+> Exact implementation-SHA evidence at
+> `43b6b12a8914414a9d68ab7ae97006e8541ad9eb`, with a clean tree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test:browser &&
+> node -e "const fs=require('node:fs'),path=require('node:path');const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=walk('apps/extension/dist');const all=files.map(f=>fs.readFileSync(f,'utf8')).join('\n');const background=fs.readFileSync('apps/extension/dist/background.js','utf8');const content=fs.readFileSync('apps/extension/dist/content.js','utf8');const required=['WARDEN_METHOD_UNAVAILABLE'];const forbidden=['provider delivery protocol:','warden:provider:transport-request','warden:provider:transport-terminal','warden:provider:transport-receipt','warden:provider:transport-settled','warden:provider:transport-cancel','provider runtime transport:','provider content transport:','WARDEN_USER_REJECTED','provider terminal outcome:','provider signed result flow:','provider page request:','provider approval action:','provider operation:','warden-provider-operations-v1'];const missing=required.filter(v=>!background.includes(v)||!content.includes(v));const hits=forbidden.filter(v=>all.includes(v));if(missing.length||hits.length){console.error({missing,hits});process.exit(1)}console.log('C22 delivery/settlement graph absent from shipped extension; fixed unavailable boundary remains')" &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It exited **0** and printed the same SHA before and after: extension
+> **473/473**, typecheck, build, Chromium **9/9**, emitted-artifact exclusion,
+> `git diff --check`, and clean-tree proof passed. The esbuild input graph also
+> forbids `provider-delivery-protocol.ts` from both shipped background and
+> content bundles. Production retains only the fixed unavailable provider.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
+> invariants JSONL is intentionally unchanged.
+>
+> **Harsh residual:** C22 is a safety-oriented volatile protocol, not an
+> exactly-once distributed transaction. Two consecutive worker/Port losses can
+> still make the page time out, though they cannot extend authority or sign
+> twice. The receipt exposes a document/correlation-specific operation digest
+> to that same page; it is an identity token, not a secret. Navigation during
+> each receipt phase is not measured. The Chromium worker delivers only a
+> durable fixed failure. No browser test opens the real approval, resolves a
+> reviewed non-empty release, reads trusted RPC, consumes a live signer,
+> verifies one exact signed transaction end to end, registers Wallet Standard,
+> or sends/confirms a transaction. The MAIN-world owner is not injected and
+> production remains intentionally unavailable.
+>
+> **Next load-bearing work:** C23 should compose one temporary-extension,
+> exact-byte `solana:signTransaction` success across the real C16→C22 transport,
+> C12–C19 approval/operation/result graph, an authenticated unlock generation,
+> a reviewed non-empty test release, and deterministic local RPC fixtures. It
+> must prove the bytes shown for approval are the bytes returned after signing,
+> kill the worker at preparation/sign/result/receipt cuts, measure navigation,
+> and prove no second approval or signature. Keep production fixed-unavailable
+> until that lane, a production RPC/release decision, MAIN-world registration,
+> and external release assurance are green.
+>
+> Ledger-inclusive full-repository evidence is not yet claimed for C22.
+
 > ## 2026-08-31 C21 BACKGROUND REPLACEMENT-PORT OWNERSHIP — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit

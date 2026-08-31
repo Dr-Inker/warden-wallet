@@ -2590,3 +2590,86 @@ Argon2 worker benchmark, builds/typechecks, repository guards, and the complete
 Rust workspace. The Anchor test-program key mismatch and legacy macro `cfg`
 notices remained non-fatal warnings. The evidence-only ledger commit recording
 this result does not inherit that verdict or promote an invariant.
+
+---
+
+## Client C22 immutable deadline and delivery settlement — 43b6b12 — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Threat closed internally:** C21 still minted content, background, and page
+lifetimes independently, while both Chrome Port enqueue and
+`window.postMessage()` stopped short of proving that the initiating Promise had
+consumed a terminal result. Worker loss near expiry could therefore extend the
+background lease, and loss after enqueue could consume the one replay without
+settling the page. C22 defines a closed five-envelope transport language:
+request, terminal, page receipt, background settled acknowledgment, and exact
+expiry cancellation. C16 mints the only absolute deadline. C20 canonicalizes
+and replays that same request envelope, and C21 opens every replacement lease
+with that timestamp rather than a fresh TTL.
+
+Terminal enqueue now stages one immutable response and a deterministic receipt
+id derived from the complete C14 operation identity. C16 records the receipt
+tombstone before settling its Promise and re-acknowledges only an exact duplicate
+terminal. C20 retains its entry through page forwarding and receipt send; only
+the matching current-generation settled acknowledgment removes it. After Port
+loss it resends the original request. If the page already consumed the terminal,
+the same terminal on the replacement causes receipt replay without a second page
+settlement. At the initiating deadline C20 sends a cancellation containing the
+same canonical request and timestamp; C21 recomputes the operation identity and
+cancels only that exact active lease.
+
+The background does not release delivery ownership merely because
+`Port.postMessage()` returned. The C14/C19 flow must enqueue one exact terminal,
+mark enqueue-side completion, and return the closed delivery proof. Only then
+may a matching receipt for the current Port generation, correlation, operation
+receipt id, and deadline call `ProviderPortSession.finish()` and receive the
+settled acknowledgment. Early, forged, expired, wrong-generation, or
+identity-changing receipts close the route. Duplicate exact receipts after
+settlement are idempotently re-acknowledged.
+
+Harsh review found and fixed two additional authority races. A superseded Port
+could finish asynchronous operation hashing and start a flow before its
+replacement presented the request; post-hash code now rechecks exact current
+Port identity. Receipt settlement also initially trusted `finish()` before the
+flow Promise returned its exact proof; `flowProven` is now required, and any
+later malformed/rejected dependency result closes the route even if state was
+otherwise cleared. Both defects have focused regressions.
+
+At implementation SHA `43b6b12a8914414a9d68ab7ae97006e8541ad9eb`,
+the clean-SHA extension command recorded in `docs/NEXT-SESSION.md` exited **0**:
+extension **473/473**, typecheck, build, real Chromium **9/9**, emitted-artifact
+exclusion, `git diff --check`, and identical SHA before/after. Chromium now
+measures (1) one live lease across overlapping Ports through receipt settlement,
+(2) one durable fixed cancellation after real CDP worker death without a second
+preparation, and (3) a replacement worker holding the exact initiating deadline,
+then losing ownership at that timestamp with C20 pending count zero and no page
+terminal or receipt fabricated. Build metadata explicitly forbids the C22
+protocol and page/content/background owners from both production graphs.
+
+Primary browser contracts checked:
+<https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+<https://developer.chrome.com/docs/extensions/develop/concepts/messaging>, and
+<https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers>.
+Chrome requires MV3 state to survive unexpected worker termination and documents
+Port messaging and service-worker lifetime behavior. Treating a send as enqueue
+rather than end-to-end Promise consumption remains Warden's conservative
+architectural inference, now enforced by the explicit receipt state machine.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented` because this graph is
+unreachable in shipped bundles and has not signed a production-composed request.
+Independent second-model review remains **UNVERIFIED**; the immediately preceding
+C21 attempt could not initialize on this host's read-only app-server state path.
+
+**Residual, stated as a threat:** this is a safety-oriented volatile receipt
+protocol with one recovery budget, not an exactly-once distributed transaction.
+Two consecutive worker/Port losses may still leave the page to time out, though
+they cannot extend the original deadline or authorize another signature. The
+receipt id reveals a document/correlation-specific operation digest to the
+initiating page and is an identity token, not a secret. Navigation during each
+receipt phase is not yet measured. The Chromium worker still produces only a
+durable fixed failure; no real browser lane opens an approval, selects a
+reviewed non-empty release, reads trusted RPC, consumes an unlocked signer,
+verifies exact signed bytes, or registers a Wallet Standard method. C22 closes
+the deadline/acknowledgment class internally; it does not make Warden deployable.
+
+Ledger-inclusive full-repository evidence is not yet claimed for C22.
