@@ -1,5 +1,121 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C18 SIGNED RESULT COMPOSITION — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `47f728b5769c679feaafbc51d8e4218bbac52b1f` closes the internal
+> scheduling gap from C17's byte-free approval action to C14's durable signed-
+> result verifier and C16's one-shot page Promise. The new bounded
+> `ProviderSignedResultFlowOwner` takes one exact live provider delivery lease,
+> invokes C15 once, waits for C12's boolean terminal only when C15 created a new
+> approval, and then delegates the same lease to C14. A retained durable
+> operation returns `replay-required` and goes directly to C14; it cannot prepare,
+> open, register, or sign again. Repeated calls for the same exact in-memory
+> request share one Promise, unresolved flows cap at 32, and only C14 may read,
+> validate, construct, enqueue, or scrub signed transaction bytes.
+>
+> Harsh source review caught a load-bearing race before this commit. The core
+> `SessionApprovalCoordinator` atomically changes the approval row to
+> `state:"approved"` when it **claims a signing attempt**, before key use and
+> before `completeSigning()` durably stores signed bytes. Therefore an approved
+> row alone is not a signed-result proof. C12 now exposes a Promise that can
+> resolve `true` only after its exact coordinator Promise returns a structurally
+> valid id/digest/transaction/signature result and an independent read proves the
+> exact bound row approved. Cancellation and settlement wait out an already-
+> started coordinator Promise; if that path never wins the exact proof, the
+> terminal resolves `false`. Provider/keyring lifetime loss still rejects the
+> approval-page action, while a signature that already completed remains
+> deliverable through C14 or replayable after reconnect. C14 independently reads
+> and cryptographically validates the durable signing outcome, so the C12
+> boolean is scheduling evidence, never byte authority.
+>
+> Executable RED and focused evidence:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run
+>   test/provider-signed-result-flow.test.ts` first exited **1** before test
+>   collection because `provider-signed-result-flow.js` did not exist.
+> - The final focused C12–C18/Port/page lane is **87/87**. It pins one shared
+>   Promise and one delivery, retained-operation replay without another prepare,
+>   false/malformed terminal refusal, malformed delivery refusal, the independent
+>   32-flow cap, exact bind → register → window ordering, and cancellation/
+>   settlement races.
+> - Three cross-owner tests compose C12 → C15 → C17 → C18 → C14 → C16. The
+>   normal test pauses C14 while C17 settles and destroys its volatile action,
+>   proving delivery depends on the durable result rather than the UI route. The
+>   keyring-loss test holds the page Promise pending after the row is merely
+>   claimed approved, then requires delivery only after the coordinator returns.
+>   The provider-loss test rejects the dead lease, constructs replacement-worker
+>   owners, and replays the same operation/result without another prepare,
+>   registration, or sign.
+> - Harsh self-review also added explicit false-terminal assertions for malformed
+>   coordinator output, absent terminal state, ordinary cancellation, and cap
+>   recovery. It found no basis to enable production.
+>
+> This round researched the gap primarily against the repository's authoritative
+> implementation rather than prose: `packages/core/src/transaction/`
+> `session-approval-coordinator.ts` proves `claimForSigning()` precedes key use
+> and `completeSigning()`, while `packages/core/src/approval/signing-outcome.ts`
+> defines the distinct `signing`/`signed`/`failed` durable outcomes. The C17
+> Chrome MV3/runtime, Solana blockhash/genesis RPC, and Wallet Standard primary
+> sources remain applicable and are linked immediately below in the prior
+> ledger. No external source is being used to overrule those executable local
+> contracts.
+>
+> `codex review --commit
+> 47f728b5769c679feaafbc51d8e4218bbac52b1f` exited **1 before review**:
+> the in-process app-server client could not initialize on this host's read-only
+> state path. Independent second-model review remains **UNVERIFIED**.
+>
+> Exact implementation-SHA evidence at
+> `47f728b5769c679feaafbc51d8e4218bbac52b1f`, with a clean tree:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build &&
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test:browser &&
+> node -e "const fs=require('node:fs');const path=require('node:path');const root='apps/extension/dist';const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=walk(root);const all=files.map(f=>fs.readFileSync(f,'utf8')).join('\n');const background=fs.readFileSync(path.join(root,'background.js'),'utf8');const content=fs.readFileSync(path.join(root,'content.js'),'utf8');const required=['WARDEN_METHOD_UNAVAILABLE'];const forbidden=['provider signed result flow:','provider approval action:','provider page request:','page_validation_0000000000000000','provider approval operation:','provider operation:','warden-provider-operations-v1','provider terminal result:','provider terminal protocol:','provider approval request:','provider approval selection:','session approval coordinator:'];const missing=required.filter(s=>!background.includes(s)||!content.includes(s));const hit=forbidden.filter(s=>all.includes(s));if(missing.length||hit.length){console.error({missing,hit});process.exit(1)}console.log('extension dist remains fixed-unavailable; C12-C18 provider/signing/page owners are absent')" &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> exited **0** and printed the same SHA before and after: extension **403/403**,
+> typecheck, build, production Chromium **6/6**, emitted-artifact exclusion,
+> `git diff --check`, and clean-tree proof passed. The production background and
+> content bundles both retain `WARDEN_METHOD_UNAVAILABLE`; all C12–C18 markers
+> are absent. Ledger-inclusive full-repository evidence is not claimed until the
+> ledger SHA runs `.claude/test-gate.sh`.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
+> invariants JSONL is intentionally unchanged.
+>
+> **Harsh residual:** C18 is a unit/integration composition of internal owners,
+> not a shipped wallet method. Its page test forwards C14's exact response
+> envelope through a fake window; the real content bridge still admits only
+> `WARDEN_METHOD_UNAVAILABLE`. The C14 integrations use its explicit
+> `readSigned` test seam, while the core cryptographic replay verifier is covered
+> in its own executable lane; this is not one real-browser cryptographic-signing
+> test. There is no content-script resend/reconnect owner, page receipt
+> acknowledgment, provider rejection mapping, production release, trusted RPC
+> endpoint, reviewed deployment pin, production coordinator/keyring composition,
+> Wallet Standard registration, send/confirmation path, onboarding, production
+> KDF policy, root ceremony, consequence review, or external audit. A Port
+> enqueue is still not page consumption. Production Chromium proves only that
+> signing is disabled. C18 removes one internal scheduling ambiguity; it does
+> not make Warden deployable.
+>
+> **Next load-bearing work:** define the closed provider transport/recovery and
+> failure protocol around C18. It must preserve C16's original page Promise over
+> content/background disconnects, replay only the exact durable C14 result, map
+> rejection/cancellation/expiry to strict terminal errors, and prove worker/
+> Port/page races without treating `postMessage()` as acknowledgment. Keep the
+> production provider fixed-unavailable until a non-empty reviewed release,
+> trusted RPC, real coordinator/keyring composition, and real-browser exact-byte
+> signing lane all exist.
+
 > ## 2026-08-31 C17 EXACT APPROVAL ACTION — INTERNAL ONLY, PRODUCTION SIGNING STILL UNAVAILABLE
 >
 > Implementation commit

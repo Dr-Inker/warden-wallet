@@ -2290,3 +2290,70 @@ and the complete Rust workspace. The known Anchor test-program key mismatch
 notice and legacy macro `cfg` notices were warnings, not skipped failures. This
 verdict belongs only to `4fd8fc9…`; the evidence-only follow-up does not inherit
 it or promote an invariant.
+
+---
+
+## Client C18 signed-result composition — 47f728b — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**New internal composition surface:** C18 adds no signer, key, release, RPC,
+Port listener, page listener, or signed-byte reader. Its bounded
+`ProviderSignedResultFlowOwner` joins C15's approval launch to the existing C14
+terminal-result owner by passing one exact browser-owned delivery lease through
+both. For a new operation it waits for C12's byte-free terminal Promise; for a
+retained bound operation it bypasses preparation and delegates directly to C14.
+The same exact in-memory request shares one Promise, the owner refuses a 33rd
+unresolved flow, and a completed/rejected flow releases its capacity.
+
+The critical state distinction is now executable. `ApprovalRecord.state === "approved"`
+is the core repository's atomic signing-**claim** state, not proof
+that `completeSigning()` committed transaction bytes. The coordinator claims
+before post-claim authority checks, blockhash validity, keyring use, exact-byte
+signing, reparsing, signature verification, and durable completion. C12 may
+therefore resolve its terminal `true` only after the exact coordinator Promise
+returns a structurally valid signed result and an independent read matches the
+exact approved binding. Cancellation and settlement await any already-started
+approve Promise before resolving `false`, so an approved claim cannot race a
+false result while the coordinator can still prove completion. First settlement
+wins; fatal owner poisoning resolves false. C14 then independently checks the
+operation identity, approval/browser binding, durable `signed` outcome, exact
+message digest, transaction envelope, and Ed25519 signature before constructing
+the provider response. The boolean never grants access to transaction bytes.
+
+Provider loss after durable completion causes the first delivery lease to fail;
+replacement-worker C15 sees the retained operation and C14 replays without a
+new prepare or sign. Keyring-lifetime loss still makes the volatile approval
+action reject, but if the coordinator had already completed the durable signed
+result, C18 may deliver it while the provider lease remains active. This is a
+commit-point rule, not authority resurrection: C17's action registry remains
+volatile and cannot be reconstructed from storage.
+
+The meaningful RED was the missing C18 module (Vitest exited **1** before
+collection). Final focused C12–C18/Port/page evidence is **87/87**. The
+implementation SHA `47f728b5769c679feaafbc51d8e4218bbac52b1f` passed extension
+**403/403**, typecheck, build, production Chromium **6/6**, emitted-artifact
+exclusion, identical before/after SHA, `git diff --check`, and clean-tree proof
+with the exact command recorded in `docs/NEXT-SESSION.md`. The production build
+metafile explicitly forbids C18 and every earlier internal provider/signing/page
+owner; emitted background and content bundles retain the fixed-unavailable
+marker. Ledger-inclusive full-repository evidence is not yet claimed.
+
+Independent second-model review is **UNVERIFIED**. `codex review --commit
+47f728b5769c679feaafbc51d8e4218bbac52b1f` exited before review because its
+in-process app-server client could not initialize on this host's read-only state
+path.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+
+**Residual, stated as a threat:** the integration test manually forwards C14's
+exact response envelope through a fake page window and uses C14's explicit
+`readSigned` test seam. The real content bridge accepts only the unavailable
+response, and real Chromium proves the feature remains disabled rather than
+proving a cryptographic signing flow. No owner yet preserves the original C16
+Promise across content/background disconnects, maps rejection/cancellation/
+expiry into strict page-terminal errors, or acknowledges page consumption;
+Chrome `postMessage()` is only enqueue. There is still no non-empty reviewed
+release, trusted RPC, production coordinator/keyring composition, real-browser
+signature test, Wallet Standard registration, send/confirmation, onboarding,
+production KDF policy, root ceremony, consequence review, or audit. C18 closes
+an internal result-scheduling race only; it is not deployment evidence.
