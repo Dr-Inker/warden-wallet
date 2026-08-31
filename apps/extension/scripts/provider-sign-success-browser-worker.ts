@@ -1,4 +1,4 @@
-//! Browser-only C23-C26 exact-byte success and restart-cut composition.
+//! Browser-only C23-C27 exact-byte success and restart-cut composition.
 //! Never copied into the product build.
 //!
 //! The release pins and Connection below are deterministic test provenance, not a
@@ -73,6 +73,10 @@ import type { KeyringRecordStorageArea } from "../src/background/keyring-record-
 import type { UnlockSessionStorageArea } from "../src/background/unlock-session.js";
 import { APPROVAL_UI_PORT_NAME } from "../src/approval-protocol.js";
 import { PROVIDER_PORT_NAME } from "../src/provider-protocol.js";
+import { readProviderTransportTerminalEnvelope } from
+  "../src/provider-delivery-protocol.js";
+import { isSignedTransactionProviderResponse } from
+  "../src/background/provider-terminal-protocol.js";
 
 const APPROVAL_DATABASE_NAME = "warden-provider-sign-success-approvals-v1";
 const OPERATION_DATABASE_NAME = "warden-provider-sign-success-operations-v1";
@@ -80,6 +84,8 @@ const KEYRING_INITIALIZED_STORAGE_KEY =
   "warden-provider-sign-success-keyring-initialized-v1";
 const SIGNING_COMMIT_CHECKPOINT_STORAGE_KEY =
   "warden:test:signing-commit-request-succeeded-v1";
+const TERMINAL_ENQUEUED_CHECKPOINT_STORAGE_KEY =
+  "warden:test:terminal-enqueued-v1";
 const WARDEN_PROGRAM = new PublicKey(
   "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
 );
@@ -179,7 +185,8 @@ type KeyringStartup = "seeded" | "restored" | "locked";
 type WorkerCheckpoint =
   | "after-signature-produced"
   | "after-signing-committed"
-  | "during-signing-commit";
+  | "during-signing-commit"
+  | "after-terminal-enqueued";
 
 interface SigningCommitCandidate {
   readonly approvalId: string;
@@ -481,6 +488,66 @@ function installSigningCommitCheckpoint(): void {
 }
 
 installSigningCommitCheckpoint();
+
+function instrumentProviderPort(port: ProviderRuntimePort): ProviderRuntimePort {
+  const postMessage = port.postMessage.bind(port);
+  const disconnect = port.disconnect.bind(port);
+  return Object.freeze({
+    name: port.name,
+    sender: port.sender,
+    onMessage: port.onMessage,
+    onDisconnect: port.onDisconnect,
+    postMessage(message: unknown): void {
+      const terminal = readProviderTransportTerminalEnvelope(message);
+      const signed = terminal !== null &&
+          isSignedTransactionProviderResponse(terminal.payload) &&
+          terminal.payload.correlationId === terminal.correlationId
+        ? terminal.payload
+        : null;
+
+      // This is the actual Chrome Port enqueue. The test-only hold begins only
+      // after the native method returns, while the production transport owner
+      // is still unable to record its posted generation or delivery proof.
+      postMessage(message);
+      if (
+        armedCheckpoint !== "after-terminal-enqueued" ||
+        terminal === null ||
+        signed === null
+      ) {
+        return;
+      }
+      const approvalId = counters.latestApprovalId;
+      if (approvalId === null) {
+        throw new Error("signed terminal has no approval identity");
+      }
+      armedCheckpoint = null;
+      checkpointReached = "after-terminal-enqueued";
+      void chromeApi.storage.session.set({
+        [TERMINAL_ENQUEUED_CHECKPOINT_STORAGE_KEY]: {
+          stage: "after-terminal-enqueued",
+          bootId,
+          approvalId,
+          correlationId: terminal.correlationId,
+          receiptId: terminal.receiptId,
+          expiresAt: terminal.expiresAt,
+          signedTransaction: [...signed.result.signedTransaction],
+          selectionCalls: counters.selectionCalls,
+          approvalCreates: counters.approvalCreates,
+          signingClaims: counters.signingClaims,
+          signingCompletions: counters.signingCompletions,
+          signerLeaseUses: counters.signerLeaseUses,
+          signerResultsProduced: counters.signerResultsProduced,
+          rpc: { ...rpcCounters },
+        },
+      });
+      const holdUntil = Date.now() + 20_000;
+      while (Date.now() < holdUntil) {
+        // C27 closes the actual worker after page receipt but before settlement.
+      }
+    },
+    disconnect,
+  });
+}
 
 async function keyringWasInitialized(): Promise<boolean> {
   const stored = await chromeApi.storage.local.get(
@@ -861,7 +928,7 @@ const transport = new ProviderRuntimeTransportOwner(providerRuntime, {
 chromeApi.runtime.onConnect.addListener((port: ProviderRuntimePort): void => {
   if (port.name === PROVIDER_PORT_NAME) {
     counters.providerPortRoutes++;
-    providerConnects.emit(port);
+    providerConnects.emit(instrumentProviderPort(port));
   } else if (port.name === APPROVAL_UI_PORT_NAME) {
     counters.approvalPortRoutes++;
     approvalConnects.emit(port);
@@ -875,7 +942,8 @@ Object.assign(globalThis, {
     if (
       stage !== "after-signature-produced" &&
       stage !== "after-signing-committed" &&
-      stage !== "during-signing-commit"
+      stage !== "during-signing-commit" &&
+      stage !== "after-terminal-enqueued"
     ) {
       throw new Error("unsupported signing worker checkpoint");
     }

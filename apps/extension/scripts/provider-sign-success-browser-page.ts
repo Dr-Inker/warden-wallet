@@ -9,6 +9,7 @@ import {
 } from "@solana/web3.js";
 
 import { ProviderPageRequestOwner } from "../src/page/provider-request-owner.js";
+import { readPageProviderReceiptEnvelope } from "../src/provider-delivery-protocol.js";
 
 const WARDEN_PROGRAM = new PublicKey(
   "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
@@ -23,6 +24,17 @@ const [SMART_ACCOUNT] = PublicKey.findProgramAddressSync(
 );
 const SOURCE_BLOCKHASH = new PublicKey(new Uint8Array(32).fill(0x77)).toBase58();
 const MEMO = "C23 exact-byte browser success";
+
+let terminalSettlements = 0;
+let pageReceiptPosts = 0;
+let lastPageReceipt: Readonly<{
+  correlationId: string;
+  receiptId: string;
+  expiresAt: number;
+}> | null = null;
+let currentState: "pending" | "signed" | "failed" = "pending";
+let currentSignedTransaction: Uint8Array | null = null;
+let currentError: string | null = null;
 
 const sourceMessage = new TransactionMessage({
   payerKey: SMART_ACCOUNT,
@@ -53,12 +65,36 @@ function observation(
     pendingCount: owner.pendingCount,
     href: location.href,
     navigationEntries: performance.getEntriesByType("navigation").length,
+    terminalSettlements,
+    pageReceiptPosts,
+    lastPageReceipt,
   });
 }
 
-Object.assign(globalThis, {
-  __wardenPageSignStatus: observation("pending", null, null),
+function publishObservation(): void {
+  Object.assign(globalThis, {
+    __wardenPageSignStatus: observation(
+      currentState,
+      currentSignedTransaction,
+      currentError,
+    ),
+  });
+}
+
+addEventListener("message", (event: MessageEvent): void => {
+  if (event.source !== window || event.origin !== location.origin) return;
+  const receipt = readPageProviderReceiptEnvelope(event.data);
+  if (receipt === null) return;
+  pageReceiptPosts++;
+  lastPageReceipt = Object.freeze({
+    correlationId: receipt.payload.correlationId,
+    receiptId: receipt.payload.receiptId,
+    expiresAt: receipt.payload.expiresAt,
+  });
+  publishObservation();
 });
+
+publishObservation();
 
 void owner.signTransaction({
   accountAddress: SMART_ACCOUNT.toBase58(),
@@ -70,17 +106,17 @@ void owner.signTransaction({
   },
 }).then(
   (signedTransaction) => {
-    Object.assign(globalThis, {
-      __wardenPageSignStatus: observation("signed", signedTransaction, null),
-    });
+    terminalSettlements++;
+    currentState = "signed";
+    currentSignedTransaction = signedTransaction;
+    publishObservation();
   },
   (error: unknown) => {
-    Object.assign(globalThis, {
-      __wardenPageSignStatus: observation(
-        "failed",
-        null,
-        error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-      ),
-    });
+    terminalSettlements++;
+    currentState = "failed";
+    currentError = error instanceof Error
+      ? `${error.name}: ${error.message}`
+      : String(error);
+    publishObservation();
   },
 );

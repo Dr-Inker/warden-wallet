@@ -24,6 +24,8 @@ const scriptDirectory = resolve(appDirectory, "scripts");
 const EXPECTED_MEMO = "C23 exact-byte browser success";
 const SIGNING_COMMIT_CHECKPOINT_STORAGE_KEY =
   "warden:test:signing-commit-request-succeeded-v1";
+const TERMINAL_ENQUEUED_CHECKPOINT_STORAGE_KEY =
+  "warden:test:terminal-enqueued-v1";
 
 interface TestServer {
   readonly origin: string;
@@ -38,6 +40,13 @@ interface PageSignStatus {
   readonly pendingCount: number;
   readonly href: string;
   readonly navigationEntries: number;
+  readonly terminalSettlements: number;
+  readonly pageReceiptPosts: number;
+  readonly lastPageReceipt: Readonly<{
+    readonly correlationId: string;
+    readonly receiptId: string;
+    readonly expiresAt: number;
+  }> | null;
 }
 
 interface WorkerStatus {
@@ -87,6 +96,23 @@ interface SigningCommitCheckpointMarker {
   readonly attemptId: string;
   readonly attemptNumber: number;
   readonly transactionBytesLength: number;
+  readonly selectionCalls: number;
+  readonly approvalCreates: number;
+  readonly signingClaims: number;
+  readonly signingCompletions: number;
+  readonly signerLeaseUses: number;
+  readonly signerResultsProduced: number;
+  readonly rpc: WorkerStatus["rpc"];
+}
+
+interface TerminalEnqueuedCheckpointMarker {
+  readonly stage: "after-terminal-enqueued";
+  readonly bootId: string;
+  readonly approvalId: string;
+  readonly correlationId: string;
+  readonly receiptId: string;
+  readonly expiresAt: number;
+  readonly signedTransaction: number[];
   readonly selectionCalls: number;
   readonly approvalCreates: number;
   readonly signingClaims: number;
@@ -206,6 +232,11 @@ async function createExtension(): Promise<{
         join(appDirectory, "approval.css"),
         join(directory, "approval.css"),
       ),
+      writeFile(
+        join(directory, "control.html"),
+        "<!doctype html><meta charset=\"utf-8\"><title>Warden test control</title>\n",
+        "utf8",
+      ),
     ]);
     await writeFile(
       join(directory, "manifest.json"),
@@ -314,6 +345,24 @@ async function readSigningCommitCheckpoint(
     const stored = await storage.get(key);
     return (stored[key] ?? null) as SigningCommitCheckpointMarker | null;
   }, SIGNING_COMMIT_CHECKPOINT_STORAGE_KEY);
+}
+
+async function readTerminalEnqueuedCheckpoint(
+  extensionPage: Page,
+): Promise<TerminalEnqueuedCheckpointMarker | null> {
+  return extensionPage.evaluate(async (key) => {
+    const storage = (globalThis as unknown as {
+      chrome: {
+        storage: {
+          session: {
+            get(key: string): Promise<Record<string, unknown>>;
+          };
+        };
+      };
+    }).chrome.storage.session;
+    const stored = await storage.get(key);
+    return (stored[key] ?? null) as TerminalEnqueuedCheckpointMarker | null;
+  }, TERMINAL_ENQUEUED_CHECKPOINT_STORAGE_KEY);
 }
 
 test("real Chromium returns exactly the reviewed message after one authenticated signature", async () => {
@@ -1173,6 +1222,243 @@ test("in-flight strict signing commit resolves to one durable outcome after MV3 
         navigationEntries: 1,
       });
     }
+  } finally {
+    try {
+      await context?.close();
+    } finally {
+      try {
+        await server?.close();
+      } finally {
+        const expectedPrefix =
+          `${resolve(tmpdir())}${sep}warden-provider-sign-success-browser-`;
+        if (resolve(extension.directory).startsWith(expectedPrefix)) {
+          await rm(extension.directory, { recursive: true, force: true });
+        }
+      }
+    }
+  }
+});
+
+test("page-settled signed result reaches one background settlement after MV3 death", async () => {
+  const extension = await createExtension();
+  let server: TestServer | undefined;
+  let context: BrowserContext | undefined;
+  try {
+    server = await startServer(extension.pageScript);
+    context = await chromium.launchPersistentContext("", {
+      headless: false,
+      args: [
+        `--disable-extensions-except=${extension.directory}`,
+        `--load-extension=${extension.directory}`,
+        "--headless=new",
+      ],
+    });
+    const firstWorker = await liveExtensionWorker(context);
+    const extensionOrigin =
+      `chrome-extension://${new URL(firstWorker.url()).hostname}`;
+    await firstWorker.evaluate(() => {
+      const arm = (globalThis as unknown as {
+        __wardenProviderSignSuccessArmCheckpoint?: (stage: string) => void;
+      }).__wardenProviderSignSuccessArmCheckpoint;
+      if (typeof arm !== "function") {
+        throw new Error("terminal-enqueue checkpoint control is unavailable");
+      }
+      arm("after-terminal-enqueued");
+    });
+
+    const page = await context.newPage();
+    await page.goto(server.origin);
+    await expect.poll(() => readWorkerStatus(context!)).toMatchObject({
+      bootId: expect.stringMatching(/^[0-9a-f]{32}$/),
+      keyringStartup: "seeded",
+      fatalErrors: [],
+      selectionCalls: 1,
+      approvalCreates: 1,
+      signingClaims: 0,
+      checkpointReached: null,
+    });
+    const existingPopup = context.pages().find((candidate) =>
+      candidate.url().startsWith(extensionOrigin) &&
+      candidate.url().includes("/approval.html?request=req_"));
+    const popup = existingPopup ?? await context.waitForEvent("page", {
+      predicate: (candidate) =>
+        candidate.url().startsWith(extensionOrigin) &&
+        candidate.url().includes("/approval.html?request=req_"),
+      timeout: 30_000,
+    });
+    await expect(popup.locator("#approval-status")).toHaveAttribute(
+      "data-state",
+      "review",
+    );
+    const reviewed = await readWorkerStatus(context);
+    if (
+      reviewed.latestApprovalId === null ||
+      reviewed.rawMessage === null ||
+      reviewed.messageDigestHex === null
+    ) {
+      throw new Error("terminal-enqueue review evidence is absent");
+    }
+    const extensionControl = await context.newPage();
+    await extensionControl.goto(`${extensionOrigin}/control.html`);
+    await popup.locator("[data-action=approve]").click();
+
+    await expect.poll(() =>
+      readTerminalEnqueuedCheckpoint(extensionControl)
+    ).toMatchObject({
+      stage: "after-terminal-enqueued",
+      bootId: reviewed.bootId,
+      approvalId: reviewed.latestApprovalId,
+      correlationId: expect.stringMatching(/^page_[0-9a-f]{32}$/),
+      receiptId: expect.stringMatching(/^delivery_[0-9a-f]{64}$/),
+      expiresAt: expect.any(Number),
+      signedTransaction: expect.any(Array),
+      selectionCalls: 1,
+      approvalCreates: 1,
+      signingClaims: 1,
+      signingCompletions: 1,
+      signerLeaseUses: 1,
+      signerResultsProduced: 1,
+      rpc: {
+        genesisCalls: 8,
+        accountCalls: 6,
+        latestBlockhashCalls: 1,
+        blockhashValidityCalls: 1,
+      },
+    });
+    const marker = await readTerminalEnqueuedCheckpoint(extensionControl);
+    if (marker === null || marker.signedTransaction.length === 0) {
+      throw new Error("signed terminal was not enqueued before the cut");
+    }
+    await expect.poll(async () => ({
+      page: await page.evaluate(() =>
+        (globalThis as unknown as { __wardenPageSignStatus: PageSignStatus })
+          .__wardenPageSignStatus,
+      ),
+      contentPending: await readContentPending(page),
+    })).toMatchObject({
+      page: {
+        state: "signed",
+        signedTransaction: marker.signedTransaction,
+        error: null,
+        pendingCount: 0,
+        href: `${server.origin}/`,
+        navigationEntries: 1,
+        terminalSettlements: 1,
+        pageReceiptPosts: 1,
+        lastPageReceipt: {
+          correlationId: marker.correlationId,
+          receiptId: marker.receiptId,
+          expiresAt: marker.expiresAt,
+        },
+      },
+      contentPending: 1,
+    });
+    const pageSettledBeforeCut = await page.evaluate(() =>
+      (globalThis as unknown as { __wardenPageSignStatus: PageSignStatus })
+        .__wardenPageSignStatus,
+    );
+
+    // The real terminal has reached the page and its receipt has reached the
+    // content owner, but the worker is still inside native Port.postMessage().
+    // Remove restart authority before closing that actual service-worker target.
+    await extensionControl.evaluate(async () => {
+      const storage = (globalThis as unknown as {
+        chrome: {
+          storage: {
+            session: { remove(key: string): Promise<void> };
+          };
+        };
+      }).chrome.storage.session;
+      await storage.remove("warden.unlock-session.v2");
+    });
+    const controlPage = await context.newPage();
+    const cdp = await context.newCDPSession(controlPage);
+    const targets = await cdp.send("Target.getTargets");
+    const target = targets.targetInfos.find((candidate) =>
+      candidate.type === "service_worker" &&
+      candidate.url.startsWith(extensionOrigin));
+    expect(target, "worker exists after page receipt but before settlement")
+      .toBeDefined();
+    const closed = await cdp.send("Target.closeTarget", {
+      targetId: target!.targetId,
+    });
+    expect(closed.success).toBe(true);
+
+    await expect.poll(async () => ({
+      page: await page.evaluate(() =>
+        (globalThis as unknown as { __wardenPageSignStatus: PageSignStatus })
+          .__wardenPageSignStatus,
+      ),
+      contentPending: await readContentPending(page),
+    })).toEqual({
+      page: pageSettledBeforeCut,
+      contentPending: 0,
+    });
+    const replacement = await readWorkerStatus(
+      context,
+      extensionOrigin,
+      reviewed.latestApprovalId,
+    );
+    expect(replacement).toMatchObject({
+      ready: true,
+      keyringStartup: "locked",
+      checkpointReached: null,
+      fatalErrors: [],
+      startupInvalidatedApprovals: 0,
+      startupInvalidatedOperations: 0,
+      keyringUnlocked: false,
+      providerPortRoutes: 1,
+      selectionCalls: 0,
+      identityReads: 0,
+      approvalCreates: 0,
+      signingClaims: 0,
+      signingCompletions: 0,
+      signerLeaseUses: 0,
+      signerResultsProduced: 0,
+      latestApprovalId: reviewed.latestApprovalId,
+      approvalState: "approved",
+      signingState: "signed",
+      signingAttemptNumber: 1,
+      signingFailureCode: null,
+      durableSignedTransaction: marker.signedTransaction,
+      activeActions: 0,
+      activeApprovalRequests: 0,
+      activeFlows: 0,
+      activeDocuments: 1,
+      rpc: {
+        genesisCalls: 0,
+        accountCalls: 0,
+        latestBlockhashCalls: 0,
+        blockhashValidityCalls: 0,
+      },
+    });
+    expect(replacement.bootId).not.toBe(marker.bootId);
+    expect(replacement.rawMessage).toEqual(reviewed.rawMessage);
+    expect(replacement.messageDigestHex).toBe(reviewed.messageDigestHex);
+
+    const returned = VersionedTransaction.deserialize(
+      Uint8Array.from(marker.signedTransaction),
+    );
+    const returnedMessage = returned.message.serialize();
+    expect(returned.signatures).toHaveLength(1);
+    expect([...returnedMessage]).toEqual(reviewed.rawMessage);
+    expect(createHash("sha256").update(returnedMessage).digest("hex")).toBe(
+      reviewed.messageDigestHex,
+    );
+    const publicKey = createPublicKey({
+      key: Buffer.concat([
+        Buffer.from("302a300506032b6570032100", "hex"),
+        Buffer.from(new PublicKey(reviewed.sessionSigner).toBytes()),
+      ]),
+      format: "der",
+      type: "spki",
+    });
+    expect(verify(
+      null,
+      returnedMessage,
+      publicKey,
+      returned.signatures[0]!,
+    )).toBe(true);
   } finally {
     try {
       await context?.close();
