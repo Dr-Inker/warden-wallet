@@ -301,15 +301,28 @@ second selection, RPC read, approval claim, signer lease, completion, or signing
 attempt. The lane validates this allowed union; it does not claim that repeated
 runs observed both outcomes.
 
+C27 cuts after the real signed terminal has been enqueued and the unchanged page
+has settled and emitted its receipt, but before the background transport can
+record its posted generation, finish the flow, prove exact delivery, or accept
+that receipt. A browser-only Port wrapper delegates to native `postMessage`
+first and holds before returning. After the actual worker target is killed, a
+locked replacement performs no selection, RPC, approval, key, or signing work.
+It replays the durable terminal; the content owner matches it to the retained
+terminal and receipt identity, re-sends the receipt without forwarding a second
+page response, and receives settlement. Content pending falls from one to zero
+while the complete page observation stays unchanged at one Promise settlement,
+one receipt post, one navigation, and the independently verified signed bytes.
+
 These contracts still do not cover death during preparation, pending approval,
-terminal enqueue, page receipt, or settled acknowledgment. Target termination
-within one loaded browser is not whole-browser restart or power loss. Chrome
-documents that `storage.session` is cleared on browser restart, and IndexedDB's
-`strict` durability setting remains a user-agent hint rather than a stable-media
-guarantee. The fixture marker and native-method hook are test instrumentation,
-not an onboarding or account-registry design. This graph still does not register
-or inject Wallet Standard, configure a live trusted RPC/release, define
-production KDF policy, send a transaction, or make the production provider
+after terminal enqueue but before page settlement, or while the final settled
+acknowledgment is in flight. Target termination within one loaded browser is not
+whole-browser restart or power loss. Chrome documents that `storage.session` is
+cleared on browser restart, and IndexedDB's `strict` durability setting remains
+a user-agent hint rather than a stable-media guarantee. The fixture markers,
+native-method hook, Port wrapper, counters, and inert control page are test
+instrumentation, not an onboarding or account-registry design. This graph still
+does not register or inject Wallet Standard, configure a live trusted RPC/release,
+define production KDF policy, send a transaction, or make the production provider
 reachable. Future activation must replace the fixed-unavailable provider behind
 the existing single central Port router, not install an independent
 `runtime.onConnect` listener.

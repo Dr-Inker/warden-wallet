@@ -1,5 +1,117 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C27 POST-PAGE-RECEIPT SETTLEMENT RECOVERY — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
+>
+> Implementation commit
+> `ae06fa2faa6e53e1dfbac3934e404449da918a78` cuts a delivery boundary that
+> C24-C26 did not measure. The exact signed terminal is enqueued through the
+> real Chrome Port, reaches the unchanged page, settles its Promise, and causes
+> the page to emit its identity-bound receipt, but the original worker dies
+> before the background transport can record exact delivery proof or accept
+> that receipt.
+>
+> The browser-only worker wraps only the provider Port passed into the real
+> `ProviderRuntimeTransportOwner`. It preserves the native sender, message and
+> disconnect events, and native disconnect method. For one armed exact signed
+> terminal, it calls the bound native `Port.postMessage()` first, validates the
+> real transport envelope and signed response, publishes a non-secret marker,
+> and synchronously holds the wrapper before returning. The production owner
+> is therefore still inside `#postTerminal`: `postedGeneration` is unset and
+> `finish()`/flow proof cannot run, even though the browser has delivered the
+> message to the content and page owners.
+>
+> The MAIN-world fixture now independently counts Promise terminal settlements
+> and well-formed page receipt posts and retains the last receipt identity. At
+> the cut it proves one signed settlement, one receipt, one navigation, exact
+> marker/page bytes, and one still-pending content entry. The test uses a
+> dedicated inert extension page because the real approval popup correctly
+> closes after approval completes. That independent page removes the serialized
+> unlock session, then CDP closes the actual service-worker target.
+>
+> A different boot starts ready-but-locked and performs zero selection,
+> identity, RPC, approval create/claim/complete, signer lease, or signer-result
+> work. The durable operation replays the exact terminal. Because the content
+> owner retained both the first terminal and the page's receipt id, it accepts
+> only an exact duplicate envelope and re-sends the receipt directly without
+> forwarding a second response to the page. The replacement proves delivery,
+> accepts that receipt, sends settlement, and content pending falls from one to
+> zero. The complete page observation remains byte-for-byte unchanged: exactly
+> one Promise settlement and one page receipt. The returned message and digest
+> still equal the reviewed values and the Ed25519 signature is independently
+> verified.
+>
+> Executable RED:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec playwright test -c playwright.config.ts
+>   provider-sign-success.pw.ts -g "page-settled signed result"`
+>   first exited **1** at the intended arm boundary with
+>   `unsupported signing worker checkpoint`.
+>
+> Current primary contracts rechecked:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>,
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>,
+> <https://developer.chrome.com/docs/extensions/how-to/test/end-to-end-testing>,
+> and
+> <https://developer.chrome.com/docs/extensions/how-to/test/test-serviceworker-termination-with-puppeteer>.
+> Chrome documents Port as a two-way long-lived channel whose messages use
+> `postMessage`, `onDisconnect` as the loss signal for the other endpoint,
+> extension-page execution as a valid way to inspect extension state, and
+> forced worker termination as a robustness test because non-persistent worker
+> state can disappear without warning. Those contracts support this bounded
+> reconnect test; they do not turn `postMessage()` return into delivery
+> acknowledgment or make target death equivalent to browser/OS crash.
+>
+> Exact focused evidence at clean implementation SHA
+> `ae06fa2faa6e53e1dfbac3934e404449da918a78` used these commands:
+>
+> ```sh
+> git rev-parse HEAD
+> git status --short
+> pnpm --filter @warden/extension test
+> pnpm --filter @warden/extension typecheck
+> pnpm --filter @warden/extension build
+> env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec playwright test -c playwright.config.ts provider-sign-success.pw.ts --repeat-each=5
+> if rg -n "after-terminal-enqueued|terminal-enqueued-v1|Warden test control|provider-sign-success-browser" apps/extension/dist; then exit 1; fi
+> git diff --check
+> git diff --exit-code
+> git status --short
+> git rev-parse HEAD
+> ```
+>
+> They exited **0** and the first/last SHA matched: extension **473/473**,
+> typecheck, production build, all five signing/recovery/fail-closed/settlement
+> browser contracts repeated five times (**25/25**), emitted-artifact
+> exclusion, diff validation, and clean-tree guards passed. The
+> ledger-inclusive full repository gate is deliberately not inferred from
+> focused evidence; it must run on the subsequent ledger SHA.
+>
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`. The
+> success graph, terminal wrapper, control page, counters, marker, and recovery
+> composition remain browser-only and absent from production artifacts.
+>
+> **Harsh residual:** C27 is an instrumented target-termination test inside one
+> loaded Chromium profile. It is not an idle-eviction timing test, browser
+> restart, renderer/browser crash, OS crash, power-loss, storage-corruption, or
+> stable-media test. It cuts after the page receipt exists; it does not cut
+> after terminal enqueue but before page settlement, or after background
+> receipt acceptance while the settled acknowledgment is still in flight.
+> Preparation and pending approval also remain uncut. Production remains fixed
+> unavailable with an empty release registry, no onboarding/account registry,
+> no production KDF decision, no Wallet Standard registration, no send/confirm
+> path, no external audit, and no real-funds exercise.
+>
+> **Next load-bearing work:** C28 should isolate the final volatile boundary:
+> enqueue the real background `transport-settled` acknowledgment after receipt
+> acceptance, kill before the content owner receives/removes it, and prove one
+> bounded locked-worker recovery clears the retained entry without a second
+> page terminal, receipt, selection, RPC call, approval, key read, or signature.
+> After that cut, stop extending the delivery micro-sequence and return to the
+> production-enablement blockers unless executable evidence exposes a defect.
+>
 > ## 2026-08-31 C26 IN-FLIGHT SIGNING-COMMIT WORKER CUT — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit

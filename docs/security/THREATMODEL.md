@@ -3040,3 +3040,75 @@ registration, send/confirm path, external audit, or real-funds exercise. The
 next honest cut is after durable terminal-result resolution but before terminal
 delivery completes; terminal enqueue, page receipt, and settled acknowledgment
 must remain separate measured boundaries.
+
+---
+
+## Client C27 post-page-receipt settlement recovery — ae06fa2 — 2026-08-31 — **INTERNAL / UNSHIPPED**
+
+**Threat closed internally:** `Port.postMessage()` return cannot be treated as
+proof that the initiating page received a result or that the background owns a
+matching receipt. C27 cuts after the real Chrome Port has enqueued the signed
+terminal, the unchanged page has settled once, and that page has posted its
+identity-bound receipt, but before the original background transport can record
+its posted generation, finish and prove the exact delivery flow, or accept the
+receipt.
+
+The browser-only worker wraps only the Port presented to the production
+`ProviderRuntimeTransportOwner`. It preserves the real Chrome sender and event
+objects and delegates first to the bound native `postMessage`. For the one
+armed, parser-validated signed terminal, it records the exact correlation,
+receipt, deadline, public signed bytes, boot/approval identity, call counters,
+and RPC counts, then synchronously holds before returning to the production
+transport owner. The MAIN-world fixture separately counts terminal Promise
+settlements and valid page receipt posts.
+
+At the cut the page has exactly one signed settlement, one page receipt, one
+navigation, and bytes equal to the marker; content retains one pending entry.
+An inert extension control page removes the unlock session and CDP closes the
+actual service-worker target. A different ready-but-locked boot performs zero
+selection, identity, RPC, approval create/claim/complete, key lease, or signing
+work and replays the durable terminal. The persistent content owner requires
+that replacement envelope to equal its retained terminal, re-sends its retained
+receipt directly, and does not forward a second page response. The replacement
+proves delivery, accepts the receipt, acknowledges settlement, and content
+pending becomes zero. The entire page observation remains exactly unchanged at
+one settlement and one receipt; message/digest equality and the Ed25519
+signature are checked independently.
+
+The initial focused browser command was executable RED: it exited **1** because
+the worker rejected `after-terminal-enqueued` with `unsupported signing worker
+checkpoint`. At exact clean implementation SHA
+`ae06fa2faa6e53e1dfbac3934e404449da918a78`, the focused commands recorded in
+`docs/NEXT-SESSION.md` exited **0** with the same SHA before and after:
+extension **473/473**, typecheck, all five signing/recovery/settlement browser
+contracts repeated five times (**25/25**), production build, emitted-artifact
+exclusion, diff validation, and clean-tree guards passed. The ledger-inclusive
+full repository gate is not inferred from this focused evidence and remains
+pending for the subsequent ledger SHA.
+
+Primary references rechecked were Chrome's current messaging, service-worker
+lifecycle, end-to-end extension testing, and worker-termination testing pages,
+all linked in `docs/NEXT-SESSION.md`. They define long-lived Port messaging,
+`onDisconnect`, extension-page state inspection, loss of volatile worker state,
+and forced termination testing. They do not define native `postMessage()` return
+as end-to-end acknowledgment or equate a service-worker target close with an OS
+or storage crash.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-APR-01`, `WRD-APR-02`,
+`WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the success graph and
+every C27 wrapper, control resource, counter, marker, and fixture remain absent
+from production artifacts. Independent second-model review remains
+**UNVERIFIED**.
+
+**Residual, stated as a threat:** this is browser-only instrumentation and a
+forced worker-target close in one loaded profile. It does not reproduce normal
+idle eviction timing, a renderer/browser/OS crash, restart, power loss, storage
+eviction/corruption, or stable-media failure. It cuts after the page receipt,
+not between terminal enqueue and page settlement or between background receipt
+acceptance and content receipt of the settled acknowledgment. Preparation and
+pending approval also remain uncut. The deterministic Connection is not
+endpoint trust; production remains fixed unavailable with no release registry,
+onboarding/account registry, production KDF decision, Wallet Standard
+registration, send/confirm path, external audit, or real-funds exercise. The
+next measured cut should isolate the settled-acknowledgment flight; after that,
+delivery micro-cuts must not substitute for production-enablement work.
