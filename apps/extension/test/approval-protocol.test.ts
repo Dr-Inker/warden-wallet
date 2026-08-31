@@ -134,6 +134,14 @@ describe("closed approval UI protocol", () => {
     })).toThrow(ApprovalUiProtocolError);
   });
 
+  it("rejects timestamps that JavaScript cannot render as an ISO date", () => {
+    expect(() => createApprovalReviewResponse(CORRELATION_ID, {
+      ...review,
+      createdAt: 8_640_000_000_000_001,
+      expiresAt: 8_640_000_000_001_001,
+    })).toThrow(ApprovalUiProtocolError);
+  });
+
   it("normalizes hostile response introspection failures to a protocol error", () => {
     const poison = new Proxy({}, {
       ownKeys() {

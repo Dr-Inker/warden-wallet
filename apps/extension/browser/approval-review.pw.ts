@@ -13,6 +13,15 @@ import {
 
 const EXTENSION_DIRECTORY = resolve(import.meta.dirname, "../dist");
 const SMART_ACCOUNT = "FTPSf3Po3uMpD9KRxWZtaqM27t7zCR8k7oAgz22u2eEC";
+const SESSION_SIGNER = "3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3";
+// Static account key 2 in GOLDEN_MESSAGE_HEX; deliberately not obtained from
+// the review projector under test.
+const SESSION_ACCOUNT = "8YYgCkVsKgpEf9ygpBbfXUpbc9s6xjgxPotFWE9gipnv";
+const REGISTRY = "DcKmSgbaMzGX1ERKPXCADMtSKYypWxWCDfPsi27nA3ga";
+const WARDEN_PROGRAM = "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2";
+const MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+const GENESIS_HASH = "BLbDu5FZUdSfLrGejhuaWw5iMJBo3j3TVRyPv9rfJyMA";
+const RECENT_BLOCKHASH = "AByCTxLPRZPoyK22KdMxa3xkCbcNbeNWzVeEvh6UcJs9";
 const SMART_ACCOUNT_BYTES = Uint8Array.from(Buffer.from(
   "d6c617f8f9b6efa8f53b8e3519b87ce86c0d4b8bf97da710769c395d7a6225f9",
   "hex",
@@ -43,7 +52,7 @@ async function liveExtensionWorker(context: BrowserContext) {
   });
 }
 
-function approval(idByte: string): ApprovalRecord {
+function approval(idByte: string, ttlMs = 120_000): ApprovalRecord {
   const now = Date.now();
   return createPendingApprovalRecord({
     id: `req_${idByte.repeat(16)}`,
@@ -59,7 +68,7 @@ function approval(idByte: string): ApprovalRecord {
     rawMessage: Uint8Array.from(Buffer.from(GOLDEN_MESSAGE_HEX, "hex")),
     policyVersion: 1,
     createdAt: now,
-    expiresAt: now + 120_000,
+    expiresAt: now + ttlMs,
   });
 }
 
@@ -198,6 +207,31 @@ test("approval page renders exact bytes and terminalizes navigation/rejection ra
       Buffer.from(navigated.messageDigest).toString("hex"),
     );
     await expect(reviewPage.locator("[data-action=approve]")).toBeDisabled();
+    const technicalDetails = reviewPage.locator("#technical-details");
+    await expect(technicalDetails).not.toHaveAttribute("open", "");
+    const detailsSummary = technicalDetails.locator("summary");
+    await expect(detailsSummary).toHaveText("Technical details");
+    expect((await detailsSummary.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await reviewPage.screenshot({
+      path: test.info().outputPath("approval-review-collapsed-desktop.png"),
+      fullPage: true,
+    });
+    await detailsSummary.focus();
+    await expect(detailsSummary).toBeFocused();
+    await reviewPage.keyboard.press("Enter");
+    await expect(technicalDetails).toHaveAttribute("open", "");
+    await expect(reviewPage.locator("#session-signer-value")).toHaveText(SESSION_SIGNER);
+    await expect(reviewPage.locator("#session-account-value")).toHaveText(SESSION_ACCOUNT);
+    await expect(reviewPage.locator("#registry-value")).toHaveText(REGISTRY);
+    await expect(reviewPage.locator("#warden-program-value")).toHaveText(WARDEN_PROGRAM);
+    await expect(reviewPage.locator("#memo-program-value")).toHaveText(MEMO_PROGRAM);
+    await expect(reviewPage.locator("#genesis-hash-value")).toHaveText(GENESIS_HASH);
+    await expect(reviewPage.locator("#recent-blockhash-value")).toHaveText(RECENT_BLOCKHASH);
+    await expect(reviewPage.locator("#compute-limit-value")).toHaveText("600,000 units");
+    await expect(reviewPage.locator("#heap-frame-value")).toHaveText("131,072 bytes");
+    await expect(reviewPage.locator("#message-size-value")).toHaveText(
+      "333 message bytes · 24 memo bytes",
+    );
     const desktopLayout = await reviewPage.evaluate(() => {
       const shell = document.querySelector<HTMLElement>(".shell")!.getBoundingClientRect();
       const reject = document.querySelector<HTMLButtonElement>("[data-action=reject]")!
@@ -276,6 +310,48 @@ test("approval page renders exact bytes and terminalizes navigation/rejection ra
       racePage.close(),
     ]);
     await expect.poll(() => readState(worker, raced.id)).toMatch(/^(rejected|cancelled)$/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("approval page visibly expires and terminalizes the durable record", async () => {
+  const context = await chromium.launchPersistentContext("", {
+    headless: false,
+    args: [
+      `--disable-extensions-except=${EXTENSION_DIRECTORY}`,
+      `--load-extension=${EXTENSION_DIRECTORY}`,
+      "--headless=new",
+    ],
+  });
+  try {
+    const worker = await liveExtensionWorker(context);
+    const extensionOrigin = `chrome-extension://${new URL(worker.url()).hostname}`;
+    const expiring = approval("d4", 3_000);
+    await seedRecord(worker, expiring);
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${extensionOrigin}/approval.html?request=${expiring.id}`);
+    await expect(page.locator("#approval-status")).toHaveAttribute(
+      "data-state",
+      "review",
+    );
+    await expect(page.locator("#expiry-countdown")).toContainText("Expires in");
+    await expect(page.locator("#approval-status")).toHaveAttribute(
+      "data-state",
+      "expired",
+      { timeout: 7_000 },
+    );
+    await expect(page.locator("#approval-status")).toHaveText(
+      "Request expired. No signature was produced.",
+    );
+    await expect(page.locator("[data-action=reject]")).toBeDisabled();
+    await expect(page.locator("[data-action=approve]")).toBeDisabled();
+    await expect.poll(() => readState(worker, expiring.id)).toBe("expired");
+    await page.screenshot({
+      path: test.info().outputPath("approval-review-expired-mobile.png"),
+      fullPage: true,
+    });
   } finally {
     await context.close();
   }

@@ -11,6 +11,7 @@ const REJECT_METHOD = "approval:reject";
 const UNAVAILABLE_CODE = "WARDEN_APPROVAL_UNAVAILABLE";
 const UNAVAILABLE_MESSAGE = "Approval request is unavailable";
 const MAX_APPROVAL_TTL_MS = 10 * 60 * 1_000;
+const MAX_JAVASCRIPT_DATE_MS = 8_640_000_000_000_000;
 
 const REQUEST_FIELDS = [
   "correlationId",
@@ -301,8 +302,18 @@ function reviewDetails(value: unknown): ApprovalReviewDetails {
   }
   const memoByteLength = safeInteger(raw.memoByteLength, "memoByteLength", 1, 256);
   if (memoByteLength !== memo.length) invalid("memoByteLength does not match memo");
-  const createdAt = safeInteger(raw.createdAt, "createdAt");
-  const expiresAt = safeInteger(raw.expiresAt, "expiresAt");
+  const createdAt = safeInteger(
+    raw.createdAt,
+    "createdAt",
+    0,
+    MAX_JAVASCRIPT_DATE_MS,
+  );
+  const expiresAt = safeInteger(
+    raw.expiresAt,
+    "expiresAt",
+    0,
+    MAX_JAVASCRIPT_DATE_MS,
+  );
   if (
     expiresAt <= createdAt ||
     expiresAt - createdAt > MAX_APPROVAL_TTL_MS

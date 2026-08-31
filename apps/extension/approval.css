@@ -102,6 +102,7 @@ h1 {
 .origin-block,
 .intent-block,
 .facts,
+.technical-details,
 .status,
 .warning,
 .actions {
@@ -204,6 +205,72 @@ dd {
   color: #7f8995;
 }
 
+.countdown {
+  display: block;
+  margin-top: 3px;
+  color: #9ee9ce;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.technical-details {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid #303944;
+  border-radius: 12px;
+  background: #121820;
+}
+
+.technical-details summary {
+  min-height: 48px;
+  padding: 14px 16px;
+  cursor: pointer;
+  color: #dce2e7;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 20px;
+  list-style-position: inside;
+}
+
+.technical-details summary::marker {
+  color: #72d8b5;
+}
+
+.technical-details summary:focus-visible {
+  outline: 3px solid rgba(109, 224, 186, 0.38);
+  outline-offset: -3px;
+}
+
+.technical-details[open] summary {
+  border-bottom: 1px solid #303944;
+}
+
+.technical-body > p {
+  margin: 0;
+  padding: 15px 16px;
+  border-bottom: 1px solid #29313b;
+  color: #8f99a5;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.technical-facts {
+  margin: 0;
+}
+
+.technical-facts > div {
+  min-width: 0;
+  padding: 13px 16px;
+}
+
+.technical-facts > div + div {
+  border-top: 1px solid #29313b;
+}
+
+.technical-facts dd {
+  overflow-wrap: anywhere;
+}
+
 .status {
   margin-top: 20px;
   border: 1px solid #2c3540;
@@ -228,7 +295,8 @@ dd {
 }
 
 .status[data-state="closed"],
-.status[data-state="unavailable"] {
+.status[data-state="unavailable"],
+.status[data-state="expired"] {
   border-color: #5b4d2c;
   background: #251f13;
   color: #e3cb91;
@@ -311,6 +379,7 @@ dd {
   .origin-block,
   .intent-block,
   .facts,
+  .technical-details,
   .status,
   .warning,
   .actions {

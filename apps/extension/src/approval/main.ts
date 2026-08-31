@@ -95,8 +95,19 @@ const method = element<HTMLElement>("#method-value");
 const account = element<HTMLElement>("#account-value");
 const digest = element<HTMLElement>("#digest-value");
 const policy = element<HTMLElement>("#policy-value");
-const expiry = element<HTMLElement>("#expiry-value");
+const expiry = element<HTMLTimeElement>("#expiry-value");
+const expiryCountdown = element<HTMLElement>("#expiry-countdown");
 const requestIdElement = element<HTMLElement>("#request-id-value");
+const sessionSigner = element<HTMLElement>("#session-signer-value");
+const sessionAccount = element<HTMLElement>("#session-account-value");
+const registry = element<HTMLElement>("#registry-value");
+const wardenProgram = element<HTMLElement>("#warden-program-value");
+const memoProgram = element<HTMLElement>("#memo-program-value");
+const genesisHash = element<HTMLElement>("#genesis-hash-value");
+const recentBlockhash = element<HTMLElement>("#recent-blockhash-value");
+const computeLimit = element<HTMLElement>("#compute-limit-value");
+const heapFrame = element<HTMLElement>("#heap-frame-value");
+const messageSize = element<HTMLElement>("#message-size-value");
 const rejectButton = element<HTMLButtonElement>("[data-action=reject]");
 const approveButton = element<HTMLButtonElement>("[data-action=approve]");
 
@@ -105,15 +116,68 @@ let requestId: string;
 let phase: "awaiting-review" | "review-visible" | "awaiting-reject" | "terminal" =
   "awaiting-review";
 let correlationId = "";
+let expiryWallClock = 0;
+let expiryMonotonicDeadline = 0;
+let expiryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 
 function setStatus(state: string, message: string): void {
   status.dataset.state = state;
   status.textContent = message;
 }
 
+function clearExpiryTimer(): void {
+  if (expiryTimer === undefined) return;
+  globalThis.clearTimeout(expiryTimer);
+  expiryTimer = undefined;
+}
+
+function remainingLabel(milliseconds: number): string {
+  const totalSeconds = Math.max(1, Math.ceil(milliseconds / 1_000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes === 0 ? `${seconds}s` : `${minutes}m ${seconds}s`;
+}
+
+function expireUi(): void {
+  if (phase === "terminal") return;
+  phase = "terminal";
+  clearExpiryTimer();
+  rejectButton.disabled = true;
+  approveButton.disabled = true;
+  expiryCountdown.textContent = "Expired";
+  setStatus("expired", "Request expired. No signature was produced.");
+  try {
+    port?.disconnect();
+  } catch {
+    // The durable owner still resolves expiry on its next clock-aware read.
+  }
+}
+
+function refreshExpiry(): void {
+  clearExpiryTimer();
+  if (phase !== "review-visible") return;
+  // Use the more conservative of absolute wall time and an anchored monotonic
+  // deadline. A backward wall-clock jump may never extend a displayed request;
+  // a forward jump closes it on the next tick/resume check.
+  const remaining = Math.min(
+    expiryWallClock - Date.now(),
+    expiryMonotonicDeadline - globalThis.performance.now(),
+  );
+  if (!Number.isFinite(remaining) || remaining <= 0) {
+    expireUi();
+    return;
+  }
+  expiryCountdown.textContent = `Expires in ${remainingLabel(remaining)}`;
+  expiryTimer = globalThis.setTimeout(
+    refreshExpiry,
+    Math.max(50, Math.min(1_000, Math.ceil(remaining))),
+  );
+}
+
 function closeUi(state: "closed" | "unavailable", message: string): void {
   if (phase === "terminal") return;
   phase = "terminal";
+  clearExpiryTimer();
   rejectButton.disabled = true;
   approveButton.disabled = true;
   setStatus(state, message);
@@ -136,8 +200,26 @@ function renderReview(review: ApprovalReviewDetails): void {
   account.textContent = review.account;
   digest.textContent = review.messageDigest;
   policy.textContent = String(review.policyVersion);
-  expiry.textContent = new Date(review.expiresAt).toISOString();
+  const expiryIso = new Date(review.expiresAt).toISOString();
+  expiry.dateTime = expiryIso;
+  expiry.textContent = expiryIso;
   requestIdElement.textContent = review.requestId;
+  sessionSigner.textContent = review.sessionSigner;
+  sessionAccount.textContent = review.sessionAccount;
+  registry.textContent = review.registry;
+  wardenProgram.textContent = review.wardenProgram;
+  memoProgram.textContent = review.memoProgram;
+  genesisHash.textContent = review.genesisHash;
+  recentBlockhash.textContent = review.recentBlockhash;
+  computeLimit.textContent = `${review.computeUnitLimit.toLocaleString("en-US")} units`;
+  heapFrame.textContent = `${review.heapFrameBytes.toLocaleString("en-US")} bytes`;
+  messageSize.textContent =
+    `${review.messageByteLength.toLocaleString("en-US")} message bytes · ` +
+    `${review.memoByteLength.toLocaleString("en-US")} memo bytes`;
+  const now = Date.now();
+  expiryWallClock = review.expiresAt;
+  expiryMonotonicDeadline = globalThis.performance.now() +
+    Math.max(0, review.expiresAt - now);
   phase = "review-visible";
   rejectButton.disabled = false;
   approveButton.disabled = true;
@@ -145,6 +227,7 @@ function renderReview(review: ApprovalReviewDetails): void {
     "review",
     "Exact durable message decoded locally. Signing remains unavailable.",
   );
+  refreshExpiry();
 }
 
 try {
@@ -176,6 +259,7 @@ try {
     }
     if (phase === "awaiting-reject" && response.result.status === "rejected") {
       phase = "terminal";
+      clearExpiryTimer();
       rejectButton.disabled = true;
       approveButton.disabled = true;
       setStatus("rejected", "Request rejected. No signature was produced.");
@@ -189,14 +273,19 @@ try {
     void chromeApi.runtime.lastError;
     if (phase === "terminal") return;
     phase = "terminal";
+    clearExpiryTimer();
     rejectButton.disabled = true;
     approveButton.disabled = true;
-    setStatus("closed", "The approval connection closed. The request was cancelled.");
+    setStatus(
+      "closed",
+      "The approval connection closed. The request is no longer actionable.",
+    );
   });
 
   rejectButton.addEventListener("click", () => {
     if (phase !== "review-visible" || rejectButton.disabled) return;
     phase = "awaiting-reject";
+    clearExpiryTimer();
     rejectButton.disabled = true;
     correlationId = mintCorrelationId();
     setStatus("loading", "Rejecting the durable request…");
@@ -213,12 +302,16 @@ try {
     }
   });
 
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshExpiry();
+  });
+  addEventListener("focus", refreshExpiry);
+  addEventListener("pageshow", refreshExpiry);
   addEventListener("pagehide", () => {
-    try {
-      port?.disconnect();
-    } catch {
-      // Browser teardown is already a closed Port lifetime.
-    }
+    closeUi(
+      "closed",
+      "This approval page was left. The request is no longer actionable.",
+    );
   }, { once: true });
 
   port.postMessage({

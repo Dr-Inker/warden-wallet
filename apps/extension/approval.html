@@ -53,13 +53,68 @@
           </div>
           <div>
             <dt>Expires</dt>
-            <dd id="expiry-value">—</dd>
+            <dd>
+              <time id="expiry-value">—</time>
+              <span id="expiry-countdown" class="countdown">—</span>
+            </dd>
           </div>
           <div class="wide subtle-fact">
             <dt>Request id</dt>
             <dd id="request-id-value" class="mono">—</dd>
           </div>
         </dl>
+
+        <details id="technical-details" class="technical-details">
+          <summary>Technical details</summary>
+          <div class="technical-body">
+            <p>
+              Derived locally from the exact digest-authenticated message. These
+              values cannot be changed on this page.
+            </p>
+            <dl class="technical-facts">
+              <div>
+                <dt>Session signer</dt>
+                <dd id="session-signer-value" class="mono">—</dd>
+              </div>
+              <div>
+                <dt>Session account</dt>
+                <dd id="session-account-value" class="mono">—</dd>
+              </div>
+              <div>
+                <dt>Registry</dt>
+                <dd id="registry-value" class="mono">—</dd>
+              </div>
+              <div>
+                <dt>Warden program</dt>
+                <dd id="warden-program-value" class="mono">—</dd>
+              </div>
+              <div>
+                <dt>Memo program</dt>
+                <dd id="memo-program-value" class="mono">—</dd>
+              </div>
+              <div>
+                <dt>Genesis hash</dt>
+                <dd id="genesis-hash-value" class="mono">—</dd>
+              </div>
+              <div>
+                <dt>Recent blockhash</dt>
+                <dd id="recent-blockhash-value" class="mono">—</dd>
+              </div>
+              <div>
+                <dt>Compute limit</dt>
+                <dd id="compute-limit-value">—</dd>
+              </div>
+              <div>
+                <dt>Heap frame</dt>
+                <dd id="heap-frame-value">—</dd>
+              </div>
+              <div>
+                <dt>Serialized size</dt>
+                <dd id="message-size-value">—</dd>
+              </div>
+            </dl>
+          </div>
+        </details>
 
         <p id="approval-status" class="status" role="status" data-state="loading">
           Loading the exact durable request…
