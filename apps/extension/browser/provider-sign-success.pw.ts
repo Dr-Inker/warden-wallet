@@ -39,7 +39,10 @@ interface PageSignStatus {
 }
 
 interface WorkerStatus {
+  readonly bootId: string;
   readonly ready: boolean;
+  readonly keyringStartup: "seeded" | "restored" | "locked";
+  readonly checkpointReached: string | null;
   readonly fatalErrors: string[];
   readonly startupInvalidatedApprovals: number;
   readonly startupInvalidatedOperations: number;
@@ -214,9 +217,12 @@ async function createExtension(): Promise<{
   }
 }
 
-async function liveExtensionWorker(context: BrowserContext) {
+async function liveExtensionWorker(
+  context: BrowserContext,
+  origin = "chrome-extension://",
+) {
   for (const worker of [...context.serviceWorkers()].reverse()) {
-    if (!worker.url().startsWith("chrome-extension://")) continue;
+    if (!worker.url().startsWith(origin)) continue;
     try {
       await worker.evaluate(() => true);
       return worker;
@@ -225,22 +231,28 @@ async function liveExtensionWorker(context: BrowserContext) {
     }
   }
   return context.waitForEvent("serviceworker", {
-    predicate: (worker) => worker.url().startsWith("chrome-extension://"),
+    predicate: (worker) => worker.url().startsWith(origin),
     timeout: 30_000,
   });
 }
 
-async function readWorkerStatus(context: BrowserContext): Promise<WorkerStatus> {
-  const worker = await liveExtensionWorker(context);
-  return worker.evaluate(async () => {
+async function readWorkerStatus(
+  context: BrowserContext,
+  origin?: string,
+  approvalId?: string,
+): Promise<WorkerStatus> {
+  const worker = await liveExtensionWorker(context, origin);
+  return worker.evaluate(async (id) => {
     const read = (globalThis as unknown as {
-      __wardenProviderSignSuccessStatus?: () => Promise<WorkerStatus>;
+      __wardenProviderSignSuccessStatus?: (
+        approvalId?: string,
+      ) => Promise<WorkerStatus>;
     }).__wardenProviderSignSuccessStatus;
     if (typeof read !== "function") {
       throw new Error("exact-byte worker status is unavailable");
     }
-    return read();
-  });
+    return read(id);
+  }, approvalId);
 }
 
 async function readContentPending(page: Page): Promise<number> {
@@ -348,7 +360,10 @@ test("real Chromium returns exactly the reviewed message after one authenticated
     });
     const reviewed = await readWorkerStatus(context);
     expect(reviewed).toMatchObject({
+      bootId: expect.stringMatching(/^[0-9a-f]{32}$/),
       ready: true,
+      keyringStartup: "seeded",
+      checkpointReached: null,
       fatalErrors: [],
       startupInvalidatedApprovals: 0,
       startupInvalidatedOperations: 0,
@@ -462,6 +477,217 @@ test("real Chromium returns exactly the reviewed message after one authenticated
     expect(await page.evaluate(() => document.location.href)).toBe(
       `${server.origin}/`,
     );
+  } finally {
+    try {
+      await context?.close();
+    } finally {
+      try {
+        await server?.close();
+      } finally {
+        const expectedPrefix =
+          `${resolve(tmpdir())}${sep}warden-provider-sign-success-browser-`;
+        if (resolve(extension.directory).startsWith(expectedPrefix)) {
+          await rm(extension.directory, { recursive: true, force: true });
+        }
+      }
+    }
+  }
+});
+
+test("durable signed bytes replay after MV3 death without restoring signer authority", async () => {
+  const extension = await createExtension();
+  let server: TestServer | undefined;
+  let context: BrowserContext | undefined;
+  try {
+    server = await startServer(extension.pageScript);
+    context = await chromium.launchPersistentContext("", {
+      headless: false,
+      args: [
+        `--disable-extensions-except=${extension.directory}`,
+        `--load-extension=${extension.directory}`,
+        "--headless=new",
+      ],
+    });
+    const firstWorker = await liveExtensionWorker(context);
+    const extensionOrigin =
+      `chrome-extension://${new URL(firstWorker.url()).hostname}`;
+    await firstWorker.evaluate(() => {
+      const arm = (globalThis as unknown as {
+        __wardenProviderSignSuccessArmCheckpoint?: (stage: string) => void;
+      }).__wardenProviderSignSuccessArmCheckpoint;
+      if (typeof arm !== "function") {
+        throw new Error("restart checkpoint control is unavailable");
+      }
+      arm("after-signing-committed");
+    });
+
+    const page = await context.newPage();
+    await page.goto(server.origin);
+    await expect.poll(() => readWorkerStatus(context!)).toMatchObject({
+      bootId: expect.stringMatching(/^[0-9a-f]{32}$/),
+      keyringStartup: "seeded",
+      fatalErrors: [],
+      selectionCalls: 1,
+      approvalCreates: 1,
+      signingClaims: 0,
+      checkpointReached: null,
+    });
+    const existingPopup = context.pages().find((candidate) =>
+      candidate.url().startsWith(extensionOrigin) &&
+      candidate.url().includes("/approval.html?request=req_"));
+    const popup = existingPopup ?? await context.waitForEvent("page", {
+      predicate: (candidate) =>
+        candidate.url().startsWith(extensionOrigin) &&
+        candidate.url().includes("/approval.html?request=req_"),
+      timeout: 30_000,
+    });
+    await expect(popup.locator("#approval-status")).toHaveAttribute(
+      "data-state",
+      "review",
+    );
+    await popup.locator("[data-action=approve]").click();
+
+    await expect.poll(() => readWorkerStatus(context!)).toMatchObject({
+      fatalErrors: [],
+      checkpointReached: "after-signing-committed",
+      approvalCreates: 1,
+      signingClaims: 1,
+      signingCompletions: 1,
+      signerLeaseUses: 1,
+      approvalState: "approved",
+      signingState: "signed",
+      signingAttemptNumber: 1,
+      activeActions: 1,
+      activeApprovalRequests: 1,
+      activeFlows: 1,
+      activeDocuments: 1,
+    });
+    const committed = await readWorkerStatus(context);
+    if (
+      committed.latestApprovalId === null ||
+      committed.rawMessage === null ||
+      committed.durableSignedTransaction === null
+    ) {
+      throw new Error("durable pre-restart signing evidence is absent");
+    }
+    expect(await page.evaluate(() =>
+      (globalThis as unknown as { __wardenPageSignStatus: PageSignStatus })
+        .__wardenPageSignStatus.state,
+    )).toBe("pending");
+    expect(await readContentPending(page)).toBe(1);
+
+    // Make replacement-worker signer restoration impossible. Recovery must be
+    // authorized only by the already-committed operation + approval result.
+    await firstWorker.evaluate(async () => {
+      const storage = (globalThis as unknown as {
+        chrome: {
+          storage: {
+            session: { remove(key: string): Promise<void> };
+          };
+        };
+      }).chrome.storage.session;
+      await storage.remove("warden.unlock-session.v2");
+    });
+    const controlPage = await context.newPage();
+    const cdp = await context.newCDPSession(controlPage);
+    const targets = await cdp.send("Target.getTargets");
+    const target = targets.targetInfos.find((candidate) =>
+      candidate.type === "service_worker" &&
+      candidate.url.startsWith(extensionOrigin));
+    expect(target, "signing worker exists before the committed-result cut")
+      .toBeDefined();
+    const closed = await cdp.send("Target.closeTarget", {
+      targetId: target!.targetId,
+    });
+    expect(closed.success).toBe(true);
+
+    await expect.poll(() => page.evaluate(() =>
+      (globalThis as unknown as { __wardenPageSignStatus: PageSignStatus })
+        .__wardenPageSignStatus,
+    )).toMatchObject({
+      state: "signed",
+      error: null,
+      pendingCount: 0,
+      href: `${server.origin}/`,
+      navigationEntries: 1,
+    });
+    const replacement = await readWorkerStatus(
+      context,
+      extensionOrigin,
+      committed.latestApprovalId,
+    );
+    expect(replacement).toMatchObject({
+      ready: true,
+      keyringStartup: "locked",
+      checkpointReached: null,
+      fatalErrors: [],
+      startupInvalidatedApprovals: 0,
+      startupInvalidatedOperations: 0,
+      keyringUnlocked: false,
+      providerPortRoutes: 1,
+      selectionCalls: 0,
+      identityReads: 0,
+      approvalCreates: 0,
+      signingClaims: 0,
+      signingCompletions: 0,
+      signerLeaseUses: 0,
+      latestApprovalId: committed.latestApprovalId,
+      approvalState: "approved",
+      signingState: "signed",
+      signingAttemptNumber: 1,
+      activeActions: 0,
+      activeApprovalRequests: 0,
+      activeFlows: 0,
+      activeDocuments: 1,
+      rpc: {
+        genesisCalls: 0,
+        accountCalls: 0,
+        latestBlockhashCalls: 0,
+        blockhashValidityCalls: 0,
+      },
+    });
+    expect(replacement.bootId).not.toBe(committed.bootId);
+    expect(replacement.rawMessage).toEqual(committed.rawMessage);
+    expect(replacement.messageDigestHex).toBe(committed.messageDigestHex);
+    expect(replacement.durableSignedTransaction).toEqual(
+      committed.durableSignedTransaction,
+    );
+    expect(await readContentPending(page)).toBe(0);
+
+    const pageStatus = await page.evaluate(() =>
+      (globalThis as unknown as { __wardenPageSignStatus: PageSignStatus })
+        .__wardenPageSignStatus,
+    );
+    if (pageStatus.signedTransaction === null) {
+      throw new Error("replacement worker returned no signed bytes");
+    }
+    expect(pageStatus.signedTransaction).toEqual(
+      committed.durableSignedTransaction,
+    );
+    expect(pageStatus.signedTransaction).not.toEqual(pageStatus.sourceTransaction);
+    const returned = VersionedTransaction.deserialize(
+      Uint8Array.from(pageStatus.signedTransaction),
+    );
+    const returnedMessage = returned.message.serialize();
+    expect(returned.signatures).toHaveLength(1);
+    expect([...returnedMessage]).toEqual(committed.rawMessage);
+    expect(createHash("sha256").update(returnedMessage).digest("hex")).toBe(
+      committed.messageDigestHex,
+    );
+    const publicKey = createPublicKey({
+      key: Buffer.concat([
+        Buffer.from("302a300506032b6570032100", "hex"),
+        Buffer.from(new PublicKey(committed.sessionSigner).toBytes()),
+      ]),
+      format: "der",
+      type: "spki",
+    });
+    expect(verify(
+      null,
+      returnedMessage,
+      publicKey,
+      returned.signatures[0]!,
+    )).toBe(true);
   } finally {
     try {
       await context?.close();

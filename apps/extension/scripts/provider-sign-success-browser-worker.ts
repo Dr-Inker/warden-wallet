@@ -1,4 +1,5 @@
-//! Browser-only C23 exact-byte success composition. Never copied into the product build.
+//! Browser-only C23/C24 exact-byte success and restart-cut composition.
+//! Never copied into the product build.
 //!
 //! The release pins and Connection below are deterministic test provenance, not a
 //! production release assertion. The composition deliberately uses the real pinned
@@ -72,6 +73,8 @@ import { PROVIDER_PORT_NAME } from "../src/provider-protocol.js";
 
 const APPROVAL_DATABASE_NAME = "warden-provider-sign-success-approvals-v1";
 const OPERATION_DATABASE_NAME = "warden-provider-sign-success-operations-v1";
+const KEYRING_INITIALIZED_STORAGE_KEY =
+  "warden-provider-sign-success-keyring-initialized-v1";
 const WARDEN_PROGRAM = new PublicKey(
   "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
 );
@@ -165,6 +168,9 @@ interface Counters {
   providerPortRoutes: number;
   latestApprovalId: string | null;
 }
+
+type KeyringStartup = "seeded" | "restored" | "locked";
+type WorkerCheckpoint = "after-signing-committed";
 
 function hexBytes(value: string): Uint8Array {
   const pairs = value.match(/../g);
@@ -295,6 +301,12 @@ function diagnosticErrorText(error: unknown, depth = 0): string {
   return errorText(error);
 }
 
+function newBootId(): string {
+  return [...crypto.getRandomValues(new Uint8Array(16))]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 class RoutedConnectEvent implements ProviderConnectEvent {
   private listener: ((port: ProviderRuntimePort) => void) | null = null;
 
@@ -330,6 +342,7 @@ function safeDisconnectUnknownPort(value: unknown): void {
 }
 
 const chromeApi = (globalThis as unknown as { readonly chrome: BrowserChrome }).chrome;
+const bootId = newBootId();
 const counters: Counters = {
   approvalPortRoutes: 0,
   selectionCalls: 0,
@@ -349,8 +362,36 @@ const rpcCounters = {
 };
 const fatalErrors: string[] = [];
 let readyFlag = false;
+let keyringStartup: KeyringStartup = "locked";
+let armedCheckpoint: WorkerCheckpoint | null = null;
+let checkpointReached: WorkerCheckpoint | null = null;
 let startupInvalidatedApprovals = -1;
 let startupInvalidatedOperations = -1;
+
+async function pauseAtCheckpoint(stage: WorkerCheckpoint): Promise<void> {
+  if (armedCheckpoint !== stage) return;
+  armedCheckpoint = null;
+  checkpointReached = stage;
+  await new Promise<void>(() => {
+    // C24 closes the real worker target while this exact continuation is held.
+  });
+}
+
+async function keyringWasInitialized(): Promise<boolean> {
+  const stored = await chromeApi.storage.local.get(
+    KEYRING_INITIALIZED_STORAGE_KEY,
+  );
+  const fields = Object.keys(stored);
+  if (fields.length === 0) return false;
+  if (
+    fields.length !== 1 ||
+    fields[0] !== KEYRING_INITIALIZED_STORAGE_KEY ||
+    stored[KEYRING_INITIALIZED_STORAGE_KEY] !== true
+  ) {
+    throw new Error("C24 keyring initialization marker is malformed");
+  }
+  return true;
+}
 
 const programDataBytes = programData();
 const fixtureAccounts = new Map<string, FixtureAccount>([
@@ -472,12 +513,14 @@ const approvals: SessionApprovalOwner = Object.freeze({
     transactionBytes: Uint8Array,
   ): Promise<ApprovalSigningRecord> {
     counters.signingCompletions++;
-    return approvalOwner.completeSigning(
+    const completed = await approvalOwner.completeSigning(
       id,
       digest,
       attemptId,
       transactionBytes,
     );
+    await pauseAtCheckpoint("after-signing-committed");
+    return completed;
   },
   failSigning(
     id: string,
@@ -508,6 +551,19 @@ const startup = Promise.all([
 const ready = startup.then(async ([invalidatedApprovals, invalidatedOperations]) => {
   startupInvalidatedApprovals = invalidatedApprovals;
   startupInvalidatedOperations = invalidatedOperations;
+  if (await keyring.restore()) {
+    keyringStartup = "restored";
+    readyFlag = true;
+    return;
+  }
+  if (await keyringWasInitialized()) {
+    if (await keyring.isUnlocked()) {
+      throw new Error("failed C24 keyring restore retained signer authority");
+    }
+    keyringStartup = "locked";
+    readyFlag = true;
+    return;
+  }
   const context: KeyringContext = {
     account: SMART_ACCOUNT.toBytes(),
     origin: `chrome-extension://${chromeApi.runtime.id}`,
@@ -535,6 +591,13 @@ const ready = startup.then(async ([invalidatedApprovals, invalidatedOperations])
     if (!(await keyring.isUnlocked())) {
       throw new Error("test keyring did not unlock");
     }
+    await chromeApi.storage.local.set({
+      [KEYRING_INITIALIZED_STORAGE_KEY]: true,
+    });
+    if (!(await keyringWasInitialized())) {
+      throw new Error("C24 keyring initialization marker was not retained");
+    }
+    keyringStartup = "seeded";
     readyFlag = true;
   } finally {
     password.fill(0);
@@ -700,9 +763,18 @@ chromeApi.runtime.onConnect.addListener((port: ProviderRuntimePort): void => {
 });
 
 Object.assign(globalThis, {
-  __wardenProviderSignSuccessStatus: async () => {
+  __wardenProviderSignSuccessArmCheckpoint: (stage: unknown): void => {
+    if (stage !== "after-signing-committed") {
+      throw new Error("unsupported C24 worker checkpoint");
+    }
+    if (armedCheckpoint !== null || checkpointReached !== null) {
+      throw new Error("C24 worker checkpoint is already owned");
+    }
+    armedCheckpoint = stage;
+  },
+  __wardenProviderSignSuccessStatus: async (approvalId?: string) => {
     await ready;
-    const id = counters.latestApprovalId;
+    const id = approvalId ?? counters.latestApprovalId;
     const approval = id === null ? null : await approvals.read(id);
     let signing: ApprovalSigningRecord | null = null;
     if (approval !== null) {
@@ -711,7 +783,10 @@ Object.assign(globalThis, {
     const durableSignedTransaction = signing?.outcome.transactionBytes ?? null;
     try {
       return {
+        bootId,
         ready: readyFlag,
+        keyringStartup,
+        checkpointReached,
         fatalErrors: [...fatalErrors],
         startupInvalidatedApprovals,
         startupInvalidatedOperations,
