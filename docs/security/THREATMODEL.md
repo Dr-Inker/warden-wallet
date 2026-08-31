@@ -1455,3 +1455,86 @@ exact-byte render, navigation/Port cancellation composition, successful result
 protocol, simulation/fee surface, sender, confirmation owner, or replay
 delivery route. Memo is still the only decoded verb. This removes the approved-
 tombstone ambiguity; it does not make the wallet deployable.
+
+---
+
+## Client C9 exact-byte approval review surface — 65df168 — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** the emitted MV3 worker owns one new exact channel for an
+extension page at `/approval.html?request=req_<128-bit lowercase hex>`. Browser-
+owned sender id, origin, exact URL, document id, tab id, frame 0, and Port
+lifetime independently bind the page to that request. The route's only owner
+capabilities are `read`, `reject`, and `cancel`; its only request methods are
+getReview and reject. It cannot create/enumerate/claim an approval, touch the
+keyring, call RPC, sign, send, or settle a provider success.
+
+The background snapshots one pending digest-authenticated record and reparses
+its exact raw message through the strict Solana envelope parser. It accepts only
+the canonical lookup-free v0 one-signer Warden/Memo form with exact header,
+seven-key order, compute instructions, execute account indexes, inline
+account-less Memo program, canonical Warden program, and bounded printable ASCII
+payload. The page receives frozen primitive rendering facts, never message bytes
+or authority state. It renders by `textContent`; signing is explicitly and
+permanently disabled. The build limits the page graph to its UI and closed
+protocol and excludes coordinator, authority/RPC, release-registry, and signer
+modules from the worker.
+
+**Removed / narrowed:** exact own data-property schemas reject getters,
+prototype tricks, symbols, unknown/missing fields, invented approve/sign
+methods, malformed ids/correlations/origins, non-32-byte base58 values, invalid
+times/ranges, duplicate correlations, and out-of-order traffic. Unique request
+and document maps plus a 16-page cap bound live state. Content scripts share the
+extension id but fail the exact extension-origin/URL classifier; real Chromium
+causally observes disconnect. Review then reject is a one-way state machine.
+Navigation/Port loss durably cancels; explicit rejection commits before its
+acknowledgement; simultaneous reject/close ends only rejected or cancelled.
+
+Synchronous parent disposal does not pretend it can await IndexedDB. It removes
+all routes and disconnects Ports without starting a transition that would race
+repository close; a same-turn queued cancellation also stops. Mandatory next-
+startup invalidation owns the abandoned pending record. This may delay its
+terminal row but never leaves an actionable approval route.
+
+Three meaningful REDs preceded the feature: the six-case core review suite
+failed because the projector did not exist; the extension protocol/Port modules
+were absent and all 12 new approval provenance cases failed; and production
+Chromium returned `net::ERR_FILE_NOT_FOUND` for the exact review URL. Later harsh
+review closed duplicate pending responses, regex-only public-key validation,
+native Proxy-introspection errors, a widened reject/disconnect microtask, and
+late owner calls during runtime teardown.
+
+Official behavior sources:
+<https://developer.chrome.com/docs/extensions/develop/concepts/messaging>,
+<https://developer.chrome.com/docs/extensions/reference/api/runtime>, and
+<https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>.
+Port disconnect, not a stale lifecycle string, owns navigation/frame teardown;
+worker globals are not continuity. Independent second-model review is
+**UNVERIFIED**; none ran for C9.
+
+Exact-SHA evidence at `65df16854c1ecfbb5e288091c6dc4d76bd10b700`:
+the exact-byte review/intent command passed **98/98**; the closed protocol,
+Port, provenance, static-page, and runtime command passed **98/98**; core and
+extension typechecks/builds exited **0**; and the rebuilt production extension
+passed the real Chromium lane **3/3**. That lane measured zero horizontal
+overflow at 720 px and 390 px, controls at least 44 px high, stacked mobile
+actions, navigation cancellation, durable rejection, reject/close single-winner
+terminalization, exact displayed origin/Memo/network/account/digest, and
+content-script rejection. The emitted-artifact scan and esbuild input-graph
+fence both passed. Exact commands and generated capture paths are in
+`docs/NEXT-SESSION.md`. This C9 ledger-inclusive SHA has not yet run
+`env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`; no prior
+SHA's verdict is inherited.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-EXT-02`, `WRD-APR-01`,
+`WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; their notes
+record this partial review-only composition.
+
+**Residual, stated honestly:** no shipped provider path creates or opens this
+record, no approve/sign route exists, and the committed production release
+registry is empty. Display is a subset of the projected technical facts and has
+no live expiry terminalization. Authority/registry/account/cluster state is not
+refreshed by the display projection; a future signer must repeat the full
+verdict. There is no simulation, fee/balance consequence, switch binding,
+onboarding, send, confirmation, event, or result delivery. A compromised
+extension origin remains outside the boundary. Memo is the only decoded verb.
+This is a measurable, fail-closed approval review—not a deployable wallet.

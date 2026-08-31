@@ -1,5 +1,150 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C9 CLOSED APPROVAL REVIEW — EXACT-BYTE UI SHIPPED, APPROVAL/SIGNING STILL IMPOSSIBLE
+>
+> Implementation commit `65df16854c1ecfbb5e288091c6dc4d76bd10b700`
+> adds the first extension-owned full-page approval document at the exact URL
+> `/approval.html?request=req_<128-bit lowercase hex>`. Chrome-owned sender
+> metadata independently derives the same request id and must prove this
+> extension id/origin, exact URL serialization, document id, tab id, frame 0,
+> and active-at-connect lifecycle. The payload id can only confirm that tuple;
+> it cannot select a different record. One request and one document may own one
+> Port, total pages are capped at 16, and malformed, duplicate, concurrent,
+> out-of-order, extra-field, accessor, custom-prototype, or wrong-id traffic
+> disconnects and fails closed.
+>
+> The route dependency surface contains exactly `read`, `reject`, and `cancel`.
+> Its closed protocol contains exactly `approval:getReview` followed optionally
+> by `approval:reject`; there is no approve, claim, keyring, signer, RPC,
+> provider-success, creation, enumeration, or record-selection method. Review
+> snapshots one clock-aware pending record and calls a new exact-byte core
+> projector. That projector authenticates the stored digest, wraps the durable
+> message in the unique unsigned one-signature envelope, reuses the strict
+> Solana parser, and requires the exact lookup-free v0 header, seven-key
+> ordering, compute-budget pair, canonical Warden program, execute indexes,
+> inline account-less Memo program, and bounded printable-ASCII payload. Only
+> frozen strings/numbers cross into the page; raw bytes and authority state do
+> not.
+>
+> The page renders the durable origin, decoded Memo, canonical network, smart
+> account, message SHA-256, policy version, expiry, and request id using
+> `textContent`. The reject button is enabled only after a valid response. The
+> would-be approve control is permanently disabled and explicitly says signing
+> is unavailable. A one-way UI state machine rejects duplicate pending or
+> unrelated responses. CSP/local-asset checks reject inline handlers, inline
+> script, remote assets, external runtime imports, or any page dependency beyond
+> `approval/main.ts` and `approval-protocol.ts`.
+>
+> Port/navigation loss attempts a durable cancellation after readiness.
+> Explicit rejection performs its IndexedDB transition before acknowledgement.
+> If reject and disconnect race, the existing transactional single-winner CAS
+> decides `rejected` or `cancelled`; neither outcome can remain pending. Clean
+> parent runtime disposal is deliberately different: because the application
+> closes the repository synchronously, boundary disposal does not launch a late
+> unawaited transition against a closed owner. It removes/disconnects every
+> route immediately and leaves any abandoned pending row for mandatory
+> next-start invalidation. A cancellation already queued in that same turn also
+> stops before touching the closed owner.
+>
+> Behavioral REDs preceded the implementation. `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest
+> run test/session-approval-review.test.ts` exited **1**, **6/6 failed**, because
+> `decodeSessionApprovalReview` did not exist. `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> vitest run test/approval-protocol.test.ts test/approval-port.test.ts
+> test/sender-provenance.test.ts` exited **1** with both route modules missing
+> and all 12 new approval-sender cases red while 42 incumbent provenance cases
+> remained green. After production UI composition, the real Chromium command
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> exec playwright test -c playwright.config.ts approval-review.pw.ts` exited
+> **1** with `net::ERR_FILE_NOT_FOUND` for the exact approval URL before
+> `approval.html` existed.
+>
+> Harsh review then found defects after the first focused greens. The page
+> would accept a second valid-looking pending response after initial render; it
+> now has explicit awaiting-review/review-visible/awaiting-reject/terminal
+> phases. A generic base58 regex accepted strings that did not decode to 32
+> bytes; the protocol now checks exact decoded length. Proxy introspection could
+> leak native exceptions instead of the closed protocol error. Re-awaiting the
+> already-crossed readiness promise before rejection needlessly widened the
+> reject/disconnect race. Finally, synchronous runtime disposal could schedule
+> cancellation after owner close and report a false fatal. Each has a focused
+> regression or an executable browser consequence.
+>
+> Current Chrome contracts were checked against the official Port messaging,
+> MessageSender/runtime, and extension-worker lifecycle documentation:
+> <https://developer.chrome.com/docs/extensions/develop/concepts/messaging>,
+> <https://developer.chrome.com/docs/extensions/reference/api/runtime>, and
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>.
+> Port disconnect is the browser-owned navigation/frame teardown signal;
+> `documentLifecycle` is only a creation-time snapshot and is used only to
+> reject, never to claim continued liveness. Worker globals are not continuity,
+> so next-start durable invalidation remains mandatory. No independent
+> second-model review ran; it remains **UNVERIFIED**.
+>
+> Exact-SHA evidence at `65df16854c1ecfbb5e288091c6dc4d76bd10b700`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/session-approval-review.test.ts test/session-intent.test.ts`
+> passed **98/98**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension exec vitest run test/approval-protocol.test.ts
+> test/approval-port.test.ts test/sender-provenance.test.ts
+> test/manifest-storage.test.ts test/runtime.test.ts` passed **98/98**. `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core typecheck`,
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core build`,
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> typecheck`, and `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension build` each exited **0**.
+>
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> test:browser` rebuilt the production extension and passed **3/3** in real
+> Chromium: durable IndexedDB single winners/worker death, the new review page,
+> and provider frame/provenance/wake behavior. The review lane asserted
+> `scrollWidth === clientWidth` at both 720×900 and 390×844, a card contained by
+> the viewport, controls at least 44 px high, and stacked mobile actions without
+> overlap. It captured
+> `apps/extension/test-results/approval-review.pw.ts-appr-6458e--navigation-rejection-races/approval-review-desktop.png`
+> and `approval-review-mobile.png`; these ignored artifacts are regenerated by
+> the command. The same browser lane executes approval-channel forgery from the
+> real isolated content-script world and observes a causal disconnect.
+>
+> After build, this exact emitted-artifact command exited **0**:
+>
+> ```sh
+> node -e "const fs=require('node:fs');const dir='apps/extension/dist';const names=fs.readdirSync(dir).sort();const required=['approval.css','approval.html','approval.js','background.js','content.js','manifest.json','popup.html','popup.js'];const missing=required.filter(name=>!names.includes(name));const approval=fs.readFileSync(dir+'/approval.js','utf8');const background=fs.readFileSync(dir+'/background.js','utf8');const pageForbidden=/claimForSigning|completeSigning|signApprovedSessionMessage|indexedDB|chrome\.storage|fetch\(|XMLHttpRequest|secretKey|privateKey/;const workerForbidden=/session approval coordinator:|createPinnedSessionApprovalCoordinator|resolveCommittedSessionRelease|sign approved session transaction/;if(missing.length||pageForbidden.test(approval)||workerForbidden.test(background)){console.error({missing,pageForbidden:pageForbidden.test(approval),workerForbidden:workerForbidden.test(background)});process.exit(1)}console.log('C9 dist present; approval page has no storage, keyring, RPC, coordinator, or signer surface')"
+> ```
+>
+> The build itself also enforces the stronger esbuild input graph: the worker
+> must include the review projector/route and must exclude the coordinator,
+> authority resolver, release registry, RPC owner, and signer. `git rev-parse
+> HEAD` returned the exact implementation SHA, `git status --short` was empty,
+> and `git diff --check` exited **0**. This C9 ledger-inclusive SHA has not yet
+> run the full deploy gate; no prior verdict is inherited.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-EXT-02`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; their
+> notes record the narrower partial boundary. Review-only UI is not authority
+> to sign.
+>
+> **Harsh residual:** this page is not reachable from any successful provider
+> request because the coordinator and provider success route remain excluded.
+> The production release registry is empty. The UI displays only a subset of
+> the projected technical fields, has no live expiry countdown, and does not
+> refresh authority/registry/account/cluster state; the future signer must do
+> that again. It has no simulation, fees, balance/consequence model, account or
+> network switch binding, approve action, key use, send, confirmation, event,
+> retry/replay delivery, or onboarding. Clean runtime disposal may leave an
+> unreachable pending row until the next startup invalidates it. Memo is the
+> only decoded verb. A polished rejection screen is not a deployable wallet.
+>
+> **Next load-bearing slice:** keep approval/signing closed and make the review
+> lifetime honest while release/RPC authority is unresolved. Add live expiry
+> terminalization and expose the already-projected program/session/compute facts
+> behind an accessible technical-details section, with real Chromium clock,
+> navigation, mobile, and screenshot measurements. Then define the background
+> launcher/request-lifetime contract that can eventually open this exact page
+> without giving an untrusted page a tabs/windows capability. Do not fabricate a
+> production release entry or trusted RPC endpoint.
+
 > ## 2026-08-31 C8 DURABLE SIGNING OUTCOME — ATOMIC RESULT OWNER SHIPPED, SIGNING ROUTE STILL CLOSED
 >
 > Implementation commit `0dc769aaf43554c69b59ff04b11b534d0b022fd6`
