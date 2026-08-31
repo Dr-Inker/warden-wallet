@@ -103,9 +103,19 @@
 > coordinator, authority resolver, release, RPC, signer/session-transaction,
 > `chrome.tabs`, host permission, or external-connect string. `git diff
 > --check` exited **0**, HEAD remained `439c399…`, and the worktree was clean.
-> The C11 ledger-inclusive SHA has not yet run `env
-> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`; no prior
-> SHA's verdict is inherited.
+> The C11 ledger-inclusive SHA
+> `9c6f1c0be244534a9bbd99075f2a673cc2ac36e6` passed this exact executable
+> command, exit **0**:
+> `git rev-parse HEAD && test -z "$(git status --porcelain)" && env
+> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && git diff
+> --check && git rev-parse HEAD && test -z "$(git status --porcelain)"`.
+> It ran the complete pnpm workspace, core **698/698**, extension **310/310**,
+> production Chromium **5/5**, the pinned Argon2 worker benchmark, core and
+> extension builds/typechecks, fixture-drift and feature-resolution guards,
+> and the complete Rust workspace. The command printed the same SHA before
+> and after the gate and proved a clean worktree. Anchor's test-program key
+> mismatch notice and legacy macro `cfg` notices remained warnings; they did
+> not suppress or replace any failing command.
 >
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-EXT-02`, `WRD-APR-01`,
 > `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`. C11

@@ -1739,3 +1739,18 @@ focus-stealing UX matrix. A future approval method must recheck the durable row,
 digest, account, cluster, registry, authority, release, and keyring immediately
 before signing. This is a fail-closed internal launcher, not a deployable
 wallet.
+
+### C11 full-gate addendum — 9c6f1c0 — 2026-08-31
+
+The ledger-inclusive SHA `9c6f1c0be244534a9bbd99075f2a673cc2ac36e6`
+passed this exact command, exit **0**: `git rev-parse HEAD && test -z "$(git
+status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash
+.claude/test-gate.sh && git diff --check && git rev-parse HEAD && test -z
+"$(git status --porcelain)"`. The gate ran the complete pnpm workspace, core
+**698/698**, extension **310/310**, production Chromium **5/5**, the pinned
+Argon2 worker benchmark, core and extension builds/typechecks, fixture-drift
+and feature-resolution guards, and the complete Rust workspace. It printed
+the same SHA before and after the gate and proved a clean worktree. Anchor's
+test-program key mismatch notice and legacy macro `cfg` notices were warnings,
+not skipped failures. This verdict belongs only to `9c6f1c0…`; it promotes no
+C11 invariant and removes none of the residuals above.
