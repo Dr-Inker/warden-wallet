@@ -1,5 +1,143 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C7 COMMITTED RELEASE STATEMENT — PROVENANCE SHAPE CLOSED, PRODUCTION REGISTRY EMPTY
+>
+> Implementation commit `54bc05dc5adbbbd9b9a37f08cdf405b5fd66c4fa`
+> adds the still-opt-in `@warden/core/transaction/session-release` boundary.
+> It parses one exact in-toto Statement v1-shaped record with exactly two
+> ordered immutable subjects: the release `target/deploy/warden.so` SHA-256 and
+> the full raw canonical ProgramData-account SHA-256. Its v1 predicate pins the
+> full release commit, committed deploy-manifest name and digest, chain,
+> canonical genesis, literal shipped Warden program, canonical loader-v3
+> ProgramData PDA, deployment slot, governed upgrade authority, and exact
+> allocation. Missing, extra, inherited/custom-prototype, symbolic, sparse,
+> future-versioned, noncanonical, zero, reordered, public-genesis-aliased
+> localnet, or out-of-range data fails closed. Every hostile field is read once
+> into immutable primitive state before later getters can mutate earlier input.
+>
+> `sessionReleaseStatementDigest` reconstructs one fixed-order canonical JSON
+> form and hashes it with SHA-256. Independent hard-coded goldens pin the shipped
+> ProgramData PDA, Squads vault PDA, fixture deploy-manifest digest, and complete
+> statement digest. The canonical `RELEASE-INTEGRITY.md` parser now carries the
+> exact release SHA plus an optional leading-value-only dedicated token
+> `session-release:<name>@<digest>`; duplicate tokens reject. The real dev seed
+> row has no token and parses as unbound. `bindSessionReleaseStatement` then
+> requires exact agreement among the statement, unique release row, complete
+> copy-owned deploy pin, row artifact/code hash, deploy-manifest content digest,
+> public genesis, literal program, and Squads-vault-derived upgrade authority
+> before it creates the C6 pin object.
+>
+> The only runtime selection map is a private frozen null-prototype registry.
+> It is deliberately **empty**: `COMMITTED_SESSION_RELEASE_NAMES` is `[]`, and
+> `mainnet-r1`, `__proto__`, `constructor`, and `toString` all refuse as unknown.
+> A future entry must source-own both its exact statement and canonical release
+> table row. Runtime callers may supply only the committed release name; an
+> earlier design that accepted caller-provided release Markdown was rejected in
+> review because it could falsely make an omitted repository row look present.
+> `assertCommittedSessionReleaseDocumentBinding` is a separate release-gate
+> drift assertion and cannot inject runtime pins. With today's empty registry,
+> `createCommittedSessionApprovalCoordinator` refuses after one release-name
+> read and before integrity text, Connection, signer, approval-owner, or keyring
+> access. The incumbent deploy manifest map and synthetic pin/member arrays are
+> now frozen and null-prototype/own-key resolved, closing prototype-name lookup
+> aliases without adding a production manifest. The extension imports none of
+> C7 and remains unable to sign.
+>
+> Behavioral REDs preceded and hardened this boundary. First, `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest
+> run test/session-release.test.ts` exited **1** before collection because the
+> module did not exist. Harsh schema review then made `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec vitest
+> run test/session-release.test.ts test/deploy-cli.test.ts` exit **1**, **44
+> passed / 2 failed**: an array with a hidden own `reviewed` property was
+> accepted and a dedicated release cell with two valid tokens silently selected
+> the first. Exact array shapes and duplicate refusal close both. Removing
+> caller-chosen release Markdown made the focused session-release command exit
+> **1**, **31 passed / 1 failed** on its two-argument resolver; source-embedded
+> rows reduced the runtime resolver to one argument. A final identity pass made
+> the same command exit **1**, **32 passed / 2 failed**: custom-prototype
+> statements and `solana:localnet` carrying devnet genesis were accepted. Plain
+> prototype enforcement and public-genesis alias refusal close them. Review
+> also found that the authority-drift test was actually dying earlier on stale
+> statement digest; it now recomputes the row and asserts the specific upgrade-
+> authority refusal. The deploy-source attestation correctly went red **19
+> passed / 1 failed** after the three verifier-closure edits; `node
+> scripts/gen-verifier-attestation.mjs` rediscovered and re-pinned all seven
+> files, after which the attestation suite passed **20/20**.
+>
+> The format and its limits were researched against the current approved SLSA
+> v1.2 provenance specification, in-toto Statement v1 and envelope/DSSE
+> specifications, Sigstore verification guidance, and GitHub artifact-
+> attestation guidance:
+> <https://slsa.dev/spec/v1.2/provenance>,
+> <https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md>,
+> <https://github.com/in-toto/attestation/blob/main/spec/v1/envelope.md>,
+> <https://docs.sigstore.dev/cosign/verifying/verify/>, and
+> <https://docs.github.com/en/actions/concepts/security/artifact-attestations>.
+> The committed record is explicitly **unsigned**. Git review authenticates the
+> source entry today; it is not DSSE/Sigstore authentication, builder identity,
+> SLSA provenance, an audit, or evidence that the bytes are safe. Independent
+> second-model review remains **UNVERIFIED**: `codex review --uncommitted`
+> exited **1** because its in-process app-server client could not initialize on
+> this host's read-only path.
+>
+> Exact-SHA evidence at `54bc05dc5adbbbd9b9a37f08cdf405b5fd66c4fa`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core exec
+> vitest run test/session-release.test.ts test/deploy-cli.test.ts
+> test/deploy-attestation.test.ts test/session-rpc.test.ts
+> test/session-authority-resolver.test.ts` passed **106/106**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/core test`
+> passed **675/675**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/core typecheck` and `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/core build` exited **0**. From `packages/core`, `node
+> --input-type=module -e "const
+> m=await import('@warden/core/transaction/session-release');if(typeof
+> m.parseSessionReleaseStatement!=='function'||typeof
+> m.resolveCommittedSessionRelease!=='function'||typeof
+> m.createCommittedSessionApprovalCoordinator!=='function'||m.COMMITTED_SESSION_RELEASE_NAMES.length!==0)process.exit(1);console.log('session-release
+> subpath resolves; committed releases: 0')"` exited **0**. `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test`
+> passed **246/246**; `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension typecheck` and `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension build`
+> exited **0**. After build, the following exact command exited **0** with no
+> match:
+>
+> ```sh
+> node -e "const fs=require('node:fs'),path=require('node:path');const re=/session-release|SessionReleaseError|parseSessionReleaseStatement|resolveCommittedSessionRelease|createCommittedSessionApprovalCoordinator|SESSION_RELEASE_PREDICATE_TYPE|session release:/;const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const hit=walk('apps/extension/dist').find(f=>re.test(fs.readFileSync(f,'utf8')));if(hit){console.error(hit);process.exit(1)}console.log('extension dist release-boundary isolation: no matches')"
+> ```
+>
+> `git rev-parse HEAD` still returned the
+> exact implementation SHA, `git status --short` was empty, and `git diff
+> --check` exited **0**. The preceding ledger-inclusive C6 SHA
+> `351541877f6165dffe84dfda72666aeb56528cc5` passed the exact full command
+> `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit
+> **0**. This new ledger-inclusive C7 SHA has not yet run that full gate; do not
+> transfer the preceding verdict.
+>
+> **No invariant status changes.** `WRD-APR-01`, `WRD-APR-02`, `WRD-APR-03`,
+> `WRD-TXI-01`, and `WRD-KEY-04` remain `unimplemented`, so
+> `docs/security/invariants.jsonl` is intentionally unchanged.
+>
+> **Harsh residual:** the production release registry and production deploy
+> manifest are empty/absent by design, so C7 enables no chain. No DSSE/Sigstore
+> signature, certificate identity policy, transparency-log proof, SLSA builder
+> provenance, independently reproduced artifact, real ProgramData readback, or
+> audited release exists. Git review can bind a future source record but cannot
+> prove the builder or deployment RPC was honest. The trusted Connection remains
+> unspecified and non-atomic; one malicious endpoint can lie consistently, and
+> a governed upgrade can land after the last observation. There is still no
+> approval render, successful provider route, simulation/fee surface, sender,
+> confirmation owner, durable signed-result/replay recovery, or token
+> consequence model. Memo remains the only decoded verb. This closes the
+> release-pin injection seam without making the wallet deployable.
+>
+> **Next load-bearing slice:** replace the coordinator's post-claim `approved`
+> tombstone with a durable signed-result/failure ownership boundary that can
+> safely replay a completed result or recover a failed signing attempt. Keep it
+> still unreachable from the provider until an approval surface and a real
+> committed release exist; do not weaken the empty-registry refusal.
+
 > ## 2026-08-31 C6 CHAIN-BOUND BLOCKHASH RPC — REAL COMPOSITION CLOSED, RELEASE PROVENANCE ABSENT
 >
 > Implementation commit `933245dac0c95c2deb6bdfda72666aeb56528cc5`

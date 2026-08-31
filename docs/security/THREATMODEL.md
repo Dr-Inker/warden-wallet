@@ -1269,3 +1269,92 @@ no replay/recovery owner. There is no approval render, successful provider
 route, simulation, fee surface, sender, confirmation, durable result, or token
 consequence model. Memo is the only decoded verb. This is a real but still
 unreachable composition primitive, not a deployable wallet.
+
+---
+
+## Client C7 committed release statement and empty registry — 54bc05d — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** core exports the separate opt-in
+`@warden/core/transaction/session-release` module. It accepts one exact v1
+in-toto Statement-shaped record whose ordered digest subjects are the Warden
+release artifact and every raw ProgramData byte. The predicate binds a full
+release SHA, committed deploy-manifest name/digest, chain/genesis, literal
+Warden program, canonical ProgramData PDA, deployment slot, exact allocation,
+and governed upgrade authority. Its custom canonical JSON digest is then bound
+to a dedicated leading-value `session-release:<name>@<digest>` field in the
+unique `RELEASE-INTEGRITY.md` row.
+
+The source-owned runtime registry is frozen, null-prototype, and deliberately
+empty. A future entry must embed both its exact statement and canonical release
+row; runtime callers may select only its committed name. The earlier design in
+which a runtime caller supplied release Markdown was rejected because it could
+fabricate the *presence* of a repository row, even though it could not change
+the source-owned pins. A separate document-drift assertion is release tooling,
+not a pin-injection route. The only C6 composition wrapper refuses an absent
+name before reading any Connection, signer, approval-owner, or keyring
+capability. Extension source and emitted output contain no C7 boundary.
+
+**Removed / narrowed:** exact own-key and plain-prototype validation rejects
+missing, extra, inherited/custom-prototype, symbolic, sparse, and hidden array
+data. Type/predicate/schema versions, subject count/order/names, lowercase
+nonzero hashes, full release SHA, canonical names/base58/decimal u64, public
+genesis, literal Warden program, ProgramData PDA, nonzero authority, and bounded
+allocation all fail closed. Localnet may not alias a pinned public genesis.
+Fields are single-read into immutable primitive state; later getters cannot
+rewrite prior observations. Binding independently copy-owns and canonicalizes
+the entire deploy pin, recomputes its digest, derives the Squads vault, and
+requires exact release-SHA, statement-digest, artifact/code-hash, manifest,
+program, genesis, and authority agreement. The incumbent deploy registry and
+synthetic members are frozen, and lookups use own keys so prototype names no
+longer resolve.
+
+The initial focused suite was red because the module did not exist. Subsequent
+adversarial runs produced: **44 passed / 2 failed** for hidden array properties
+and duplicate release tokens; **31 passed / 1 failed** when the unsafe
+caller-document resolver still had two arguments; and **32 passed / 2 failed**
+for custom-prototype statements and a localnet/devnet-genesis alias. All are
+closed. Harsh test review also found false attribution: the authority-drift case
+was failing first on a stale statement digest. It now recomputes the row and
+asserts the specific derived-authority refusal. Deploy-verifier attestation
+correctly failed **19 passed / 1 failed** after its three closure files changed;
+the repository generator rediscovered/re-pinned all seven files and the suite
+returned to **20/20**. Independent second-model review remains **UNVERIFIED**
+because `codex review --uncommitted` could not initialize its app-server client
+on the read-only host path.
+
+Primary format evidence:
+<https://slsa.dev/spec/v1.2/provenance>,
+<https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md>,
+<https://github.com/in-toto/attestation/blob/main/spec/v1/envelope.md>,
+<https://docs.sigstore.dev/cosign/verifying/verify/>, and
+<https://docs.github.com/en/actions/concepts/security/artifact-attestations>.
+The source record is deliberately described as **unsigned**. Repository review
+is the current trust anchor; no DSSE/Sigstore signer authentication, builder
+identity, transparency proof, SLSA provenance, audit assurance, or safety claim
+is inferred from matching digests.
+
+Exact-SHA evidence at `54bc05dc5adbbbd9b9a37f08cdf405b5fd66c4fa`:
+the focused release/deploy-attestation/C6 suites passed **106/106**; core passed
+**675/675**, typecheck, build, and compiled subpath resolution; extension passed
+**246/246**, typecheck, build, and emitted C7 isolation. Exact commands are in
+`docs/NEXT-SESSION.md`. The preceding ledger SHA
+`351541877f6165dffe84dfda72666aeb56528cc5` passed `env
+npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`, exit **0**.
+This C7 ledger-inclusive SHA has not yet run that gate; the prior verdict is not
+inherited.
+
+**New invariants:** none. `WRD-APR-01`, `WRD-APR-02`, `WRD-APR-03`,
+`WRD-TXI-01`, and `WRD-KEY-04` remain `unimplemented`;
+`docs/security/invariants.jsonl` is intentionally unchanged.
+
+**Residual, stated honestly:** no production release entry or production deploy
+manifest exists, so this path cannot construct a coordinator. No real
+ProgramData readback, reproducible release attestation, signature/certificate
+policy, or independent build establishes provenance. The RPC is still an
+explicit trust terminus and separate genesis/context reads are non-atomic. A
+governed upgrade can occur after observation. Signing failures after approval
+still leave an `approved` tombstone without a durable result/recovery owner.
+There is no approval UI, provider success route, simulation, fee presentation,
+sender, confirmation/replay owner, or token consequence model. Memo remains the
+only decoded verb. This is a fail-closed release trust boundary, not a deployable
+wallet.
