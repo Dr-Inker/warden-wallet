@@ -1,5 +1,139 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C11 BACKGROUND-OWNED APPROVAL WINDOW LIFECYCLE — SHIPPED INTERNALLY, NO PROVIDER SUCCESS
+>
+> The C11 implementation set ends at
+> `439c3995d7109f110668c82ddd893672ea679d8a`. Commit
+> `1fea6ed8328721b207e2aaa17760f9ecea1b5a16` adds the production-composed
+> owner, `d2d6c5b2fc8fdfc0dede6a55e5caa3d3987edbe9` fixes self-derived test
+> oracles, and `439c3995d7109f110668c82ddd893672ea679d8a` adds the real-Chrome worker-
+> death proof. The shipped worker now owns a readiness-gated internal launcher,
+> but no browser message route receives it and every provider/popup request
+> remains fixed unavailable.
+>
+> The launcher's only caller-controlled inputs are one strict
+> `req_<32 lowercase hex>` id and an `AbortSignal`. It supplies Chrome a fixed
+> `chrome-extension://<runtime-id>/approval.html?request=<id>` URL, popup type,
+> focus, `720×600` requested bounds, and `setSelfAsOpener: false`. Callers
+> cannot provide a URL, window id, placement, incognito flag, opener, or Chrome
+> query options. The manifest remains exactly `permissions: ["storage"]`;
+> there is no `tabs`, `activeTab`, `scripting`, host, external-connect, or web-
+> accessible-resource expansion.
+>
+> One reserved request and a global hard cap of 16 exist before any await. The
+> owner proves the exact durable row pending before create, validates the
+> returned safe non-negative window id, detects create-to-close races with
+> `chrome.windows.get`, then proves the row pending again. Duplicate request or
+> window ids fail closed. Provider abort, user close, malformed/missing Chrome
+> results, create/get failure, and post-create terminal races close only the
+> owned window and either cancel the exact row or accept an independently
+> proven non-pending winner. If cancellation fails and a read cannot prove the
+> row absent/terminal, the parent fatal lifecycle removes every runtime route
+> and closes the approval repository.
+>
+> Worker globals are deliberately not continuity. `windows.onRemoved` is
+> registered synchronously during worker evaluation, but its request/window map
+> is volatile. Disposal removes that listener, wakes readiness- and create-
+> blocked callers, closes active or late-created windows, and starts no new
+> repository transition before the parent closes IndexedDB. Mandatory startup
+> invalidation cancels an abandoned pending row after worker death. This loses
+> availability rather than resuming stale authority.
+>
+> Meaningful REDs preceded or challenged the implementation:
+>
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run test/approval-window.test.ts` first exited
+>   **1** because `approval-window.js` did not exist. The first implementation
+>   run then exited **1**, **1 failed / 22 passed**, because an already-aborted
+>   lifetime left its exact row pending.
+> - `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+>   @warden/extension exec vitest run test/runtime.test.ts -t "ships a
+>   readiness-gated internal approval-window owner"` exited **1**, **1 failed /
+>   17 skipped**, because the production worker registered zero window-close
+>   listeners and exposed no launcher.
+> - Two new disposal cases exited **1**, **2 failed / 23 passed**, proving that
+>   readiness and Chrome-create promises could outlive teardown. The fixed
+>   owner races waits against disposal and removes a window returned after the
+>   owner is gone.
+> - The focused second-read race exited **1**, **1 failed / 24 skipped**, because
+>   a row already proven rejected still triggered `cancel` plus another read.
+>   Explicit non-pending proof now suppresses that unnecessary authority use.
+> - The first real-Chrome window run exited **1** because headless Chrome
+>   resolved requested `720×600` bounds to `1280×720`. The corrected lane
+>   separately hard-codes the requested values and measures Chrome's positive
+>   resolved bounds; it does not call them browser-enforced.
+>
+> Harsh QA also caught two harness defects. The first combined focused/typecheck
+> run passed **23/23** behavior tests but TypeScript exited **2** on two
+> recursive inferred test functions; explicit return types fixed the harness.
+> Later audit found that unit and browser dimension expectations, and the cap,
+> were imported from the code under test. Commit `d2d6c5b…` pins independent
+> hard-coded `720`, `600`, and `16` oracles. No earlier adaptive green is used
+> as evidence.
+>
+> Current platform behavior was checked against Chrome's official windows and
+> service-worker lifecycle documentation:
+> <https://developer.chrome.com/docs/extensions/reference/api/windows> and
+> <https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>.
+> Chrome documents `onRemoved`, browser-session-unique window ids, Promise APIs
+> at this project's Chrome floor, and that `tabs` is needed only for sensitive
+> Tab fields. It also requires resilience to unexpected worker termination and
+> says globals disappear. `codex review --commit
+> 1fea6ed8328721b207e2aaa17760f9ecea1b5a16` could not initialize its in-
+> process app-server client on this host's read-only state path. Independent
+> second-model review is therefore **UNVERIFIED**; no bypass wrote outside
+> `/opt`.
+>
+> Exact-SHA evidence at `439c3995d7109f110668c82ddd893672ea679d8a`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> test` passed **310/310**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> typecheck` exited **0**; `env npm_config_cache=/tmp/warden-npm-cache pnpm
+> --filter @warden/extension build` exited **0**; and `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> playwright test -c playwright.config.ts` passed **5/5** in real Chromium.
+> The new browser case uses a temporary extension with no permissions, imports
+> the real window owner plus IndexedDB owner, proves exact fixed create input,
+> popup type/focus/URL, user-close cancellation, then creates a second pending
+> row, force-stops the exact worker target, proves the popup outlives the old
+> global map, and observes the replacement startup pass leave it `cancelled`.
+>
+> The same exact-SHA command rebuilt production output and recursively found no
+> test-only `__wardenApprovalWindow` global, browser-contract marker,
+> coordinator, authority resolver, release, RPC, signer/session-transaction,
+> `chrome.tabs`, host permission, or external-connect string. `git diff
+> --check` exited **0**, HEAD remained `439c399…`, and the worktree was clean.
+> The C11 ledger-inclusive SHA has not yet run `env
+> npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`; no prior
+> SHA's verdict is inherited.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-EXT-02`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`. C11
+> narrows only internal launch/lifetime/cancellation subclaims.
+>
+> **Harsh residual:** this still cannot open from a real provider request. There
+> is no shipped authoritative account/cluster/policy resolver, production
+> release entry, trusted production RPC, coordinator dispatch, approve/claim/
+> sign route, simulation, fee/balance consequence model, send/confirmation
+> owner, result replay, onboarding, or non-Memo verb. The launcher browser lane
+> uses a test-only static approval document while the separate production lane
+> tests the real review page; end-to-end provider→record→window→real review is
+> absent. Current-Chromium headless evidence is not Chrome 106/store/manual,
+> multi-monitor, incognito, Linux-window-manager, or focus-stealing UX
+> compatibility. A briefly loaded page may display already-authenticated stale
+> details during an abort/create race, but it has no approve capability; a
+> future approve route must recheck durable state and all authority immediately
+> before signing. An internal popup substrate is not a deployable wallet.
+>
+> **Next load-bearing slice:** do not expose this raw launcher to provider
+> traffic. Define one background request owner that ties the provider Port's
+> AbortController to the existing strict coordinator and this launcher only
+> after authoritative account/cluster/release/RPC resolution succeeds. Keep
+> production unavailable while the release registry is empty; do not invent a
+> deployment address or trusted RPC endpoint. The first executable contract
+> must prove disconnect/open-failure/authority-change resolve only the exact
+> durable request before any approve/sign route is considered.
+
 > ## 2026-08-31 C10 HONEST REVIEW LIFETIME — LIVE EXPIRY AND EXACT TECHNICAL DISCLOSURE, SIGNING STILL IMPOSSIBLE
 >
 > Implementation commit `7149b727c75476f4919a957c4866d21bdf0f3a1b`

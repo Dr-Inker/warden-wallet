@@ -1643,3 +1643,99 @@ and feature-resolution guards, and the complete Rust workspace. Afterward
 HEAD remained that SHA, the worktree was clean, and `git diff --check` exited
 **0**. This verdict belongs only to `f6fcde9…`; it does not promote any C10
 invariant or remove the residuals above.
+
+---
+
+## Client C11 background-owned approval-window lifecycle — 439c399 — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** the emitted MV3 worker now imports and owns one internal
+approval-window launcher. It accepts only a strict request id and an
+`AbortSignal` from future trusted background composition. The background, not
+the caller, constructs the exact extension review URL and fixes popup type,
+focus, requested `720×600` bounds, and `setSelfAsOpener: false`. No caller can
+choose a URL, window id, position, incognito state, opener, tab query, or Chrome
+options. No runtime Port, extension page, content script, or web page receives
+this facade. Provider and popup routes remain fixed unavailable.
+
+The launcher registers `windows.onRemoved` synchronously during worker
+evaluation. Before any await it reserves the request id and enforces one window
+per request plus a 16-request cap. It snapshots and integrity-validates the
+exact durable row as pending before `windows.create`, validates Chrome's result
+as a safe non-negative id, refuses active id reuse, calls `windows.get` to close
+the create-to-remove race, and snapshots the same row as pending again. URL
+input is never accepted and a strict lowercase request id cannot escape the
+fixed query slot.
+
+**Removed / narrowed:** provider abort, user window close, create rejection,
+undefined/malformed Chrome results, get failure, late create after abort, and a
+post-create terminal winner all remove only the owned mapping/window. A still-
+pending row is cancelled through the transactional approval owner. If cancel
+loses to reject/expiry/invalidation, an exact read may prove that terminal
+winner; missing is also non-actionable. If cancel fails and the row remains
+pending, or the proving read fails/mismatches, the error enters the parent's
+fatal lifecycle, which removes all runtime routes and closes the repository.
+No uncertainty is treated as cancellation success.
+
+Synchronous disposal removes the Chrome listener, wakes readiness- or create-
+blocked launch callers, closes mapped windows, and arranges best-effort removal
+for a window returned after disposal. It deliberately begins no new approval
+transition before the parent closes IndexedDB. Worker death discards every
+window map; mandatory startup invalidation, not a resurrected global, cancels
+the abandoned pending row. Real Chromium force-stops the exact worker while a
+popup and proven-pending row remain, observes the popup survive, then observes
+the replacement worker have no old marker and read the row as `cancelled`.
+
+The manifest remains exactly `permissions: ["storage"]`. There is no `tabs`,
+`activeTab`, `scripting`, host-permission, external-connect, or web-accessible-
+resource addition. Chrome's current windows documentation says `tabs` is
+needed for sensitive Tab fields; this owner never populates or reads tabs. The
+real browser contract loads a temporary extension with no permissions and
+observes exact extension URL, popup type, focus, and durable user-close
+cancellation. Headless Chrome resolved requested `720×600` bounds as
+`1280×720`; requested size is not claimed as a browser-enforced guarantee.
+
+The first module RED failed because the owner did not exist. Subsequent REDs
+exposed an already-aborted row left pending, absent production listener/
+launcher composition, teardown-blocked promises, a late-created window after
+dispose, and unnecessary cancel/read work after a terminal second read. The
+first browser dimension assertion also failed by measuring Chrome's headless
+window-manager choice as a product guarantee. A later harsh audit found the
+dimension/cap tests derived expectations from exported production constants;
+commit `d2d6c5b2fc8fdfc0dede6a55e5caa3d3987edbe9` pins independent `720`, `600`,
+and `16` oracles. Failed or adaptive harness results are not green evidence.
+
+Official behavior sources:
+<https://developer.chrome.com/docs/extensions/reference/api/windows> and
+<https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>.
+The latter explicitly warns that globals disappear and workers can terminate
+unexpectedly. `codex review --commit
+1fea6ed8328721b207e2aaa17760f9ecea1b5a16` failed before review because its in-
+process app-server client could not initialize on this host's read-only state
+path. Independent second-model review remains **UNVERIFIED**.
+
+Exact-SHA evidence at `439c3995d7109f110668c82ddd893672ea679d8a`:
+the extension passed **310/310**, typecheck and production build exited **0**,
+and real Chromium passed **5/5**. The emitted-artifact command rejected any
+test-only window global/marker, coordinator, authority resolver, release, RPC,
+session transaction/signer, `chrome.tabs`, host-permission, or external-
+connect string; it exited **0**. Exact commands and RED outputs are recorded in
+`docs/NEXT-SESSION.md`. This C11 ledger-inclusive SHA has not yet run the full
+deploy gate, so no earlier SHA's verdict is inherited.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-EXT-02`, `WRD-APR-01`,
+`WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`. The
+launcher narrows lifecycle and exact-cancellation subclaims only.
+
+**Residual, stated honestly:** there is no provider-to-launch production path,
+authoritative account/cluster/policy composition, non-empty production release
+registry, trusted production RPC endpoint, approve/claim/sign method,
+simulation/fee consequence model, send/confirmation owner, or result delivery.
+The launcher browser contract uses a test-only static page while another lane
+tests the actual production review page; the complete provider→record→window→
+review chain is unverified. Provider AbortSignal wiring is unit/composition
+evidence, not a reachable production behavior. Current headless Chromium is not
+a Chrome 106/store/manual, incognito, multi-monitor, OS-window-manager, or
+focus-stealing UX matrix. A future approval method must recheck the durable row,
+digest, account, cluster, registry, authority, release, and keyring immediately
+before signing. This is a fail-closed internal launcher, not a deployable
+wallet.
