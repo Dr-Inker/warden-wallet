@@ -99,6 +99,26 @@
 > Ledger-inclusive full-gate evidence is not claimed until the ledger SHA runs
 > the repository gate.
 >
+> Full-gate addendum: ledger-inclusive SHA
+> `a7a5301c9ab97aecb169f7482f100e5e46c1d58d` passed this exact command,
+> exit **0**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It printed the same SHA before and after, proved a clean worktree, and ran the
+> complete pnpm workspace, core **699/699**, extension **380/380**, production
+> Chromium **6/6**, the pinned Argon2 worker benchmark, core/extension builds
+> and typechecks, fixture/ledger/feature guards, and the complete Rust
+> workspace. The known Anchor test-program key mismatch notice and legacy macro
+> `cfg` notices were warnings, not skipped failures. This verdict belongs only
+> to `a7a5301…`; this evidence-only follow-up does not inherit it or promote an
+> invariant.
+>
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
 > `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
 > invariants JSONL is intentionally unchanged.

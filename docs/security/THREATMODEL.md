@@ -2174,3 +2174,18 @@ There is no Wallet Standard registration/batching, real-browser successful
 provider path, non-empty release/trusted RPC, approve/sign action, consequence
 review, send/confirmation, onboarding, or root ceremony. This is an internal
 replay primitive, not a deployable wallet feature.
+
+### C16 full-gate addendum — a7a5301 — 2026-08-31
+
+The ledger-inclusive SHA `a7a5301c9ab97aecb169f7482f100e5e46c1d58d`
+passed this exact command, exit **0**: `git rev-parse HEAD && test -z "$(git
+status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash
+.claude/test-gate.sh && git diff --check && git rev-parse HEAD && test -z
+"$(git status --porcelain)"`. It printed the same SHA before and after, proved
+a clean worktree, and ran the complete pnpm workspace, core **699/699**,
+extension **380/380**, production Chromium **6/6**, the pinned Argon2 worker
+benchmark, core/extension builds and typechecks, fixture/ledger/feature guards,
+and the complete Rust workspace. The known Anchor test-program key mismatch
+notice and legacy macro `cfg` notices were warnings, not skipped failures. This
+verdict belongs only to `a7a5301…`; the evidence-only follow-up does not inherit
+it or promote an invariant.
