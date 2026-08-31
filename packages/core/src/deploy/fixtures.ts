@@ -51,7 +51,7 @@ export interface MultisigSpec {
   staleTransactionIndex?: bigint;
   rentCollector?: PublicKey | null;
   bump?: number;
-  members: PinnedMember[];
+  members: readonly PinnedMember[];
 }
 
 /** Encode a Squads v4 `Multisig` account (discriminator ‖ fields ‖ members vec).

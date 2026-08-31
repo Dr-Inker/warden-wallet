@@ -43,9 +43,9 @@ export const MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9
  *  with only a subset, or an unexpected proposer/executor, changes real control —
  *  WRDF-0017 round 7). */
 export interface PinnedMember {
-  key: PublicKey;
+  readonly key: PublicKey;
   /** Exact permission mask — asserted equal, not a floor. */
-  mask: number;
+  readonly mask: number;
 }
 
 export interface DeployPinConfig {
@@ -58,7 +58,7 @@ export interface DeployPinConfig {
   /** The vault index whose canonical PDA must equal the upgrade authority. */
   vaultIndex: number;
   /** The complete audited member set with per-member permission masks. */
-  members: PinnedMember[];
+  readonly members: readonly PinnedMember[];
   /** Required threshold (spec-exact). */
   threshold: number;
   /** Required member count (spec-exact). */
@@ -117,18 +117,20 @@ const synthetic = (byte: number): PublicKey => new PublicKey(new Uint8Array(32).
  * is a placeholder chosen so the happy-path fixture passes and each negative
  * fixture fails a specific assertion.
  */
-export const SYNTHETIC_PIN: DeployPinConfig = {
+const SYNTHETIC_MEMBERS = Object.freeze([
+  Object.freeze({ key: synthetic(0x01), mask: PERMISSION_ALL }),
+  Object.freeze({ key: synthetic(0x02), mask: PERMISSION_ALL }),
+  Object.freeze({ key: synthetic(0x03), mask: PERMISSION_ALL }),
+  Object.freeze({ key: synthetic(0x04), mask: PERMISSION_ALL }),
+  Object.freeze({ key: synthetic(0x05), mask: PERMISSION_ALL }),
+]);
+
+export const SYNTHETIC_PIN: DeployPinConfig = Object.freeze({
   wardenProgramId: synthetic(0xa1),
   squadsProgramId: new PublicKey("SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf"),
   multisig: synthetic(0xb2),
   vaultIndex: 0,
-  members: [
-    { key: synthetic(0x01), mask: PERMISSION_ALL },
-    { key: synthetic(0x02), mask: PERMISSION_ALL },
-    { key: synthetic(0x03), mask: PERMISSION_ALL },
-    { key: synthetic(0x04), mask: PERMISSION_ALL },
-    { key: synthetic(0x05), mask: PERMISSION_ALL },
-  ],
+  members: SYNTHETIC_MEMBERS,
   threshold: REQUIRED_THRESHOLD,
   memberCount: REQUIRED_MEMBER_COUNT,
   minTimeLockSeconds: MIN_TIME_LOCK_SECONDS,
@@ -137,7 +139,7 @@ export const SYNTHETIC_PIN: DeployPinConfig = {
   expectedGenesisHash: MAINNET_GENESIS_HASH,
   registryVersion: 1,
   registryTreasury: synthetic(0xc3), // synthetic swap-fee treasury SmartAccount
-};
+});
 
 /**
  * The COMMITTED manifest registry (WRDF-0085): the deploy gate's live mode
@@ -148,9 +150,11 @@ export const SYNTHETIC_PIN: DeployPinConfig = {
  * then only the synthetic template exists, and no live run can select a real
  * manifest that does not exist.
  */
-export const MANIFESTS: Record<string, DeployPinConfig> = {
+const manifestRegistry = Object.assign(Object.create(null), {
   synthetic: SYNTHETIC_PIN,
-};
+}) as Record<string, DeployPinConfig>;
+export const MANIFESTS: Readonly<Record<string, DeployPinConfig>> =
+  Object.freeze(manifestRegistry);
 
 /**
  * A canonical sha256 digest of a manifest (WRDF-0085): so the release-integrity

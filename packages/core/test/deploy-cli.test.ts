@@ -10,7 +10,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const DEV_SHA = "f0f38cab713d1d9165e367f3397e11a152620eab";
 const digest = () => manifestDigest(SYNTHETIC_PIN);
 const rowMd = (sha: string, extra = "") =>
-  `| dev | \`${sha}\` | \`${"2a".repeat(32)}\` | id | x | y | z ${extra} manifest:synthetic@${digest()} | v |`;
+  `| dev | \`${sha}\` | \`${"2a".repeat(32)}\` | id | x | y | z ${extra} manifest:synthetic@${digest()} | none | v |`;
 
 const goodIds = () => ({
   wardenProgram: SYNTHETIC_PIN.wardenProgramId.toBase58(),
@@ -23,6 +23,8 @@ describe("deploy-gate CLI logic (WRDF-0088)", () => {
     expect(resolveManifest("synthetic")).toBe(SYNTHETIC_PIN);
     expect(() => resolveManifest("mainnet")).toThrow(/unknown manifest 'mainnet'/);
     expect(() => resolveManifest("../../etc/passwd")).toThrow(/unknown manifest/);
+    expect(() => resolveManifest("__proto__")).toThrow(/unknown manifest/);
+    expect(() => resolveManifest("constructor")).toThrow(/unknown manifest/);
   });
 
   it("crossCheckIdentities accepts the exact manifest identities + derived vault", () => {
@@ -53,6 +55,35 @@ describe("deploy-gate CLI logic (WRDF-0088)", () => {
     expect(r.manifestName).toBe("synthetic");
     expect(r.manifestDigest).toBe(digest());
     expect(r.artifactHashHex).toBe("2a".repeat(32));
+    expect(r.releaseSha).toBe(DEV_SHA);
+    expect(r.sessionReleaseName).toBeNull();
+    expect(r.sessionReleaseDigest).toBeNull();
+  });
+
+  it("parses a session-release token only from its dedicated leading-value column", () => {
+    const statementDigest = "7b".repeat(32);
+    const exact = rowMd(
+      DEV_SHA,
+    ).replace("| none | v |", `| \`session-release:devnet-r1@${statementDigest}\` | v |`);
+    const parsed = parseReleaseRow(exact, DEV_SHA);
+    expect(parsed.sessionReleaseName).toBe("devnet-r1");
+    expect(parsed.sessionReleaseDigest).toBe(statementDigest);
+
+    const mentioned = rowMd(DEV_SHA).replace(
+      "| none | v |",
+      `| pending; later \`session-release:devnet-r1@${statementDigest}\` | v |`,
+    );
+    const unbound = parseReleaseRow(mentioned, DEV_SHA);
+    expect(unbound.sessionReleaseName).toBeNull();
+    expect(unbound.sessionReleaseDigest).toBeNull();
+
+    const ambiguous = exact.replace(
+      "| v |",
+      ` also \`session-release:other-r1@${"8c".repeat(32)}\` | v |`,
+    );
+    expect(() => parseReleaseRow(ambiguous, DEV_SHA)).toThrow(
+      /multiple session-release tokens/,
+    );
   });
 
   it("parseReleaseRow rejects abbreviated SHAs, zero rows, ambiguous rows, and a missing token", () => {
@@ -93,6 +124,8 @@ describe("deploy-gate CLI logic (WRDF-0088)", () => {
     const md = readFileSync(join(REPO, "docs/security/RELEASE-INTEGRITY.md"), "utf8");
     const row = parseReleaseRow(md, DEV_SHA);
     expect(bindReleaseManifest("synthetic", row)).toBe(SYNTHETIC_PIN); // real row → real binding
+    expect(row.sessionReleaseName).toBeNull();
+    expect(row.sessionReleaseDigest).toBeNull();
   });
 
   it("proposalAuditResult ALWAYS fails closed — no attestation bypass (WRDF-0028)", () => {

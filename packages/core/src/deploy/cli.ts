@@ -11,8 +11,11 @@ import type { CheckResult } from "./gate.js";
 /** Select a pin BY NAME from the COMMITTED registry — never an arbitrary file
  *  (WRDF-0085). Throws on an unknown name, listing the committed manifests. */
 export function resolveManifest(name: string): DeployPinConfig {
+  if (!Object.hasOwn(MANIFESTS, name)) {
+    throw new Error(`unknown manifest '${name}'; committed manifests: ${Object.keys(MANIFESTS).join(", ")}`);
+  }
   const pin = MANIFESTS[name];
-  if (!pin) throw new Error(`unknown manifest '${name}'; committed manifests: ${Object.keys(MANIFESTS).join(", ")}`);
+  if (!pin) throw new Error(`committed manifest '${name}' is invalid`);
   return pin;
 }
 
@@ -58,9 +61,12 @@ export function crossCheckIdentities(
 }
 
 export interface ReleaseRow {
-  artifactHashHex: string;
-  manifestName: string;
-  manifestDigest: string;
+  readonly releaseSha: string;
+  readonly artifactHashHex: string;
+  readonly manifestName: string;
+  readonly manifestDigest: string;
+  readonly sessionReleaseName: string | null;
+  readonly sessionReleaseDigest: string | null;
 }
 
 /**
@@ -78,6 +84,7 @@ export interface ReleaseRow {
 // caveats), so the value is the leading backtick-wrapped token of the column.
 const COL_GIT_SHA = 2;
 const COL_ARTIFACT_HASH = 3;
+const COL_SESSION_RELEASE = 8;
 /** The LEADING backtick-wrapped token matching `re` in a table cell (the cell must
  *  START with it, after trimming), or null — so a value merely MENTIONED later in
  *  the cell's free-text (e.g. "UNVERIFIED; supersedes `A`") is never accepted as
@@ -109,7 +116,32 @@ export function parseReleaseRow(md: string, releaseSha: string): ReleaseRow {
   }
   const tokens = [...rows[0]!.matchAll(/manifest:([A-Za-z0-9_.-]+)@([0-9a-f]{64})/g)];
   if (tokens.length !== 1) throw new Error(`RELEASE-INTEGRITY row for ${releaseSha} has ${tokens.length} manifest:<name>@<digest> tokens (expected exactly 1)`);
-  return { artifactHashHex, manifestName: tokens[0]![1]!, manifestDigest: tokens[0]![2]! };
+  const sessionCell = cols[COL_SESSION_RELEASE] ?? "";
+  const sessionTokens = [
+    ...sessionCell.matchAll(
+      /session-release:[a-z][a-z0-9-]{0,62}@[0-9a-f]{64}/g,
+    ),
+  ];
+  if (sessionTokens.length > 1) {
+    throw new Error(
+      `RELEASE-INTEGRITY row for ${releaseSha} has multiple session-release tokens in its dedicated column`,
+    );
+  }
+  const sessionToken = leadingBacktickToken(
+    sessionCell,
+    /session-release:[a-z][a-z0-9-]{0,62}@[0-9a-f]{64}/,
+  );
+  const sessionMatch = sessionToken?.match(
+    /^session-release:([a-z][a-z0-9-]{0,62})@([0-9a-f]{64})$/,
+  );
+  return Object.freeze({
+    releaseSha,
+    artifactHashHex,
+    manifestName: tokens[0]![1]!,
+    manifestDigest: tokens[0]![2]!,
+    sessionReleaseName: sessionMatch?.[1] ?? null,
+    sessionReleaseDigest: sessionMatch?.[2] ?? null,
+  });
 }
 
 /**

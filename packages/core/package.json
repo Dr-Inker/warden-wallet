@@ -44,6 +44,10 @@
     "./transaction/session-rpc": {
       "types": "./dist/transaction/session-rpc.d.ts",
       "import": "./dist/transaction/session-rpc.js"
+    },
+    "./transaction/session-release": {
+      "types": "./dist/transaction/session-release.d.ts",
+      "import": "./dist/transaction/session-release.js"
     }
   },
   "files": [
