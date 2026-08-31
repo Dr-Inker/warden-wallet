@@ -77,6 +77,29 @@
 > repository gate is deliberately not claimed by this implementation entry; it
 > must run on the subsequent ledger-inclusive SHA.
 >
+> Ledger-inclusive full-repository evidence belongs only to
+> `e85841b54e8966e1c73367b4465b58645ee9ecb1`. From a clean tree, this exact
+> command exited **0** and printed that SHA before and after:
+>
+> ```sh
+> set -euo pipefail
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh
+> test -z "$(rg -n 'after-signing-committed|warden-provider-sign-success-keyring-initialized-v1|restart checkpoint control|C24 keyring|after-signature-produced|signerResultsProduced|signingFailureCode|precommit checkpoint control|unsupported signing worker checkpoint|signing worker checkpoint' apps/extension/dist || true)"
+> git diff --check
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> ```
+>
+> The executable gate passed core **700/700**, extension **473/473**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real
+> Chromium **12/12**, builds/typechecks, the production Argon2 benchmark, the
+> complete Rust workspace suite, emitted-artifact exclusion, diff validation,
+> and clean-tree guards. Known Anchor test-program key, legacy macro-`cfg`, and
+> Rust unused-code warnings were non-fatal. This evidence-only documentation
+> commit does not inherit that verdict.
+>
 > Independent second-model review remains **UNVERIFIED**.
 >
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,

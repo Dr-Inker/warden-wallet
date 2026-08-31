@@ -2943,3 +2943,17 @@ send/confirm path, external audit, or real-funds exercise. An honest next test
 must either force a real in-transaction death and accept only durable success or
 durable `worker-restarted` failure, or explicitly record that cut as
 uncontrollable rather than simulate commit semantics.
+
+Ledger-inclusive full-repository evidence belongs only to
+`e85841b54e8966e1c73367b4465b58645ee9ecb1`. From a clean tree, the exact
+command in `docs/NEXT-SESSION.md` ran `.claude/test-gate.sh`, scanned the emitted
+extension for all C24/C25 checkpoint, counter, fixture, and status markers,
+validated the diff, and guarded SHA and worktree on both sides. It exited **0**
+with the same SHA printed before and after. The executable gate passed core
+**700/700**, extension **473/473**, UI tokens **11/11**,
+transaction-budget **8/8**, WebAuthn **1/1**, real Chromium **12/12**,
+builds/typechecks, the production Argon2 benchmark, the complete Rust workspace
+suite, artifact exclusion, and clean-tree guards. Known Anchor test-program
+key, legacy macro-`cfg`, and Rust unused-code warnings were non-fatal. The
+evidence-only documentation commit recording this result does not inherit the
+verdict or promote an invariant.
