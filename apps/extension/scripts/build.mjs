@@ -52,8 +52,9 @@ const approvalResult = await build({
 
 // C11 deliberately composes the exact-byte review projector and the internal
 // fixed-URL approval-window owner into the worker. Keep the approval
-// coordinator, authority/RPC owners, signer, and release registry tree-shaken
-// until a later milestone opens those capabilities with executable contracts.
+// C12 adds a test-only provider request preparation owner, but keeps that owner,
+// the coordinator, authority/RPC owners, signer, and release registry
+// tree-shaken until a later milestone opens them with executable contracts.
 const backgroundInputs = new Set(
   Object.keys(backgroundResult.metafile.inputs).map((input) => resolve(input)),
 );
@@ -63,15 +64,18 @@ const requiredBackgroundInputs = [
   resolve(appDirectory, "../../packages/core/src/transaction/session-intent.ts"),
 ].map((input) => resolve(input));
 const forbiddenBackgroundInputs = [
-  "session-approval-coordinator.ts",
-  "session-authority-resolver.ts",
-  "session-release.ts",
-  "session-rpc.ts",
-  "session-transaction.ts",
-].map((name) => resolve(
-  appDirectory,
-  `../../packages/core/src/transaction/${name}`,
-));
+  join(appDirectory, "src/background/provider-approval-request.ts"),
+  ...[
+    "session-approval-coordinator.ts",
+    "session-authority-resolver.ts",
+    "session-release.ts",
+    "session-rpc.ts",
+    "session-transaction.ts",
+  ].map((name) => resolve(
+    appDirectory,
+    `../../packages/core/src/transaction/${name}`,
+  )),
+].map((input) => resolve(input));
 const missingBackgroundInputs = requiredBackgroundInputs.filter(
   (input) => !backgroundInputs.has(input),
 );
