@@ -2432,3 +2432,16 @@ release, trusted production RPC, production coordinator/keyring graph,
 real-browser signature, Wallet Standard registration, send/confirmation,
 onboarding, production KDF policy, root ceremony, consequence review, or audit.
 C19 is a safer unreachable protocol primitive, not deployable wallet behavior.
+
+**Ledger-gate correction:** the first full-repository attempt at ledger SHA
+`7e196697cd3034006b5d996a2fa33b416ce26002` was **red**, despite core reaching
+699/699: the extension stopped at 429/430 because its concurrent-operation test
+used one microtask yield as a proxy for completion of asynchronous WebCrypto
+identity derivation. Under the full workspace scheduler, the second call could
+become claimant and deadlock the harness. Test-only commit
+`267163b5769cc8547b00d6417538acc784f33b50` replaces that timing guess with an
+explicit first-preparation signal. The exact clean-SHA command recorded in
+`docs/NEXT-SESSION.md` then exited 0 at `267163b…`, including core 699/699,
+extension 430/430, production Chromium 6/6, the remaining TypeScript workspace,
+build/type checks, KDF benchmark, and Rust workspace. This ledger addendum is an
+evidence-only commit and does not inherit that verdict.

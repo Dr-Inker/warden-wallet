@@ -95,7 +95,37 @@
 > `git diff --check`, and clean-tree proof passed. The production background and
 > content bundles retain `WARDEN_METHOD_UNAVAILABLE`; C12–C19 terminal,
 > provider, signing, and page markers are absent. Ledger-inclusive full-repo
-> evidence is not claimed until the ledger SHA runs `.claude/test-gate.sh`.
+> evidence was then attempted at ledger SHA
+> `7e196697cd3034006b5d996a2fa33b416ce26002` and correctly remained **red**:
+> core reached **699/699**, but the extension stopped at **429/430** when the
+> concurrent provider-operation test timed out with an unhandled
+> `ProviderOperationStateError`. The test had yielded one microtask and assumed
+> WebCrypto identity derivation had already reached the durable claim. Under the
+> full workspace scheduler, the second call could become the claimant and wait
+> on a gate that the test released only after that call rejected: a harness
+> deadlock, not a runtime owner failure.
+>
+> Test-only repair commit
+> `267163b5769cc8547b00d6417538acc784f33b50` replaces that scheduler guess with
+> an explicit signal from the first preparation callback. Its focused file is
+> **11/11**, and the full extension lane is **430/430**. Exact full-repository
+> evidence at that clean SHA is:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It exited **0** and printed
+> `267163b5769cc8547b00d6417538acc784f33b50` before and after. The gate included
+> core **699/699**, extension **430/430**, UI tokens **11/11**, transaction-budget
+> spike **8/8**, WebAuthn spike **1/1**, extension type/build, the KDF benchmark,
+> production Chromium **6/6**, and the Rust workspace. The known Anchor
+> test-program key mismatch and legacy macro `cfg` notices were warnings, not
+> skipped failures. This verdict belongs only to `267163b…`; the evidence-only
+> ledger follow-up does not inherit it.
 >
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
 > `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`; the
