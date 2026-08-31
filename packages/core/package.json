@@ -41,11 +41,11 @@
     "gen:fixtures": "tsx scripts/gen-fixtures.ts"
   },
   "dependencies": {
+    "@noble/curves": "1.9.7",
     "@noble/hashes": "2.4.0",
     "@solana/web3.js": "^1.98.0"
   },
   "devDependencies": {
-    "@noble/curves": "^1.9.7",
     "ajv": "^8.20.0",
     "tsx": "^4.23.12"
   }

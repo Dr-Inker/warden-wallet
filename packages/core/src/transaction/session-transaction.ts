@@ -23,6 +23,7 @@ import {
   TransactionMessage,
   VersionedTransaction,
 } from "@solana/web3.js";
+import { ed25519 } from "@noble/curves/ed25519.js";
 
 import {
   computeAccountsHash,
@@ -82,6 +83,31 @@ export class SessionTransactionBuildError extends Error {
   }
 }
 
+export type SessionTransactionSignErrorCode =
+  | "INVALID_APPROVED_MESSAGE"
+  | "INVALID_SESSION_SEED"
+  | "APPROVED_MESSAGE_VERSION_UNSUPPORTED"
+  | "APPROVED_MESSAGE_LOOKUPS_UNSUPPORTED"
+  | "APPROVED_SIGNER_SET_UNSUPPORTED"
+  | "SESSION_SIGNER_MISMATCH"
+  | "APPROVED_BLOCKHASH_INVALID"
+  | "SIGNED_TRANSACTION_TOO_LARGE"
+  | "SIGNED_INVARIANT_VIOLATION";
+
+export class SessionTransactionSignError extends Error {
+  readonly code: SessionTransactionSignErrorCode;
+
+  constructor(
+    code: SessionTransactionSignErrorCode,
+    message: string,
+    options: ErrorOptions = {},
+  ) {
+    super(`session transaction signing: ${message}`, options);
+    this.name = "SessionTransactionSignError";
+    this.code = code;
+  }
+}
+
 export interface PrepareSessionTransactionOptions {
   /** The advertised Wallet Standard account and source transaction fee payer. */
   readonly smartAccount: PublicKey;
@@ -112,12 +138,39 @@ export interface PreparedSessionTransaction {
   readonly transactionByteLength: number;
 }
 
+/**
+ * Copy-isolated result of signing one exact approval message. The transaction
+ * differs from its canonical unsigned envelope only in the sole signature
+ * slot; the message bytes themselves are never reconstructed or refreshed.
+ */
+export interface SignedSessionTransaction {
+  readonly messageBytes: Uint8Array;
+  readonly transactionBytes: Uint8Array;
+  readonly signature: Uint8Array;
+  readonly sessionSigner: Uint8Array;
+  readonly recentBlockhash: Uint8Array;
+  readonly messageByteLength: number;
+  readonly transactionByteLength: number;
+}
+
 function fail(
   code: SessionTransactionBuildErrorCode,
   message: string,
   cause?: unknown,
 ): never {
   throw new SessionTransactionBuildError(
+    code,
+    message,
+    cause === undefined ? {} : { cause },
+  );
+}
+
+function signFail(
+  code: SessionTransactionSignErrorCode,
+  message: string,
+  cause?: unknown,
+): never {
+  throw new SessionTransactionSignError(
     code,
     message,
     cause === undefined ? {} : { cause },
@@ -294,6 +347,303 @@ class PreparedSessionTransactionValue implements PreparedSessionTransaction {
 
   get accountsHash(): Uint8Array {
     return this.#accountsHash.slice();
+  }
+}
+
+class SignedSessionTransactionValue implements SignedSessionTransaction {
+  readonly messageByteLength: number;
+  readonly transactionByteLength: number;
+  readonly #messageBytes: Uint8Array;
+  readonly #transactionBytes: Uint8Array;
+  readonly #signature: Uint8Array;
+  readonly #sessionSigner: Uint8Array;
+  readonly #recentBlockhash: Uint8Array;
+
+  constructor(params: {
+    messageBytes: Uint8Array;
+    transactionBytes: Uint8Array;
+    signature: Uint8Array;
+    sessionSigner: Uint8Array;
+    recentBlockhash: Uint8Array;
+  }) {
+    this.#messageBytes = params.messageBytes.slice();
+    this.#transactionBytes = params.transactionBytes.slice();
+    this.#signature = params.signature.slice();
+    this.#sessionSigner = params.sessionSigner.slice();
+    this.#recentBlockhash = params.recentBlockhash.slice();
+    this.messageByteLength = this.#messageBytes.length;
+    this.transactionByteLength = this.#transactionBytes.length;
+    Object.freeze(this);
+  }
+
+  get messageBytes(): Uint8Array {
+    return this.#messageBytes.slice();
+  }
+
+  get transactionBytes(): Uint8Array {
+    return this.#transactionBytes.slice();
+  }
+
+  get signature(): Uint8Array {
+    return this.#signature.slice();
+  }
+
+  get sessionSigner(): Uint8Array {
+    return this.#sessionSigner.slice();
+  }
+
+  get recentBlockhash(): Uint8Array {
+    return this.#recentBlockhash.slice();
+  }
+}
+
+function snapshotApprovedMessage(value: unknown): Uint8Array {
+  if (!(value instanceof Uint8Array) || value.length === 0) {
+    signFail(
+      "INVALID_APPROVED_MESSAGE",
+      "approved message must be a non-empty Uint8Array",
+    );
+  }
+  if (value.length + 65 > MAX_TX_BYTES) {
+    signFail(
+      "SIGNED_TRANSACTION_TOO_LARGE",
+      `approved message cannot fit a ${MAX_TX_BYTES}-byte signed transaction`,
+    );
+  }
+  return value.slice();
+}
+
+function snapshotSessionSeed(value: unknown): Uint8Array {
+  if (!(value instanceof Uint8Array) || value.length !== 32) {
+    signFail(
+      "INVALID_SESSION_SEED",
+      "session signer seed must contain exactly 32 bytes",
+    );
+  }
+  return value.slice();
+}
+
+/**
+ * Sign the exact message stored in an already-claimed approval record.
+ *
+ * This function deliberately accepts no blockhash override, transaction
+ * builder, or caller-provided signer identity. It derives the Ed25519 public
+ * key from the leased seed, requires that key to be the message's sole signer,
+ * and constructs the canonical one-signature transaction envelope around the
+ * approved bytes. This is a cryptographic finalizer, not a semantic verdict: a
+ * coordinator must still prove the local decoder/allowlist result, approval
+ * digest, current authority/policy, and blockhash validity immediately before
+ * invoking it.
+ */
+export function signApprovedSessionMessage(
+  approvedMessageValue: Uint8Array,
+  sessionSignerSeedValue: Uint8Array,
+): SignedSessionTransaction {
+  const approvedMessage = snapshotApprovedMessage(approvedMessageValue);
+  const sessionSeed = snapshotSessionSeed(sessionSignerSeedValue);
+  let sessionSigner: Uint8Array | undefined;
+  let unsignedTransaction: Uint8Array | undefined;
+  let signature: Uint8Array | undefined;
+  let signedTransaction: Uint8Array | undefined;
+
+  try {
+    try {
+      sessionSigner = ed25519.getPublicKey(sessionSeed);
+    } catch (error) {
+      signFail("INVALID_SESSION_SEED", "session signer key derivation failed", error);
+    }
+
+    // One canonical ShortU16 signature count, one empty signature, then the
+    // exact message. No SDK recompile is permitted at this boundary.
+    unsignedTransaction = new Uint8Array(1 + 64 + approvedMessage.length);
+    unsignedTransaction[0] = 1;
+    unsignedTransaction.set(approvedMessage, 65);
+
+    let envelope;
+    try {
+      envelope = parseSerializedTransactionEnvelope(
+        unsignedTransaction,
+        sessionSigner,
+      );
+    } catch (error) {
+      if (error instanceof TransactionEnvelopeError) {
+        if (error.code === "SIGNATURE_COUNT_MISMATCH") {
+          signFail(
+            "APPROVED_SIGNER_SET_UNSUPPORTED",
+            "approved message must require exactly one signer",
+            error,
+          );
+        }
+        if (error.code === "REQUESTED_SIGNER_MISSING") {
+          signFail(
+            "SESSION_SIGNER_MISMATCH",
+            "leased session seed is not the approved message signer",
+            error,
+          );
+        }
+        if (error.code === "ADDRESS_LOOKUPS_UNSUPPORTED") {
+          signFail(
+            "APPROVED_MESSAGE_LOOKUPS_UNSUPPORTED",
+            "approved message must not contain address-table lookups",
+            error,
+          );
+        }
+        if (error.code === "UNSUPPORTED_VERSION") {
+          signFail(
+            "APPROVED_MESSAGE_VERSION_UNSUPPORTED",
+            "approved message version is unsupported",
+            error,
+          );
+        }
+      }
+      signFail("INVALID_APPROVED_MESSAGE", "approved message is malformed", error);
+    }
+
+    if (envelope.version !== 0) {
+      signFail(
+        "APPROVED_MESSAGE_VERSION_UNSUPPORTED",
+        "approved session message must be lookup-free v0",
+      );
+    }
+    if (
+      envelope.header.numRequiredSignatures !== 1 ||
+      envelope.requiredSignerKeys.length !== 1 ||
+      !bytesEqual(envelope.requiredSignerKeys[0]!, sessionSigner)
+    ) {
+      signFail(
+        "APPROVED_SIGNER_SET_UNSUPPORTED",
+        "approved message signer set drifted after strict parsing",
+      );
+    }
+    if (!allZero(envelope.signatures[0]!)) {
+      signFail(
+        "SIGNED_INVARIANT_VIOLATION",
+        "canonical unsigned envelope unexpectedly contains a signature",
+      );
+    }
+    if (allZero(envelope.recentBlockhash)) {
+      signFail(
+        "APPROVED_BLOCKHASH_INVALID",
+        "approved message recent blockhash must not be all zero",
+      );
+    }
+    if (!bytesEqual(envelope.messageBytes, approvedMessage)) {
+      signFail(
+        "SIGNED_INVARIANT_VIOLATION",
+        "strict parser changed the approved message bytes",
+      );
+    }
+
+    let sdkUnsigned: VersionedTransaction;
+    try {
+      sdkUnsigned = VersionedTransaction.deserialize(unsignedTransaction);
+    } catch (error) {
+      signFail(
+        "SIGNED_INVARIANT_VIOLATION",
+        "SDK rejected the strict approved message envelope",
+        error,
+      );
+    }
+    if (
+      sdkUnsigned.version !== 0 ||
+      sdkUnsigned.signatures.length !== 1 ||
+      !allZero(sdkUnsigned.signatures[0]!) ||
+      !bytesEqual(sdkUnsigned.message.serialize(), approvedMessage) ||
+      !bytesEqual(sdkUnsigned.serialize(), unsignedTransaction)
+    ) {
+      signFail(
+        "SIGNED_INVARIANT_VIOLATION",
+        "SDK interpretation drifted from the strict approved message envelope",
+      );
+    }
+
+    try {
+      signature = ed25519.sign(approvedMessage, sessionSeed);
+    } catch (error) {
+      signFail("SIGNED_INVARIANT_VIOLATION", "Ed25519 signing failed", error);
+    }
+    if (
+      signature.length !== 64 ||
+      !ed25519.verify(signature, approvedMessage, sessionSigner)
+    ) {
+      signFail(
+        "SIGNED_INVARIANT_VIOLATION",
+        "Ed25519 signature did not verify over the approved message",
+      );
+    }
+
+    signedTransaction = unsignedTransaction.slice();
+    signedTransaction.set(signature, 1);
+
+    let signedEnvelope;
+    try {
+      signedEnvelope = parseSerializedTransactionEnvelope(
+        signedTransaction,
+        sessionSigner,
+      );
+    } catch (error) {
+      signFail(
+        "SIGNED_INVARIANT_VIOLATION",
+        "signed transaction failed strict reparsing",
+        error,
+      );
+    }
+    if (
+      signedEnvelope.version !== 0 ||
+      signedEnvelope.header.numRequiredSignatures !== 1 ||
+      signedEnvelope.signatures.length !== 1 ||
+      !bytesEqual(signedEnvelope.signatures[0]!, signature) ||
+      !bytesEqual(signedEnvelope.messageBytes, approvedMessage) ||
+      !bytesEqual(signedEnvelope.recentBlockhash, envelope.recentBlockhash) ||
+      !ed25519.verify(
+        signedEnvelope.signatures[0]!,
+        signedEnvelope.messageBytes,
+        sessionSigner,
+      )
+    ) {
+      signFail(
+        "SIGNED_INVARIANT_VIOLATION",
+        "signature attachment changed or failed to authenticate the approved message",
+      );
+    }
+
+    let sdkSigned: VersionedTransaction;
+    try {
+      sdkSigned = VersionedTransaction.deserialize(signedTransaction);
+    } catch (error) {
+      signFail(
+        "SIGNED_INVARIANT_VIOLATION",
+        "SDK rejected the strictly reparsed signed transaction",
+        error,
+      );
+    }
+    if (
+      sdkSigned.version !== 0 ||
+      sdkSigned.signatures.length !== 1 ||
+      !bytesEqual(sdkSigned.signatures[0]!, signature) ||
+      !bytesEqual(sdkSigned.message.serialize(), approvedMessage) ||
+      !bytesEqual(sdkSigned.serialize(), signedTransaction)
+    ) {
+      signFail(
+        "SIGNED_INVARIANT_VIOLATION",
+        "SDK serialization changed the signed transaction",
+      );
+    }
+
+    return new SignedSessionTransactionValue({
+      messageBytes: approvedMessage,
+      transactionBytes: signedTransaction,
+      signature,
+      sessionSigner,
+      recentBlockhash: signedEnvelope.recentBlockhash,
+    });
+  } finally {
+    approvedMessage.fill(0);
+    sessionSeed.fill(0);
+    sessionSigner?.fill(0);
+    unsignedTransaction?.fill(0);
+    signature?.fill(0);
+    signedTransaction?.fill(0);
   }
 }
 

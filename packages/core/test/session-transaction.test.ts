@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { createPublicKey, verify as verifySignature } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   ComputeBudgetProgram,
+  AddressLookupTableAccount,
   Keypair,
   PublicKey,
   SystemProgram,
@@ -23,8 +25,11 @@ import {
 } from "../src/transaction/envelope.js";
 import {
   SessionTransactionBuildError,
+  SessionTransactionSignError,
   prepareSessionTransaction,
+  signApprovedSessionMessage,
   type SessionTransactionBuildErrorCode,
+  type SessionTransactionSignErrorCode,
 } from "../src/transaction/session-transaction.js";
 
 const fill = (value: number): Uint8Array => new Uint8Array(32).fill(value);
@@ -115,6 +120,20 @@ function captureBuildError(
     expect(error).toBeInstanceOf(SessionTransactionBuildError);
     expect((error as SessionTransactionBuildError).code).toBe(code);
     return error as SessionTransactionBuildError;
+  }
+  throw new Error(`expected ${code}`);
+}
+
+function captureSignError(
+  run: () => unknown,
+  code: SessionTransactionSignErrorCode,
+): SessionTransactionSignError {
+  try {
+    run();
+  } catch (error) {
+    expect(error).toBeInstanceOf(SessionTransactionSignError);
+    expect((error as SessionTransactionSignError).code).toBe(code);
+    return error as SessionTransactionSignError;
   }
   throw new Error(`expected ${code}`);
 }
@@ -408,6 +427,230 @@ describe("prepareSessionTransaction", () => {
     captureBuildError(
       () => prepare(source),
       "FINAL_TRANSACTION_TOO_LARGE",
+    );
+  });
+});
+
+describe("signApprovedSessionMessage", () => {
+  function approvedMessage(): {
+    readonly prepared: ReturnType<typeof prepare>;
+    readonly rawMessage: Uint8Array;
+    readonly messageDigest: Uint8Array;
+  } {
+    const prepared = prepare(
+      sourceTransaction([ordinaryInstruction()]).serialize(),
+    );
+    const record = createPendingApprovalRecord({
+      id: "req_fedcba9876543210fedcba9876543210",
+      origin: "https://signing.example.test",
+      tabId: 9,
+      frameId: 0,
+      documentId: "document-signing-1",
+      account: SMART_ACCOUNT.toBytes(),
+      method: "solana:signTransaction",
+      chain: "solana:devnet",
+      genesisHash: fill(0x99),
+      programId: WARDEN_PROGRAM.toBytes(),
+      rawMessage: prepared.messageBytes,
+      policyVersion: 4,
+      createdAt: 2_000,
+      expiresAt: 62_000,
+    });
+    return {
+      prepared,
+      rawMessage: record.rawMessage,
+      messageDigest: record.messageDigest,
+    };
+  }
+
+  it("signs exactly the approved message and changes only its signature slot", () => {
+    const approval = approvedMessage();
+    const seed = fill(0x22);
+    const seedSnapshot = seed.slice();
+    const messageSnapshot = approval.rawMessage.slice();
+    const signed = signApprovedSessionMessage(approval.rawMessage, seed);
+    const transactionBytes = signed.transactionBytes;
+    const envelope = parseSerializedTransactionEnvelope(
+      transactionBytes,
+      SESSION_SIGNER.toBytes(),
+    );
+
+    expect(seed).toEqual(seedSnapshot);
+    expect(approval.rawMessage).toEqual(messageSnapshot);
+    expect(envelope.version).toBe(0);
+    expect(envelope.header.numRequiredSignatures).toBe(1);
+    expect(envelope.requiredSignerKeys).toEqual([SESSION_SIGNER.toBytes()]);
+    expect(envelope.messageBytes).toEqual(approval.rawMessage);
+    expect(envelope.recentBlockhash).toEqual(FINAL_BLOCKHASH);
+    expect(envelope.signatures).toHaveLength(1);
+    expect(envelope.signatures[0]).toEqual(signed.signature);
+    expect(isZero(envelope.signatures[0]!)).toBe(false);
+    expect(signed.messageBytes).toEqual(approval.rawMessage);
+    expect(signed.sessionSigner).toEqual(SESSION_SIGNER.toBytes());
+    expect(signed.recentBlockhash).toEqual(FINAL_BLOCKHASH);
+    expect(signed.messageByteLength).toBe(approval.rawMessage.length);
+    expect(signed.transactionByteLength).toBe(transactionBytes.length);
+    expect(Object.isFrozen(signed)).toBe(true);
+    expect(digestApprovalMessage(signed.messageBytes)).toEqual(
+      approval.messageDigest,
+    );
+    expect(ed25519.verify(
+      signed.signature,
+      approval.rawMessage,
+      SESSION_SIGNER.toBytes(),
+    )).toBe(true);
+    expect(ed25519.verify(
+      signed.signature,
+      approval.prepared.unsignedTransactionBytes,
+      SESSION_SIGNER.toBytes(),
+    )).toBe(false);
+    const nodePublicKey = createPublicKey({
+      key: Buffer.concat([
+        Buffer.from("302a300506032b6570032100", "hex"),
+        Buffer.from(SESSION_SIGNER.toBytes()),
+      ]),
+      format: "der",
+      type: "spki",
+    });
+    expect(verifySignature(
+      null,
+      Buffer.from(approval.rawMessage),
+      nodePublicKey,
+      Buffer.from(signed.signature),
+    )).toBe(true);
+    const changedMessage = approval.rawMessage.slice();
+    changedMessage[changedMessage.length - 1]! ^= 1;
+    expect(verifySignature(
+      null,
+      Buffer.from(changedMessage),
+      nodePublicKey,
+      Buffer.from(signed.signature),
+    )).toBe(false);
+
+    const unsigned = approval.prepared.unsignedTransactionBytes;
+    expect(transactionBytes).toHaveLength(unsigned.length);
+    expect(transactionBytes[0]).toBe(unsigned[0]);
+    expect(transactionBytes.subarray(65)).toEqual(unsigned.subarray(65));
+    expect(transactionBytes.subarray(1, 65)).toEqual(signed.signature);
+    expect(transactionBytes.subarray(1, 65)).not.toEqual(
+      unsigned.subarray(1, 65),
+    );
+
+    const sdkTransaction = VersionedTransaction.deserialize(transactionBytes);
+    expect(sdkTransaction.message.serialize()).toEqual(approval.rawMessage);
+    expect(sdkTransaction.signatures).toEqual([signed.signature]);
+    expect(sdkTransaction.serialize()).toEqual(transactionBytes);
+  });
+
+  it("copy-isolates every returned signing artefact", () => {
+    const approval = approvedMessage();
+    const signed = signApprovedSessionMessage(approval.rawMessage, fill(0x22));
+    const originalTransaction = signed.transactionBytes;
+    const originalMessage = signed.messageBytes;
+    const originalSignature = signed.signature;
+    const originalSigner = signed.sessionSigner;
+    const originalBlockhash = signed.recentBlockhash;
+
+    signed.transactionBytes.fill(0);
+    signed.messageBytes.fill(0);
+    signed.signature.fill(0);
+    signed.sessionSigner.fill(0);
+    signed.recentBlockhash.fill(0);
+
+    expect(signed.transactionBytes).toEqual(originalTransaction);
+    expect(signed.messageBytes).toEqual(originalMessage);
+    expect(signed.signature).toEqual(originalSignature);
+    expect(signed.sessionSigner).toEqual(originalSigner);
+    expect(signed.recentBlockhash).toEqual(originalBlockhash);
+  });
+
+  it("refuses a seed whose derived public key is not the approved sole signer", () => {
+    const approval = approvedMessage();
+    const error = captureSignError(
+      () => signApprovedSessionMessage(approval.rawMessage, fill(0x23)),
+      "SESSION_SIGNER_MISMATCH",
+    );
+    expect(error.cause).toBeInstanceOf(TransactionEnvelopeError);
+  });
+
+  it("rejects malformed input, legacy messages, extra signers, and zero blockhashes", () => {
+    const approval = approvedMessage();
+    captureSignError(
+      () => signApprovedSessionMessage(
+        new Uint8Array([...approval.rawMessage, 0]),
+        fill(0x22),
+      ),
+      "INVALID_APPROVED_MESSAGE",
+    );
+    captureSignError(
+      () => signApprovedSessionMessage(
+        approval.prepared.unsignedTransactionBytes,
+        fill(0x22),
+      ),
+      "INVALID_APPROVED_MESSAGE",
+    );
+    captureSignError(
+      () => signApprovedSessionMessage(approval.rawMessage, new Uint8Array(31)),
+      "INVALID_SESSION_SEED",
+    );
+
+    const legacy = new TransactionMessage({
+      payerKey: SESSION_SIGNER,
+      recentBlockhash: new PublicKey(FINAL_BLOCKHASH).toBase58(),
+      instructions: [ordinaryInstruction()],
+    }).compileToLegacyMessage().serialize();
+    captureSignError(
+      () => signApprovedSessionMessage(legacy, fill(0x22)),
+      "APPROVED_MESSAGE_VERSION_UNSUPPORTED",
+    );
+
+    const cosignerInstruction = ordinaryInstruction();
+    cosignerInstruction.keys.push({
+      pubkey: key(0xaa),
+      isSigner: true,
+      isWritable: false,
+    });
+    const withCosigner = new TransactionMessage({
+      payerKey: SESSION_SIGNER,
+      recentBlockhash: new PublicKey(FINAL_BLOCKHASH).toBase58(),
+      instructions: [cosignerInstruction],
+    }).compileToV0Message().serialize();
+    captureSignError(
+      () => signApprovedSessionMessage(withCosigner, fill(0x22)),
+      "APPROVED_SIGNER_SET_UNSUPPORTED",
+    );
+
+    const zeroBlockhash = new TransactionMessage({
+      payerKey: SESSION_SIGNER,
+      recentBlockhash: PublicKey.default.toBase58(),
+      instructions: [ordinaryInstruction()],
+    }).compileToV0Message().serialize();
+    captureSignError(
+      () => signApprovedSessionMessage(zeroBlockhash, fill(0x22)),
+      "APPROVED_BLOCKHASH_INVALID",
+    );
+  });
+
+  it("refuses v0 address-table lookups because their account roles are unresolved", () => {
+    const lookup = new AddressLookupTableAccount({
+      key: key(0xbb),
+      state: {
+        deactivationSlot: 0xffff_ffff_ffff_ffffn,
+        lastExtendedSlot: 1,
+        lastExtendedSlotStartIndex: 0,
+        authority: undefined,
+        addresses: [DESTINATION],
+      },
+    });
+    const message = new TransactionMessage({
+      payerKey: SESSION_SIGNER,
+      recentBlockhash: new PublicKey(FINAL_BLOCKHASH).toBase58(),
+      instructions: [ordinaryInstruction()],
+    }).compileToV0Message([lookup]).serialize();
+
+    captureSignError(
+      () => signApprovedSessionMessage(message, fill(0x22)),
+      "APPROVED_MESSAGE_LOOKUPS_UNSUPPORTED",
     );
   });
 });
