@@ -29,8 +29,6 @@ import {
   encodeProgramData,
 } from "../src/deploy/fixtures.js";
 import {
-  SessionApprovalCoordinator,
-  type SessionApprovalBlockhashClient,
   type SessionApprovalKeyring,
   type SessionApprovalOwner,
 } from "../src/transaction/session-approval-coordinator.js";
@@ -50,6 +48,10 @@ import {
   DeterministicSessionIntentGate,
   encodeSessionAuthorizationState,
 } from "../src/transaction/session-intent.js";
+import {
+  ConnectionSessionApprovalBlockhashClient,
+  createPinnedSessionApprovalCoordinator,
+} from "../src/transaction/session-rpc.js";
 
 const fill = (value: number): Uint8Array => new Uint8Array(32).fill(value);
 const key = (value: number): PublicKey => new PublicKey(fill(value));
@@ -982,19 +984,63 @@ describe("pinned session authority resolver", () => {
     });
   });
 
-  it("runs the real resolver and deterministic gate through the real coordinator to exact-byte signing", async () => {
+  it("runs the real Connection resolver, blockhash client, gate, coordinator, and exact-byte signer", async () => {
     const fixture = authorityFixture();
     const approvals = new MemoryApprovalOwner();
-    const blockhash: SessionApprovalBlockhashClient = {
-      async getLatestBlockhash(input) {
+    const latestRequests: unknown[] = [];
+    const validityRequests: unknown[] = [];
+    let genesisCalls = 0;
+    const connection = {
+      async getGenesisHash() {
+        genesisCalls++;
+        return fixture.rpc.genesisHash;
+      },
+      async getMultipleAccountsInfoAndContext(
+        keys: PublicKey[],
+        config: { commitment: "confirmed"; minContextSlot: number },
+      ) {
+        const response = await fixture.rpc.getMultipleAccounts({
+          addresses: keys,
+          commitment: config.commitment,
+          minContextSlot: config.minContextSlot,
+        });
         return {
-          blockhash: FINAL_BLOCKHASH,
-          lastValidBlockHeight: 500,
-          contextSlot: input.minContextSlot + 10,
+          context: { slot: response.contextSlot },
+          value: response.accounts.map((value) =>
+            value === null
+              ? null
+              : ({
+                  owner: value.owner,
+                  executable: value.executable,
+                  data: Buffer.from(value.data),
+                  lamports: 1,
+                  rentEpoch: 0,
+                } satisfies AccountInfo<Buffer>),
+          ),
         };
       },
-      async isBlockhashValid(input) {
-        return { valid: true, contextSlot: input.minContextSlot + 10 };
+      async getLatestBlockhashAndContext(config: {
+        commitment: "confirmed";
+        minContextSlot: number;
+      }) {
+        latestRequests.push(config);
+        return {
+          context: { slot: config.minContextSlot + 10 },
+          value: {
+            blockhash: new PublicKey(FINAL_BLOCKHASH).toBase58(),
+            lastValidBlockHeight: 500,
+          },
+        };
+      },
+      async isBlockhashValid(
+        blockhash: string,
+        config: { commitment: "confirmed"; minContextSlot: number },
+      ) {
+        validityRequests.push({ blockhash, config });
+        return {
+          context: { slot: config.minContextSlot + 10 },
+          value: true,
+        };
       },
     };
     const keyring: SessionApprovalKeyring = {
@@ -1007,50 +1053,125 @@ describe("pinned session authority resolver", () => {
         });
       },
     };
-    const coordinator = new SessionApprovalCoordinator(
-      {
-        authority: fixture.resolver,
-        blockhash,
-        intent: new DeterministicSessionIntentGate(),
-        approvals,
-        keyring,
+    const releaseGenesis = DEVNET_GENESIS.slice();
+    const releaseCodeHash = fixture.expectedCodeHash.slice();
+    const releaseProgramDataHash = fixture.expectedProgramDataHash.slice();
+    const coordinator = createPinnedSessionApprovalCoordinator({
+      trustedConnection: connection as unknown as Connection,
+      releasePins: {
+        chain: "solana:devnet",
+        genesisHash: releaseGenesis,
+        wardenProgram: WARDEN_PROGRAM,
+        wardenProgramDataSlot: PROGRAMDATA_SLOT,
+        wardenUpgradeAuthority: UPGRADE_AUTHORITY,
+        wardenCodeHash: releaseCodeHash,
+        wardenProgramDataHash: releaseProgramDataHash,
+        wardenProgramDataBytes: fixture.programDataBytes.length,
       },
-      { readNow: () => 1_900_000_000_000 },
-    );
-    const sourceMessage = new TransactionMessage({
-      payerKey: SMART_ACCOUNT,
-      recentBlockhash: key(0x77).toBase58(),
-      instructions: [
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
-        ComputeBudgetProgram.requestHeapFrame({ bytes: 128 * 1_024 }),
-        new TransactionInstruction({
-          programId: MEMO_PROGRAM,
-          keys: [],
-          data: Buffer.from("resolver integration"),
-        }),
-      ],
-    }).compileToV0Message();
-    const prepared = await coordinator.prepare({
-      origin: "https://dapp.example",
-      tabId: 1,
-      frameId: 0,
-      documentId: "resolver-integration-document",
-      requestedAccount: SMART_ACCOUNT.toBytes(),
-      method: "solana:signTransaction",
-      chain: "solana:devnet",
-      sourceTransactionBytes: new VersionedTransaction(sourceMessage).serialize(),
+      sessionSigner: SESSION_SIGNER,
+      approvals,
+      keyring,
+      readNow: () => 1_900_000_000_000,
     });
-    const signed = await coordinator.approve(prepared.id, prepared.messageDigest);
-    expect(signed.transactionBytes).toHaveLength(394);
-    expect(signed.signature).toHaveLength(64);
-    expect(fixture.rpc.requests.map((request) => request.minContextSlot)).toEqual([
-      0,
-      52,
-      52,
-      52,
-      62,
-      62,
-    ]);
-    expect(SESSION_AUTHORITY_CLOCK_SAFETY_SECONDS).toBeGreaterThan(0);
+    releaseGenesis.fill(0);
+    releaseCodeHash.fill(0);
+    releaseProgramDataHash.fill(0);
+    connection.getGenesisHash = async () => {
+      throw new Error("mutated genesis method");
+    };
+    connection.getMultipleAccountsInfoAndContext = async () => {
+      throw new Error("mutated account method");
+    };
+    connection.getLatestBlockhashAndContext = async () => {
+      throw new Error("mutated latest method");
+    };
+    connection.isBlockhashValid = async () => {
+      throw new Error("mutated validity method");
+    };
+    approvals.create = async () => {
+      throw new Error("mutated approval create method");
+    };
+    approvals.read = async () => {
+      throw new Error("mutated approval read method");
+    };
+    approvals.claimForSigning = async () => {
+      throw new Error("mutated approval claim method");
+    };
+    keyring.useSessionSignerBytes = async () => {
+      throw new Error("mutated keyring method");
+    };
+    const originalLatest =
+      ConnectionSessionApprovalBlockhashClient.prototype.getLatestBlockhash;
+    const originalValidity =
+      ConnectionSessionApprovalBlockhashClient.prototype.isBlockhashValid;
+    const originalIntent =
+      DeterministicSessionIntentGate.prototype.assertAllowed;
+    ConnectionSessionApprovalBlockhashClient.prototype.getLatestBlockhash =
+      async () => {
+        throw new Error("mutated internal latest method");
+      };
+    ConnectionSessionApprovalBlockhashClient.prototype.isBlockhashValid =
+      async () => {
+        throw new Error("mutated internal validity method");
+      };
+    DeterministicSessionIntentGate.prototype.assertAllowed = () => {
+      throw new Error("mutated internal intent method");
+    };
+    try {
+      const sourceMessage = new TransactionMessage({
+        payerKey: SMART_ACCOUNT,
+        recentBlockhash: key(0x77).toBase58(),
+        instructions: [
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+          ComputeBudgetProgram.requestHeapFrame({ bytes: 128 * 1_024 }),
+          new TransactionInstruction({
+            programId: MEMO_PROGRAM,
+            keys: [],
+            data: Buffer.from("resolver integration"),
+          }),
+        ],
+      }).compileToV0Message();
+      const prepared = await coordinator.prepare({
+        origin: "https://dapp.example",
+        tabId: 1,
+        frameId: 0,
+        documentId: "resolver-integration-document",
+        requestedAccount: SMART_ACCOUNT.toBytes(),
+        method: "solana:signTransaction",
+        chain: "solana:devnet",
+        sourceTransactionBytes: new VersionedTransaction(sourceMessage).serialize(),
+      });
+      const signed = await coordinator.approve(
+        prepared.id,
+        prepared.messageDigest,
+      );
+      expect(signed.transactionBytes).toHaveLength(394);
+      expect(signed.signature).toHaveLength(64);
+      expect(fixture.rpc.requests.map((request) => request.minContextSlot)).toEqual([
+        0,
+        52,
+        52,
+        52,
+        62,
+        62,
+      ]);
+      expect(latestRequests).toEqual([
+        { commitment: "confirmed", minContextSlot: 42 },
+      ]);
+      expect(validityRequests).toEqual([
+        {
+          blockhash: new PublicKey(FINAL_BLOCKHASH).toBase58(),
+          config: { commitment: "confirmed", minContextSlot: 52 },
+        },
+      ]);
+      expect(genesisCalls).toBe(8);
+      expect(SESSION_AUTHORITY_CLOCK_SAFETY_SECONDS).toBeGreaterThan(0);
+    } finally {
+      ConnectionSessionApprovalBlockhashClient.prototype.getLatestBlockhash =
+        originalLatest;
+      ConnectionSessionApprovalBlockhashClient.prototype.isBlockhashValid =
+        originalValidity;
+      DeterministicSessionIntentGate.prototype.assertAllowed = originalIntent;
+    }
   });
 });

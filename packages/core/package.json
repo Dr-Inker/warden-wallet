@@ -40,6 +40,10 @@
     "./transaction/session-authority": {
       "types": "./dist/transaction/session-authority-resolver.d.ts",
       "import": "./dist/transaction/session-authority-resolver.js"
+    },
+    "./transaction/session-rpc": {
+      "types": "./dist/transaction/session-rpc.d.ts",
+      "import": "./dist/transaction/session-rpc.js"
     }
   },
   "files": [

@@ -41,9 +41,9 @@ import {
   encodeSessionAuthorizationState,
 } from "./session-intent.js";
 
-const WARDEN_PROGRAM = new PublicKey(
-  "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
-);
+export const SESSION_AUTHORITY_WARDEN_PROGRAM_ID =
+  "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2" as const;
+const WARDEN_PROGRAM = new PublicKey(SESSION_AUTHORITY_WARDEN_PROGRAM_ID);
 const SYSVAR_OWNER = new PublicKey(
   "Sysvar1111111111111111111111111111111111111",
 );
