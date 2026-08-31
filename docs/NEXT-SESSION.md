@@ -129,6 +129,20 @@
 > genesis/deployment attestation. The approve/sign path must recheck the exact
 > row, digest, account, chain, release, registry authority, and keyring
 > immediately before signing.
+>
+> **C13 full-gate addendum:** the ledger-inclusive SHA
+> `835539457aa211a1ebfe8ac46f52b2a563b8c8ba` passed this exact command,
+> exit **0**: `git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && git
+> diff --check && git rev-parse HEAD && test -z "$(git status --porcelain)"`.
+> It printed the same SHA before and after, proved a clean worktree, and ran the
+> complete pnpm workspace, core **699/699**, extension **347/347**, production
+> Chromium **5/5**, the pinned Argon2 worker benchmark, core/extension builds
+> and typechecks, fixture/ledger/feature guards, and the complete Rust workspace.
+> The known Anchor test-program key mismatch notice and legacy macro `cfg`
+> notices were warnings, not skipped failures. This verdict belongs only to
+> `8355394…`; this evidence-only addendum commit does not inherit it or promote
+> an invariant.
 
 > ## 2026-08-31 C12 PROVIDER LEASE→PREPARATION OWNER — INTERNAL ONLY, EMITTED PROVIDER STILL UNAVAILABLE
 >

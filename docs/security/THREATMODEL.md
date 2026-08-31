@@ -1920,3 +1920,18 @@ approve/claim/sign route, durable provider result/replay owner, simulation,
 fee/balance consequence model, send/confirmation owner, onboarding, Wallet
 Standard registration/batching, or root ceremony. C13 reduces authority
 confusion in code that remains unreachable; it does not make Warden deployable.
+
+### C13 full-gate addendum — 8355394 — 2026-08-31
+
+The ledger-inclusive SHA `835539457aa211a1ebfe8ac46f52b2a563b8c8ba`
+passed this exact command, exit **0**: `git rev-parse HEAD && test -z "$(git
+status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash
+.claude/test-gate.sh && git diff --check && git rev-parse HEAD && test -z
+"$(git status --porcelain)"`. It printed the same SHA before and after, proved
+a clean worktree, and ran the complete pnpm workspace, core **699/699**,
+extension **347/347**, production Chromium **5/5**, the pinned Argon2 worker
+benchmark, core/extension builds and typechecks, fixture/ledger/feature guards,
+and the complete Rust workspace. The known Anchor test-program key mismatch
+notice and legacy macro `cfg` notices were warnings, not skipped failures. This
+verdict belongs only to `8355394…`; the evidence-only follow-up does not inherit
+it or promote an invariant.
