@@ -115,6 +115,28 @@
 > production provider fixed-unavailable until a non-empty reviewed release,
 > trusted RPC, real coordinator/keyring composition, and real-browser exact-byte
 > signing lane all exist.
+>
+> ### C18 full-gate addendum — eaeb26c — 2026-08-31
+>
+> Ledger-inclusive SHA
+> `eaeb26c55925e9dfe01c123d8bd0431cd57ad80a` passed this exact command,
+> exit **0**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" &&
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh &&
+> git diff --check && git rev-parse HEAD &&
+> test -z "$(git status --porcelain)"
+> ```
+>
+> It printed the same SHA before and after, proved a clean worktree, and ran the
+> complete pnpm workspace, core **699/699**, extension **403/403**, production
+> Chromium **6/6**, the pinned Argon2 worker benchmark, core/extension builds
+> and typechecks, fixture/ledger/feature guards, and the complete Rust workspace.
+> The known Anchor test-program key mismatch notice and legacy macro `cfg`
+> notices were warnings, not skipped failures. This verdict belongs only to
+> `eaeb26c…`; this evidence-only follow-up does not inherit it or promote an
+> invariant.
 
 > ## 2026-08-31 C17 EXACT APPROVAL ACTION — INTERNAL ONLY, PRODUCTION SIGNING STILL UNAVAILABLE
 >
