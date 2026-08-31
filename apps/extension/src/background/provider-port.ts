@@ -21,6 +21,8 @@ export const DEFAULT_PROVIDER_REQUEST_TTL_MS = 2 * 60 * 1_000;
 export const MAX_PROVIDER_REQUEST_TTL_MS = 10 * 60 * 1_000;
 export const MAX_PENDING_PROVIDER_REQUESTS = 32;
 export const MAX_PROVIDER_REQUESTS_PER_PORT = MAX_PROVIDER_REQUESTS_PER_DOCUMENT;
+export const MAX_PROVIDER_REQUEST_IDS_PER_SESSION =
+  MAX_PROVIDER_REQUESTS_PER_PORT * 2;
 export const MAX_ACTIVE_PROVIDER_PORTS = 256;
 
 const REQUEST_ID_BYTES = 16;
@@ -87,6 +89,8 @@ export interface ProviderPortSessionOptions {
   readonly randomSource?: ProviderRandomSource;
   /** Test seam; an absolute-time recheck remains authoritative over this timer. */
   readonly timerSource?: ProviderTimerSource;
+  /** Bounded test/composition seam; production callers omit this. */
+  readonly requestLimit?: number;
 }
 
 const NO_EXPIRY_TIMER = Symbol("no-expiry-timer");
@@ -118,6 +122,19 @@ function requireTtl(value: unknown): number {
     (value as number) > MAX_PROVIDER_REQUEST_TTL_MS
   ) {
     stateError(`request TTL must be 1..${MAX_PROVIDER_REQUEST_TTL_MS} milliseconds`);
+  }
+  return value as number;
+}
+
+function requireRequestLimit(value: unknown): number {
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < 1 ||
+    (value as number) > MAX_PROVIDER_REQUEST_IDS_PER_SESSION
+  ) {
+    stateError(
+      `request limit must be 1..${MAX_PROVIDER_REQUEST_IDS_PER_SESSION}`,
+    );
   }
   return value as number;
 }
@@ -160,6 +177,7 @@ export class ProviderPortSession {
   private readonly provenance: ProviderProvenance;
   private readonly readNow: () => number;
   private readonly requestTtlMs: number;
+  private readonly requestLimit: number;
   private readonly randomSource: ProviderRandomSource;
   private readonly timerSource: ProviderTimerSource;
   private readonly pending = new Map<string, PendingProviderRequest>();
@@ -178,6 +196,9 @@ export class ProviderPortSession {
     this.readNow = options.readNow ?? Date.now;
     this.requestTtlMs = requireTtl(
       options.requestTtlMs ?? DEFAULT_PROVIDER_REQUEST_TTL_MS,
+    );
+    this.requestLimit = requireRequestLimit(
+      options.requestLimit ?? MAX_PROVIDER_REQUESTS_PER_PORT,
     );
     this.randomSource = requireRandomSource(options.randomSource ?? globalThis.crypto);
     this.timerSource = requireTimerSource(options.timerSource ?? DEFAULT_TIMER_SOURCE);
@@ -205,7 +226,7 @@ export class ProviderPortSession {
   }
 
   private mintRequestId(): string {
-    if (this.issuedIds.size >= MAX_PROVIDER_REQUESTS_PER_PORT) {
+    if (this.issuedIds.size >= this.requestLimit) {
       stateError("request limit reached");
     }
     for (let attempt = 0; attempt < REQUEST_ID_ATTEMPTS; attempt++) {
@@ -308,13 +329,13 @@ export class ProviderPortSession {
     return expired;
   }
 
-  open(value: unknown): OwnedProviderRequest {
+  private openAt(value: unknown, absoluteExpiresAt?: number): OwnedProviderRequest {
     if (this.isClosed) stateError("provider port is closed");
     this.reapExpired();
     if (this.pending.size >= MAX_PENDING_PROVIDER_REQUESTS) {
       stateError("too many pending requests");
     }
-    if (this.issuedIds.size >= MAX_PROVIDER_REQUESTS_PER_PORT) {
+    if (this.issuedIds.size >= this.requestLimit) {
       stateError("request limit reached");
     }
 
@@ -324,8 +345,14 @@ export class ProviderPortSession {
     }
 
     const createdAt = this.currentTime();
-    const expiresAt = createdAt + this.requestTtlMs;
-    if (!Number.isSafeInteger(expiresAt)) stateError("request expiry overflowed");
+    const expiresAt = absoluteExpiresAt ?? createdAt + this.requestTtlMs;
+    if (
+      !Number.isSafeInteger(expiresAt) ||
+      expiresAt <= createdAt ||
+      expiresAt - createdAt > this.requestTtlMs
+    ) {
+      stateError("request absolute expiry is outside the configured lifetime");
+    }
     const id = this.mintRequestId();
     const controller = new AbortController();
     const owned = Object.freeze({
@@ -353,6 +380,19 @@ export class ProviderPortSession {
       stateError("request expired while opening");
     }
     return owned;
+  }
+
+  open(value: unknown): OwnedProviderRequest {
+    return this.openAt(value);
+  }
+
+  /**
+   * Open a replacement delivery lease without extending the first accepted
+   * request's absolute deadline. Only the C21 document transport uses this;
+   * the production unavailable boundary continues to call open().
+   */
+  openUntil(value: unknown, absoluteExpiresAt: number): OwnedProviderRequest {
+    return this.openAt(value, absoluteExpiresAt);
   }
 
   assertActive(owned: OwnedProviderRequest): void {

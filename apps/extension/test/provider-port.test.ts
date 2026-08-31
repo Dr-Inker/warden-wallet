@@ -4,6 +4,7 @@ import {
   DEFAULT_PROVIDER_REQUEST_TTL_MS,
   MAX_ACTIVE_PROVIDER_PORTS,
   MAX_PENDING_PROVIDER_REQUESTS,
+  MAX_PROVIDER_REQUEST_IDS_PER_SESSION,
   MAX_PROVIDER_REQUESTS_PER_PORT,
   PROVIDER_PORT_NAME,
   ProviderPortSession,
@@ -304,6 +305,24 @@ describe("per-provider-Port request owner", () => {
       expect(session.finish(owned)).toBe(true);
     }
     expect(() => session.open(request("request_total_over_cap"))).toThrow(
+      "request limit reached",
+    );
+  });
+
+  it("bounds an explicitly raised reconnect-attempt id budget", () => {
+    expect(() => new ProviderPortSession(provenance(), {
+      requestLimit: MAX_PROVIDER_REQUEST_IDS_PER_SESSION + 1,
+    })).toThrow(`request limit must be 1..${MAX_PROVIDER_REQUEST_IDS_PER_SESSION}`);
+
+    const session = new ProviderPortSession(provenance(), {
+      randomSource: new CounterRandom(),
+      requestLimit: 2,
+    });
+    const first = session.open(request("request_limit_first_0001"));
+    expect(session.finish(first)).toBe(true);
+    const second = session.open(request("request_limit_second_001"));
+    expect(session.finish(second)).toBe(true);
+    expect(() => session.open(request("request_limit_overflow_01"))).toThrow(
       "request limit reached",
     );
   });

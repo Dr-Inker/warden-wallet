@@ -9,9 +9,11 @@
 
 import { APPROVAL_DIGEST_BYTES } from "@warden/core/approval";
 
+import type { ProviderSignTransactionRequest } from "./provider-message.js";
 import type { OwnedProviderRequest } from "./provider-port.js";
 import { MAX_PROVIDER_REQUEST_TTL_MS } from "./provider-port.js";
 import { MAX_TRANSACTION_BYTES } from "./provider-message.js";
+import type { ProviderProvenance } from "./sender-provenance.js";
 
 export const PROVIDER_OPERATION_VERSION = 1 as const;
 export const PROVIDER_OPERATION_DIGEST_BYTES = 32;
@@ -91,6 +93,12 @@ export interface ProviderOperationIdentity {
   readonly correlationId: string;
   readonly method: "solana:signTransaction";
   readonly requestDigest: Uint8Array;
+}
+
+/** The exact fields that define durable provider-operation identity. */
+export interface ProviderOperationIdentityInput {
+  readonly provenance: ProviderProvenance;
+  readonly request: ProviderSignTransactionRequest;
 }
 
 export interface ProviderOperationRecord extends ProviderOperationIdentity {
@@ -529,7 +537,7 @@ async function digest(
   return requireBytes(value, PROVIDER_OPERATION_DIGEST_BYTES, "SHA-256 digest");
 }
 
-function requireOwnedProviderRequest(value: unknown): {
+function requireProviderOperationIdentityInput(value: unknown): {
   readonly extensionId: string;
   readonly origin: string;
   readonly tabId: number;
@@ -543,11 +551,11 @@ function requireOwnedProviderRequest(value: unknown): {
   readonly minContextSlot: number | null;
 } {
   if (typeof value !== "object" || value === null) {
-    stateError("owned provider request must be an object");
+    stateError("provider operation identity input must be an object");
   }
-  const owned = value as Partial<OwnedProviderRequest>;
-  const provenance = owned.provenance;
-  const request = owned.request;
+  const input = value as Partial<ProviderOperationIdentityInput>;
+  const provenance = input.provenance;
+  const request = input.request;
   if (
     typeof provenance !== "object" ||
     provenance === null ||
@@ -630,11 +638,11 @@ function requireOwnedProviderRequest(value: unknown): {
  * request field and every browser-owned provenance field is length-delimited by
  * a fixed JSON tuple before SHA-256; no page field is treated as authority.
  */
-export async function deriveProviderOperationIdentity(
-  ownedValue: OwnedProviderRequest,
+async function deriveIdentity(
+  inputValue: unknown,
   digestSourceValue: ProviderOperationDigestSource = DEFAULT_DIGEST_SOURCE,
 ): Promise<ProviderOperationIdentity> {
-  const owned = requireOwnedProviderRequest(ownedValue);
+  const owned = requireProviderOperationIdentityInput(inputValue);
   const source = requireDigestSource(digestSourceValue);
   const encoder = new TextEncoder();
   let requestBytes: Uint8Array | undefined;
@@ -682,6 +690,20 @@ export async function deriveProviderOperationIdentity(
     keyBytes?.fill(0);
     keyDigest?.fill(0);
   }
+}
+
+export async function deriveProviderOperationIdentity(
+  ownedValue: OwnedProviderRequest,
+  digestSourceValue: ProviderOperationDigestSource = DEFAULT_DIGEST_SOURCE,
+): Promise<ProviderOperationIdentity> {
+  return deriveIdentity(ownedValue, digestSourceValue);
+}
+
+export async function deriveProviderOperationIdentityFromRequest(
+  inputValue: ProviderOperationIdentityInput,
+  digestSourceValue: ProviderOperationDigestSource = DEFAULT_DIGEST_SOURCE,
+): Promise<ProviderOperationIdentity> {
+  return deriveIdentity(inputValue, digestSourceValue);
 }
 
 export function createPreparingProviderOperation(input: {

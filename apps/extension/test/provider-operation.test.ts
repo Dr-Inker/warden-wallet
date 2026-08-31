@@ -16,6 +16,7 @@ import {
   bindProviderOperation,
   createPreparingProviderOperation,
   deriveProviderOperationIdentity,
+  deriveProviderOperationIdentityFromRequest,
   failProviderOperation,
   snapshotProviderOperation,
   type ProviderOperationClaim,
@@ -225,7 +226,15 @@ function approvalReader(
 
 describe("durable provider operation identity", () => {
   it("survives a Port/worker remint but changes for every request or browser provenance input", async () => {
-    const first = await deriveProviderOperationIdentity(owned());
+    const firstOwned = owned();
+    if (firstOwned.request.method !== "solana:signTransaction") {
+      throw new Error("test request has the wrong method");
+    }
+    const first = await deriveProviderOperationIdentity(firstOwned);
+    const transportIdentity = await deriveProviderOperationIdentityFromRequest({
+      provenance: firstOwned.provenance,
+      request: firstOwned.request,
+    });
     const reminted = await deriveProviderOperationIdentity(owned({
       id: `req_${"22".repeat(16)}`,
       createdAt: 2_000,
@@ -246,6 +255,8 @@ describe("durable provider operation identity", () => {
 
     expect(reminted.key).toBe(first.key);
     expect(reminted.requestDigest).toEqual(first.requestDigest);
+    expect(transportIdentity.key).toBe(first.key);
+    expect(transportIdentity.requestDigest).toEqual(first.requestDigest);
     expect(new Set([
       first.key,
       changedCorrelation.key,
@@ -255,6 +266,7 @@ describe("durable provider operation identity", () => {
     ])).toHaveProperty("size", 5);
     first.requestDigest.fill(0);
     expect(reminted.requestDigest).not.toEqual(first.requestDigest);
+    transportIdentity.requestDigest.fill(0);
   });
 
   it("strictly copy-owns preparing, bound, and failed records", async () => {
