@@ -50,15 +50,16 @@ const approvalResult = await build({
   ...sharedBuildOptions,
 });
 
-// C9 deliberately composes only the exact-byte review projector into the
-// worker. Keep the approval coordinator, authority/RPC owners, signer, and
-// release registry tree-shaken until a later milestone opens those capabilities
-// with their own executable contracts.
+// C11 deliberately composes the exact-byte review projector and the internal
+// fixed-URL approval-window owner into the worker. Keep the approval
+// coordinator, authority/RPC owners, signer, and release registry tree-shaken
+// until a later milestone opens those capabilities with executable contracts.
 const backgroundInputs = new Set(
   Object.keys(backgroundResult.metafile.inputs).map((input) => resolve(input)),
 );
 const requiredBackgroundInputs = [
   join(appDirectory, "src/background/approval-port.ts"),
+  join(appDirectory, "src/background/approval-window.ts"),
   resolve(appDirectory, "../../packages/core/src/transaction/session-intent.ts"),
 ].map((input) => resolve(input));
 const forbiddenBackgroundInputs = [

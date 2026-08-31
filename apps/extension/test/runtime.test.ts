@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createPendingApprovalRecord,
+  resolveApprovalRecord,
+  snapshotApprovalRecord,
+  type ApprovalRecord,
+} from "@warden/core/approval";
+import {
   KeyringFormatError,
   KeyringLockedError,
   SESSION_SIGNER_PAYLOAD_SCHEMA_VERSION,
@@ -34,6 +40,7 @@ import type {
   ProviderMessageEvent,
   ProviderRuntimePort,
 } from "../src/background/provider-port.js";
+import type { ApprovalWindowsApi } from "../src/background/approval-window.js";
 
 interface Gate {
   readonly promise: Promise<void>;
@@ -58,6 +65,25 @@ const SIGNER_POLICY = {
   idleTimeoutMs: 60_000,
   hardTimeoutMs: 120_000,
 };
+
+function runtimeApprovalRecord(): ApprovalRecord {
+  return createPendingApprovalRecord({
+    id: `req_${"ab".repeat(16)}`,
+    origin: "https://runtime.example",
+    tabId: 7,
+    frameId: 0,
+    documentId: "runtime-provider-document",
+    account: fill(32, 0x11),
+    method: "solana:signTransaction",
+    chain: "solana:devnet",
+    genesisHash: fill(32, 0x22),
+    programId: fill(32, 0x33),
+    rawMessage: Uint8Array.of(1, 2, 3),
+    policyVersion: 1,
+    createdAt: 1_000,
+    expiresAt: 2_000,
+  });
+}
 
 const PERSISTENT_RECORD = encodeKeyringRecordStorageValue({
   metadata: {
@@ -220,6 +246,46 @@ class RuntimeStorageChangeEvent {
   }
 }
 
+class RuntimeWindowRemovedEvent {
+  readonly listeners = new Set<(windowId: number) => void>();
+
+  addListener(listener: (windowId: number) => void): void {
+    this.listeners.add(listener);
+  }
+
+  removeListener(listener: (windowId: number) => void): void {
+    this.listeners.delete(listener);
+  }
+
+  emit(windowId: number): void {
+    for (const listener of [...this.listeners]) listener(windowId);
+  }
+}
+
+class RuntimeWindows implements ApprovalWindowsApi {
+  readonly onRemoved = new RuntimeWindowRemovedEvent();
+  readonly createCalls: unknown[] = [];
+  readonly removeCalls: number[] = [];
+  readonly existing = new Set<number>();
+
+  async create(options: Parameters<ApprovalWindowsApi["create"]>[0]) {
+    this.createCalls.push(Object.freeze({ ...options }));
+    this.existing.add(91);
+    return { id: 91 };
+  }
+
+  async get(windowId: number) {
+    if (!this.existing.has(windowId)) throw new Error("No window with id");
+    return { id: windowId };
+  }
+
+  async remove(windowId: number): Promise<void> {
+    this.removeCalls.push(windowId);
+    this.existing.delete(windowId);
+    this.onRemoved.emit(windowId);
+  }
+}
+
 function observableStorage(
   storage: ExtensionBackgroundStorageApi,
   onChanged = new RuntimeStorageChangeEvent(),
@@ -228,7 +294,9 @@ function observableStorage(
 }
 
 function startBackground(
-  chromeApi: ExtensionBackgroundChromeApi,
+  chromeApi: Omit<ExtensionBackgroundChromeApi, "windows"> & {
+    readonly windows?: ApprovalWindowsApi;
+  },
   approvalLifecycle: ApprovalStartupLifecycle = {
     read: async () => null,
     reject: async () => Promise.reject(new Error("approval unavailable")),
@@ -237,7 +305,10 @@ function startBackground(
     close: () => {},
   },
 ) {
-  return startProductionBackground(chromeApi, approvalLifecycle);
+  return startProductionBackground({
+    ...chromeApi,
+    windows: chromeApi.windows ?? new RuntimeWindows(),
+  }, approvalLifecycle);
 }
 
 describe("MV3 background bootstrap", () => {
@@ -1060,5 +1131,125 @@ describe("MV3 background bootstrap", () => {
     // bootstrapBackground already started before event registration failed;
     // let its storage-only readiness work settle to avoid leaking test work.
     await Promise.resolve();
+  });
+
+  it("ships a readiness-gated internal approval-window owner and tears it down before repository close", async () => {
+    const onConnect = new RuntimeConnectEvent();
+    const onStorageChanged = new RuntimeStorageChangeEvent();
+    const windows = new RuntimeWindows();
+    const operations: string[] = [];
+    let current = runtimeApprovalRecord();
+    const approvalLifecycle: ApprovalStartupLifecycle = {
+      async read(id) {
+        operations.push(`approval:read:${id}`);
+        return id === current.id ? snapshotApprovalRecord(current) : null;
+      },
+      async reject(id) {
+        operations.push(`approval:reject:${id}`);
+        current = resolveApprovalRecord(current, "rejected", 1_100);
+        return snapshotApprovalRecord(current);
+      },
+      async cancel(id) {
+        operations.push(`approval:cancel:${id}`);
+        current = resolveApprovalRecord(current, "cancelled", 1_100);
+        return snapshotApprovalRecord(current);
+      },
+      async invalidateAfterWorkerRestart() {
+        operations.push("approval:invalidate");
+        return 0;
+      },
+      close() {
+        operations.push("approval:close");
+      },
+    };
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined, { get: async () => ({}) }),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async () => ({}),
+        set: async () => undefined,
+        remove: async () => undefined,
+      },
+    };
+    const application = startProductionBackground({
+      storage: observableStorage(storage, onStorageChanged),
+      runtime: { id: EXTENSION_ID, onConnect },
+      windows,
+    }, approvalLifecycle);
+    const launcher = application.approvalWindows;
+
+    expect(windows.onRemoved.listeners.size).toBe(1);
+    expect(onConnect.listeners.size).toBe(1);
+    await application.runtimeBoundariesReady;
+    await launcher.launch(current.id, new AbortController().signal);
+    expect(windows.createCalls).toHaveLength(1);
+    expect(operations).toEqual([
+      "approval:invalidate",
+      `approval:read:${current.id}`,
+      `approval:read:${current.id}`,
+    ]);
+
+    application.dispose();
+    expect(windows.onRemoved.listeners.size).toBe(0);
+    expect(onConnect.listeners.size).toBe(0);
+    expect(windows.removeCalls).toEqual([91]);
+    expect(current.state).toBe("pending");
+    expect(operations.at(-1)).toBe("approval:close");
+  });
+
+  it("fails the whole runtime closed when a disappeared window cannot be proven terminal", async () => {
+    const onConnect = new RuntimeConnectEvent();
+    const onStorageChanged = new RuntimeStorageChangeEvent();
+    const windows = new RuntimeWindows();
+    let current = runtimeApprovalRecord();
+    let approvalCloses = 0;
+    const cancellationError = new Error("approval cancellation unavailable");
+    const approvalLifecycle: ApprovalStartupLifecycle = {
+      async read(id) {
+        return id === current.id ? snapshotApprovalRecord(current) : null;
+      },
+      async reject() {
+        current = resolveApprovalRecord(current, "rejected", 1_100);
+        return snapshotApprovalRecord(current);
+      },
+      async cancel() {
+        throw cancellationError;
+      },
+      async invalidateAfterWorkerRestart() {
+        return 0;
+      },
+      close() {
+        approvalCloses++;
+      },
+    };
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => undefined, { get: async () => ({}) }),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async () => ({}),
+        set: async () => undefined,
+        remove: async () => undefined,
+      },
+    };
+    const application = startProductionBackground({
+      storage: observableStorage(storage, onStorageChanged),
+      runtime: { id: EXTENSION_ID, onConnect },
+      windows,
+    }, approvalLifecycle);
+    await application.runtimeBoundariesReady;
+    await application.approvalWindows.launch(
+      current.id,
+      new AbortController().signal,
+    );
+
+    windows.existing.delete(91);
+    windows.onRemoved.emit(91);
+    await expect(application.fatal).rejects.toBe(cancellationError);
+
+    expect(onConnect.listeners.size).toBe(0);
+    expect(onStorageChanged.listeners.size).toBe(0);
+    expect(windows.onRemoved.listeners.size).toBe(0);
+    expect(approvalCloses).toBe(1);
+    expect(current.state).toBe("pending");
   });
 });

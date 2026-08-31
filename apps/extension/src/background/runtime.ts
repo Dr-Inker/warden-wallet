@@ -16,6 +16,12 @@ import {
 } from "./runtime-ports.js";
 import type { ApprovalReviewOwner } from "./approval-port.js";
 import {
+  installApprovalWindowOwner,
+  type ApprovalWindowLauncher,
+  type ApprovalWindowsApi,
+  type InstalledApprovalWindowOwner,
+} from "./approval-window.js";
+import {
   KEYRING_RECORD_STORAGE_KEY,
   type KeyringRecordStorageArea,
 } from "./keyring-record-store.js";
@@ -61,10 +67,13 @@ export interface ExtensionBackgroundRuntime {
 export interface ExtensionBackgroundChromeApi {
   readonly storage: ObservableExtensionBackgroundStorageApi;
   readonly runtime: ProviderRuntimeApi;
+  readonly windows: ApprovalWindowsApi;
 }
 
 export interface ExtensionBackgroundApplication extends ExtensionBackgroundRuntime {
   readonly runtimeBoundariesReady: Promise<RuntimeBoundaries>;
+  /** Internal-only launcher; no browser message route receives this capability. */
+  readonly approvalWindows: ApprovalWindowLauncher;
   /** Rejects on a post-startup record-change cleanup failure. */
   readonly fatal: Promise<never>;
   dispose(): void;
@@ -284,7 +293,10 @@ export function startBackground(
   let reportApprovalFatal = (error: unknown): void => {
     if (queuedApprovalFatals.length === 0) queuedApprovalFatals.push(error);
   };
-  let boundary: RuntimeBoundaries;
+  let boundary!: RuntimeBoundaries;
+  let boundaryInstalled = false;
+  let approvalWindowOwner!: InstalledApprovalWindowOwner;
+  let approvalWindowOwnerInstalled = false;
   try {
     boundary = installRuntimeBoundaries(chromeApi.runtime, {
       approvals: approvalLifecycle,
@@ -292,14 +304,40 @@ export function startBackground(
       projectReview: decodeSessionApprovalReview,
       onFatal: (error) => reportApprovalFatal(error),
     });
+    boundaryInstalled = true;
+    approvalWindowOwner = installApprovalWindowOwner(chromeApi.windows, {
+      runtimeId: chromeApi.runtime.id,
+      approvals: approvalLifecycle,
+      ready: approvalRuntimeReady,
+      onFatal: (error) => reportApprovalFatal(error),
+    });
+    approvalWindowOwnerInstalled = true;
   } catch (error) {
     rejectApprovalRuntimeReady(error);
+    const cleanupErrors: unknown[] = [];
+    if (boundaryInstalled) {
+      try {
+        boundary.dispose();
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (approvalWindowOwnerInstalled) {
+      try {
+        approvalWindowOwner.dispose();
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
     try {
       closeApproval();
-    } catch (closeError) {
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+    if (cleanupErrors.length > 0) {
       throw new AggregateError(
-        [error, closeError],
-        "runtime registration and approval cleanup both failed",
+        [error, ...cleanupErrors],
+        "runtime registration and background cleanup both failed",
       );
     }
     throw error;
@@ -337,6 +375,11 @@ export function startBackground(
       cleanupErrors.push(cleanupError);
     }
     try {
+      approvalWindowOwner.dispose();
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+    try {
       closeApproval();
     } catch (cleanupError) {
       cleanupErrors.push(cleanupError);
@@ -369,6 +412,11 @@ export function startBackground(
     }
     try {
       boundary.dispose();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      approvalWindowOwner.dispose();
     } catch (error) {
       cleanupErrors.push(error);
     }
@@ -441,10 +489,16 @@ export function startBackground(
       throw closeFailure(error, "background initialization and runtime cleanup both failed");
     },
   );
+  const approvalWindows: ApprovalWindowLauncher = Object.freeze({
+    launch(requestId: string, signal: AbortSignal): Promise<void> {
+      return approvalWindowOwner.launch(requestId, signal);
+    },
+  });
 
   return {
     ...background,
     runtimeBoundariesReady,
+    approvalWindows,
     fatal,
     dispose(): void {
       if (disposed) return;

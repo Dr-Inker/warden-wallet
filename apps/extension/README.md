@@ -13,6 +13,12 @@ This is a pre-alpha development extension. It must not be used with real funds.
   treats these match patterns as host access and may show a broad read/change
   warning. This is a real permission cost, not “no host permission” merely
   because the manifest has no separate `host_permissions` key.
+- The background's internal approval launcher uses basic `chrome.windows`
+  create/get/remove events, which require no added manifest permission. The
+  `tabs` permission remains absent, so the launcher neither reads tab URLs nor
+  accepts a caller-selected URL. Chrome receives only the fixed extension page
+  documented by the
+  [`windows` API](https://developer.chrome.com/docs/extensions/reference/api/windows).
 
 ## Persistent keyring boundary
 
@@ -110,21 +116,44 @@ worker startup pass cancels rather than resumes every live pending record. The
 store caps retained and pending records and keeps short terminal tombstones so
 ordinary retries cannot reuse an approval during the retention window.
 
-This is a fail-closed persistence substrate, not a usable approval feature.
+This remains a partial approval feature, not an approval-to-signature product.
 `startBackground()` gates all internal readiness on startup invalidation and
 closes the repository whenever initialization, fatal cleanup, or disposal closes
-the runtime. No Port or page can create, read, or resolve a record. There is no
-authoritative account/network/policy registry, approval page, exact-byte decoder,
-signer/RPC consumer, signed-result replay, navigation cancellation, or root
-ceremony. A temporary-extension Chromium contract opens two independent database
-connections, races decisions, and mutates stored message bytes. The shipped-
-extension lane separately seeds its production database, kills and wakes the MV3
-worker through the real provider Port, and observes startup cancel that pending
-record. The unit runtime contract separately proves readiness stays closed until
-the same invalidation settles. IndexedDB transaction serialization is evidence
-for the tested compare-and-set; `durability: "strict"` remains a browser hint,
-not proof against browser, process, or disk failure. Trusted same-extension
-contexts share this database and remain inside the trust boundary.
+the runtime. A dedicated extension-only `/approval.html?request=req_<128-bit
+lowercase hex>` Port can read one pending record, receive a strict primitive
+projection decoded from its authenticated exact message bytes, and durably
+reject or cancel that same record. It cannot create, enumerate, approve, claim,
+sign, send, access the keyring, or return provider success. The page exposes the
+exact technical projection behind a native disclosure and uses a conservative
+wall-plus-monotonic countdown; page expiry, navigation, and Port loss make the
+request non-actionable in durable storage.
+
+The shipped worker also owns an internal approval-window launcher. Its only
+caller inputs are a strict request id and an `AbortSignal`; URL, popup type,
+focus, dimensions, opener status, and browser window id are background-owned.
+It checks the durable row before and after `chrome.windows.create`, detects a
+create-to-close race with `windows.get`, limits and deduplicates in-flight
+requests, and maps `windows.onRemoved` or provider abort to exact durable
+cancellation. An unprovable cancellation closes the entire runtime through the
+fatal lifecycle. Disposal stops waiters promptly, removes or later closes owned
+windows, and deliberately starts no new repository transition before the parent
+closes IndexedDB; the mandatory next-worker startup pass invalidates anything
+abandoned by worker death. MV3 global memory is therefore never continuity.
+
+No browser message route receives the launcher, and every provider/popup method
+still returns unavailable. There is still no production release registry,
+authoritative account/network/policy composition, approve/sign/RPC consumer,
+signed-result replay route, or root ceremony. A temporary-extension Chromium
+contract now proves the real permissionless popup has the exact extension URL,
+popup type, focus, and user-close cancellation. Headless Chrome expanded the
+requested `720×600` bounds to `1280×720`, so the fixed dimensions are a measured
+request, not a browser-enforced layout guarantee. Earlier browser lanes cover
+IndexedDB competing connections, tamper/worker restart, the production approval
+render, navigation/reject/expiry races, and exact technical values. IndexedDB
+transaction serialization is evidence for the tested compare-and-set;
+`durability: "strict"` remains a browser hint, not proof against browser,
+process, or disk failure. Trusted same-extension contexts share this database
+and remain inside the trust boundary.
 
 The bridge is excluded from `file:`, browser-internal, extension, data, and
 opaque `about:blank`/`srcdoc` documents. It opens no background Port during

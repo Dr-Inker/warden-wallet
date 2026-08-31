@@ -9,12 +9,19 @@ function requireBackgroundChrome(value: unknown): ExtensionBackgroundChromeApi {
   if (typeof value !== "object" || value === null) {
     throw new Error("Warden extension: Chrome API is unavailable");
   }
-  const chromeApi = value as { readonly storage?: unknown; readonly runtime?: unknown };
+  const chromeApi = value as {
+    readonly storage?: unknown;
+    readonly runtime?: unknown;
+    readonly windows?: unknown;
+  };
   if (typeof chromeApi.storage !== "object" || chromeApi.storage === null) {
     throw new Error("Warden extension: Chrome storage API is unavailable");
   }
   if (typeof chromeApi.runtime !== "object" || chromeApi.runtime === null) {
     throw new Error("Warden extension: Chrome runtime API is unavailable");
+  }
+  if (typeof chromeApi.windows !== "object" || chromeApi.windows === null) {
+    throw new Error("Warden extension: Chrome windows API is unavailable");
   }
   return chromeApi as ExtensionBackgroundChromeApi;
 }
