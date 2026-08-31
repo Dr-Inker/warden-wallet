@@ -1,5 +1,118 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-08-31 C10 HONEST REVIEW LIFETIME — LIVE EXPIRY AND EXACT TECHNICAL DISCLOSURE, SIGNING STILL IMPOSSIBLE
+>
+> Implementation commit `7149b727c75476f4919a957c4866d21bdf0f3a1b`
+> closes two honesty gaps in the C9 review-only page without adding any
+> authority. The strict page protocol now refuses `createdAt` or `expiresAt`
+> outside JavaScript's renderable Date range, so an authenticated but
+> unrenderable timestamp cannot throw after protocol acceptance. The page
+> renders the absolute ISO instant in a native `<time>` element and a live
+> countdown anchored to both wall time and `performance.now()`. A backward
+> wall-clock jump cannot extend the displayed lifetime; a forward jump closes
+> the page on the next tick or resume check. Expiry disables both controls,
+> states exactly that no signature was produced, and disconnects the Port. The
+> existing clock-aware durable owner then atomically resolves the pending row
+> as expired. Real Chromium observes both the visible terminal state and the
+> durable `expired` record.
+>
+> Timers are best-effort while Chrome freezes a page, so `visibilitychange`,
+> `focus`, and `pageshow` each recheck the two deadlines before the page can be
+> treated as actionable again. Port loss/navigation remains fail-closed. This
+> does not make the page clock an authorization clock: the durable background
+> repository remains authoritative, and a future signer must recheck the
+> record, digest, authority, cluster, account, registry, and release at claim
+> and immediately before signing.
+>
+> The page now exposes every already-projected technical fact behind a native,
+> initially closed `<details>/<summary>` disclosure: session signer, session
+> account, registry, Warden and Memo programs, genesis hash, recent blockhash,
+> compute-unit limit, heap frame, serialized message length, and Memo length.
+> Values still cross the Port only as strict frozen primitives and render only
+> through `textContent`. The summary retains native keyboard semantics, has a
+> 48 px CSS minimum target, and was opened with the Enter key in production
+> Chromium. Keeping it collapsed is load-bearing: expanded technical content
+> is intentionally exhaustive and makes the narrow mobile page very long.
+>
+> Two behavioral REDs preceded production code. `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension exec
+> playwright test -c playwright.config.ts approval-review.pw.ts` exited **1**,
+> **2/2 failed**, because `#technical-details` and `#expiry-countdown` did not
+> exist. `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter
+> @warden/extension exec vitest run test/approval-protocol.test.ts` exited
+> **1**, **1 failed / 13 passed**, because the protocol accepted timestamp
+> `8640000000000001`, which `Date#toISOString` cannot render.
+>
+> Harsh verification also found defects in the new QA, not in the renderer.
+> The first post-build browser run passed the expiry scenario but failed the
+> display case because the hard-coded session-account oracle came from a
+> different fixture. The next run exposed the same mistake for registry. Both
+> were replaced with constants independently decoded from static account-key
+> slots 2 and 5 in `GOLDEN_MESSAGE_HEX`; only then did the lane pass **2/2**.
+> The first emitted-artifact command also exited **1** with a checker
+> `ReferenceError` because it forgot to read `background.js`; the corrected
+> executable check below passed. These failed harness attempts are not product
+> evidence and no green claim is inherited from them.
+>
+> Current platform/accessibility behavior was checked against the official
+> WCAG 2.2 target-size understanding, WHATWG native disclosure contract, and
+> Chrome page-lifecycle guidance:
+> <https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum>,
+> <https://html.spec.whatwg.org/dev/interactive-elements.html>, and
+> <https://developer.chrome.com/docs/web-platform/page-lifecycle-api>.
+> Frozen tabs suspend freezable tasks, which is why the timer is explicitly
+> described as best-effort and resume events force a deadline check. No
+> independent second-model review ran; it remains **UNVERIFIED**.
+>
+> Exact-SHA evidence at `7149b727c75476f4919a957c4866d21bdf0f3a1b`:
+> `env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> test` passed **283/283**; `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> typecheck` exited **0**; and `env
+> npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension
+> test:browser` rebuilt the production extension and passed **4/4** in real
+> Chromium. The C10 lane proves exact technical values from the serialized
+> fixture, native keyboard disclosure, a disclosure target at least 44 px high,
+> no horizontal overflow at 720 px and 390 px after expansion, visible expiry,
+> disabled terminal controls, and a durable `expired` row. It regenerates these
+> ignored visual artifacts:
+> `apps/extension/test-results/approval-review.pw.ts-appr-6458e--navigation-rejection-races/approval-review-collapsed-desktop.png`,
+> `approval-review-desktop.png`, `approval-review-mobile.png`, and
+> `apps/extension/test-results/approval-review.pw.ts-appr-56b23-inalizes-the-durable-record/approval-review-expired-mobile.png`.
+>
+> After that production build, this exact emitted-artifact command exited
+> **0**:
+>
+> ```sh
+> node -e "const fs=require('node:fs');const dir='apps/extension/dist';const names=fs.readdirSync(dir).sort();const required=['approval.css','approval.html','approval.js','background.js','content.js','manifest.json','popup.html','popup.js'];const missing=required.filter(name=>!names.includes(name));const approval=fs.readFileSync(dir+'/approval.js','utf8');const background=fs.readFileSync(dir+'/background.js','utf8');const html=fs.readFileSync(dir+'/approval.html','utf8');const pageForbidden=/claimForSigning|completeSigning|signApprovedSessionMessage|indexedDB|chrome\.storage|fetch\(|XMLHttpRequest|secretKey|privateKey/;const workerForbidden=/session approval coordinator:|createPinnedSessionApprovalCoordinator|resolveCommittedSessionRelease|sign approved session transaction/;const missingC10=['expiry-countdown','technical-details','session-account-value','recent-blockhash-value'].filter(value=>!html.includes(value));if(missing.length||missingC10.length||pageForbidden.test(approval)||workerForbidden.test(background)){console.error({missing,missingC10,pageForbidden:pageForbidden.test(approval),workerForbidden:workerForbidden.test(background)});process.exit(1)}console.log('C10 dist present; review has expiry/details and no storage, keyring, RPC, coordinator, or signer surface')"
+> ```
+>
+> Immediately after the successful exact-SHA gate, `git rev-parse HEAD`
+> returned `7149b727c75476f4919a957c4866d21bdf0f3a1b`, `git status --short`
+> was empty, and `git diff --check` exited **0**.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-EXT-02`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+> C10 narrows only the review-lifetime and displayed-intent portions of those
+> compound claims. Review-only UI is still not authority to sign.
+>
+> **Harsh residual:** there is still no successful provider request, launcher,
+> approve/claim/sign route, production release entry, trusted production RPC,
+> simulation, fee/balance/token consequence model, account/network switch
+> binding, send/confirmation owner, result delivery, or onboarding. While a
+> page is frozen its visual countdown cannot tick; only the resume check and
+> durable owner enforce truth. The displayed projection does not refresh live
+> authority or release state. Memo remains the only decoded verb. An honest,
+> accessible rejection/expiry page is not a deployable wallet.
+>
+> **Next load-bearing slice:** keep approval and signing closed while defining
+> the background-owned request-launch lifetime. A provider request must create
+> one durable record and open exactly its extension URL without giving page or
+> content-script input general tabs/windows authority; open failure, duplicate
+> launch, navigation, worker death, timeout, and provider disconnect must each
+> have one executable terminal outcome. Do not fabricate a production release
+> entry or trusted RPC endpoint.
+
 > ## 2026-08-31 C9 CLOSED APPROVAL REVIEW — EXACT-BYTE UI SHIPPED, APPROVAL/SIGNING STILL IMPOSSIBLE
 >
 > Implementation commit `65df16854c1ecfbb5e288091c6dc4d76bd10b700`

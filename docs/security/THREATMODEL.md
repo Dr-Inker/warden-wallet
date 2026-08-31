@@ -1550,3 +1550,84 @@ guard, feature-resolution check, and the complete Rust workspace. Afterward
 HEAD remained that SHA, the worktree was clean, and `git diff --check` exited
 **0**. This verdict belongs only to `04c810a…`; it does not promote any C9
 invariant or remove the residuals above.
+
+---
+
+## Client C10 honest review lifetime and technical disclosure — 7149b72 — 2026-08-31 — **PARTIAL**
+
+**New trust surface:** the existing review-only extension page now owns a
+visual deadline loop and an initially closed native technical disclosure. The
+page accepts only protocol timestamps inside JavaScript's renderable Date
+range, displays the exact ISO expiry plus a live countdown, anchors the
+remaining lifetime to both wall time and `performance.now()`, and rechecks on
+`visibilitychange`, `focus`, and `pageshow`. Expiry is terminal in the page:
+both controls disable, the page states that no signature was produced, and its
+Port disconnects. The existing background owner remains the durable clock and
+atomically records expiry; the page gained no repository, keyring, RPC,
+approval, signer, send, or provider-success capability.
+
+The native `<details>/<summary>` surface reveals every primitive already
+derived from the digest-authenticated serialized message: session signer and
+account, registry, Warden and Memo programs, genesis hash, recent blockhash,
+compute limit, heap frame, serialized-message bytes, and Memo bytes. It is
+closed by default, keyboard operable, and has a 48 px minimum summary target.
+All values still render through `textContent`; no HTML, caller labels, raw
+message bytes, authority objects, or new action methods cross the Port.
+
+**Removed / narrowed:** a response timestamp that `Date#toISOString` cannot
+render is now a closed protocol error instead of a post-acceptance page
+exception. A backward wall-clock jump cannot extend a currently displayed
+request beyond its anchored monotonic lifetime; a forward jump closes it on
+the next tick/resume. Frozen-page timers remain best-effort, but the page must
+recheck before it is visible/focused/actionable again. The formerly omitted
+projected keys and compute facts can now be independently compared with the
+exact serialized fixture instead of being hidden from review.
+
+The browser and protocol REDs preceded production code: the focused real-
+Chromium lane failed **2/2** because the disclosure and countdown were absent,
+and the focused protocol lane failed **1/14** because it accepted a timestamp
+one millisecond beyond the ECMAScript Date limit. Harsh verification then
+found two stale hard-coded address oracles in the browser test. The session
+account and registry were corrected only after independently decoding static
+account-key slots 2 and 5 from the golden serialized message. A first custom
+artifact scan also failed from its own missing `background` variable; the
+corrected executable command is recorded in `docs/NEXT-SESSION.md`. None of
+those broken QA attempts is presented as green evidence.
+
+Official behavior sources:
+<https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum>,
+<https://html.spec.whatwg.org/dev/interactive-elements.html>, and
+<https://developer.chrome.com/docs/web-platform/page-lifecycle-api>. Chrome
+documents that frozen pages suspend freezable tasks, so the countdown is not
+treated as an authorization mechanism. Independent second-model review remains
+**UNVERIFIED**; none ran for C10.
+
+Exact-SHA evidence at `7149b727c75476f4919a957c4866d21bdf0f3a1b`:
+the extension passed **283/283**, typecheck exited **0**, and the rebuilt real
+production extension passed Chromium **4/4**. The review lane verifies exact
+technical strings and numbers against serialized-fixture constants, native
+Enter-key disclosure, a summary target at least 44 px high, zero horizontal
+overflow at 720 px and 390 px after expansion, visible terminal expiry,
+disabled controls, and the durable `expired` record. Collapsed desktop,
+expanded desktop/mobile, and expired-mobile capture paths plus the exact
+commands are in `docs/NEXT-SESSION.md`. The corrected emitted-artifact scan
+required the C10 HTML ids while forbidding storage, keyring, RPC, coordinator,
+and signer surfaces; it exited **0**. This C10 ledger-inclusive SHA has not yet
+run `env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh`; no
+prior SHA's verdict is inherited.
+
+**New invariants:** none. `WRD-EXT-01`, `WRD-EXT-02`, `WRD-APR-01`,
+`WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`. This
+slice narrows only review lifetime, timeout, and exact-display subclaims; it
+does not ship the successful privileged path required by those compound
+invariants.
+
+**Residual, stated honestly:** no provider request can successfully create and
+launch this page, no approve/claim/sign path is emitted, and the production
+release registry remains empty. The page's clock is visual/fail-closed only;
+a frozen page does not tick, and the durable owner must remain authoritative.
+The displayed projection does not refresh authority, registry, account,
+cluster, or release state. There is no simulation, fee/balance/token
+consequence model, account/network switching contract, send/confirmation
+owner, result delivery, onboarding, or non-Memo verb. This makes the closed
+review more truthful; it does not make Warden deployable.
