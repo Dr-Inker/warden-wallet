@@ -1,5 +1,6 @@
 import {
   KEYRING_RECORD_VERSION_2,
+  PUBKEY_BYTES,
   KeyringAuthError,
   KeyringFormatError,
   KeyringLockedError,
@@ -9,6 +10,7 @@ import {
   assertValidUnlockPolicy,
   decodeKeyringRecordStorageValue,
   decodeSessionSignerPayload,
+  deriveSessionSignerPublicKey,
   deriveUnwrapKeyFromPasswordBytesAsync,
   encodeKeyringRecordMetadata,
   openKeyringBundle,
@@ -53,6 +55,18 @@ export interface SessionSignerLease extends SessionApprovalSignerLease {
   readonly unlock: UnlockCheck;
 }
 
+/** Public identity authenticated by the active encrypted keyring record. */
+export interface AuthenticatedSessionIdentity {
+  /** Caller-owned SmartAccount copy. */
+  readonly account: Uint8Array;
+  /** Caller-owned canonical cluster genesis hash. */
+  readonly genesisHash: Uint8Array;
+  /** Caller-owned Warden deployment id. */
+  readonly programId: Uint8Array;
+  /** Caller-owned public half derived from the authenticated signer seed. */
+  readonly sessionSigner: Uint8Array;
+}
+
 /** Privileged lifecycle surface; production exposes it only through readiness gating. */
 export interface KeyringLifecycle extends SessionApprovalKeyring {
   isUnlocked(): Promise<boolean>;
@@ -60,6 +74,9 @@ export interface KeyringLifecycle extends SessionApprovalKeyring {
   replacePersistentRecord(value: unknown): Promise<void>;
   clearPersistentRecord(): Promise<void>;
   unlockWithPassword(params: UnlockKeyringWithPasswordParams): Promise<void>;
+  readAuthenticatedSessionIdentity(
+    operation: string,
+  ): Promise<AuthenticatedSessionIdentity>;
   useSessionSignerBytes(
     operation: string,
     use: (lease: SessionSignerLease) => Promise<Uint8Array>,
@@ -560,6 +577,45 @@ export class KeyringLifecycleOwner implements KeyringLifecycle {
         return this.lockAfterFailure(error, generation);
       }
       throw error;
+    }
+  }
+
+  /**
+   * Authenticate the live record and return only its public selection facts.
+   * The seed is opened and schema-checked inside the existing exact-readback
+   * lease, used only to derive its public half, and scrubbed before this method
+   * returns. A record/session transition suppresses the entire snapshot.
+   */
+  async readAuthenticatedSessionIdentity(
+    operation: string,
+  ): Promise<AuthenticatedSessionIdentity> {
+    const encoded = await this.useSessionSignerBytes(operation, async (lease) => {
+      const sessionSigner = deriveSessionSignerPublicKey(lease.seed);
+      try {
+        const identity = new Uint8Array(PUBKEY_BYTES * 4);
+        identity.set(lease.account, 0);
+        identity.set(lease.genesisHash, PUBKEY_BYTES);
+        identity.set(lease.programId, PUBKEY_BYTES * 2);
+        identity.set(sessionSigner, PUBKEY_BYTES * 3);
+        return identity;
+      } finally {
+        sessionSigner.fill(0);
+      }
+    });
+    try {
+      if (encoded.length !== PUBKEY_BYTES * 4) {
+        throw new KeyringLifecycleConsistencyError(
+          "authenticated public identity has the wrong length",
+        );
+      }
+      return Object.freeze({
+        account: encoded.slice(0, PUBKEY_BYTES),
+        genesisHash: encoded.slice(PUBKEY_BYTES, PUBKEY_BYTES * 2),
+        programId: encoded.slice(PUBKEY_BYTES * 2, PUBKEY_BYTES * 3),
+        sessionSigner: encoded.slice(PUBKEY_BYTES * 3, PUBKEY_BYTES * 4),
+      });
+    } finally {
+      encoded.fill(0);
     }
   }
 }

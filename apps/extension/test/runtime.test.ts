@@ -362,6 +362,9 @@ describe("MV3 background bootstrap", () => {
     await expect(runtime.keyring.isUnlocked()).rejects.toThrow(
       BackgroundNotReadyError,
     );
+    await expect(
+      runtime.keyring.readAuthenticatedSessionIdentity("select provider account"),
+    ).rejects.toThrow(BackgroundNotReadyError);
     expect(calls).toEqual(["local:restrict", "session:restrict"]);
     localGate.release();
     await Promise.resolve();

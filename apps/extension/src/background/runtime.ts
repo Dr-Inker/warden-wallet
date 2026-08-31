@@ -26,6 +26,7 @@ import {
   type KeyringRecordStorageArea,
 } from "./keyring-record-store.js";
 import {
+  type AuthenticatedSessionIdentity,
   KeyringLifecycleOwner,
   type KeyringLifecycle,
   type SessionSignerLease,
@@ -202,6 +203,13 @@ class ReadyKeyringLifecycle implements KeyringLifecycle {
       return Promise.reject(unavailable);
     }
     return this.#owner.unlockWithPassword(params);
+  }
+
+  readAuthenticatedSessionIdentity(
+    operation: string,
+  ): Promise<AuthenticatedSessionIdentity> {
+    return this.run(operation, () =>
+      this.#owner.readAuthenticatedSessionIdentity(operation));
   }
 
   useSessionSignerBytes(

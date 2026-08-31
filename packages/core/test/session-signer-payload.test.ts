@@ -5,8 +5,13 @@ import {
   SESSION_SIGNER_PAYLOAD_SCHEMA_VERSION,
   SESSION_SIGNER_SEED_BYTES,
   decodeSessionSignerPayload,
+  deriveSessionSignerPublicKey,
   encodeSessionSignerPayload,
 } from "../src/index.js";
+
+function hex(value: string): Uint8Array {
+  return Uint8Array.from(value.match(/../g)!.map((byte) => Number.parseInt(byte, 16)));
+}
 
 describe("session-signer plaintext payload", () => {
   it("pins schema v1 to the exact 32-byte Ed25519 seed", () => {
@@ -39,5 +44,22 @@ describe("session-signer plaintext payload", () => {
     expect(() => encodeSessionSignerPayload(value as Uint8Array)).toThrow(
       KeyringFormatError,
     );
+  });
+
+  it("derives the RFC 8032 public key without retaining or mutating the caller's seed", () => {
+    const seed = hex(
+      "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+    );
+    const original = seed.slice();
+    const expected = hex(
+      "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+    );
+
+    const publicKey = deriveSessionSignerPublicKey(seed);
+
+    expect(publicKey).toEqual(expected);
+    expect(seed).toEqual(original);
+    seed.fill(0xff);
+    expect(publicKey).toEqual(expected);
   });
 });

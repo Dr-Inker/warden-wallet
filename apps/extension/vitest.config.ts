@@ -23,6 +23,33 @@ export default defineConfig({
         ),
       },
       {
+        find: "@warden/core/transaction/session-approval",
+        replacement: fileURLToPath(
+          new URL(
+            "../../packages/core/src/transaction/session-approval-coordinator.ts",
+            import.meta.url,
+          ),
+        ),
+      },
+      {
+        find: "@warden/core/transaction/session-release",
+        replacement: fileURLToPath(
+          new URL(
+            "../../packages/core/src/transaction/session-release.ts",
+            import.meta.url,
+          ),
+        ),
+      },
+      {
+        find: "@warden/core/transaction/session-rpc",
+        replacement: fileURLToPath(
+          new URL(
+            "../../packages/core/src/transaction/session-rpc.ts",
+            import.meta.url,
+          ),
+        ),
+      },
+      {
         find: "@warden/core/transaction/session-intent",
         replacement: fileURLToPath(
           new URL(

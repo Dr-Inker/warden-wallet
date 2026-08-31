@@ -142,7 +142,7 @@ function compositionOptions(
 }
 
 describe("chain-bound session blockhash RPC", () => {
-  it("ships only as a separate opt-in subpath and remains absent from extension source", () => {
+  it("ships only as a separate opt-in subpath and enters extension source only as a fenced C13 type", () => {
     const packageJson = JSON.parse(
       readFileSync(resolve(import.meta.dirname, "../package.json"), "utf8"),
     ) as { exports: Record<string, { import: string; types: string }> };
@@ -156,14 +156,24 @@ describe("chain-bound session blockhash RPC", () => {
         "utf8",
       ),
     ).not.toContain("session-rpc");
-    const extensionSource = readTypeScriptTree(
-      resolve(import.meta.dirname, "../../../apps/extension/src"),
+    const extensionDirectory = resolve(
+      import.meta.dirname,
+      "../../../apps/extension/src",
     );
-    expect(extensionSource).not.toContain("session-rpc");
-    expect(extensionSource).not.toContain(
+    const selectionSource = readFileSync(
+      resolve(extensionDirectory, "background/provider-approval-selection.ts"),
+      "utf8",
+    );
+    expect(selectionSource).toContain(
+      'import type { SessionApprovalReleasePins } from "@warden/core/transaction/session-rpc"',
+    );
+    const extensionSourceWithoutSelection = readTypeScriptTree(extensionDirectory)
+      .replace(selectionSource, "");
+    expect(extensionSourceWithoutSelection).not.toContain("session-rpc");
+    expect(extensionSourceWithoutSelection).not.toContain(
       "ConnectionSessionApprovalBlockhashClient",
     );
-    expect(extensionSource).not.toContain(
+    expect(extensionSourceWithoutSelection).not.toContain(
       "createPinnedSessionApprovalCoordinator",
     );
   });

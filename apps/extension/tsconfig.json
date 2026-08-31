@@ -8,6 +8,9 @@
       "@warden/core/approval": ["../../packages/core/src/approval/index.ts"],
       "@warden/core/constants": ["../../packages/core/src/constants.ts"],
       "@warden/core/keyring": ["../../packages/core/src/keyring/index.ts"],
+      "@warden/core/transaction/session-approval": ["../../packages/core/src/transaction/session-approval-coordinator.ts"],
+      "@warden/core/transaction/session-release": ["../../packages/core/src/transaction/session-release.ts"],
+      "@warden/core/transaction/session-rpc": ["../../packages/core/src/transaction/session-rpc.ts"],
       "@warden/core/transaction/session-intent": ["../../packages/core/src/transaction/session-intent.ts"]
     },
     "types": ["node"]

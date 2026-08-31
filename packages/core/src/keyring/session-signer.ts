@@ -9,6 +9,8 @@
 //! These helpers copy on both sides. Callers still own zeroization of every
 //! secret copy; JavaScript zeroization remains best effort.
 
+import { ed25519 } from "@noble/curves/ed25519.js";
+
 import { KeyringFormatError } from "./errors.js";
 
 /** Plaintext-layout version bound into {@link KeyringContext.schemaVersion}. */
@@ -36,4 +38,20 @@ export function encodeSessionSignerPayload(seed: Uint8Array): Uint8Array {
 /** Strictly decode schema v1 and return an isolated caller-owned seed copy. */
 export function decodeSessionSignerPayload(plaintext: Uint8Array): Uint8Array {
   return copySeed(plaintext, "session-signer plaintext");
+}
+
+/**
+ * Derive only the public Ed25519 identity from an isolated seed copy.
+ *
+ * This is deliberately colocated with the encrypted payload schema so callers
+ * do not expand a Solana `Keypair` and accidentally retain its redundant
+ * 64-byte secret-key representation merely to select public account context.
+ */
+export function deriveSessionSignerPublicKey(seedValue: Uint8Array): Uint8Array {
+  const seed = copySeed(seedValue, "session-signer seed");
+  try {
+    return Uint8Array.from(ed25519.getPublicKey(seed));
+  } finally {
+    seed.fill(0);
+  }
 }

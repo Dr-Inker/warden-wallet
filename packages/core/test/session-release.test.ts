@@ -223,7 +223,7 @@ describe("repository-bound session release statements", () => {
     ).toBe(false);
   });
 
-  it("ships only as a separate opt-in subpath and remains absent from extension source", () => {
+  it("ships only as a separate opt-in subpath and enters extension source only through the fenced C13 resolver", () => {
     const packageJson = JSON.parse(
       readFileSync(resolve(import.meta.dirname, "../package.json"), "utf8"),
     ) as { exports: Record<string, { import: string; types: string }> };
@@ -237,14 +237,34 @@ describe("repository-bound session release statements", () => {
         "utf8",
       ),
     ).not.toContain("session-release");
-    const extensionSource = readTypeScriptTree(
-      resolve(import.meta.dirname, "../../../apps/extension/src"),
+    const extensionDirectory = resolve(
+      import.meta.dirname,
+      "../../../apps/extension/src",
     );
-    expect(extensionSource).not.toContain("session-release");
-    expect(extensionSource).not.toContain(
+    const selectionPath = resolve(
+      extensionDirectory,
+      "background/provider-approval-selection.ts",
+    );
+    const selectionSource = readFileSync(selectionPath, "utf8");
+    expect(selectionSource).toContain("@warden/core/transaction/session-release");
+    expect(selectionSource).toContain(
       "createCommittedSessionApprovalCoordinator",
     );
-    expect(extensionSource).not.toContain("resolveCommittedSessionRelease");
+    expect(selectionSource).toContain("resolveCommittedSessionRelease");
+    const extensionSourceWithoutSelection = readTypeScriptTree(extensionDirectory)
+      .replace(selectionSource, "");
+    expect(extensionSourceWithoutSelection).not.toContain("session-release");
+    expect(extensionSourceWithoutSelection).not.toContain(
+      "createCommittedSessionApprovalCoordinator",
+    );
+    expect(extensionSourceWithoutSelection).not.toContain(
+      "resolveCommittedSessionRelease",
+    );
+    const buildSource = readFileSync(
+      resolve(extensionDirectory, "../scripts/build.mjs"),
+      "utf8",
+    );
+    expect(buildSource).toContain("provider-approval-selection.ts");
   });
 
   it("parses one exact in-toto-shaped statement into immutable primitive fields", () => {
