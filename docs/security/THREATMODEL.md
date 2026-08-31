@@ -2765,3 +2765,16 @@ is injected or registered with Wallet Standard; there is no onboarding,
 account/release registry, send/confirm path, production KDF policy, browser-
 crash/disk-failure claim, published-artifact assurance, external audit, or real
 funds exercise. Production remains fixed unavailable.
+
+Ledger-inclusive full-repository evidence belongs to
+`53c692344c3bbc9c91f6768be70b9f3a454e3614` only. From a clean tree, the exact
+command in `docs/NEXT-SESSION.md` ran `.claude/test-gate.sh`, scanned the emitted
+extension for the C23 database/password/memo/release/fixture/signer markers,
+checked the diff, and guarded the SHA and worktree on both sides. It exited
+**0** and printed the same SHA before and after. It covered core **700/700**,
+extension **473/473**, UI tokens **11/11**, transaction-budget **8/8**,
+WebAuthn **1/1**, Chromium **10/10**, builds/typechecks, the production Argon2
+benchmark, repository guards, and the complete Rust workspace suite. The
+artifact scan was empty. Known Anchor test-program key and legacy macro-`cfg`
+warnings were non-fatal. The evidence-only ledger commit recording this result
+does not inherit the verdict or promote an invariant.

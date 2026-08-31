@@ -109,6 +109,32 @@
 > central router. After restart safety, commit the production RPC/release/KDF
 > decision and prove single-evaluation MAIN-world Wallet Standard registration.
 >
+> ### C23 full-gate addendum — 53c6923 — 2026-08-31
+>
+> Ledger-inclusive SHA
+> `53c692344c3bbc9c91f6768be70b9f3a454e3614` passed this exact command from a
+> clean tree, exit **0**, and printed the same SHA before and after:
+>
+> ```sh
+> set -euo pipefail
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh
+> test -z "$(rg -n 'C23 exact-byte|C23 browser-only password|warden-provider-sign-success|warden-authority-resolver-fixture|EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG|Bow1CGKGDB9mNxeWdw85E2aCthQ1oZX4oFEe7fYT17ew' apps/extension/dist || true)"
+> git diff --check
+> git rev-parse HEAD
+> test -z "$(git status --porcelain)"
+> ```
+>
+> The executable gate passed core **700/700**, UI tokens **11/11**,
+> transaction-budget **8/8**, WebAuthn **1/1**, extension **473/473**,
+> core/extension builds and typechecks, the production Argon2 benchmark, real
+> Chromium **10/10**, and the complete Rust workspace suite. The explicit
+> artifact scan found no C23 database, password, memo, release, fixture-code, or
+> signer markers in `apps/extension/dist`. Known Anchor test-program key and
+> legacy macro-`cfg` warnings were non-fatal. This verdict belongs only to the
+> exact SHA above; this documentation-only addendum commit does not inherit it.
+>
 > ## 2026-08-31 C22 IMMUTABLE DEADLINE + DELIVERY SETTLEMENT — INTERNAL ONLY, PRODUCTION PROVIDER STILL UNAVAILABLE
 >
 > Implementation commit
