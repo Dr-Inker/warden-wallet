@@ -16,10 +16,12 @@ export const RELEASE_RECIPE_INPUT_PATHS = Object.freeze([
   "apps/extension/scripts/release-artifact.mjs",
   "apps/extension/scripts/release-recipe-input-evidence.mjs",
   "apps/extension/scripts/release-source-tag.mjs",
+  "apps/extension/scripts/reviewed-artifact-signature.mjs",
   "apps/extension/scripts/static-input-evidence.mjs",
   "apps/extension/scripts/store-package.mjs",
   "apps/extension/scripts/verify-release-source-tag.mjs",
   "apps/extension/scripts/verify-release.mjs",
+  "apps/extension/scripts/verify-reviewed-artifact-signature.mjs",
   "apps/extension/scripts/verify-store-package.mjs",
   "package.json",
   "packages/core/package.json",
@@ -29,7 +31,7 @@ export const RELEASE_RECIPE_INPUT_PATHS = Object.freeze([
 
 const SCOPE = Object.freeze({
   type: "extension-release-recipe-repository-inputs",
-  inputCoverage: "nineteen-reviewed-non-payload-files-only",
+  inputCoverage: "twenty-one-reviewed-non-payload-files-only",
   executableCoverage: "not-asserted",
   runtimeEnvironmentCoverage: "not-asserted",
 });
@@ -85,7 +87,7 @@ function normalizeInputPaths(inputPaths) {
   }
   const normalized = [...inputPaths].sort(compareUtf8);
   if (JSON.stringify(normalized) !== JSON.stringify(RELEASE_RECIPE_INPUT_PATHS)) {
-    fail("input paths must contain exactly the nineteen reviewed release recipe files");
+    fail("input paths must contain exactly the twenty-one reviewed release recipe files");
   }
   return normalized;
 }
@@ -122,7 +124,7 @@ function assertEvidenceShape(evidence) {
   }
   assertHash(evidence.artifact.archiveSha256, "evidence archiveSha256");
   if (!Array.isArray(evidence.inputs) || evidence.inputs.length !== RELEASE_RECIPE_INPUT_PATHS.length) {
-    fail("evidence must contain exactly nineteen release recipe inputs");
+    fail("evidence must contain exactly twenty-one release recipe inputs");
   }
   for (let index = 0; index < RELEASE_RECIPE_INPUT_PATHS.length; index += 1) {
     const input = evidence.inputs[index];

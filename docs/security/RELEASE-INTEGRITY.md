@@ -44,12 +44,12 @@ zero-byte counts, and each output's byte length and hash. The static sidecar
 records source/output byte lengths and hashes for `approval.css`,
 `approval.html`, `manifest.json`, and `popup.html`, distinguishing three exact
 byte copies from the manifest's JSON parse/two-space/newline serialization. The
-recipe sidecar records exact byte lengths and SHA-256 hashes for the 19 reviewed
+recipe sidecar records exact byte lengths and SHA-256 hashes for the 21 reviewed
 non-payload files that declare the install/release path: `.node-version`,
 `.npmrc`, both root/workspace pnpm configuration files, root/extension/core
 package manifests, the upload package/verification modules, the CRX3
-store-package comparison modules, and the signed release-source verifier and
-its CLI. The verifier
+store-package comparison modules, the signed release-source verifier, and the
+reviewed-artifact detached-signature verifier plus their CLIs. The verifier
 independently asks `unzip -t` to parse the archive and then fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
@@ -126,6 +126,44 @@ the production tag/object/fingerprint, authenticate the external anchor for
 the unsigned artifact JSON,
 attest the Git or GnuPG executables, or supply a second independent builder.
 Its ephemeral test key and repository therefore do not promote `WRD-REL-01`.
+
+### Reviewed artifact detached signature (C6 partial; fixture-only)
+
+`GNUPGHOME=/path/to/artifact-review-keyring pnpm --filter @warden/extension
+release:verify-artifact-signature -- <reviewed-artifact.json>
+<detached-signature> <expected-primary-fingerprint>` authenticates the exact
+artifact-manifest bytes before parsing them. The artifact path, signature path,
+complete primary OpenPGP fingerprint, and absolute verification keyring are all
+caller-controlled inputs; none is adopted from the candidate.
+
+The CLI refuses non-regular/symlink inputs, caps the artifact at **8 MiB** and
+signature at **1 MiB**, reads each once, and rejects size drift. The verifier
+places those exact in-memory bytes in mode-0600 files under a private temporary
+directory and invokes absolute `/usr/bin/gpg` with `--no-options`, `--batch`,
+`--no-tty`, `--no-auto-key-import`, `--no-auto-key-retrieve`, an empty automatic
+key-location list, `--status-fd=1`, and explicit detached-signature and data
+filenames. It requires exactly one `NEWSIG`, terminal `GOODSIG`, and
+cryptographic `VALIDSIG`, cross-checks signing identity, and binds the reported
+primary fingerprint to the full independent value. Bad, expired, revoked,
+missing-key, duplicate/multi-signature, malformed, trailing, wrong-artifact,
+or wrong-fingerprint results fail closed. Temporary files are removed on
+success and failure; GnuPG may still maintain state inside the explicitly
+selected caller keyring.
+
+The contract follows GnuPG's primary
+[`--verify` documentation](https://gnupg.org/documentation/manuals/gnupg/Operational-GPG-Commands.html),
+which recommends explicitly naming both detached signature and data file,
+its [`--status-fd` unattended-use guidance](https://www.gnupg.org/documentation/manuals/gnupg/Unattended-Usage-of-GPG.html),
+and documented
+[`--no-auto-key-retrieve` behavior](https://gnupg.org/documentation/manuals/gnupg/GPG-Configuration-Options.html),
+checked 2026-09-01 against installed GnuPG 2.4.4.
+
+This is an executable review-anchor precondition, not a real review anchor or
+provenance claim. No production artifact was signed, no production review key
+or reviewer authority was selected, and no key ceremony, rotation/revocation
+workflow, host attestation, transparency log, or independent build exists.
+Only ephemeral fixture keys and bytes have passed, so `WRD-REL-01` remains
+`unimplemented`.
 
 ### Store-returned CRX3 verifier (C6 partial; fixture-only)
 

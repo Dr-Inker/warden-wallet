@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   parseAnnotatedTagObject,
-  parseGitVerifyTagStatus,
+  parseSingleOpenPgpSignatureStatus,
   verifyReleaseSourceTag,
 } from "../scripts/release-source-tag.mjs";
 
@@ -226,26 +226,26 @@ describe("release source annotated-tag verification", () => {
       "[GNUPG:] FUTURE_STATUS ignored-for-forward-compatibility",
       "",
     ].join("\n");
-    expect(parseGitVerifyTagStatus(validStatus, primary)).toEqual({
+    expect(parseSingleOpenPgpSignatureStatus(validStatus, primary)).toEqual({
       signingFingerprint: signing,
       primaryFingerprint: primary,
     });
-    expect(() => parseGitVerifyTagStatus(
+    expect(() => parseSingleOpenPgpSignatureStatus(
       validStatus.replace("[GNUPG:] TRUST_UNDEFINED", "[GNUPG:] NEWSIG\n[GNUPG:] TRUST_UNDEFINED"),
       primary,
     )).toThrow(/exactly one signature/);
-    expect(() => parseGitVerifyTagStatus(
+    expect(() => parseSingleOpenPgpSignatureStatus(
       validStatus.replace("[GNUPG:] GOODSIG", "[GNUPG:] EXPKEYSIG"),
       primary,
     )).toThrow(/EXPKEYSIG/);
-    expect(() => parseGitVerifyTagStatus(
+    expect(() => parseSingleOpenPgpSignatureStatus(
       validStatus.replace(
         "[GNUPG:] TRUST_UNDEFINED",
         `[GNUPG:] VALIDSIG ${signing} 2026-09-01 1788220800 0 4 0 22 8 00 ${primary}\n[GNUPG:] TRUST_UNDEFINED`,
       ),
       primary,
     )).toThrow(/exactly one cryptographic VALIDSIG/);
-    expect(() => parseGitVerifyTagStatus(
+    expect(() => parseSingleOpenPgpSignatureStatus(
       validStatus.replace(
         `[GNUPG:] GOODSIG ${"C".repeat(16)} Warden%20fixture`,
         `[GNUPG:] ERRSIG ${"C".repeat(16)} 22 8 00 1788220800 9 ${signing}\n[GNUPG:] NO_PUBKEY ${"C".repeat(16)}`,

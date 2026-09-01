@@ -40,7 +40,7 @@ under `apps/extension/release/`:
   lengths/hashes and distinguishes the three exact byte copies from
   `manifest.json`'s JSON parse/two-space/newline serialization; and
 - `warden-extension-<version>.recipe-inputs.json`, a canonical byte/hash map of
-  the exact 19 reviewed non-payload repository files that declare the install
+  the exact 21 reviewed non-payload repository files that declare the install
   and release recipe: root/workspace configuration, the extension/core package
   manifests, and every release module. It explicitly does not attest installed
   executables, runtime behavior, the OS, or the environment.
@@ -113,6 +113,38 @@ absolute caller-controlled GnuPG home. The command does not create a key or
 tag, choose production identities, authenticate the unsigned artifact
 manifest's external review anchor, or prove an independent builder.
 Fixture-only temporary repositories and keys do not promote `WRD-REL-01`.
+
+## Reviewed artifact detached-signature precondition
+
+After an independent reviewer signs the exact canonical artifact-manifest
+bytes with an owner-approved review key, verify that detached signature with:
+
+```sh
+GNUPGHOME=/path/to/artifact-review-keyring \
+  pnpm --filter @warden/extension release:verify-artifact-signature -- \
+  /path/to/reviewed.artifact.json /path/to/reviewed.artifact.json.sig \
+  <expected-primary-fingerprint>
+```
+
+All three inputs are explicit. The command rejects symlinks and bounds the
+artifact manifest to 8 MiB and detached signature to 1 MiB, copies their exact
+bytes to a private temporary directory, and invokes absolute `/usr/bin/gpg`
+with no options file, no prompts, no automatic key import/retrieval, and both
+the signature and data filenames. It applies the same strict one-signature
+`NEWSIG`/`GOODSIG`/`VALIDSIG` and full-primary-fingerprint checks as the signed
+source lane, then parses the already authenticated artifact bytes under the
+canonical artifact schema. Temporary files are removed on success or failure.
+
+This follows GnuPG's primary
+[`--verify` detached-signature contract](https://gnupg.org/documentation/manuals/gnupg/Operational-GPG-Commands.html),
+[`--status-fd` unattended-use guidance](https://www.gnupg.org/documentation/manuals/gnupg/Unattended-Usage-of-GPG.html),
+and documented
+[`--no-auto-key-retrieve` behavior](https://gnupg.org/documentation/manuals/gnupg/GPG-Configuration-Options.html).
+The command authenticates bytes only after the owner has independently chosen
+and provisioned the review key. It does not sign anything, establish reviewer
+authority, provide a key ceremony/rotation policy, attest the verifier host, or
+prove how the artifact was built. Ephemeral fixture signatures are not a real
+review anchor or provenance statement and do not promote `WRD-REL-01`.
 
 ## Web-Store-returned CRX3 comparison
 

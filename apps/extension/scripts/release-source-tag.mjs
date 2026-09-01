@@ -32,13 +32,17 @@ function fail(message) {
   throw new Error(`extension release source tag: ${message}`);
 }
 
-function normalizeFingerprint(value, label) {
+function openPgpFail(message) {
+  throw new Error(`OpenPGP verification: ${message}`);
+}
+
+export function normalizeOpenPgpFingerprint(value, label) {
   if (typeof value !== "string" || value !== value.trim()) {
-    fail(`${label} must be an unspaced full OpenPGP fingerprint`);
+    openPgpFail(`${label} must be an unspaced full OpenPGP fingerprint`);
   }
   const normalized = value.toUpperCase();
   if (!FINGERPRINT_PATTERN.test(normalized)) {
-    fail(`${label} must be a 40- or 64-character full OpenPGP fingerprint`);
+    openPgpFail(`${label} must be a 40- or 64-character full OpenPGP fingerprint`);
   }
   return normalized;
 }
@@ -53,11 +57,11 @@ function countStatus(statuses, keyword) {
   return statuses.filter((status) => status.keyword === keyword).length;
 }
 
-export function parseGitVerifyTagStatus(statusText, expectedSignerFingerprint) {
+export function parseSingleOpenPgpSignatureStatus(statusText, expectedSignerFingerprint) {
   if (typeof statusText !== "string") {
-    fail("Git verification status must be text");
+    openPgpFail("machine status must be text");
   }
-  const expectedPrimaryFingerprint = normalizeFingerprint(
+  const expectedPrimaryFingerprint = normalizeOpenPgpFingerprint(
     expectedSignerFingerprint,
     "expected signer fingerprint",
   );
@@ -68,50 +72,50 @@ export function parseGitVerifyTagStatus(statusText, expectedSignerFingerprint) {
     }
     const prefix = "[GNUPG:] ";
     if (!line.startsWith(prefix)) {
-      fail("git verify-tag --raw emitted non-status output");
+      openPgpFail("machine-status channel emitted non-status output");
     }
     const status = line.slice(prefix.length);
     const separator = status.indexOf(" ");
     const keyword = separator === -1 ? status : status.slice(0, separator);
     const argumentsText = separator === -1 ? "" : status.slice(separator + 1);
     if (!/^[A-Z][A-Z0-9_]*$/.test(keyword)) {
-      fail("GnuPG emitted an invalid status keyword");
+      openPgpFail("GnuPG emitted an invalid status keyword");
     }
     statuses.push({ keyword, argumentsText });
   }
   if (statuses.length === 0) {
-    fail("git verify-tag --raw emitted no GnuPG status");
+    openPgpFail("GnuPG emitted no machine status");
   }
   const refused = statuses.find((status) => REFUSAL_STATUSES.has(status.keyword));
   if (refused) {
-    fail(`GnuPG refused the tag signature with ${refused.keyword}`);
+    openPgpFail(`GnuPG refused the signature with ${refused.keyword}`);
   }
   if (countStatus(statuses, "NEWSIG") !== 1) {
-    fail("GnuPG status must describe exactly one signature");
+    openPgpFail("GnuPG status must describe exactly one signature");
   }
   const terminalStatuses = statuses.filter((status) =>
     TERMINAL_SIGNATURE_STATUSES.has(status.keyword));
   if (terminalStatuses.length !== 1 || terminalStatuses[0].keyword !== "GOODSIG") {
-    fail("GnuPG status must contain exactly one successful signature result");
+    openPgpFail("GnuPG status must contain exactly one successful signature result");
   }
   const validSignatures = statuses.filter((status) => status.keyword === "VALIDSIG");
   if (validSignatures.length !== 1) {
-    fail("GnuPG status must contain exactly one cryptographic VALIDSIG result");
+    openPgpFail("GnuPG status must contain exactly one cryptographic VALIDSIG result");
   }
   const validArguments = validSignatures[0].argumentsText.split(" ").filter(Boolean);
   if (validArguments.length < 9) {
-    fail("GnuPG VALIDSIG status is truncated");
+    openPgpFail("GnuPG VALIDSIG status is truncated");
   }
-  const signingFingerprint = normalizeFingerprint(
+  const signingFingerprint = normalizeOpenPgpFingerprint(
     validArguments[0],
     "VALIDSIG signing fingerprint",
   );
-  const primaryFingerprint = normalizeFingerprint(
+  const primaryFingerprint = normalizeOpenPgpFingerprint(
     validArguments[9] ?? signingFingerprint,
     "VALIDSIG primary fingerprint",
   );
   if (primaryFingerprint !== expectedPrimaryFingerprint) {
-    fail("VALIDSIG primary fingerprint differs from the independently supplied signer");
+    openPgpFail("VALIDSIG primary fingerprint differs from the independently supplied signer");
   }
   const goodSignatureIdentity = terminalStatuses[0].argumentsText.split(" ")[0]?.toUpperCase();
   if (
@@ -119,7 +123,7 @@ export function parseGitVerifyTagStatus(statusText, expectedSignerFingerprint) {
     !/^[0-9A-F]{16,64}$/.test(goodSignatureIdentity) ||
     !signingFingerprint.endsWith(goodSignatureIdentity)
   ) {
-    fail("GOODSIG identity differs from the VALIDSIG signing fingerprint");
+    openPgpFail("GOODSIG identity differs from the VALIDSIG signing fingerprint");
   }
   return {
     signingFingerprint,
@@ -172,7 +176,7 @@ function verificationEnvironment(gnupgHome) {
   return sanitized;
 }
 
-async function requireGnuPgHome(environment) {
+export async function requireExplicitGnuPgHome(environment) {
   const gnupgHome = (environment ?? process.env).GNUPGHOME;
   if (
     typeof gnupgHome !== "string" ||
@@ -180,17 +184,17 @@ async function requireGnuPgHome(environment) {
     gnupgHome !== gnupgHome.trim() ||
     !isAbsolute(gnupgHome)
   ) {
-    fail("GNUPGHOME must explicitly select an existing absolute verification keyring directory");
+    openPgpFail("GNUPGHOME must explicitly select an existing absolute verification keyring directory");
   }
   let metadata;
   let canonicalHome;
   try {
     [metadata, canonicalHome] = await Promise.all([stat(gnupgHome), realpath(gnupgHome)]);
   } catch (error) {
-    fail(`GNUPGHOME is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    openPgpFail(`GNUPGHOME is unavailable: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!metadata.isDirectory()) {
-    fail("GNUPGHOME must select a directory");
+    openPgpFail("GNUPGHOME must select a directory");
   }
   return canonicalHome;
 }
@@ -288,13 +292,13 @@ export async function verifyReleaseSourceTag({
     fail("selected tag name is invalid");
   }
   assertFullSha1(expectedTagObject, "expected tag object");
-  const expectedPrimaryFingerprint = normalizeFingerprint(
+  const expectedPrimaryFingerprint = normalizeOpenPgpFingerprint(
     expectedSignerFingerprint,
     "expected signer fingerprint",
   );
   const artifactCommit = artifactManifest?.source?.gitCommit;
   assertFullSha1(artifactCommit, "artifact source commit");
-  const gnupgHome = await requireGnuPgHome(environment);
+  const gnupgHome = await requireExplicitGnuPgHome(environment);
   const gitOptions = {
     repositoryRoot,
     environment: verificationEnvironment(gnupgHome),
@@ -356,7 +360,7 @@ export async function verifyReleaseSourceTag({
   if (verification.stdout !== "") {
     fail("git verify-tag --raw unexpectedly emitted stdout");
   }
-  const signature = parseGitVerifyTagStatus(
+  const signature = parseSingleOpenPgpSignatureStatus(
     verification.stderr,
     expectedPrimaryFingerprint,
   );

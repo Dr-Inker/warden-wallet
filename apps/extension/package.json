@@ -10,6 +10,7 @@
     "release:verify": "node scripts/verify-release.mjs",
     "release:gate": "pnpm run release:package && pnpm run release:verify",
     "release:dual-local": "node ../../scripts/local-dual-extension-release.mjs",
+    "release:verify-artifact-signature": "node scripts/verify-reviewed-artifact-signature.mjs",
     "release:verify-source-tag": "node scripts/verify-release-source-tag.mjs",
     "release:verify-store": "node scripts/verify-store-package.mjs",
     "test": "vitest run",
