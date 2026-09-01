@@ -49,12 +49,13 @@ The verifier reparses the ZIP under a deliberately strict canonical grammar,
 compares every file and release-policy field, checks the normalized unpacked
 tree, verifies both directions of the ZIP/evidence/manifest binding, and runs
 `unzip -t` as an independent format reader over a private temporary copy of the
-same stable-read archive bytes. It keeps the copy open, unlinks its filename,
-passes only the live procfs descriptor path to Info-ZIP, then positionally
-rereads the live descriptor and requires its length and every byte to remain
-identical after Info-ZIP exits. It closes/removes the descriptor and directory
-on success or failure and never reopens the operator-supplied archive path. To
-compare another canonical
+same stable-read archive bytes. It opens and verifies a same-inode read-only
+handle after syncing the exclusive construction writer, closes the writer,
+unlinks the filename, and passes only the live read-descriptor path to Info-ZIP.
+It then positionally rereads the live descriptor and requires its length and
+every byte to remain identical after Info-ZIP exits. It closes/removes both
+handles and the directory on success or failure and never reopens the operator-
+supplied archive path. To compare another canonical
 upload ZIP and all four evidence sidecars against an already reviewed artifact
 manifest:
 

@@ -52,13 +52,17 @@ store-package comparison modules, the signed release-source verifier, and the
 reviewed-artifact detached-signature verifier plus their CLIs, and the one
 shared public-release-CLI argument normalizer. The verifier
 independently asks `unzip -t` to parse a private temporary copy of the same
-stable-read archive bytes. It keeps that file open, removes its filesystem name,
-passes only the live procfs descriptor path to Info-ZIP, and after Info-ZIP
-exits it positionally rereads that same handle in bounded chunks and requires
-the exact original length and bytes. It closes/removes the descriptor and
-directory on success or failure and never reopens the operator-supplied archive
-path. This detects a completed parser-side rewrite; it does not establish trust
-against a hostile process racing the comparison. It then fail-closes on
+stable-read archive bytes. It opens and verifies a same-inode `O_RDONLY` handle
+after syncing the exclusive construction writer, closes the writer, removes the
+filesystem name, and passes only the live read-descriptor path to Info-ZIP.
+After Info-ZIP exits it positionally rereads that same handle in bounded chunks
+and requires the exact original length and bytes. It closes/removes both handles
+and the directory on success or failure and never reopens the operator-supplied
+archive path. This
+is least privilege for the file description handed to the parser and detects a
+completed parser-side rewrite; it does not establish trust against a hostile
+process reopening procfs with greater rights or racing the comparison. It then
+fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
 payload-tree hash, whole-ZIP hash, sidecar-byte hash, source binding, archive

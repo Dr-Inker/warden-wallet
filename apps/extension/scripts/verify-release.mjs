@@ -71,12 +71,13 @@ async function assertTemporaryArchiveUnchanged(
 
 async function verifyArchiveWithInfoZip(archiveBytes) {
   let temporaryDirectory;
-  let temporaryArchiveHandle;
+  let temporaryArchiveReadHandle;
+  let temporaryArchiveWriteHandle;
   let validationError;
   try {
     temporaryDirectory = await mkdtemp(join(tmpdir(), "warden-release-unzip-"));
     const temporaryArchivePath = join(temporaryDirectory, "archive.zip");
-    temporaryArchiveHandle = await open(
+    temporaryArchiveWriteHandle = await open(
       temporaryArchivePath,
       fsConstants.O_CREAT |
         fsConstants.O_EXCL |
@@ -84,28 +85,50 @@ async function verifyArchiveWithInfoZip(archiveBytes) {
         fsConstants.O_NOFOLLOW,
       0o600,
     );
-    await temporaryArchiveHandle.writeFile(archiveBytes);
-    const written = await temporaryArchiveHandle.stat({ bigint: true });
+    await temporaryArchiveWriteHandle.writeFile(archiveBytes);
+    const written = await temporaryArchiveWriteHandle.stat({ bigint: true });
     if (!written.isFile() || written.size !== BigInt(archiveBytes.length)) {
       throw new Error("temporary archive byte count differs from the stable archive");
     }
-    await temporaryArchiveHandle.sync();
+    await temporaryArchiveWriteHandle.sync();
+    temporaryArchiveReadHandle = await open(
+      temporaryArchivePath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+    const readable = await temporaryArchiveReadHandle.stat({ bigint: true });
+    if (
+      !readable.isFile() ||
+      readable.dev !== written.dev ||
+      readable.ino !== written.ino ||
+      readable.size !== written.size
+    ) {
+      throw new Error("temporary archive read handle differs from the synced writer");
+    }
+    await temporaryArchiveWriteHandle.close();
+    temporaryArchiveWriteHandle = undefined;
     await unlink(temporaryArchivePath);
-    const descriptorPath = `/proc/${process.pid}/fd/${temporaryArchiveHandle.fd}`;
+    const descriptorPath = `/proc/${process.pid}/fd/${temporaryArchiveReadHandle.fd}`;
     await execFile("unzip", ["-t", descriptorPath], {
       encoding: "utf8",
       maxBuffer: 4 * 1024 * 1024,
     });
-    await assertTemporaryArchiveUnchanged(temporaryArchiveHandle, archiveBytes);
+    await assertTemporaryArchiveUnchanged(temporaryArchiveReadHandle, archiveBytes);
   } catch (error) {
     validationError = error;
   }
   let cleanupError;
-  if (temporaryArchiveHandle !== undefined) {
+  if (temporaryArchiveReadHandle !== undefined) {
     try {
-      await temporaryArchiveHandle.close();
+      await temporaryArchiveReadHandle.close();
     } catch (error) {
       cleanupError = error;
+    }
+  }
+  if (temporaryArchiveWriteHandle !== undefined) {
+    try {
+      await temporaryArchiveWriteHandle.close();
+    } catch (error) {
+      cleanupError ??= error;
     }
   }
   if (temporaryDirectory !== undefined) {
