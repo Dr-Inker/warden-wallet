@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -84,6 +84,7 @@ async function fixture() {
     artifactManifestPath,
     candidateBytes,
     candidatePath,
+    directory,
     reviewedArchivePath,
   };
 }
@@ -109,6 +110,22 @@ afterEach(async () => {
 });
 
 describe("standalone store-package CLI", () => {
+  it("rejects a final candidate symlink before digest or CRX handling", async () => {
+    const created = await fixture();
+    const candidateSymlinkPath = join(created.directory, "candidate-link.crx");
+    await symlink(created.candidatePath, candidateSymlinkPath);
+
+    const output = await rejectedOutput([
+      candidateSymlinkPath,
+      sha256(created.candidateBytes),
+      "a".repeat(32),
+      created.reviewedArchivePath,
+      created.artifactManifestPath,
+    ]);
+    expect(output).toMatch(/could not be opened as a non-symlink regular file/);
+    expect(output).not.toMatch(/CRX3 magic/);
+  });
+
   it("requires and checks an independent exact CRX digest before parsing", async () => {
     const created = await fixture();
     const commonArgs = [
