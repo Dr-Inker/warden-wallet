@@ -26,9 +26,47 @@ const execFile = promisify(execFileCallback);
 const MAX_UPLOAD_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_UPLOAD_ARTIFACT_MANIFEST_BYTES = 8 * 1024 * 1024;
 const MAX_UPLOAD_EVIDENCE_BYTES = 256 * 1024 * 1024;
+const TEMPORARY_ARCHIVE_COMPARE_CHUNK_BYTES = 64 * 1024;
+const TEMPORARY_ARCHIVE_CHANGED_MESSAGE =
+  "temporary archive bytes changed during independent unzip -t validation";
 
 function fail(message) {
   throw new Error(`extension release verify: ${message}`);
+}
+
+async function assertTemporaryArchiveUnchanged(
+  temporaryArchiveHandle,
+  archiveBytes,
+) {
+  const current = await temporaryArchiveHandle.stat({ bigint: true });
+  if (!current.isFile() || current.size !== BigInt(archiveBytes.length)) {
+    throw new Error(TEMPORARY_ARCHIVE_CHANGED_MESSAGE);
+  }
+  const comparisonBuffer = Buffer.allocUnsafe(
+    Math.min(TEMPORARY_ARCHIVE_COMPARE_CHUNK_BYTES, archiveBytes.length),
+  );
+  for (let offset = 0; offset < archiveBytes.length;) {
+    const length = Math.min(comparisonBuffer.length, archiveBytes.length - offset);
+    let bytesRead = 0;
+    while (bytesRead < length) {
+      const result = await temporaryArchiveHandle.read(
+        comparisonBuffer,
+        bytesRead,
+        length - bytesRead,
+        offset + bytesRead,
+      );
+      if (result.bytesRead === 0) {
+        throw new Error(TEMPORARY_ARCHIVE_CHANGED_MESSAGE);
+      }
+      bytesRead += result.bytesRead;
+    }
+    if (!comparisonBuffer
+      .subarray(0, length)
+      .equals(archiveBytes.subarray(offset, offset + length))) {
+      throw new Error(TEMPORARY_ARCHIVE_CHANGED_MESSAGE);
+    }
+    offset += length;
+  }
 }
 
 async function verifyArchiveWithInfoZip(archiveBytes) {
@@ -58,6 +96,7 @@ async function verifyArchiveWithInfoZip(archiveBytes) {
       encoding: "utf8",
       maxBuffer: 4 * 1024 * 1024,
     });
+    await assertTemporaryArchiveUnchanged(temporaryArchiveHandle, archiveBytes);
   } catch (error) {
     validationError = error;
   }

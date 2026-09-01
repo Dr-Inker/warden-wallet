@@ -53,9 +53,12 @@ reviewed-artifact detached-signature verifier plus their CLIs, and the one
 shared public-release-CLI argument normalizer. The verifier
 independently asks `unzip -t` to parse a private temporary copy of the same
 stable-read archive bytes. It keeps that file open, removes its filesystem name,
-passes only the live procfs descriptor path to Info-ZIP, and closes/removes the
-descriptor and directory on success or failure; it never reopens the operator-
-supplied archive path. It then fail-closes on
+passes only the live procfs descriptor path to Info-ZIP, and after Info-ZIP
+exits it positionally rereads that same handle in bounded chunks and requires
+the exact original length and bytes. It closes/removes the descriptor and
+directory on success or failure and never reopens the operator-supplied archive
+path. This detects a completed parser-side rewrite; it does not establish trust
+against a hostile process racing the comparison. It then fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
 payload-tree hash, whole-ZIP hash, sidecar-byte hash, source binding, archive
