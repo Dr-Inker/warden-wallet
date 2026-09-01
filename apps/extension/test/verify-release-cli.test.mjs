@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +46,30 @@ afterEach(async () => {
 });
 
 describe("deterministic upload verifier CLI", () => {
+  it("rejects a final-symlink archive before reading later inputs", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
+    temporaryDirectories.push(directory);
+    const archiveTargetPath = join(directory, "archive-target.zip");
+    const archiveSymlinkPath = join(directory, "archive-link.zip");
+    const artifactPath = join(directory, "missing.artifact.json");
+    await writeFile(archiveTargetPath, "archive target bytes\n");
+    await symlink(archiveTargetPath, archiveSymlinkPath);
+
+    const output = await rejectedOutput([
+      archiveSymlinkPath,
+      artifactPath,
+      join(directory, "missing.sbom.json"),
+      join(directory, "missing.bundle-inputs.json"),
+      join(directory, "missing.static-inputs.json"),
+      join(directory, "missing.recipe-inputs.json"),
+    ]);
+
+    expect(output).toMatch(
+      /upload archive could not be opened as a non-symlink regular file/,
+    );
+    expect(output).not.toContain(artifactPath);
+  });
+
   it("accepts the documented pnpm argument separator before reading the candidate", async () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
     temporaryDirectories.push(directory);
