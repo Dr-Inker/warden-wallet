@@ -1,5 +1,125 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 C36 STORE-RETURNED CRX3 PAYLOAD VERIFIER — C6 PARTIAL, REAL WEB STORE PACKAGE NOT CLAIMED
+>
+> Implementation commit
+> `d573443506b6e517caad26941a1874119db3a06c` adds an offline,
+> fail-closed CRX3 signature/envelope verifier, bounded content-level embedded
+> ZIP reader, independently supplied expected-extension-id binding, production
+> CLI/package command, focused mutation fixtures, a shared exact-payload
+> comparison seam, and scoped release documentation. The release-recipe record
+> now binds **17** reviewed non-payload files, including both new store-package
+> modules. There was no dependency/lockfile or extension-payload-byte change,
+> Web Store download/upload, deployment, publisher/account action, production
+> extension-id choice, secret, legal ruling, provider-route change, or
+> real-account/funds mutation.
+>
+> Real RED was captured from clean SHA
+> `5fc0a9d4878c7e7211bc1c74bdfb39720e7620de` before implementation:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/store-package.test.mjs
+> ```
+>
+> It exited **1** because `test/store-package.test.mjs` did not exist. At clean
+> implementation SHA `d573443506b6e517caad26941a1874119db3a06c`, this
+> exact command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/store-package.test.mjs test/release-artifact.test.mjs test/release-recipe-input-evidence.test.mjs && pnpm --filter @warden/extension release:gate && if rg -n 'store-package|verify-store-package|release-artifact|release-recipe-input-evidence|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|extension store package' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The focused files passed **26/26** tests. The real upload release gate then
+> measured **8** payload files, **60** production/peer components, **4**
+> JavaScript bundles, **101** positive bundle inputs, **4** static input files,
+> and **17** release-recipe inputs; independent Info-ZIP parsing, emitted
+> tooling exclusion, diff checks, and both clean-tree guards passed.
+>
+> The **11** CRX3/store tests use a cryptographically valid synthetic envelope
+> with an ephemeral RSA developer proof and ECDSA publisher proof. Production
+> code defaults to Chromium's current Chrome Web Store publisher public-key
+> SHA-256
+> `61f7f2a6bfcf74cd0bc1fe2497cc9b04254c658f79f2145392867ea8366367cf`;
+> the fixture passes its own key hash only to the unit API, and a test proves
+> the production default refuses it. Tests verify every proof over the exact
+> `CRX3 SignedData\0` context, signed-header length/data, and embedded archive;
+> require exactly one proof whose public-key hash matches the signed 16-byte CRX
+> id and exactly one required publisher proof; derive/report the extension id;
+> and require a separately supplied expected id rather than trusting the
+> candidate. Wrong magic/version, excessive/truncated header, non-minimal or
+> duplicate protobuf fields, embedded ZIP end-record tokens, absent publisher
+> proof, id mismatch, signature mutation, and trailing archive bytes all fail.
+>
+> The synthetic store ZIP deliberately differs from the reviewed upload ZIP in
+> file order, DEFLATE compression, timestamps, timestamp extras, and mode
+> metadata while preserving exact payload bytes. Both exact and descriptor
+> forms pass. One changed JavaScript byte, changed dependency-produced output,
+> permission addition, CSP relaxation, update URL, missing/extra/duplicate/unsafe
+> path, encryption, ZIP64 sentinel, unknown extra, hidden local byte, and
+> trailing byte all fail. Thus the lane measures content/policy equality rather
+> than incorrectly demanding that store repackaging preserve upload-ZIP bytes.
+>
+> Chromium primary-source mapping was performed against
+> `components/crx_file/crx3.proto` and `crx_verifier.cc` on 2026-09-01,
+> page-reported blobs `b38dd5a77467eabca61f0d1fee461b2a6822df44` and
+> `522a740a4f51363b54a35b808fc2ff8680aeeaea`. The repository docs link those
+> sources and state the exact observed behavior. The implementation caps the
+> CRX at **536,870,912 bytes**, the protobuf header at **262,144 bytes**, proofs
+> at **16**, each unpacked entry at **268,435,456 bytes**, total unpacked bytes
+> at **536,870,912**, and ZIP entries at **4,096**.
+>
+> At the implementation SHA, the store verifier core was **23,465 bytes** with
+> SHA-256
+> `9cb0cd189fbb34e3b189387cc0f3da40bcdf8afe4389bfc60a624618af681c36`;
+> the **4,151-byte** CLI SHA-256 was
+> `6448add08d104da888595d52e3aa995042b4870fd1c87f51a8a24ff6e35bd905`;
+> and the **18,325-byte** focused test SHA-256 was
+> `23293adb472f1433fc910d5cd5bc0a3c8267a2cdde2af18b83170ee1aafc4b34`.
+> The generated artifact, bundle, recipe, dependency, and static sidecar
+> SHA-256 values were respectively
+> `171449cb322a5d29601c5e56d4bf03405b45668325b581cb4354ebcf3b52d21c`,
+> `aed2987aff1f91815ab099afd1ff87b4857fed523f07ab282a031213da3b7eb1`,
+> `45aba62d3304c4da02eac399cb8b6ea4d13859d83837170281f5e253291bf3a5`,
+> `f37e0ae5d39b6fce7ec42775d85c3175cab86055290632668c4a8e32801b5213`,
+> and `8bd7909a87656dd6b954d310a97b5dee268f8568569fec206a5cb18e23549deb`;
+> the **3,597-byte** recipe sidecar now names 17 inputs. ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> From the same clean SHA, this exact command exited **0** and printed the same
+> SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'store-package|verify-store-package|release-artifact|release-recipe-input-evidence|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|extension store package' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **517/517**, typecheck/build passed, the
+> release/store-verification tooling remained absent from `dist`, and
+> diff/clean-tree guards passed.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded. Production provider routing remains fixed unavailable. C36 adds a
+> fixture-proved parser/comparator only.
+>
+> Independent second-model review remains **UNVERIFIED**. A ledger-inclusive
+> full repository, upload release, and dual-rehearsal gate is intentionally
+> deferred until this record is committed; a later pickup memo must cite its
+> exact SHA before calling C36 fully closed.
+>
+> **Harsh residual:** no real Chrome Web Store-returned CRX exists in scope, so
+> the production CLI and pinned Google publisher proof have not run end-to-end.
+> The tool does not download a package, prove its acquisition route, interpret
+> optional `verified_contents`, authenticate the adjacent reviewed manifest,
+> or choose the unresolved production extension id. Its accepted ZIP grammar
+> is deliberately bounded and may fail closed on a legitimate future store
+> packaging variant. Source links point at observed upstream blobs but are not
+> a vendored Chromium conformance suite. There is still no signed release tag,
+> independent builder, provenance signature, publisher-control evidence,
+> off-host run, real store comparison, legal disposition, external audit,
+> deployment, or real-funds evidence.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C35 CLOSED; C36 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
