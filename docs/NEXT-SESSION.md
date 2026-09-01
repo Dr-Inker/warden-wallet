@@ -1,16 +1,16 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C72 CLOSED; NEXT BOUNDED AUDIT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C73 CONTRACT WRITTEN; BEHAVIORAL RED NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** audit the store-package verifier boundary after closed C72 and
->   begin another bounded cycle only if it has a locally executable RED and a
->   material claim narrower than sandboxing or production trust. Do not
->   manufacture local proxies for the remaining external obligations.
+> - **TASK:** implement C73 test-first: prove the standalone store-package CLI's
+>   independent parser runs with its exact private **0700** directory as `cwd`.
+>   Commit the behavioral RED before source changes.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C72 evidence-ledger/full-gated SHA
+> - **BASE:** C72 close SHA
+>   `d36ff2756743662621840bd033e36eaa9bfc422e`; evidence-ledger/full-gated SHA
 >   `bd717bdf19ef9986522e1180cd2c67b8dba96660`; implementation/evidence
 >   `a99054d5c5b51a30d564a3d2b6081769ba8d5a2e`; contract SHA
 >   `ba854a8ed5aed6bf99c52fb5d0ee03a89bb9cec9`; behavioral RED
@@ -39,28 +39,28 @@
 >   `47d419dae0dda40ad6ca461ab7cd81dc3ba32308`; implementation/evidence
 >   `5bb34f87d6e0fbafa53e1090fbc93fd67495a476`; behavioral RED
 >   `21213293cc184b80d8d397c102b01b3b2d85bf6a`.
-> - **READ:** this memo and the C72/C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
+> - **READ:** this memo and the C73/C72/C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** none until the next bounded contract is written and
->   committed. C72 source, tests, README, security docs, evidence ledger, and
->   closeout are complete.
+> - **WRITE (edit lease):** after this contract commit,
+>   `apps/extension/test/verify-store-package-infozip.test.mjs` only for the
+>   behavioral RED. Do not edit source before that RED is committed.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
 >   empty production release registry, or the C1a production extension-id/
 >   permitted-origin owner decision. Do not fetch a key/package, push, tag,
->   sign production bytes, publish, weaken C36/C38–C72 policy, or invent store
+>   sign production bytes, publish, weaken C36/C38–C73 policy, or invent store
 >   provenance, freshness, reviewer, builder-independence, key-strength,
 >   publisher, or lifecycle policy.
 > - **ACCEPT:** after the store-package verifier has authenticated and parsed a
->   CRX3 fixture, prove its independent parser receives the exact embedded ZIP
->   digest through `/proc/<pid>/fd/<fd>`, observes an `O_RDONLY` descriptor on a
->   **0400** inode, cannot replace a pathname to redirect parsing, and leaves no
->   `warden-store-package-verify-*` directory. The test may mock only the
->   already-covered upstream CRX3 cryptographic/parser result so the downstream
->   handoff is reachable with synthetic keys; expected bytes and metadata must
->   be independent fixtures. Preserve C71's bounded direct child, C70's exact
+>   CRX3 fixture, prove its independent parser observes an exact
+>   `warden-store-package-verify-*` working directory beneath the selected
+>   temporary root at mode **0700**, while preserving C72's exact embedded ZIP
+>   digest, `O_RDONLY` descriptor, **0400** inode, refused pathname replacement,
+>   exact post-parser comparison, and empty cleanup. The test may mock only the
+>   already-covered upstream CRX3 cryptographic/parser result. Preserve C71's
+>   bounded direct child, C70's exact
 >   environment, C69's exact private **0700** `cwd`, C68's descriptor/inode
 >   seal, and all C67/C66/C65/C64/C63 upload-verifier probes,
 >   exclusive **0600** construction, identity/seal checks, exact post-parser
@@ -73,7 +73,7 @@
 >   production signature/key/tag, deploy, upload, publishing, live service,
 >   external message, secret persistence, legal ruling, or real-account/funds
 >   mutation.
-> - **RETURN:** C71 close/full SHAs plus C72 contract/RED/implementation/evidence/
+> - **RETURN:** C72 close/full SHAs plus C73 contract/RED/implementation/evidence/
 >   full/close SHAs and any
 >   subsequent bounded-cycle SHAs, clean/dirty state,
 >   exact commands and outcomes, stable-byte proof and temp-copy mode/cleanup,
@@ -135,7 +135,8 @@
 > SHA `6fd9b34fbf4dd294b71bbe7bbd7cfce7402b3a80`.
 > C72 has a committed contract, measured behavioral RED, clean implementation,
 > and exact single-contract, focused/release, extension-wide, and repository-
-> wide FULL evidence. Only this docs close commit follows the full-gated SHA.
+> wide FULL evidence at close SHA
+> `d36ff2756743662621840bd033e36eaa9bfc422e`.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -143,8 +144,26 @@
 > pins exact artifact bytes, the source-tag signature authenticates that exact
 > digest, and a safe command emits its canonical message, but production trust
 > and operator-controlled signing remain external.
-> C68–C72 are only cooperative-host least privilege. Do not manufacture a local
+> C68–C73 are only cooperative-host least privilege. Do not manufacture a local
 > proxy for the remaining external trust/owner obligations.
+
+> ## 2026-09-01 C73 STORE-PACKAGE INFO-ZIP PRIVATE WORKING DIRECTORY — C6 PARTIAL
+>
+> Contract: invoke the standalone store-package CLI's independent Info-ZIP
+> parser with C72's already-created private `warden-store-package-verify-*`
+> directory as its exact `cwd`. Extend the C72 handoff probe to record the
+> child's working directory and its mode independently. The selected temporary
+> root is fixture-controlled; the observed working directory must be its direct
+> private child, start with the exact prefix, have mode **0700**, and disappear
+> after verification. Preserve the exact descriptor path/digest/access mode,
+> **0400** inode, refused replacement, successful output, mutation refusal, and
+> cleanup probes.
+>
+> This limits accidental relative-path reads/writes by a cooperative parser. It
+> is not a sandbox and does not constrain a malicious same-UID executable, root,
+> the host, escaped descendants, or absolute paths. C73 does not yet minimize the
+> store child environment or bound its runtime. No invariant or production-
+> release status moves.
 
 > ## 2026-09-01 C72 STORE-PACKAGE EMBEDDED-ZIP STABLE DESCRIPTOR — C6 PARTIAL
 >
