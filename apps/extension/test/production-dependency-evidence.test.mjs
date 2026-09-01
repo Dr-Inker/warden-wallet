@@ -287,7 +287,7 @@ describe("canonical production dependency evidence", () => {
     })).toThrow(/archive bytes differ/);
   });
 
-  it("fails closed when any registry component lacks declared-license metadata", () => {
+  it("fails closed on missing or extraneous declared-license metadata", () => {
     const incompleteLicenses = licenseReport();
     delete incompleteLicenses.Unknown;
     expect(() => createProductionDependencyEvidence({
@@ -298,6 +298,21 @@ describe("canonical production dependency evidence", () => {
       archiveFileName: "warden-extension-1.2.3.zip",
       archiveBytes: Buffer.from("canonical zip fixture"),
     })).toThrow(/missing declared-license metadata.*@solana\/web3\.js@1\.98\.4/);
+
+    const extraneousLicenses = licenseReport();
+    extraneousLicenses.MIT.push({
+      name: "not-in-production-closure",
+      versions: ["9.9.9"],
+      license: "MIT",
+    });
+    expect(() => createProductionDependencyEvidence({
+      dependencyReport: dependencyReport(),
+      licenseReport: extraneousLicenses,
+      rootPackage: { name: "@warden/extension", version: "1.2.3" },
+      source: SOURCE,
+      archiveFileName: "warden-extension-1.2.3.zip",
+      archiveBytes: Buffer.from("canonical zip fixture"),
+    })).toThrow(/declared-license metadata is outside the production closure.*not-in-production-closure@9\.9\.9/);
   });
 
   it("rejects duplicate-key and noncanonical evidence JSON", () => {
