@@ -105,6 +105,108 @@
 > key strength, authority, lifecycle, independent build provenance, or
 > publisher control.
 
+> ## 2026-09-01 C41 PRIVATE OFFLINE GIT/GPG LAUNCHER — C6 PARTIAL, HOST IS EXTERNAL
+>
+> Behavioral RED commit
+> `ed6d6fe05646fe4b3d0fc3e613c18604f5c42942` adds a real signed-tag fixture
+> whose selected `GNUPGHOME/gpg.conf` disables the default keyring and names an
+> explicit empty keyring. Implementation commit
+> `10ac55e5414ab90b9e22fa430bbdac89521f0f89` makes Git invoke GnuPG through a
+> freshly written private launcher instead of `/usr/bin/gpg` directly. The
+> launcher uses absolute `/usr/bin/gpg` and places `--no-options`, canonical
+> `--homedir "$GNUPGHOME"`, `--batch`, `--no-tty`,
+> `--no-auto-key-import`, `--no-auto-key-retrieve`, and
+> `--auto-key-locate clear` before Git's fixed verification arguments. Directory
+> and file are chmod'd and re-stat-verified at exact mode **0700**, the file is
+> created exclusively, and recursive cleanup runs in `finally`. C39/C40's
+> strict machine status, algorithm, and exact primary/signing fingerprint rules
+> are unchanged. There was no dependency/lockfile, reviewed recipe-file-set, or
+> payload-byte change, production signature/key/keyring action, network key
+> retrieval, deployment, Web Store/publisher action, provider-route change,
+> legal ruling, secret persistence, or real-account/funds mutation.
+>
+> A preliminary `no-default-keyring`-only probe passed on installed GnuPG's
+> keybox behavior and was explicitly rejected as inadequate evidence. The
+> corrected real RED was then captured from clean SHA
+> `ed6d6fe05646fe4b3d0fc3e613c18604f5c42942` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs -t "ignores mutable keyring options while verifying the selected signing key"
+> ```
+>
+> It exited **1** after the real cryptographic verifier reached `ERRSIG`, proving
+> the old Git/GPG path consumed the mutable options file and lost the locally
+> selected public key. At clean implementation SHA
+> `10ac55e5414ab90b9e22fa430bbdac89521f0f89`, this exact command exited **0**
+> and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs test/openpgp-signature-policy.test.mjs test/reviewed-artifact-signature.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && pnpm --filter @warden/extension release:gate && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The focused files passed **40/40** tests, typecheck/build passed, and the real
+> upload release gate measured **8** payload files, **60** production/peer
+> components, **4** JavaScript bundles, **101** positive bundle inputs, **4**
+> static inputs, and **21** release-recipe inputs. Independent Info-ZIP parsing,
+> emitted-tooling exclusion, the new launcher plus all four fixture cleanup
+> checks, diff checks, and both clean-tree guards passed.
+>
+> The source suite independently duplicates the complete launcher text and mode
+> instead of deriving its expected value from the implementation. The hostile
+> two-line `gpg.conf` is ignored after implementation and the exact selected
+> primary/subkey signature still passes. A separate absolute empty
+> `GNUPGHOME` still reaches `ERRSIG`/`NO_PUBKEY`, while a tampered signature
+> still fails; neither path retrieves or imports a key. An `afterEach` scan
+> proves no `warden-release-source-gpg-launcher-*` directory remains after
+> successful, policy-refused, missing-key, bad-signature, or pre-verification
+> failure cases. Ephemeral keys, keyrings, tags, repositories, option files,
+> and launchers remain under `/tmp` and are removed.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **542/542**, typecheck/build passed, release
+> verification tooling and launcher text remained absent from `dist`, no
+> launcher/fixture/verifier temp directory remained, and diff/clean-tree guards
+> passed.
+>
+> The signed-source module was **17,306 bytes** with SHA-256
+> `ceac955698d166044be63b1067f088cf0a53603724ae3519cf62c3782adfaaa0`;
+> its **15,860-byte** focused test SHA-256 was
+> `8632791c8a254438aa13c8a60c616ad52fc34655465d1a5345eba5837b970462`.
+> At the implementation SHA, the generated artifact, bundle, recipe,
+> dependency, and static sidecar SHA-256 values were respectively
+> `33b4269bc689ac93e1be70ea96a30c90a08b9b976559717f92dc622e1445e1bc`,
+> `1cb717a8b8fb654c05bb5f2d3906d765e3f4a488207a8b23c2699e92b39cbbc7`,
+> `3597b2d7599e22fab6d2c3d3b9867f5b533f89bc74f1b3120fd91437eb7e5b76`,
+> `ebab338ad0c985071f574678b6631b6b1a13942bc49d4943d975d7cfc17332af`,
+> and `be0133813be9ef652af49d6f92c8d01671b4c402cbeb4b4bd450691834a0b750`;
+> the recipe sidecar remained **4,372 bytes** and named 21 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** a private launcher controls the intended option vector,
+> not the host. A same-UID/host compromise or replaced Git, shell, GnuPG,
+> keyring, OS, runtime, filesystem, or kernel can lie, alter the launcher after
+> its stat, or make network calls independently. This slice does not constrain
+> key strength/curve, establish reviewer/tagger authority, select or provision a
+> production keyring/key/subkey, govern ceremony/rotation/revocation, validate a
+> transparency log, prove an independent builder, compare a real store return,
+> establish publisher control, make a legal ruling, deploy, or exercise real
+> funds. The ledger-inclusive full repository/release/rehearsal gate is still
+> pending at this entry.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C39 CLOSED; C40 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
