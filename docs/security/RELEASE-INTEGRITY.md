@@ -44,12 +44,13 @@ zero-byte counts, and each output's byte length and hash. The static sidecar
 records source/output byte lengths and hashes for `approval.css`,
 `approval.html`, `manifest.json`, and `popup.html`, distinguishing three exact
 byte copies from the manifest's JSON parse/two-space/newline serialization. The
-recipe sidecar records exact byte lengths and SHA-256 hashes for the 24 reviewed
+recipe sidecar records exact byte lengths and SHA-256 hashes for the 25 reviewed
 non-payload files that declare the install/release path: `.node-version`,
 `.npmrc`, both root/workspace pnpm configuration files, root/extension/core
 package manifests, the upload package/verification modules, the CRX3
 store-package comparison modules, the signed release-source verifier, and the
-reviewed-artifact detached-signature verifier plus their CLIs. The verifier
+reviewed-artifact detached-signature verifier plus their CLIs, and the one
+shared public-release-CLI argument normalizer. The verifier
 independently asks `unzip -t` to parse the archive and then fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
