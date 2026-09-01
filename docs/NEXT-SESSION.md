@@ -1,5 +1,109 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C43 CLOSED; C44 NOT STARTED
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the next Warden implementation/review session.
+> - **TASK:** continue C6 with one bounded C44 contract: strengthen C43's
+>   signed-source/dual-report composition from source/version agreement to exact
+>   release-output agreement. Begin with a fresh read-only map and real RED.
+>   Require the exact canonical artifact-manifest bytes selected by the caller;
+>   bind the report's artifact-manifest record to those bytes; then require all
+>   thirteen other report records (ZIP, four evidence sidecars, and eight
+>   unpacked payload files) to equal the byte lengths and SHA-256 values declared
+>   by that exact manifest. Preserve the independently supplied report digest,
+>   signed annotated tag, exact primary/signing fingerprints, and honest same-
+>   host/shared-store scope. Do not claim the report was generated honestly or
+>   promote it to independent build provenance.
+> - **CWD:** `/opt/warden`.
+> - **BASE:** C43 behavioral RED
+>   `0cb1d61846d830c1ae6b93c250db9387a89b0ff4`; implementation
+>   `e47bd5e21e7acb2821da6b55a25c4d8509bf3239`; ledger-inclusive, fully gated
+>   SHA `eddc0f88faaeff42a97d2a0eb78b99f4b8b3cda9`. The documentation-only commit
+>   containing this memo is intentionally not described as gate green.
+> - **READ:** this memo and the C43/C42 entries immediately below; C6 in the
+>   client-security plan; `apps/extension/scripts/release-source-tag.mjs` and
+>   its real fixture; `scripts/local-dual-extension-release.mjs` and report
+>   tests; artifact-manifest creation/parsing/tests; the signed-source CLI;
+>   release-recipe evidence/tests; `apps/extension/README.md`; and
+>   `docs/security/RELEASE-INTEGRITY.md`.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the smallest exact-artifact/report comparison boundary, caller-
+>   byte plumbing, independently specified record-tamper tests, and scoped docs.
+> - **DO_NOT_TOUCH:** `.superpowers/**`,
+>   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
+>   publisher/account state, production tags/keys/trust stores, secrets, the
+>   empty production release registry, or the C1a production extension-id/
+>   permitted-origin owner decision. Do not fetch/import a real key, push, tag,
+>   sign production bytes, publish, weaken C39–C43 policy, or invent freshness,
+>   reviewer, builder-independence, key-strength, or lifecycle policy.
+> - **ACCEPT:** executable RED proving a valid signed tag and independently
+>   digested same-source/version report currently pass even when the report's
+>   fourteen file records do not describe the selected artifact manifest;
+>   exact canonical artifact bytes read once; exact artifact-record byte/hash
+>   binding; all ZIP/sidecar/payload path, byte, and hash claims cross-checked;
+>   one-byte or metadata drift in each category fails closed before a provenance
+>   claim; real signed-tag success and C43 mismatch/key/signature refusals remain;
+>   exact-SHA focused/release evidence; committed/full-gated ledger; and explicit
+>   artifact-binding-versus-independent-builder limits. Keep the provider fixed
+>   unavailable.
+> - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
+>   extension artifacts, ephemeral signing keys/files/repos/launchers under
+>   `/tmp`, and git commits only; no network key retrieval, production
+>   signature/key/tag, deploy, upload, publishing, live service, external
+>   message, secret persistence, legal ruling, or real-account/funds mutation.
+> - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
+>   and outcomes, report/artifact digest plus fourteen compared record values,
+>   preserved scope, unchanged or promoted invariants, independent-review
+>   status, explicit synthetic/production and same-host/independent gaps, and
+>   remaining owner/counsel/external-state blockers.
+>
+> **C43 ledger-inclusive gate:** from a clean tree at
+> `eddc0f88faaeff42a97d2a0eb78b99f4b8b3cda9`, this exact command exited **0**
+> and printed that same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|dualReleaseReport|expectedDualReleaseReportSha256|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed action pins **2/2**, core **700/700**, extension **549/549**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
+> measured Argon2 benchmark, canonical ZIP/five-sidecar verification with
+> **22** recipe inputs, independent Info-ZIP parsing, the real sequential
+> two-clean-checkout rehearsal, emitted release-tooling exclusion, all seven
+> temp-directory cleanup checks, diff checks, and both clean-tree guards. The
+> Argon2 elapsed p50/p95 were **922.3/1,069.1 ms**, host-task delay p50/p95 were
+> **62.7/68.4 ms**, and password-buffer wiping was true. The final rehearsal
+> compared **14** files and produced a **3,810-byte** canonical report with
+> SHA-256
+> `e5383b88cb9868958f670e1a3ac30c4677c1f1a7d6280ac38ca374e4bdc6470a`.
+> At this ledger SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `3b6dd4c1eefbfdba984f9a1b65b98f1543303380780d30977e3f7f38f18e813c`,
+> `c9e47423b24c3020268bc10dbc5c463dfbd6e473082cad99a6953ada7055fd9b`,
+> `5ffe279e01e2a9e0e99d2459db8639b411613cf252c3e9809aa96ac3059f9893`,
+> `5e26be3a0397f1de24d12ef56650983dadbb1c0cb014a3ecd1afe537ce7f71f2`,
+> and `98dea3d4663cb90ee95d6e6c295ca218aaf028315382fe393c539dda943f9785`;
+> the recipe sidecar was **4,553 bytes** and named 22 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> No dual-release, store-verifier, GPG-launcher, OpenPGP-policy, signed-source,
+> or reviewed-artifact fixture/verifier temporary directory remained. Known
+> Anchor test-middleman key mismatch, legacy macro-`cfg`, and Rust unused-code
+> warnings remained non-fatal. Independent second-model review is still
+> **UNVERIFIED**.
+>
+> **Stop state:** C43 is closed. C44 has no code, RED, edit lease, dependency
+> change, exact fourteen-output binder, production tag/key/signature, release-
+> registry edit, Web Store package/action, deployment, or legal adjudication.
+> `WRD-REL-01`, `WRD-REL-02`, and `WRD-REL-03` remain `unimplemented`; C43
+> binds source identity to a report, not the report's file claims to the exact
+> artifact and not either builder to an independent trust domain.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C42 CLOSED; C43 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
@@ -208,7 +312,9 @@
 > anchor, choose a real tag/key/subkey or freshness policy, validate a
 > transparency log, compare a real store return, establish publisher control,
 > make a legal ruling, deploy, or exercise real funds. The ledger-inclusive full
-> repository/release/rehearsal gate is still pending at this entry.
+> repository/release/rehearsal gate subsequently passed at
+> `eddc0f88faaeff42a97d2a0eb78b99f4b8b3cda9`; the exact command and measured
+> outcome are recorded in the C44 clean-break memo above.
 
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C41 CLOSED; C42 NOT STARTED
 >
