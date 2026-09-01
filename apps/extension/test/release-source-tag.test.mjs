@@ -15,6 +15,11 @@ import {
   verifyReleaseSourceTag,
 } from "../scripts/release-source-tag.mjs";
 import {
+  createArtifactManifest,
+  createCanonicalZip,
+  serializeArtifactManifest,
+} from "../scripts/release-artifact.mjs";
+import {
   createLocalDualReleaseReport,
   releaseComparisonPaths,
   serializeLocalDualReleaseReport,
@@ -26,6 +31,25 @@ const GPG = "/usr/bin/gpg";
 const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
 const FIXTURE_VERSION = "1.2.3";
 const fixture = {};
+
+const ARTIFACT_ATTACHMENTS = Object.freeze({
+  dependencyEvidence: {
+    file: `warden-extension-${FIXTURE_VERSION}.sbom.json`,
+    bytes: Buffer.from("canonical signed-source dependency evidence fixture\n"),
+  },
+  bundleInputEvidence: {
+    file: `warden-extension-${FIXTURE_VERSION}.bundle-inputs.json`,
+    bytes: Buffer.from("canonical signed-source bundle evidence fixture\n"),
+  },
+  staticInputEvidence: {
+    file: `warden-extension-${FIXTURE_VERSION}.static-inputs.json`,
+    bytes: Buffer.from("canonical signed-source static evidence fixture\n"),
+  },
+  releaseRecipeInputEvidence: {
+    file: `warden-extension-${FIXTURE_VERSION}.recipe-inputs.json`,
+    bytes: Buffer.from("canonical signed-source recipe evidence fixture\n"),
+  },
+});
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -48,6 +72,45 @@ function localDualReportBytes(sourceGitCommit, extensionVersion = FIXTURE_VERSIO
     firstFiles: files,
     secondFiles: [...files].reverse(),
   })), "utf8");
+}
+
+function releaseArtifact(sourceGitCommit) {
+  const extensionManifest = {
+    manifest_version: 3,
+    name: "Warden signed-source fixture",
+    version: FIXTURE_VERSION,
+    permissions: ["storage"],
+    background: { service_worker: "background.js", type: "module" },
+    content_security_policy: {
+      extension_pages: "script-src 'self'; object-src 'self';",
+    },
+  };
+  const entries = [
+    { path: "approval.css", data: Buffer.from("body { color: #123456; }\n") },
+    { path: "approval.html", data: Buffer.from("<!doctype html><title>Approve</title>\n") },
+    { path: "approval.js", data: Buffer.from("globalThis.approve = false;\n") },
+    { path: "background.js", data: Buffer.from("globalThis.background = true;\n") },
+    { path: "content.js", data: Buffer.from("globalThis.content = true;\n") },
+    {
+      path: "manifest.json",
+      data: Buffer.from(`${JSON.stringify(extensionManifest, null, 2)}\n`),
+    },
+    { path: "popup.html", data: Buffer.from("<!doctype html><title>Warden</title>\n") },
+    { path: "popup.js", data: Buffer.from("globalThis.popup = true;\n") },
+  ];
+  const archiveBytes = createCanonicalZip(entries);
+  const artifactManifest = createArtifactManifest({
+    entries,
+    archiveBytes,
+    artifactFileName: `warden-extension-${FIXTURE_VERSION}.zip`,
+    source: { gitCommit: sourceGitCommit, lockfileSha256: "b".repeat(64) },
+    toolchain: { node: "22.23.2", pnpm: "11.12.0", esbuild: "0.28.2" },
+    ...ARTIFACT_ATTACHMENTS,
+  });
+  return {
+    artifactManifest,
+    artifactManifestBytes: Buffer.from(serializeArtifactManifest(artifactManifest), "utf8"),
+  };
 }
 
 async function command(file, arguments_, { cwd, env = process.env } = {}) {
@@ -346,6 +409,16 @@ describe("release source annotated-tag verification", () => {
         },
       },
     });
+  });
+
+  it("rejects a report whose fourteen records do not describe the selected artifact", async () => {
+    const artifact = releaseArtifact(fixture.firstCommit);
+    const dualReleaseReportBytes = localDualReportBytes(fixture.firstCommit);
+    await expect(verify({
+      ...artifact,
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+    })).rejects.toThrow(/dual release report artifact manifest record differs/);
   });
 
   it("checks the independent report digest before parsing candidate bytes", async () => {
