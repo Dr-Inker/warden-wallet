@@ -1,5 +1,79 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 C30 IMMUTABLE GITHUB ACTIONS PINS — C6 PARTIAL, NO OFF-HOST ATTESTATION
+>
+> Implementation commit
+> `eda3d0422962f4780e5c7116dfdfcaa6c2eb82fc` replaces every external
+> GitHub Actions tag/branch in `.github/workflows/**` with a full upstream
+> commit and adds an executable repository-wide pin audit. It changes CI
+> executable-source selection only: no extension payload, provider route,
+> release registry, deployment, Web Store, publisher, account, secret, or live
+> service state changed.
+>
+> The read-only C6 inventory found **11 mutable call sites** across six external
+> actions. The incumbent supply-chain lane already runs pinned cargo-deny plus
+> a fail-closed shipped-workspace pnpm audit and stores raw whole-workspace
+> license reports. It still has no deterministic SBOM/license attachment bound
+> to the eight-file extension upload artifact, and its existing notice carries
+> unresolved `rpc-websockets` LGPL, `text-encoding-utf-8` unknown-license,
+> Jupiter-IDL, and Squads clean-room/counsel items. C30 therefore chose the
+> smaller no-owner-decision action-pin contract and made no legal conclusion.
+>
+> Executable RED was captured before changing the workflow:
+>
+> ```sh
+> node --test test/github-actions-pins.test.mjs
+> ```
+>
+> It exited **1** and named all 11 mutable references: two
+> `actions/checkout@v4`, one `dtolnay/rust-toolchain@stable`, three
+> `actions/cache@v4`, two `actions/setup-node@v4`, two
+> `pnpm/action-setup@v4`, and one `actions/upload-artifact@v4`.
+>
+> C30 pins those call sites to six 40-character commits resolved directly from
+> the named upstream refs with `git ls-remote` on 2026-09-01. The full mapping
+> and resolution method live in `docs/TOOLCHAIN.md`; human-readable versions
+> remain review comments only. The test recursively scans every YAML workflow,
+> proves that at least one workflow and external reference were measured, and
+> accepts only a repository-local `./...` action, a full lowercase Git commit,
+> or a Docker SHA-256 digest. Its tamper cases reject a major tag, branch,
+> abbreviated SHA, expression, Docker tag, and uppercase pseudo-SHA.
+>
+> The audit runs at the start of `.claude/test-gate.sh` and as the blocking CI
+> job's first post-checkout command, before every other external action. Exact
+> clean-SHA focused evidence belongs only to the implementation commit above.
+> This command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --test test/github-actions-pins.test.mjs && python3 -c 'import pathlib,yaml; yaml.safe_load(pathlib.Path(".github/workflows/ci.yml").read_text())' && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> Both Node contracts passed and the updated workflow parsed as YAML. The first
+> contract exercises the immutable/mutable grammar; the second scans the real
+> repository and found zero mutable external references.
+>
+> **Full-repository gate is pending the ledger commit.** Focused C30 evidence
+> never substitutes for `.claude/test-gate.sh`, and no ledger SHA is described
+> as green before that executable gate runs on it.
+>
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+> Production provider routing remains fixed unavailable; C30 changes only the
+> repository's CI executable-source pins and their audit.
+>
+> **Harsh residual:** a syntactically immutable ref is not an audit of the code
+> at that commit, a signature/provenance statement, or an attestation of the
+> mutable `ubuntu-latest` runner image. The audit itself cannot enforce GitHub
+> branch or workflow protection; host policy must stop an unreviewed workflow
+> edit from inserting executable code before the audit. The pinned workflow has
+> not run off-host in this campaign. There is still no extension SBOM/license
+> attachment, independent builder identity, signed provenance, store-returned
+> package comparison, publisher MFA/least-privilege evidence, external audit,
+> deployed release, or real-funds evidence. The adjacent artifact JSON remains
+> unsigned and co-generated with its ZIP.
+
 > ## 2026-08-31 CLEAN-BREAK PICKUP MEMO — C29 CLOSED; C30 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
