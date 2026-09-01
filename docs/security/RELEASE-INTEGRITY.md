@@ -61,6 +61,9 @@ the subprocess working directory.
 The child environment contains exactly the verifier's `PATH` (falling back to
 `/usr/bin:/bin` when absent), `LANG=C`, and `LC_ALL=C`; `TMPDIR` and every other
 ambient verifier variable are not directly inherited.
+The verifier sets `killSignal: "SIGKILL"` and derives the direct-child timeout
+from the stable archive byte length as
+`min(120000, 5000 + ceil(bytes / 1048576) * 1000)` milliseconds.
 After Info-ZIP exits it positionally rereads that same handle in bounded chunks
 and requires the exact original length and bytes. It closes/removes both handles
 and the directory on success or failure and never reopens the operator-supplied
@@ -75,6 +78,9 @@ The minimal child environment limits direct ambient disclosure to cooperative
 tool behavior and diagnostics. It is not secret isolation: PATH still selects
 the executable, and a malicious same-UID process, root, or the host may access
 other permitted state. It does not attest or normalize the build environment.
+The timeout bounds the direct child and verifier wait, not escaped descendants
+or a process group, and its 120-second ceiling does not attest production-host
+performance.
 The verifier then
 fail-closes on
 archive metadata,

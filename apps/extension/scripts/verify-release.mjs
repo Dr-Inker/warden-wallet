@@ -27,6 +27,10 @@ const MAX_UPLOAD_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_UPLOAD_ARTIFACT_MANIFEST_BYTES = 8 * 1024 * 1024;
 const MAX_UPLOAD_EVIDENCE_BYTES = 256 * 1024 * 1024;
 const TEMPORARY_ARCHIVE_COMPARE_CHUNK_BYTES = 64 * 1024;
+const INFO_ZIP_TIMEOUT_BASE_MS = 5_000;
+const INFO_ZIP_TIMEOUT_PER_MIB_MS = 1_000;
+const INFO_ZIP_TIMEOUT_MAX_MS = 120_000;
+const MIB_BYTES = 1024 * 1024;
 const TEMPORARY_ARCHIVE_CHANGED_MESSAGE =
   "temporary archive bytes changed during independent unzip -t validation";
 const INFO_ZIP_ENVIRONMENT = Object.freeze({
@@ -37,6 +41,14 @@ const INFO_ZIP_ENVIRONMENT = Object.freeze({
 
 function fail(message) {
   throw new Error(`extension release verify: ${message}`);
+}
+
+function infoZipTimeoutMs(archiveBytes) {
+  return Math.min(
+    INFO_ZIP_TIMEOUT_MAX_MS,
+    INFO_ZIP_TIMEOUT_BASE_MS +
+      Math.ceil(archiveBytes.length / MIB_BYTES) * INFO_ZIP_TIMEOUT_PER_MIB_MS,
+  );
 }
 
 async function assertTemporaryArchiveUnchanged(
@@ -128,7 +140,9 @@ async function verifyArchiveWithInfoZip(archiveBytes) {
       cwd: temporaryDirectory,
       encoding: "utf8",
       env: INFO_ZIP_ENVIRONMENT,
+      killSignal: "SIGKILL",
       maxBuffer: 4 * 1024 * 1024,
+      timeout: infoZipTimeoutMs(archiveBytes),
     });
     await assertTemporaryArchiveUnchanged(temporaryArchiveReadHandle, archiveBytes);
   } catch (error) {

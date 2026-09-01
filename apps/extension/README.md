@@ -59,6 +59,9 @@ The Info-ZIP child receives an explicit three-key environment: the verifier's
 `PATH` (or `/usr/bin:/bin` when absent), `LANG=C`, and `LC_ALL=C`. It does not
 directly inherit `TMPDIR`, home-directory variables, credentials, or other
 ambient verifier variables.
+The direct child also receives a `SIGKILL` deadline calculated from the stable
+archive bytes as `min(120000, 5000 + ceil(bytes / 1048576) * 1000)`
+milliseconds.
 It then positionally rereads the live descriptor and requires its length and
 every byte to remain identical after Info-ZIP exits. It closes/removes both
 handles and the directory on success or failure and never reopens the operator-
@@ -70,6 +73,9 @@ The minimal child environment similarly limits direct disclosure to a
 cooperative executable and ordinary diagnostics; PATH still selects the
 executable, and it does not isolate secrets from a malicious same-UID process,
 root, or the host.
+The deadline bounds only the direct parser child and verifier wait; it is not
+process-group or descendant confinement, and the ceiling is not an attestation
+of production-host performance.
 To compare another canonical
 upload ZIP and all four evidence sidecars against an already reviewed artifact
 manifest:
