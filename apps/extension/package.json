@@ -10,6 +10,7 @@
     "release:verify": "node scripts/verify-release.mjs",
     "release:gate": "pnpm run release:package && pnpm run release:verify",
     "release:dual-local": "node ../../scripts/local-dual-extension-release.mjs",
+    "release:verify-store": "node scripts/verify-store-package.mjs",
     "test": "vitest run",
     "test:browser": "pnpm run build && playwright test -c playwright.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"

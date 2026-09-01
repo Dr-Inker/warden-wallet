@@ -850,16 +850,16 @@ export function parseArtifactManifest(bytes) {
   return artifactManifest;
 }
 
-export function verifyArtifactArchive({ archiveBytes, artifactManifest }) {
+export function verifyArtifactPayloadEntries({ entries, artifactManifest }) {
   assertArtifactManifestShape(artifactManifest);
-  const entries = parseCanonicalZip(archiveBytes);
-  const candidatePaths = entries.map((entry) => entry.path);
+  const canonicalEntries = canonicalizeEntries(entries).map(({ path, data }) => ({ path, data }));
+  const candidatePaths = canonicalEntries.map((entry) => entry.path);
   const reviewedPaths = artifactManifest.payload.files.map((entry) => entry.path);
   if (!jsonEqual(candidatePaths, reviewedPaths)) {
     fail("candidate payload path set differs from the reviewed artifact");
   }
 
-  const candidateExtension = extensionSnapshot(parseExtensionManifest(entries));
+  const candidateExtension = extensionSnapshot(parseExtensionManifest(canonicalEntries));
   if (!jsonEqual(candidateExtension.permissions, artifactManifest.extension.permissions)) {
     fail("candidate manifest permissions differ from the reviewed artifact");
   }
@@ -876,7 +876,7 @@ export function verifyArtifactArchive({ archiveBytes, artifactManifest }) {
     fail("candidate extension identity differs from the reviewed artifact");
   }
 
-  const candidateFiles = payloadFileRecords(entries);
+  const candidateFiles = payloadFileRecords(canonicalEntries);
   for (let index = 0; index < candidateFiles.length; index += 1) {
     const candidate = candidateFiles[index];
     const reviewed = artifactManifest.payload.files[index];
@@ -892,13 +892,22 @@ export function verifyArtifactArchive({ archiveBytes, artifactManifest }) {
   if (payloadTreeHash(candidateFiles) !== artifactManifest.payload.treeSha256) {
     fail("candidate payload tree digest differs from the reviewed artifact");
   }
+  return {
+    treeSha256: artifactManifest.payload.treeSha256,
+    files: candidateFiles.length,
+  };
+}
+
+export function verifyArtifactArchive({ archiveBytes, artifactManifest }) {
+  const entries = parseCanonicalZip(archiveBytes);
+  const payload = verifyArtifactPayloadEntries({ entries, artifactManifest });
   if (archiveBytes.length !== artifactManifest.archive.bytes || sha256(archiveBytes) !== artifactManifest.archive.sha256) {
     fail("candidate ZIP bytes differ from the reviewed canonical archive");
   }
   return {
     archiveSha256: artifactManifest.archive.sha256,
-    treeSha256: artifactManifest.payload.treeSha256,
-    files: candidateFiles.length,
+    treeSha256: payload.treeSha256,
+    files: payload.files,
   };
 }
 

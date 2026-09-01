@@ -44,11 +44,11 @@ zero-byte counts, and each output's byte length and hash. The static sidecar
 records source/output byte lengths and hashes for `approval.css`,
 `approval.html`, `manifest.json`, and `popup.html`, distinguishing three exact
 byte copies from the manifest's JSON parse/two-space/newline serialization. The
-recipe sidecar records exact byte lengths and SHA-256 hashes for the 15 reviewed
+recipe sidecar records exact byte lengths and SHA-256 hashes for the 17 reviewed
 non-payload files that declare the install/release path: `.node-version`,
 `.npmrc`, both root/workspace pnpm configuration files, root/extension/core
-package manifests, and all eight release modules including the evidence module
-itself. The verifier
+package manifests, the upload package/verification modules, and the CRX3
+store-package comparison modules. The verifier
 independently asks `unzip -t` to parse the archive and then fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
@@ -77,15 +77,55 @@ For a real extension release, the reviewed `*.artifact.json` bytes and ZIP hash
 must be anchored in the release review/attestation system before comparing a
 candidate. The JSON files are unsigned and co-generated with the ZIP, so
 replacing all of them defeats comparison if no independent reviewed anchor exists. The current
-verifier accepts the canonical **upload ZIP** only. A package downloaded back
-from the Web Store is a CRX/store-repackaged object and remains UNVERIFIED; a
-future lane must remove only documented store-added signing/packaging and then
-compare the entire payload. Two genuinely independent clean builders, full
-build-environment input coverage, publisher MFA/least privilege, a provenance
-signature, and an external security review also remain UNVERIFIED. Immutable CI
-action syntax is now repository-gated as described above, but no off-host run or
-upstream-source attestation is claimed. No Web Store upload or publisher-account
-mutation is performed by this gate.
+upload verifier accepts the canonical **upload ZIP** only. The separate offline
+CRX3 lane below handles the documented store envelope and repackaged ZIP at the
+content level, but no real Web Store-returned package has passed it. Two
+genuinely independent clean builders, full build-environment input coverage,
+publisher MFA/least privilege, a provenance signature, and an external security
+review also remain UNVERIFIED. Immutable CI action syntax is now
+repository-gated as described above, but no off-host run or upstream-source
+attestation is claimed. No Web Store upload or publisher-account mutation is
+performed by this gate.
+
+### Store-returned CRX3 verifier (C6 partial; fixture-only)
+
+`pnpm --filter @warden/extension release:verify-store -- <candidate.crx>
+<expected-extension-id>` accepts an offline CRX3 candidate plus an
+independently supplied expected extension id. It first verifies the reviewed
+canonical upload ZIP against its artifact manifest. It then requires `Cr24`,
+version 3, a bounded little-endian protobuf-header length, only the reviewed
+CRX3 fields, exactly one developer proof matching the signed 16-byte CRX id,
+exactly one current Chrome Web Store publisher proof, and valid signatures from
+every included ECDSA/RSA proof. The pinned publisher public-key SHA-256 is
+`61f7f2a6bfcf74cd0bc1fe2497cc9b04254c658f79f2145392867ea8366367cf`.
+The candidate id must equal the independent argument; it is never adopted from
+the candidate itself.
+
+After rejecting ZIP end-record tokens in the header, the verifier removes only
+the documented 12-byte fixed prefix and the exact declared protobuf header. Its
+bounded embedded-ZIP reader supports STORE and DEFLATE plus optional data
+descriptors and non-semantic timestamp extras, while refusing encryption,
+ZIP64, unsafe/duplicate paths, semantic/unknown extras, inconsistent
+local/central records, CRC/size drift, hidden bytes, comments, and trailing
+ambiguity. Archive order, compression, timestamps, and mode metadata can differ
+from the upload ZIP; exact path/content hashes, extension version, manifest
+permissions, CSP, update URL, and payload-tree hash cannot. The command also
+runs `unzip -t` over a temporary copy of the embedded ZIP and removes it.
+
+The format contract comes from Chromium's primary
+[`crx3.proto`](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx3.proto)
+and current
+[`crx_verifier.cc`](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx_verifier.cc),
+observed 2026-09-01 as page-reported blobs
+`b38dd5a77467eabca61f0d1fee461b2a6822df44` and
+`522a740a4f51363b54a35b808fc2ff8680aeeaea`.
+
+This is still fixture/parser/comparator evidence. No real Web Store package is
+present; the tool does not download one, prove its acquisition route, interpret
+the optional `verified_contents` field, authenticate the adjacent artifact
+manifest, choose the unresolved production extension id, or mutate publisher
+state. `WRD-REL-02` remains `unimplemented` until a real returned package and
+independently anchored review inputs pass at an exact release SHA.
 
 ### Same-host dual-checkout rehearsal (C6 partial)
 

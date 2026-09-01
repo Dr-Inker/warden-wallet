@@ -40,7 +40,7 @@ under `apps/extension/release/`:
   lengths/hashes and distinguishes the three exact byte copies from
   `manifest.json`'s JSON parse/two-space/newline serialization; and
 - `warden-extension-<version>.recipe-inputs.json`, a canonical byte/hash map of
-  the exact 15 reviewed non-payload repository files that declare the install
+  the exact 17 reviewed non-payload repository files that declare the install
   and release recipe: root/workspace configuration, the extension/core package
   manifests, and every release module. It explicitly does not attest installed
   executables, runtime behavior, the OS, or the environment.
@@ -71,12 +71,50 @@ The dependency sidecar still does **not** assert that every listed package
 contributed bundle bytes. The static sidecar does not claim absent icons or
 other files, and no sidecar covers executable bytes, OS/runtime/environment
 behavior, or legal disposition. No sidecar proves that a declared license is legally
-sufficient or that a vulnerability scan passed. The lane also does not parse or normalize a
-Web-Store-returned CRX, authenticate the adjacent JSON, prove two independent
-builders agree, publish anything, or replace publisher-account and review
-controls. Replacing the ZIP and all five unsigned, co-generated JSON files is not
-detected unless the reviewed manifest/hash is anchored somewhere the builder
-cannot rewrite.
+sufficient or that a vulnerability scan passed. The lane also does not obtain a
+package from the Web Store, authenticate the adjacent JSON, prove two
+independent builders agree, publish anything, or replace publisher-account and
+review controls. Replacing the ZIP and all five unsigned, co-generated JSON
+files is not detected unless the reviewed manifest/hash is anchored somewhere
+the builder cannot rewrite.
+
+## Web-Store-returned CRX3 comparison
+
+After obtaining a CRX3 through an independently controlled Chrome Web Store
+download path, compare it with an already reviewed upload ZIP and artifact
+manifest using an independently reviewed expected extension id:
+
+```sh
+pnpm --filter @warden/extension release:verify-store -- \
+  /path/to/store-returned.crx <expected-extension-id>
+```
+
+Optional third and fourth arguments select a reviewed upload ZIP and artifact
+manifest outside the default local release directory. The verifier never learns
+the expected extension id from the candidate. It requires the `Cr24` magic,
+version 3, a bounded little-endian header length, strict known protobuf fields,
+one developer proof matching the declared CRX id, the current Chrome Web Store
+publisher-key proof, and valid signatures from every included proof over the
+documented signed bytes. It rejects ZIP end-record tokens inside the CRX header,
+then parses the remaining archive with bounded STORE/DEFLATE, CRC-32, path,
+duplicate, local/central-record, descriptor, extra-field, and trailing-byte
+checks. File ordering, compression, timestamps, and non-semantic archive mode
+metadata may differ; every payload path and byte, manifest permission, CSP
+directive, update URL, version, and payload-tree hash must still equal the
+reviewed artifact. `unzip -t` independently parses the embedded archive.
+
+The envelope follows Chromium's current primary sources: the
+[`crx3.proto` format](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx3.proto)
+and [`crx_verifier.cc` behavior](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx_verifier.cc),
+observed 2026-09-01 as page-reported blobs
+`b38dd5a77467eabca61f0d1fee461b2a6822df44` and
+`522a740a4f51363b54a35b808fc2ff8680aeeaea`. This local verifier does not
+download a package, establish that a file actually came from the Web Store,
+interpret the optional `verified_contents` payload, authenticate the reviewed
+artifact manifest, or resolve the production extension-id owner decision. The
+fixture tests therefore do not promote `WRD-REL-02`; a real returned package,
+owner-approved expected id, independently anchored artifact, and exact-SHA gate
+are still required.
 
 ## Same-host dual-checkout rehearsal
 

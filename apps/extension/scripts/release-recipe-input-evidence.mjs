@@ -16,7 +16,9 @@ export const RELEASE_RECIPE_INPUT_PATHS = Object.freeze([
   "apps/extension/scripts/release-artifact.mjs",
   "apps/extension/scripts/release-recipe-input-evidence.mjs",
   "apps/extension/scripts/static-input-evidence.mjs",
+  "apps/extension/scripts/store-package.mjs",
   "apps/extension/scripts/verify-release.mjs",
+  "apps/extension/scripts/verify-store-package.mjs",
   "package.json",
   "packages/core/package.json",
   "pnpm-lock.yaml",
@@ -25,7 +27,7 @@ export const RELEASE_RECIPE_INPUT_PATHS = Object.freeze([
 
 const SCOPE = Object.freeze({
   type: "extension-release-recipe-repository-inputs",
-  inputCoverage: "fifteen-reviewed-non-payload-files-only",
+  inputCoverage: "seventeen-reviewed-non-payload-files-only",
   executableCoverage: "not-asserted",
   runtimeEnvironmentCoverage: "not-asserted",
 });
@@ -81,7 +83,7 @@ function normalizeInputPaths(inputPaths) {
   }
   const normalized = [...inputPaths].sort(compareUtf8);
   if (JSON.stringify(normalized) !== JSON.stringify(RELEASE_RECIPE_INPUT_PATHS)) {
-    fail("input paths must contain exactly the fifteen reviewed release recipe files");
+    fail("input paths must contain exactly the seventeen reviewed release recipe files");
   }
   return normalized;
 }
@@ -118,7 +120,7 @@ function assertEvidenceShape(evidence) {
   }
   assertHash(evidence.artifact.archiveSha256, "evidence archiveSha256");
   if (!Array.isArray(evidence.inputs) || evidence.inputs.length !== RELEASE_RECIPE_INPUT_PATHS.length) {
-    fail("evidence must contain exactly fifteen release recipe inputs");
+    fail("evidence must contain exactly seventeen release recipe inputs");
   }
   for (let index = 0; index < RELEASE_RECIPE_INPUT_PATHS.length; index += 1) {
     const input = evidence.inputs[index];
