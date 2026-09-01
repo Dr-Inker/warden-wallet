@@ -102,6 +102,121 @@
 > across review/source/report lanes but does not bind that artifact to the
 > separate offline store-return comparison.
 
+> ## 2026-09-01 C46 SAME-ARTIFACT STORE-RETURN COMPOSITION — C6 PARTIAL, SYNTHETIC CRX ONLY
+>
+> Behavioral RED commit
+> `405fe49584f525be87df2525b541c891b6344508` creates canonical artifacts A
+> and B with the same source/version but different `approval.css` bytes, proves
+> that the incumbent strict store verifier accepts a separately valid synthetic
+> CRX3 package for B, then supplies that B upload/CRX tuple to C45's successful
+> tag/report/review verification for A. The expected rejection resolved because
+> the store inputs were ignored. Implementation commit
+> `72fd45fd52914da31d8787bfc9723f6489dbfd6e` makes the reviewed upload bytes,
+> store package bytes, and independently supplied extension id an atomic tuple
+> accepted only with C45's exact report and detached-review binding.
+>
+> The one canonical artifact-manifest buffer read by the CLI is reparsed for
+> store composition. The reviewed upload must equal that manifest's canonical
+> ZIP byte-for-byte. The incumbent CRX3 verifier then checks the store envelope,
+> independently supplied extension id, required publisher proof, every included
+> signature, embedded ZIP, and payload against the same manifest. The reviewed
+> upload and store payload must also return equal file counts and tree digests.
+> The production CLI retains the fixed official Chrome Web Store publisher key;
+> only the API's existing fixture seam can inject a synthetic publisher key. The
+> optional production CLI form has **14** arguments: C45's eleven followed by
+> `store-returned.crx`, the expected store extension id, and the exact reviewed
+> upload ZIP. It reads each selected file once and reports the manifest, upload,
+> CRX3 package, embedded archive, extension-id, publisher-key, and tree hashes.
+>
+> The real RED was captured from clean SHA
+> `405fe49584f525be87df2525b541c891b6344508` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs -t "rejects a separately valid store package for different exact reviewed outputs"
+> ```
+>
+> It exited **1** with one failed/21 skipped because the promise resolved with
+> valid C45 results rather than rejecting the independently proven B store
+> package. At clean implementation SHA
+> `72fd45fd52914da31d8787bfc9723f6489dbfd6e`, this exact focused command
+> exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs test/store-package.test.mjs test/reviewed-artifact-signature.test.mjs test/openpgp-signature-policy.test.mjs test/local-dual-release.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && pnpm --filter @warden/extension release:gate && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|reviewedUploadArchive|storePackage|expectedStoreExtensionId|dualReleaseReport|expectedDualReleaseReportSha256|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The seven focused files passed **71/71** tests, typecheck/build passed, and
+> the real upload release gate measured **8** payload files, **60** production/
+> peer components, **4** JavaScript bundles, **101** positive bundle inputs,
+> **4** static inputs, and **22** release-recipe inputs. Independent Info-ZIP
+> parsing, emitted-tooling exclusion, all seven selected temp-directory cleanup
+> checks, diff checks, and both clean-tree guards passed. No reviewed recipe
+> path was added because the changed source/CLI were already in the exact
+> 22-file recipe set. The stale recipe validation error and two prose counts
+> were corrected from twenty-one to twenty-two without changing that set.
+>
+> The positive composition uses one real canonical fixture manifest A, its
+> exact canonical upload ZIP, real detached Ed25519 review signature, real
+> signed annotated tag, exact fourteen-record dual report, and a synthetic CRX3
+> over A signed by generated RSA developer and P-256 publisher fixture keys.
+> Its returned artifact-manifest SHA equals the review/report digest; its
+> reviewed-upload SHA equals the manifest archive digest; and its embedded CRX
+> payload file count/tree digest equal the reviewed upload. A separately valid
+> B upload/CRX now fails while verifying the reviewed upload against A. Missing
+> store tuple fields, a complete store tuple without the artifact review, and a
+> wrong independently supplied extension id fail closed. C36's header/protobuf/
+> proof/signature/ZIP/payload refusals and C39–C45's key/time/tag/report/review/
+> exact-output refusals remain executable. Fixture key generation means the
+> signature and CRX byte digests are intentionally ephemeral per run; no stable
+> fixture digest is mislabeled as a production review or store-return anchor.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|reviewedUploadArchive|storePackage|expectedStoreExtensionId|dualReleaseReport|expectedDualReleaseReportSha256|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **558/558**, typecheck/build passed, release
+> verification/composition tooling remained absent from `dist`, no selected
+> fixture/launcher/rehearsal temp directory remained, and diff/clean-tree guards
+> passed.
+>
+> The signed-source module, CLI, and signed-source test were respectively
+> **32,444**, **7,163**, and **40,176 bytes**, with SHA-256 values
+> `830f3d779df884e12f33626d3d844ae83b4ad4fd1c2d2564ef426d78ee7ccbfb`,
+> `cacd8fab84cd68200c7e9f84019c04651ffd1653b32b46859f058a8e4aee9e22`,
+> and `fc74b8e1a1c9ec384bdd02ccd860a9812cb242b58975a0cc02ed491373091ba7`.
+> At the implementation SHA, the generated artifact, bundle, recipe,
+> dependency, and static sidecar SHA-256 values were respectively
+> `1945aa03681b429e99f830b1e12439e768bd0c93a254f7afec9b5f072d145686`,
+> `924919bbe1eaa5fe004d9a0c6c4f7a3c2446c943857af7adaf20c4c904086d01`,
+> `ca274ed04a155ce176cd81927c2a64384f327781f9597127d9be0d7ed91781e2`,
+> `bb3adc743d8597330498d549b378daf2828e83044e163249db6057b91f6726ca`,
+> and `121b1b283a32a4f79d0b24b155770e252df5f4e322c510a4ff29300e095c3762`;
+> the recipe sidecar remained **4,553 bytes** and named 22 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> There was no dependency/lockfile, recipe-file-set, or payload-byte change.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** C46 closes the local split-artifact seam but supplies no
+> real Web Store-returned package, store provenance, owner-approved production
+> extension id, publisher-control evidence, production artifact/tag/review key
+> or signature, signature/package freshness, trusted present time, key/storage/
+> lifecycle policy, transparency log, off-host independent build, host/toolchain
+> attestation, external audit, deployment, or legal disposition. The builders
+> remain same-host/shared-store and explicitly non-independent. The repository-
+> wide ledger-inclusive gate is intentionally pending until this entry is
+> committed; the implementation-SHA focused/full-extension evidence above must
+> not be relabeled as that gate.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C44 CLOSED; C45 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
