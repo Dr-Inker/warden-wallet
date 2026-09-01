@@ -1,5 +1,103 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C39 CLOSED; C40 NOT STARTED
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the next Warden implementation/review session.
+> - **TASK:** continue C6 with one bounded C40 contract: require the signed-
+>   source and reviewed-artifact verifiers to bind not only the independently
+>   supplied full primary OpenPGP fingerprint but also an independently
+>   supplied full signing-key fingerprint. Begin with a fresh read-only map
+>   and real RED. Preserve the strict C39 signature-policy parser, distinguish
+>   primary-key and signing-subkey identities, and prove that a valid signature
+>   from an unexpected sibling signing subkey under the same trusted primary
+>   fails closed. Do not select a production key, approve a signing subkey,
+>   choose key strength/lifecycle policy, or weaken primary-fingerprint binding.
+> - **CWD:** `/opt/warden`.
+> - **BASE:** C39 implementation
+>   `9d29629d0700d23c61a62db5a0971e3a7d63c31e`; ledger-inclusive, fully gated
+>   SHA `7a449d710d7b92bd141a46790274223283dc1ed5`. The documentation-only commit
+>   containing this memo is intentionally not described as gate green.
+> - **READ:** this memo and the C39/C38 entries immediately below; C6 in the
+>   client-security plan; `apps/extension/scripts/release-source-tag.mjs`;
+>   `apps/extension/scripts/reviewed-artifact-signature.mjs`; both verifier
+>   CLIs and focused tests; `apps/extension/package.json`;
+>   `docs/security/RELEASE-INTEGRITY.md`; and installed/primary GnuPG
+>   documentation for `VALIDSIG` signing and primary fingerprints.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the smallest verifier/API/CLI identity-binding changes, focused
+>   ephemeral primary/subkey and transcript tests, release-recipe binding if
+>   the reviewed file set changes, and scoped documentation required by the
+>   measured contract.
+> - **DO_NOT_TOUCH:** `.superpowers/**`,
+>   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
+>   publisher/account state, production tags/keys/trust stores, secrets, the
+>   empty production release registry, or the C1a production extension-id/
+>   permitted-origin owner decision. Do not generate or select a production
+>   signing key/subkey, fetch keys, push, tag, sign production bytes, publish,
+>   or invent reviewer/key-strength/key-lifecycle policy.
+> - **ACCEPT:** executable RED; required canonical full primary and signing
+>   fingerprints supplied independently of the candidate; exact `VALIDSIG`
+>   signing-fingerprint equality plus preserved primary-fingerprint equality;
+>   real ephemeral primary-signing and signing-subkey cases; valid unexpected
+>   sibling-subkey, primary/subkey substitution, short/malformed identity, and
+>   transcript ambiguity refusal in both consumers; temp cleanup; exact-SHA
+>   focused/release evidence; committed/full-gated ledger; and explicit
+>   synthetic-versus-production limits. Keep the provider fixed unavailable.
+> - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
+>   extension artifacts, ephemeral signing keys/files/repos under `/tmp`, and
+>   git commits only; no production signature/key/tag, deploy, upload,
+>   publishing, live service, external message, secret persistence, legal
+>   ruling, or real-account/funds mutation.
+> - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
+>   and outcomes, primary/signing fingerprint behavior, temp cleanup result,
+>   unchanged or promoted invariants, independent-review status, explicit
+>   synthetic/production gaps, and remaining owner/counsel/external-state
+>   blockers.
+>
+> **C39 ledger-inclusive gate:** from a clean tree at
+> `7a449d710d7b92bd141a46790274223283dc1ed5`, this exact command exited **0**
+> and printed that same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed action pins **2/2**, core **700/700**, extension **537/537**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
+> measured Argon2 benchmark, canonical ZIP/five-sidecar verification with
+> **21** recipe inputs, independent Info-ZIP parsing, the real sequential
+> two-clean-checkout rehearsal, emitted release-tooling exclusion, all six
+> temp-directory cleanup checks, diff checks, and both clean-tree guards. The
+> final rehearsal compared **14** files and produced a **3,810-byte** canonical
+> report with SHA-256
+> `97364d47ce2d3b75aa2c4dc598a7d310bf89b4ff39745752fe48c5a36ba480ef`.
+> At this ledger SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `a1b68f569441afc73bf3ec851ce00df2f094b47cfb610a4a05a24703461602b3`,
+> `f3b8de76861a443c103d9fc04fa15eb40d0b5aeac86d1cca54da66e6012b8270`,
+> `6aa7d5c6c3aff127d0f85549fdcea5dcd17a7cdf890ffe11df0d259a37073e0a`,
+> `0f6d3fb5071b778998be21952b3113f37be5d3907d0b23824a1ad3d1d010e4e1`,
+> and `2d3ba384b514de784db2347781b8a9b0182f4b75cbc9401089eaca477f4d9e93`;
+> the recipe sidecar was **4,372 bytes** and named 21 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> No dual-release, store-verifier, OpenPGP-policy, signed-source, or reviewed-
+> artifact fixture/verifier temporary directory remained. Known Anchor test-
+> middleman key mismatch, legacy macro-`cfg`, and Rust unused-code warnings
+> remained non-fatal. Independent second-model review is still **UNVERIFIED**.
+>
+> **Stop state:** C39 is closed. C40 has no code, RED, edit lease, dependency
+> change, production signature/key/subkey, release-registry edit, Web Store
+> package/action, deployment, or legal adjudication. `WRD-REL-01`,
+> `WRD-REL-02`, and `WRD-REL-03` remain `unimplemented`; C39 is deliberately a
+> synthetic signature-policy precondition and does not establish key strength,
+> authority, lifecycle, independent build provenance, or publisher control.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C38 CLOSED; C39 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
@@ -206,8 +304,9 @@
 > validate a transparency log, prove an independent builder, compare a real
 > store return, establish publisher control, decide the deprecated-ID-22
 > production disposition, make a legal ruling, deploy, or exercise real funds.
-> The ledger-inclusive full repository/release/rehearsal gate is still pending
-> at this entry.
+> The ledger-inclusive full repository/release/rehearsal gate subsequently
+> passed at `7a449d710d7b92bd141a46790274223283dc1ed5`; the exact command and measured
+> outcome are recorded in the C40 clean-break memo above.
 
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C37 CLOSED; C38 NOT STARTED
 >
