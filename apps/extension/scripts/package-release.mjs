@@ -228,7 +228,10 @@ async function writeCanonicalFile(path, bytes) {
 
 async function main() {
   const releaseEnvironment = await assertReleaseEnvironment();
-  const { bundleResults } = await buildExtension();
+  const buildOutput = await buildExtension();
+  if (!Array.isArray(buildOutput?.bundleResults)) {
+    fail("extension build did not return bundle metafiles");
+  }
   const { stdout: postBuildStatus } = await run("git", ["status", "--porcelain=v1", "--untracked-files=all"]);
   if (postBuildStatus !== "") {
     fail(`build changed the source tree:\n${postBuildStatus.trimEnd()}`);
@@ -248,7 +251,7 @@ async function main() {
   const bundleInputEvidenceFileName = `warden-extension-${version}.bundle-inputs.json`;
   const archiveBytes = createCanonicalZip(entries);
   const bundleInputEvidence = await createJavaScriptBundleInputEvidence({
-    buildResults,
+    buildResults: buildOutput.bundleResults,
     entries,
     appDirectory,
     repositoryRoot,
