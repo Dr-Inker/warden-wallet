@@ -1,20 +1,21 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C69 IMPLEMENTED; FULL LEDGER GATE NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C69 CLOSED; NEXT BOUNDED AUDIT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** commit this C69 evidence ledger, run the exact clean-SHA FULL gate
->   recorded below, then write and commit the docs-only close memo. Do not
->   broaden into executable provenance or production trust, and do not imply a
->   private `cwd` confines a malicious same-UID executable or defeats file-owner/
->   root races.
+> - **TASK:** audit the verifier boundary after closed C69 and begin another
+>   bounded cycle only if it has a locally executable RED and a material claim
+>   narrower than sandboxing or production trust. Do not broaden into executable
+>   provenance or production trust, and do not imply a private `cwd` confines a
+>   malicious same-UID executable or defeats file-owner/root races.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C68 close SHA
->   `5e49c3d482540d5adc5a1c3810b0556a91d20c5d`; C69 behavioral RED
->   `8c1828de1de1cdc7369f1131c3fc47636ed15b0c`; implementation/evidence
->   `a206228cacd95197bbd677af6309f1a130db2f2a`; C68 behavioral RED
+> - **BASE:** C69 evidence-ledger/full-gated SHA
+>   `c500cb88815d5a20e18f06b37918b994a9d57799`; C69 implementation/evidence
+>   `a206228cacd95197bbd677af6309f1a130db2f2a`; behavioral RED
+>   `8c1828de1de1cdc7369f1131c3fc47636ed15b0c`; C68 close SHA
+>   `5e49c3d482540d5adc5a1c3810b0556a91d20c5d`; C68 behavioral RED
 >   `f0f751760b3910bafdc087948193a84bf1c36622`; implementation
 >   `c57e14cdd9ea15556e2e5fe3ae0f509bc360165e`; corrected implementation/evidence
 >   `a223edf8a1d8d5c11381756e9fd013ff4b8f5026`; evidence-ledger/full-gated SHA
@@ -26,8 +27,9 @@
 > - **READ:** this memo and the C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** `docs/NEXT-SESSION.md` only for evidence-ledger and
->   closeout. Source, tests, README, and security docs are implementation-complete.
+> - **WRITE (edit lease):** none until the next bounded contract is written and
+>   committed. C69 source, tests, README, security docs, evidence ledger, and
+>   closeout are complete.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -50,8 +52,8 @@
 >   production signature/key/tag, deploy, upload, publishing, live service,
 >   external message, secret persistence, legal ruling, or real-account/funds
 >   mutation.
-> - **RETURN:** C68 close/full SHAs plus C69 contract/RED/implementation/evidence/
->   full/close SHAs, clean/dirty state,
+> - **RETURN:** C69 contract/RED/implementation/evidence/full/close SHAs and any
+>   subsequent bounded-cycle SHAs, clean/dirty state,
 >   exact commands and outcomes, stable-byte proof and temp-copy mode/cleanup,
 >   preserved grammar/order/output/scope, invariant and independent-review
 >   status, explicit synthetic/production and same-host/independent gaps, and
@@ -96,14 +98,12 @@
 > unused-code warnings remained non-fatal. Independent second-model review
 > remains **UNVERIFIED**.
 >
-> **Stop state:** C67 is closed with executable RED, a clean implementation,
-> focused/release/extension-wide evidence, and the repository-wide FULL gate
-> recorded below. C68 is closed with a committed, measured behavioral RED, clean
-> implementation, exact single-contract/focused/release/extension evidence, and
-> the repository-wide FULL gate recorded below. C69 has a committed, measured
-> behavioral RED and clean implementation with exact single-contract, focused/
-> release, and extension-wide evidence. Its ledger commit, FULL gate, and close
-> commit remain.
+> **Stop state:** C67 and C68 are closed with executable REDs, clean
+> implementations, focused/release/extension-wide evidence, and their
+> repository-wide FULL gates recorded below. C69 is closed with a committed,
+> measured behavioral RED, clean implementation, exact single-contract,
+> focused/release, extension-wide, and repository-wide FULL evidence. Only this
+> docs close commit follows the full-gated SHA.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -201,18 +201,49 @@
 > output, construction/sealed/directory modes, and recipe membership are
 > otherwise unchanged. The verifier was already recipe-bound.
 >
-> After committing this evidence ledger, run this exact FULL command from its
-> clean SHA. It is not green until its exit, repeated SHA, and measurements are
-> recorded in the close memo:
+> Evidence-ledger/full-gated commit
+> `c500cb88815d5a20e18f06b37918b994a9d57799` records the command before its
+> execution. From that clean SHA, this exact FULL command exited **0** and
+> printed the same SHA before and after:
 >
 > ```sh
 > git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'release-cli-arguments|normalizeReleaseCliArguments|release-input-file|readBoundedRegularFile|O_NOFOLLOW|MAX_UPLOAD_ARCHIVE_BYTES|MAX_UPLOAD_ARTIFACT_MANIFEST_BYTES|MAX_UPLOAD_EVIDENCE_BYTES|verifyArchiveWithInfoZip|assertTemporaryArchiveUnchanged|TEMPORARY_ARCHIVE_COMPARE_CHUNK_BYTES|temporaryArchiveReadHandle|temporaryArchiveWriteHandle|descriptorPath|warden-release-unzip|cwd: temporaryDirectory|read-only seal|chmod\(0o400\)|release-source-tag-message|print-release-source-tag-message|formatReleaseTagMessage|warden\.extension-release-tag\.v1|artifact-manifest-sha256|expected-default-artifact-manifest-sha256|expected-artifact-manifest-sha256|expected-detached-signature-sha256|source tag signed|source tag verifier returned|artifact signature verifier returned|artifact manifest sha256|reviewed artifact manifest differs|detached signature differs|openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|expectedArtifactManifestSha256|signedArtifactManifestSha256|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|reviewedUploadArchive|storePackage|expectedPackageSha256|expectedStorePackageSha256|expectedStoreExtensionId|dualReleaseReport|expectedDualReleaseReportSha256|artifactManifestSha256|boundReleaseFileCount|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-release-verify-cli-test-*' -o -name 'warden-release-unzip-*' -o -name 'warden-release-tag-message-cli-test-*' -o -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
 > ```
 >
+> It passed action pins **2/2**, core **700/700**, extension **595/595**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, and Rust **681 passed / 0 failed / 1 ignored**, plus builds,
+> typechecks, the canonical release gate, real Info-ZIP parsing from the private
+> directory, the sequential two-clean-checkout rehearsal, emitted release-
+> tooling exclusion, selected cleanup, diff checks, and both clean-tree guards.
+> The measured Argon2 elapsed p50/p95 were **907.0/1017.3 ms**, host-task delay
+> p50/p95 were **61.4/67.9 ms**, and password-buffer wiping was true. Known
+> Anchor test-middleman key mismatch, legacy macro-`cfg`, target-`cfg`, and Rust
+> unused-code warnings remained non-fatal.
+>
+> The final rehearsal compared **14** files and produced a **3,810-byte**
+> canonical report with SHA-256
+> `a2718cdedad9f771d2fb355ee2d9684515d7e7d5420a03f4cccd5f522f225e95`.
+> At the full-gated SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `59fe5ed799c1045d5e98bbed9fdf6f2d91ada53d04b5f16f974128ae956908d1`,
+> `4881305e398c226b42f606b081b181849f031b8a428d63a3fd585aea658d50c5`,
+> `7b53eb13765b784770a8d3e0696c0ec6376d3d03eaff7088c3e6184b992cdd29`,
+> `9c50a53a66744c5044f46381df5c5c1c558fa54107b98d0dde075e2a9d25e5eb`,
+> and `7802d0230d5149f8e9aaad5c2df632a62a587aec2c912236715c3ad871452181`.
+> The recipe sidecar remained **5,126 bytes** with **25** inputs; the verifier
+> remained **11,282 bytes** at SHA-256
+> `77a028e1eb8a3f196386267e69243c84eed9336e97bca7a27f48149a0c86fd93`.
+> ZIP SHA-256 and payload-tree SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> No selected fixture/verifier/rehearsal temporary directory remained.
+>
 > This limits accidental/cooperative relative-path reads or writes by Info-ZIP.
 > It is not a sandbox: a malicious same-UID executable can change directories or
 > access other permitted paths, and root/host/executable provenance remains
-> external. No invariant or production-trust status moves.
+> external. No invariant or production-trust status moves. Independent second-
+> model review remains **UNVERIFIED**.
 
 > ## 2026-09-01 C68 READ-ONLY INFO-ZIP INODE — C6 PARTIAL, HOST TRUST EXTERNAL
 >
