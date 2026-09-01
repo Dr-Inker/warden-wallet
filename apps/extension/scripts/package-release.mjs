@@ -19,6 +19,11 @@ import { promisify } from "node:util";
 import { version as esbuildVersion } from "esbuild";
 
 import {
+  createProductionDependencyEvidence,
+  serializeProductionDependencyEvidence,
+  verifyProductionDependencyEvidenceAttachment,
+} from "./production-dependency-evidence.mjs";
+import {
   CANONICAL_TIMESTAMP,
   collectCanonicalPayload,
   createArtifactManifest,
@@ -56,6 +61,14 @@ function fail(message) {
 async function readJson(path, label) {
   try {
     return JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    fail(`${label} is not readable JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function parseCommandJson(text, label) {
+  try {
+    return JSON.parse(text);
   } catch (error) {
     fail(`${label} is not readable JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -239,20 +252,68 @@ async function main() {
   }
   const archiveFileName = `warden-extension-${version}.zip`;
   const artifactManifestFileName = `warden-extension-${version}.artifact.json`;
+  const dependencyEvidenceFileName = `warden-extension-${version}.sbom.json`;
   const archiveBytes = createCanonicalZip(entries);
+  const { stdout: dependencyReportOutput } = await run("pnpm", [
+    "--filter",
+    "@warden/extension...",
+    "list",
+    "--prod",
+    "--depth",
+    "Infinity",
+    "--json",
+  ]);
+  const { stdout: licenseReportOutput } = await run("pnpm", [
+    "--filter",
+    "@warden/extension...",
+    "licenses",
+    "list",
+    "--prod",
+    "--json",
+  ]);
+  const { stdout: postInventoryStatus } = await run("git", [
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+  ]);
+  if (postInventoryStatus !== "") {
+    fail(`dependency inventory changed the source tree:\n${postInventoryStatus.trimEnd()}`);
+  }
+  const dependencyEvidence = createProductionDependencyEvidence({
+    dependencyReport: parseCommandJson(dependencyReportOutput, "pnpm production dependency report"),
+    licenseReport: parseCommandJson(licenseReportOutput, "pnpm production license report"),
+    rootPackage: { name: "@warden/extension", version },
+    source: releaseEnvironment.source,
+    archiveFileName,
+    archiveBytes,
+  });
+  const dependencyEvidenceBytes = Buffer.from(
+    serializeProductionDependencyEvidence(dependencyEvidence),
+    "utf8",
+  );
   const artifactManifest = createArtifactManifest({
     entries,
     archiveBytes,
     artifactFileName: archiveFileName,
     ...releaseEnvironment,
+    dependencyEvidence: {
+      file: dependencyEvidenceFileName,
+      bytes: dependencyEvidenceBytes,
+    },
   });
   verifyArtifactArchive({ archiveBytes, artifactManifest });
+  verifyProductionDependencyEvidenceAttachment({
+    evidenceBytes: dependencyEvidenceBytes,
+    artifactManifest,
+    archiveBytes,
+  });
 
   await ensureReleaseDirectory();
   const stagingDirectory = await mkdtemp(join(releaseDirectory, ".staging-"));
   const stagedUnpacked = join(stagingDirectory, "unpacked");
   const stagedArchive = join(stagingDirectory, archiveFileName);
   const stagedArtifactManifest = join(stagingDirectory, artifactManifestFileName);
+  const stagedDependencyEvidence = join(stagingDirectory, dependencyEvidenceFileName);
   try {
     await stageCanonicalUnpacked(entries, stagedUnpacked);
     await writeCanonicalFile(stagedArchive, archiveBytes);
@@ -260,6 +321,7 @@ async function main() {
       stagedArtifactManifest,
       Buffer.from(serializeArtifactManifest(artifactManifest), "utf8"),
     );
+    await writeCanonicalFile(stagedDependencyEvidence, dependencyEvidenceBytes);
     await verifyCanonicalUnpacked({
       rootDirectory: stagedUnpacked,
       artifactManifest,
@@ -268,23 +330,32 @@ async function main() {
     const unpackedTarget = join(releaseDirectory, "unpacked");
     const archiveTarget = join(releaseDirectory, archiveFileName);
     const artifactManifestTarget = join(releaseDirectory, artifactManifestFileName);
+    const dependencyEvidenceTarget = join(releaseDirectory, dependencyEvidenceFileName);
     await removeGeneratedTarget(unpackedTarget, "directory");
     await removeGeneratedTarget(archiveTarget, "file");
     await removeGeneratedTarget(artifactManifestTarget, "file");
+    await removeGeneratedTarget(dependencyEvidenceTarget, "file");
     await rename(stagedUnpacked, unpackedTarget);
     await rename(stagedArchive, archiveTarget);
     await rename(stagedArtifactManifest, artifactManifestTarget);
+    await rename(stagedDependencyEvidence, dependencyEvidenceTarget);
   } finally {
     await rm(stagingDirectory, { recursive: true, force: true });
   }
 
   const relativeArchive = relative(repositoryRoot, join(releaseDirectory, archiveFileName));
   const relativeManifest = relative(repositoryRoot, join(releaseDirectory, artifactManifestFileName));
+  const relativeDependencyEvidence = relative(
+    repositoryRoot,
+    join(releaseDirectory, dependencyEvidenceFileName),
+  );
   console.log(`packaged ${relativeArchive}`);
   console.log(`attestation ${relativeManifest}`);
+  console.log(`dependency evidence ${relativeDependencyEvidence}`);
   console.log(`source ${artifactManifest.source.gitCommit}`);
   console.log(`payload tree sha256 ${artifactManifest.payload.treeSha256}`);
   console.log(`archive sha256 ${artifactManifest.archive.sha256}`);
+  console.log(`production dependency components ${dependencyEvidence.components.length}`);
 }
 
 await main();

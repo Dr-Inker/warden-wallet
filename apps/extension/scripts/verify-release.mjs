@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { verifyProductionDependencyEvidenceAttachment } from "./production-dependency-evidence.mjs";
 import {
   parseArtifactManifest,
   verifyArtifactArchive,
@@ -28,19 +29,27 @@ async function main() {
 
   const defaultArchive = join(releaseDirectory, `warden-extension-${version}.zip`);
   const defaultArtifactManifest = join(releaseDirectory, `warden-extension-${version}.artifact.json`);
+  const defaultDependencyEvidence = join(releaseDirectory, `warden-extension-${version}.sbom.json`);
   const args = process.argv.slice(2);
-  if (args.length > 3) {
-    fail("usage: verify-release.mjs [candidate.zip] [artifact.json] [unpacked-directory]");
+  if (![0, 3, 4].includes(args.length)) {
+    fail("usage: verify-release.mjs [candidate.zip artifact.json dependency-evidence.json [unpacked-directory]]");
   }
   const archivePath = resolve(args[0] ?? defaultArchive);
   const artifactManifestPath = resolve(args[1] ?? defaultArtifactManifest);
-  const unpackedPath = args[2] === undefined
+  const dependencyEvidencePath = resolve(args[2] ?? defaultDependencyEvidence);
+  const unpackedPath = args[3] === undefined
     ? (args.length === 0 ? join(releaseDirectory, "unpacked") : undefined)
-    : resolve(args[2]);
+    : resolve(args[3]);
 
   const archiveBytes = await readFile(archivePath);
   const artifactManifest = parseArtifactManifest(await readFile(artifactManifestPath));
+  const dependencyEvidenceBytes = await readFile(dependencyEvidencePath);
   const verified = verifyArtifactArchive({ archiveBytes, artifactManifest });
+  const dependencyEvidence = verifyProductionDependencyEvidenceAttachment({
+    evidenceBytes: dependencyEvidenceBytes,
+    artifactManifest,
+    archiveBytes,
+  });
   try {
     await execFile("unzip", ["-t", archivePath], {
       encoding: "utf8",
@@ -65,10 +74,12 @@ async function main() {
 
   console.log(`verified ${archivePath}`);
   console.log(`against ${artifactManifestPath}`);
+  console.log(`dependency evidence ${dependencyEvidencePath}`);
   console.log(`source ${artifactManifest.source.gitCommit}`);
   console.log(`files ${verified.files}`);
   console.log(`payload tree sha256 ${verified.treeSha256}`);
   console.log(`archive sha256 ${verified.archiveSha256}`);
+  console.log(`production dependency components ${dependencyEvidence.components}`);
   console.log("independent ZIP reader unzip -t passed");
   console.log(unpackedPath === undefined ? "unpacked tree not requested" : `unpacked ${unpackedPath}`);
 }

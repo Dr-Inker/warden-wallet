@@ -42,6 +42,11 @@ const RELEASE_TOOLCHAIN = Object.freeze({
   esbuild: "0.28.2",
 });
 
+const DEPENDENCY_EVIDENCE = Object.freeze({
+  file: "warden-extension-1.2.3.sbom.json",
+  bytes: Buffer.from("canonical dependency evidence fixture\n"),
+});
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
@@ -74,6 +79,7 @@ function baselineArtifact(entries = payloadEntries()) {
     artifactFileName: "warden-extension-1.2.3.zip",
     source: RELEASE_SOURCE,
     toolchain: RELEASE_TOOLCHAIN,
+    dependencyEvidence: DEPENDENCY_EVIDENCE,
   });
   return { archiveBytes, artifactManifest };
 }
@@ -212,6 +218,7 @@ describe("reviewed artifact manifest and fail-closed verifier", () => {
       artifactFileName: "warden-extension-1.2.3.zip",
       source: RELEASE_SOURCE,
       toolchain: RELEASE_TOOLCHAIN,
+      dependencyEvidence: DEPENDENCY_EVIDENCE,
     })).toThrow(/canonical two-space JSON/);
   });
 

@@ -11,7 +11,9 @@ import {
 } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 
-export const ARTIFACT_SCHEMA = "warden.extension-artifact.v1";
+import { PRODUCTION_DEPENDENCY_EVIDENCE_SCHEMA } from "./production-dependency-evidence.mjs";
+
+export const ARTIFACT_SCHEMA = "warden.extension-artifact.v2";
 export const CANONICAL_TIMESTAMP = "1980-01-01T00:00:00.000Z";
 
 const CANONICAL_DATE = new Date(CANONICAL_TIMESTAMP);
@@ -572,7 +574,7 @@ function assertHash(value, label) {
 function assertArtifactManifestShape(artifactManifest) {
   assertExactKeys(
     artifactManifest,
-    ["schema", "source", "toolchain", "extension", "payload", "archive"],
+    ["schema", "source", "toolchain", "extension", "payload", "archive", "dependencyEvidence"],
     "artifact manifest",
   );
   if (artifactManifest.schema !== ARTIFACT_SCHEMA) {
@@ -639,6 +641,25 @@ function assertArtifactManifestShape(artifactManifest) {
     fail("artifact archive metadata is invalid");
   }
   assertHash(artifactManifest.archive.sha256, "artifact archive sha256");
+  assertExactKeys(
+    artifactManifest.dependencyEvidence,
+    ["file", "schema", "bytes", "sha256"],
+    "artifact dependency evidence",
+  );
+  if (
+    typeof artifactManifest.dependencyEvidence.file !== "string" ||
+    !/^[A-Za-z0-9._-]+\.sbom\.json$/.test(artifactManifest.dependencyEvidence.file) ||
+    artifactManifest.dependencyEvidence.schema !== PRODUCTION_DEPENDENCY_EVIDENCE_SCHEMA ||
+    !Number.isSafeInteger(artifactManifest.dependencyEvidence.bytes) ||
+    artifactManifest.dependencyEvidence.bytes <= 0 ||
+    artifactManifest.dependencyEvidence.bytes > MAX_ENTRY_BYTES
+  ) {
+    fail("artifact dependency evidence metadata is invalid");
+  }
+  assertHash(
+    artifactManifest.dependencyEvidence.sha256,
+    "artifact dependency evidence sha256",
+  );
 }
 
 export function createArtifactManifest({
@@ -647,6 +668,7 @@ export function createArtifactManifest({
   artifactFileName,
   source,
   toolchain,
+  dependencyEvidence,
 }) {
   const canonical = canonicalizeEntries(entries).map(({ path, data }) => ({ path, data }));
   const parsedArchive = parseCanonicalZip(archiveBytes);
@@ -657,6 +679,14 @@ export function createArtifactManifest({
     fail("archive payload does not equal the files being attested");
   }
   const files = payloadFileRecords(canonical);
+  if (
+    !isPlainObject(dependencyEvidence) ||
+    typeof dependencyEvidence.file !== "string" ||
+    !(dependencyEvidence.bytes instanceof Uint8Array) ||
+    dependencyEvidence.bytes.length === 0
+  ) {
+    fail("dependency evidence attachment must provide a file name and non-empty bytes");
+  }
   const artifactManifest = {
     schema: ARTIFACT_SCHEMA,
     source: {
@@ -679,6 +709,12 @@ export function createArtifactManifest({
       format: "zip-store-v1",
       bytes: archiveBytes.length,
       sha256: sha256(archiveBytes),
+    },
+    dependencyEvidence: {
+      file: dependencyEvidence.file,
+      schema: PRODUCTION_DEPENDENCY_EVIDENCE_SCHEMA,
+      bytes: dependencyEvidence.bytes.length,
+      sha256: sha256(dependencyEvidence.bytes),
     },
   };
   assertArtifactManifestShape(artifactManifest);

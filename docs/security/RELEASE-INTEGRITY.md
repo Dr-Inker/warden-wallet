@@ -27,13 +27,25 @@ steps ahead of the audit; the repository test cannot enforce host-side policy.
 ## Extension upload artifacts (C6 partial)
 
 `pnpm --filter @warden/extension release:gate` now produces a deterministic
-unpacked payload, canonical Chrome Web Store upload ZIP, and adjacent artifact
-manifest from a clean commit under the exact JavaScript toolchain pins in
-`docs/TOOLCHAIN.md`. The verifier independently asks `unzip -t` to parse the
-archive and then fail-closes on archive metadata, path-set, file-mode, file-size,
-file-hash, manifest permission, CSP, update URL, payload-tree hash, or whole-ZIP
-hash drift. Generated outputs are ignored; this document does not pretend an
-ordinary development build is a release row.
+unpacked payload, canonical Chrome Web Store upload ZIP, adjacent artifact
+manifest, and canonical `*.sbom.json` production-dependency evidence sidecar
+from a clean commit under the exact JavaScript toolchain pins in
+`docs/TOOLCHAIN.md`. The sidecar records the installed pnpm `--prod` closure and
+package-declared license strings without host paths or unsaved dependencies. It
+binds the clean source and ZIP hash; artifact-manifest schema v2 in turn binds
+the exact sidecar byte length and SHA-256. The verifier independently asks
+`unzip -t` to parse the archive and then fail-closes on archive metadata,
+path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
+payload-tree hash, whole-ZIP hash, sidecar-byte hash, source binding, archive
+binding, graph shape, or canonical JSON drift. Generated outputs are ignored;
+this document does not pretend an ordinary development build is a release row.
+
+The evidence scope deliberately says `bundleCoverage: "not-asserted"`: pnpm's
+installed production closure is broader than a tree-shaken browser bundle, and
+this generator does not inspect esbuild metafile inputs. `declaredLicense`
+values are package metadata, not a legal conclusion; `Unknown` remains unknown.
+This attachment is not a vulnerability scan, provenance signature, independent
+build comparison, or proof that no other build input contributed bytes.
 
 For a real extension release, the reviewed `*.artifact.json` bytes and ZIP hash
 must be anchored in the release review/attestation system before comparing a
@@ -42,12 +54,12 @@ both defeats comparison if no independent reviewed anchor exists. The current
 verifier accepts the canonical **upload ZIP** only. A package downloaded back
 from the Web Store is a CRX/store-repackaged object and remains UNVERIFIED; a
 future lane must remove only documented store-added signing/packaging and then
-compare the entire payload. Two genuinely independent clean builders, SBOM and
-license attachment, publisher MFA/least privilege, and an external security
-review also remain UNVERIFIED. Immutable CI action syntax is now
-repository-gated as described above, but no off-host run or upstream-source
-attestation is claimed. No Web Store upload or publisher-account mutation is
-performed by this gate.
+compare the entire payload. Two genuinely independent clean builders, exact
+emitted-bundle input coverage, publisher MFA/least privilege, a provenance
+signature, and an external security review also remain UNVERIFIED. Immutable CI
+action syntax is now repository-gated as described above, but no off-host run or
+upstream-source attestation is claimed. No Web Store upload or publisher-account
+mutation is performed by this gate.
 
 This document is the addressable record `scripts/deploy-gate.sh` checks against
 (spec §17 item L7, plan Task 11 item 5): for every release SHA that is a

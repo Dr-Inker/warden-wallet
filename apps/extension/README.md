@@ -11,38 +11,49 @@ root `package.json` and `.node-version`, run:
 pnpm --filter @warden/extension release:gate
 ```
 
-The command rebuilds the extension and writes three ignored, local artifacts
+The command rebuilds the extension and writes four ignored, local artifacts
 under `apps/extension/release/`:
 
 - `unpacked/`, with files normalized to mode `0644`, directories to `0755`, and
   every mtime to `1980-01-01T00:00:00.000Z`;
 - `warden-extension-<version>.zip`, a classic non-ZIP64 STORE archive with
   UTF-8 paths in byte-sorted order, no comments/extras, the same fixed metadata,
-  and `manifest.json` at the archive root; and
+  and `manifest.json` at the archive root;
 - `warden-extension-<version>.artifact.json`, which binds the clean source SHA,
   lockfile hash, exact Node/pnpm/esbuild versions, every path/size/mode/file
   hash, a payload-tree hash, the reviewed permission/CSP/update-URL snapshot,
-  and the complete ZIP hash.
+  the complete ZIP hash, and the exact dependency-evidence sidecar bytes; and
+- `warden-extension-<version>.sbom.json`, a canonical production-dependency
+  evidence record generated from pnpm's installed `--prod` dependency graph
+  and declared-license report. It binds the clean source and ZIP hash, excludes
+  host paths and unsaved dependencies, preserves `Unknown` as reported, and
+  labels bundle coverage `not-asserted`.
 
 The verifier reparses the ZIP under a deliberately strict canonical grammar,
 compares every file and release-policy field, checks the normalized unpacked
-tree, and runs `unzip -t` as an independent format reader. To compare another
-canonical upload ZIP against an already reviewed artifact manifest:
+tree, verifies both directions of the ZIP/evidence/manifest binding, and runs
+`unzip -t` as an independent format reader. To compare another canonical
+upload ZIP and evidence sidecar against an already reviewed artifact manifest:
 
 ```sh
 node apps/extension/scripts/verify-release.mjs \
-  /path/to/candidate.zip /path/to/reviewed.artifact.json
+  /path/to/candidate.zip /path/to/reviewed.artifact.json \
+  /path/to/candidate.sbom.json
 ```
 
 Chrome's current Web Store contract requires an upload ZIP with
 `manifest.json` at its root; see [Prepare your extension](https://developer.chrome.com/docs/webstore/prepare)
 and [Publish in the Chrome Web Store](https://developer.chrome.com/docs/webstore/publish).
-This lane creates and verifies that upload artifact only. It does **not** parse
-or normalize a Web-Store-returned CRX, authenticate the adjacent JSON, prove two
-independent builders agree, publish anything, or replace publisher-account and
-review controls. Replacing both a ZIP and its unsigned, co-generated JSON is not
-detected unless the reviewed JSON/hash is anchored somewhere the builder cannot
-rewrite.
+This lane creates and verifies that upload artifact and package-manager
+production closure only. The sidecar does **not** assert that every listed
+package contributed bytes to the emitted browser bundle, that no unlisted input
+contributed bytes, that a declared license is legally sufficient, or that a
+vulnerability scan passed. The lane also does not parse or normalize a
+Web-Store-returned CRX, authenticate the adjacent JSON, prove two independent
+builders agree, publish anything, or replace publisher-account and review
+controls. Replacing the ZIP and both unsigned, co-generated JSON files is not
+detected unless the reviewed manifest/hash is anchored somewhere the builder
+cannot rewrite.
 
 ## Manifest permissions
 

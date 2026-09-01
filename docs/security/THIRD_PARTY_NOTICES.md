@@ -105,9 +105,11 @@ license posture.
   counsel before SHIP** — carried UNRESOLVED (parallels the Squads reader); record
   the ruling here.
 - `rpc-websockets` (LGPL-3.0-only) and `text-encoding-utf-8` (unknown
-  license) — re-evaluate at Phase 2 when the extension bundle's actual
-  build/link shape (webpack/esbuild single-file bundle vs. npm tree) is
-  decided; see table above.
+  license) remain unresolved. The extension release gate now preserves both
+  package-declared values in its deterministic `*.sbom.json` production-closure
+  attachment, but explicitly does not claim exact emitted-bundle coverage or a
+  legal disposition. Re-evaluate with esbuild input evidence and counsel before
+  SHIP; see the table above.
 - This file is **generated, not hand-curated** — regenerate it (rerun both
   commands, re-paste) on every `Cargo.lock`/`pnpm-lock.yaml` change that
   Task 11's or a successor's review cares about; it will silently go stale
