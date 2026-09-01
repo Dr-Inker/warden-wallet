@@ -1,4 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,12 +14,41 @@ import {
   parseSingleOpenPgpSignatureStatus,
   verifyReleaseSourceTag,
 } from "../scripts/release-source-tag.mjs";
+import {
+  createLocalDualReleaseReport,
+  releaseComparisonPaths,
+  serializeLocalDualReleaseReport,
+} from "../../../scripts/local-dual-extension-release.mjs";
 
 const execFile = promisify(execFileCallback);
 const GIT = "/usr/bin/git";
 const GPG = "/usr/bin/gpg";
 const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
+const FIXTURE_VERSION = "1.2.3";
 const fixture = {};
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function localDualReportBytes(sourceGitCommit) {
+  const files = releaseComparisonPaths(FIXTURE_VERSION).map((path) => ({
+    path,
+    data: Buffer.from(`canonical signed-source fixture bytes for ${path}\n`),
+  }));
+  return Buffer.from(serializeLocalDualReleaseReport(createLocalDualReleaseReport({
+    sourceGitCommit,
+    toolchain: { node: "22.23.2", pnpm: "11.12.0", esbuild: "0.28.2" },
+    orchestrator: {
+      path: "repo:scripts/local-dual-extension-release.mjs",
+      bytes: 12345,
+      sha256: "a".repeat(64),
+    },
+    extensionVersion: FIXTURE_VERSION,
+    firstFiles: files,
+    secondFiles: [...files].reverse(),
+  })), "utf8");
+}
 
 async function command(file, arguments_, { cwd, env = process.env } = {}) {
   return execFile(file, arguments_, {
@@ -241,7 +271,10 @@ function verify(options = {}) {
     expectedTagObject: fixture.releaseTagObject,
     expectedPrimaryFingerprint: fixture.fingerprint,
     expectedSigningFingerprint: fixture.signingFingerprint,
-    artifactManifest: { source: { gitCommit: fixture.firstCommit } },
+    artifactManifest: {
+      source: { gitCommit: fixture.firstCommit },
+      extension: { version: FIXTURE_VERSION },
+    },
     environment: fixture.environment,
     ...options,
   });
@@ -282,6 +315,14 @@ describe("release source annotated-tag verification", () => {
       hashAlgorithm: 10,
       signatureClass: "00",
     });
+  });
+
+  it("rejects a separately valid dual report for a different source commit", async () => {
+    const dualReleaseReportBytes = localDualReportBytes(fixture.secondCommit);
+    await expect(verify({
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+    })).rejects.toThrow(/dual release report source differs from the artifact source commit/);
   });
 
   it("rejects a lightweight tag, moved tag, or wrong artifact commit", async () => {
