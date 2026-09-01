@@ -36,6 +36,27 @@ afterEach(async () => {
 });
 
 describe("release-source CLI external files", () => {
+  it("requires an independent digest for the auto-selected local artifact", async () => {
+    const sourceArguments = [
+      "release-test",
+      "a".repeat(40),
+      "A".repeat(40),
+      "B".repeat(40),
+    ];
+
+    const missingOutput = await rejectedOutput(sourceArguments);
+    expect(missingOutput).toMatch(/usage: verify-release-source-tag/);
+
+    const malformedOutput = await rejectedOutput([
+      ...sourceArguments,
+      "A".repeat(64),
+    ]);
+    expect(malformedOutput).toMatch(
+      /expected artifact manifest SHA-256 must be a lowercase digest/,
+    );
+    expect(malformedOutput).not.toMatch(/usage: verify-release-source-tag/);
+  });
+
   it("requires an independent exact artifact digest before parsing or GnuPG", async () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-source-cli-test-"));
     temporaryDirectories.push(directory);
