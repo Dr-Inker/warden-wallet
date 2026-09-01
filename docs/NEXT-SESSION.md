@@ -1,5 +1,109 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C50 CLOSED; C51 NOT STARTED
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the next Warden implementation/review session.
+> - **TASK:** continue C6 with one bounded C51 contract: make C50's shared
+>   stable release-input reader reject same-size in-place mutation by comparing
+>   the opened file's exact pre/post identity and nanosecond modification/change
+>   metadata, not only its byte count. Begin with a fresh read-only map and a
+>   real helper-level RED that mutates a regular file without changing its size
+>   while the current reader accepts it. Preserve all C36/C39–C50 parser,
+>   digest, signature, tag, key, report, store, ceiling, and recipe rules.
+> - **CWD:** `/opt/warden`.
+> - **BASE:** C50 behavioral RED
+>   `3806a27bca0d20db0a570d60c8dcb04a99b85445`; implementation
+>   `b885573d48078b1ef49044d6b0977daf062af041`; ledger-inclusive, fully gated
+>   SHA `865ef3e7f4a03d937a131f7f8afafce3bbfbf0b0`. The documentation-only commit
+>   containing this memo is intentionally not described as gate green.
+> - **READ:** this memo and the C50/C49/C36 entries; C6 in the client-security
+>   plan; `release-input-file.mjs` and all ten caller-selected reads; the
+>   stronger bigint `dev`/`ino`/`size`/`mtimeNs`/`ctimeNs` comparison in
+>   `release-artifact.mjs`; direct/CLI tests; exact recipe evidence; release
+>   docs; and temp cleanup assertions.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the shared reader, one deterministic same-size mutation RED and
+>   refusals, recipe-bound generated evidence, scoped docs/ledger, and any
+>   minimal caller change strictly required by the strengthened contract.
+> - **DO_NOT_TOUCH:** `.superpowers/**`,
+>   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
+>   publisher/account state, production tags/keys/trust stores, secrets, the
+>   empty production release registry, or the C1a production extension-id/
+>   permitted-origin owner decision. Do not fetch a store package/key, push,
+>   tag, sign production bytes, publish, weaken C36/C39–C50 policy, or invent
+>   store provenance, freshness, reviewer, builder-independence, key-strength,
+>   publisher, or lifecycle policy.
+> - **ACCEPT:** executable helper-level RED proving current acceptance of a
+>   same-size in-place mutation; one opened handle compares bigint device,
+>   inode, size, `mtimeNs`, and `ctimeNs` before/after plus returned byte length;
+>   existing no-final-symlink, nonempty regular-file, ceiling, close-on-every-
+>   path, caller-specific exact-buffer, recipe, and earlier refusal behavior
+>   remains; exact-SHA focused/release evidence; committed/full-gated ledger;
+>   and explicit local/production and same-host/independent limits. Keep the
+>   provider fixed unavailable.
+> - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
+>   extension artifacts, ephemeral mutation/keys/files/repos/launchers/CRX
+>   fixtures under `/tmp`, and git commits only; no network key/package
+>   retrieval, production signature/key/tag, deploy, upload, publishing, live
+>   service, external message, secret persistence, legal ruling, or real-
+>   account/funds mutation.
+> - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
+>   and outcomes, pre/post metadata and mutation behavior, all caller ceilings,
+>   exact artifact/upload/report/signature/CRX relationships and digests,
+>   preserved scope, unchanged or promoted invariants, independent-review
+>   status, explicit synthetic/production and same-host/independent gaps, and
+>   remaining owner/counsel/external-state blockers.
+>
+> **C50 ledger-inclusive gate:** from a clean tree at
+> `865ef3e7f4a03d937a131f7f8afafce3bbfbf0b0`, this exact command exited **0**
+> and printed that same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'release-input-file|readBoundedRegularFile|O_NOFOLLOW|openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|reviewedUploadArchive|storePackage|expectedPackageSha256|expectedStorePackageSha256|expectedStoreExtensionId|dualReleaseReport|expectedDualReleaseReportSha256|artifactManifestSha256|boundReleaseFileCount|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed action pins **2/2**, core **700/700**, extension **563/563**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
+> measured Argon2 benchmark, canonical ZIP/five-sidecar verification with
+> **23** recipe inputs, independent Info-ZIP parsing, the real sequential two-
+> clean-checkout rehearsal, emitted release-tooling exclusion, all nine selected
+> temp-directory cleanup checks, diff checks, and both clean-tree guards. The
+> Argon2 elapsed p50/p95 were **931.8/998.3 ms**, host-task delay p50/p95 were
+> **62.7/69.3 ms**, and password-buffer wiping was true. The final rehearsal
+> compared **14** files and produced a **3,810-byte** canonical report with
+> SHA-256
+> `5eb4da89733d32292efc1814f3b261500891799be0b1d9c26e2fa1133b8e2010`.
+> At this ledger SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `5e113dc174f433c9733de54e83ef90ce950d07a521d454a0702609f629ee8bbb`,
+> `4983ce40f6ddc0fbc0d6944d3e760d9c6da99957fb3daa583ca38c381df2bbbc`,
+> `cd45144b59f937279add817166a9418985869841bf79805f721a4246da44b146`,
+> `77532a29d44396ecf0083bb4a4855d09484509b08b75da6910f6d0c800d913a2`,
+> and `9765c18244430dc7804afdeef76aed34144bcc9745695e8639275fe7446c0218`;
+> the recipe sidecar was **4,740 bytes**, named 23 inputs, and bound the shared
+> helper as **1,394 bytes** with SHA-256
+> `ee1ddcf7f9105bcf2e025cb8f826371831dcb1ccf128341a3aa758e2de75c6d2`.
+> ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> No selected fixture/verifier/rehearsal temporary directory remained. Known
+> Anchor test-middleman key mismatch, legacy macro-`cfg`, and Rust unused-code
+> warnings remained non-fatal. Independent second-model review remains
+> **UNVERIFIED**.
+>
+> **Stop state:** C50 is closed. C51 has no code, RED, edit lease, metadata-
+> stable same-size-mutation refusal, real store-returned package, production
+> reviewer/tag/key/signature, release-registry edit, Web Store account/action,
+> deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; all ten caller-selected release inputs
+> now share final-symlink, regular-file, pre-read-ceiling, stable-handle, and
+> size-stability enforcement, while input provenance and host trust stay
+> external.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C49 CLOSED; C50 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
