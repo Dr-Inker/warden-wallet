@@ -223,6 +223,16 @@ return {
     { outputFile: "popup.js", metafile: popupResult.metafile },
     { outputFile: "approval.js", metafile: approvalResult.metafile },
   ],
+  staticResults: [
+    { outputFile: "approval.css", sourceFile: "approval.css", transformation: "byte-copy" },
+    { outputFile: "approval.html", sourceFile: "approval.html", transformation: "byte-copy" },
+    {
+      outputFile: "manifest.json",
+      sourceFile: "manifest.json",
+      transformation: "json-parse-stringify-two-space-newline",
+    },
+    { outputFile: "popup.html", sourceFile: "popup.html", transformation: "byte-copy" },
+  ],
 };
 }
 

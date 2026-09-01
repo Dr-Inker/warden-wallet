@@ -267,6 +267,10 @@ describe("canonical production dependency evidence", () => {
         file: "warden-extension-1.2.3.bundle-inputs.json",
         bytes: Buffer.from("canonical bundle input evidence fixture\n"),
       },
+      staticInputEvidence: {
+        file: "warden-extension-1.2.3.static-inputs.json",
+        bytes: Buffer.from("canonical static input evidence fixture\n"),
+      },
     });
 
     expect(artifactManifest.dependencyEvidence.sha256).toBe(

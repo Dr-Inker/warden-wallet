@@ -13,8 +13,9 @@ import { dirname, join, posix } from "node:path";
 
 import { JS_BUNDLE_INPUT_EVIDENCE_SCHEMA } from "./bundle-input-evidence.mjs";
 import { PRODUCTION_DEPENDENCY_EVIDENCE_SCHEMA } from "./production-dependency-evidence.mjs";
+import { STATIC_INPUT_EVIDENCE_SCHEMA } from "./static-input-evidence.mjs";
 
-export const ARTIFACT_SCHEMA = "warden.extension-artifact.v3";
+export const ARTIFACT_SCHEMA = "warden.extension-artifact.v4";
 export const CANONICAL_TIMESTAMP = "1980-01-01T00:00:00.000Z";
 
 const CANONICAL_DATE = new Date(CANONICAL_TIMESTAMP);
@@ -575,7 +576,7 @@ function assertHash(value, label) {
 function assertArtifactManifestShape(artifactManifest) {
   assertExactKeys(
     artifactManifest,
-    ["schema", "source", "toolchain", "extension", "payload", "archive", "dependencyEvidence", "bundleInputEvidence"],
+    ["schema", "source", "toolchain", "extension", "payload", "archive", "dependencyEvidence", "bundleInputEvidence", "staticInputEvidence"],
     "artifact manifest",
   );
   if (artifactManifest.schema !== ARTIFACT_SCHEMA) {
@@ -680,6 +681,25 @@ function assertArtifactManifestShape(artifactManifest) {
     artifactManifest.bundleInputEvidence.sha256,
     "artifact bundle input evidence sha256",
   );
+  assertExactKeys(
+    artifactManifest.staticInputEvidence,
+    ["file", "schema", "bytes", "sha256"],
+    "artifact static input evidence",
+  );
+  if (
+    typeof artifactManifest.staticInputEvidence.file !== "string" ||
+    !/^[A-Za-z0-9._-]+\.static-inputs\.json$/.test(artifactManifest.staticInputEvidence.file) ||
+    artifactManifest.staticInputEvidence.schema !== STATIC_INPUT_EVIDENCE_SCHEMA ||
+    !Number.isSafeInteger(artifactManifest.staticInputEvidence.bytes) ||
+    artifactManifest.staticInputEvidence.bytes <= 0 ||
+    artifactManifest.staticInputEvidence.bytes > MAX_ENTRY_BYTES
+  ) {
+    fail("artifact static input evidence metadata is invalid");
+  }
+  assertHash(
+    artifactManifest.staticInputEvidence.sha256,
+    "artifact static input evidence sha256",
+  );
 }
 
 export function createArtifactManifest({
@@ -690,6 +710,7 @@ export function createArtifactManifest({
   toolchain,
   dependencyEvidence,
   bundleInputEvidence,
+  staticInputEvidence,
 }) {
   const canonical = canonicalizeEntries(entries).map(({ path, data }) => ({ path, data }));
   const parsedArchive = parseCanonicalZip(archiveBytes);
@@ -715,6 +736,14 @@ export function createArtifactManifest({
     bundleInputEvidence.bytes.length === 0
   ) {
     fail("bundle input evidence attachment must provide a file name and non-empty bytes");
+  }
+  if (
+    !isPlainObject(staticInputEvidence) ||
+    typeof staticInputEvidence.file !== "string" ||
+    !(staticInputEvidence.bytes instanceof Uint8Array) ||
+    staticInputEvidence.bytes.length === 0
+  ) {
+    fail("static input evidence attachment must provide a file name and non-empty bytes");
   }
   const artifactManifest = {
     schema: ARTIFACT_SCHEMA,
@@ -750,6 +779,12 @@ export function createArtifactManifest({
       schema: JS_BUNDLE_INPUT_EVIDENCE_SCHEMA,
       bytes: bundleInputEvidence.bytes.length,
       sha256: sha256(bundleInputEvidence.bytes),
+    },
+    staticInputEvidence: {
+      file: staticInputEvidence.file,
+      schema: STATIC_INPUT_EVIDENCE_SCHEMA,
+      bytes: staticInputEvidence.bytes.length,
+      sha256: sha256(staticInputEvidence.bytes),
     },
   };
   assertArtifactManifestShape(artifactManifest);

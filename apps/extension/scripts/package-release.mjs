@@ -40,6 +40,11 @@ import {
   verifyArtifactArchive,
   verifyCanonicalUnpacked,
 } from "./release-artifact.mjs";
+import {
+  createStaticInputEvidence,
+  serializeStaticInputEvidence,
+  verifyStaticInputEvidenceAttachment,
+} from "./static-input-evidence.mjs";
 
 const execFile = promisify(execFileCallback);
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -229,8 +234,8 @@ async function writeCanonicalFile(path, bytes) {
 async function main() {
   const releaseEnvironment = await assertReleaseEnvironment();
   const buildOutput = await buildExtension();
-  if (!Array.isArray(buildOutput?.bundleResults)) {
-    fail("extension build did not return bundle metafiles");
+  if (!Array.isArray(buildOutput?.bundleResults) || !Array.isArray(buildOutput?.staticResults)) {
+    fail("extension build did not return bundle metafiles and static transformations");
   }
   const { stdout: postBuildStatus } = await run("git", ["status", "--porcelain=v1", "--untracked-files=all"]);
   if (postBuildStatus !== "") {
@@ -249,6 +254,7 @@ async function main() {
   const artifactManifestFileName = `warden-extension-${version}.artifact.json`;
   const dependencyEvidenceFileName = `warden-extension-${version}.sbom.json`;
   const bundleInputEvidenceFileName = `warden-extension-${version}.bundle-inputs.json`;
+  const staticInputEvidenceFileName = `warden-extension-${version}.static-inputs.json`;
   const archiveBytes = createCanonicalZip(entries);
   const bundleInputEvidence = await createJavaScriptBundleInputEvidence({
     buildResults: buildOutput.bundleResults,
@@ -261,6 +267,19 @@ async function main() {
   });
   const bundleInputEvidenceBytes = Buffer.from(
     serializeJavaScriptBundleInputEvidence(bundleInputEvidence),
+    "utf8",
+  );
+  const staticInputEvidence = await createStaticInputEvidence({
+    staticResults: buildOutput.staticResults,
+    entries,
+    appDirectory,
+    repositoryRoot,
+    source: releaseEnvironment.source,
+    archiveFileName,
+    archiveBytes,
+  });
+  const staticInputEvidenceBytes = Buffer.from(
+    serializeStaticInputEvidence(staticInputEvidence),
     "utf8",
   );
   const { dependencyReport, licenseReport } =
@@ -301,6 +320,10 @@ async function main() {
       file: bundleInputEvidenceFileName,
       bytes: bundleInputEvidenceBytes,
     },
+    staticInputEvidence: {
+      file: staticInputEvidenceFileName,
+      bytes: staticInputEvidenceBytes,
+    },
   });
   verifyArtifactArchive({ archiveBytes, artifactManifest });
   verifyProductionDependencyEvidenceAttachment({
@@ -313,6 +336,11 @@ async function main() {
     artifactManifest,
     archiveBytes,
   });
+  verifyStaticInputEvidenceAttachment({
+    evidenceBytes: staticInputEvidenceBytes,
+    artifactManifest,
+    archiveBytes,
+  });
 
   await ensureReleaseDirectory();
   const stagingDirectory = await mkdtemp(join(releaseDirectory, ".staging-"));
@@ -321,6 +349,7 @@ async function main() {
   const stagedArtifactManifest = join(stagingDirectory, artifactManifestFileName);
   const stagedDependencyEvidence = join(stagingDirectory, dependencyEvidenceFileName);
   const stagedBundleInputEvidence = join(stagingDirectory, bundleInputEvidenceFileName);
+  const stagedStaticInputEvidence = join(stagingDirectory, staticInputEvidenceFileName);
   try {
     await stageCanonicalUnpacked(entries, stagedUnpacked);
     await writeCanonicalFile(stagedArchive, archiveBytes);
@@ -330,6 +359,7 @@ async function main() {
     );
     await writeCanonicalFile(stagedDependencyEvidence, dependencyEvidenceBytes);
     await writeCanonicalFile(stagedBundleInputEvidence, bundleInputEvidenceBytes);
+    await writeCanonicalFile(stagedStaticInputEvidence, staticInputEvidenceBytes);
     await verifyCanonicalUnpacked({
       rootDirectory: stagedUnpacked,
       artifactManifest,
@@ -340,16 +370,19 @@ async function main() {
     const artifactManifestTarget = join(releaseDirectory, artifactManifestFileName);
     const dependencyEvidenceTarget = join(releaseDirectory, dependencyEvidenceFileName);
     const bundleInputEvidenceTarget = join(releaseDirectory, bundleInputEvidenceFileName);
+    const staticInputEvidenceTarget = join(releaseDirectory, staticInputEvidenceFileName);
     await removeGeneratedTarget(unpackedTarget, "directory");
     await removeGeneratedTarget(archiveTarget, "file");
     await removeGeneratedTarget(artifactManifestTarget, "file");
     await removeGeneratedTarget(dependencyEvidenceTarget, "file");
     await removeGeneratedTarget(bundleInputEvidenceTarget, "file");
+    await removeGeneratedTarget(staticInputEvidenceTarget, "file");
     await rename(stagedUnpacked, unpackedTarget);
     await rename(stagedArchive, archiveTarget);
     await rename(stagedArtifactManifest, artifactManifestTarget);
     await rename(stagedDependencyEvidence, dependencyEvidenceTarget);
     await rename(stagedBundleInputEvidence, bundleInputEvidenceTarget);
+    await rename(stagedStaticInputEvidence, staticInputEvidenceTarget);
   } finally {
     await rm(stagingDirectory, { recursive: true, force: true });
   }
@@ -364,15 +397,21 @@ async function main() {
     repositoryRoot,
     join(releaseDirectory, bundleInputEvidenceFileName),
   );
+  const relativeStaticInputEvidence = relative(
+    repositoryRoot,
+    join(releaseDirectory, staticInputEvidenceFileName),
+  );
   console.log(`packaged ${relativeArchive}`);
   console.log(`attestation ${relativeManifest}`);
   console.log(`dependency evidence ${relativeDependencyEvidence}`);
   console.log(`bundle input evidence ${relativeBundleInputEvidence}`);
+  console.log(`static input evidence ${relativeStaticInputEvidence}`);
   console.log(`source ${artifactManifest.source.gitCommit}`);
   console.log(`payload tree sha256 ${artifactManifest.payload.treeSha256}`);
   console.log(`archive sha256 ${artifactManifest.archive.sha256}`);
   console.log(`production dependency components ${dependencyEvidence.components.length}`);
   console.log(`JavaScript bundle inputs ${bundleInputEvidence.bundles.reduce((total, bundle) => total + bundle.inputCount, 0)}`);
+  console.log(`static input files ${staticInputEvidence.files.length}`);
 }
 
 await main();

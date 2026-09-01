@@ -213,6 +213,10 @@ describe("JavaScript bundle input evidence", () => {
         file: "warden-extension-1.2.3.bundle-inputs.json",
         bytes: evidenceBytes,
       },
+      staticInputEvidence: {
+        file: "warden-extension-1.2.3.static-inputs.json",
+        bytes: Buffer.from("canonical static input evidence fixture\n"),
+      },
     });
     expect(artifactManifest.bundleInputEvidence.sha256).toBe(sha256(evidenceBytes));
     expect(verifyJavaScriptBundleInputEvidenceAttachment({

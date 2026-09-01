@@ -29,22 +29,26 @@ steps ahead of the audit; the repository test cannot enforce host-side policy.
 `pnpm --filter @warden/extension release:gate` now produces a deterministic
 unpacked payload, canonical Chrome Web Store upload ZIP, adjacent artifact
 manifest, canonical `*.sbom.json` production-dependency evidence sidecar, and
-canonical `*.bundle-inputs.json` JavaScript-bundle input sidecar
+canonical `*.bundle-inputs.json` JavaScript-bundle input sidecar, and canonical
+`*.static-inputs.json` non-JavaScript source/output sidecar
 from a clean commit under the exact JavaScript toolchain pins in
 `docs/TOOLCHAIN.md`. A read-only walk records the pnpm-installed `package.json`
 production closure and package-declared license strings without host paths or
 dev dependencies. It binds the clean source and ZIP hash; artifact-manifest
-schema v3 in turn binds each sidecar's exact byte length and SHA-256. The bundle
+schema v4 in turn binds each sidecar's exact byte length and SHA-256. The bundle
 sidecar records every positive `bytesInOutput` input esbuild reports for the
 four emitted JavaScript files, canonical repository/npm identities, actual
 non-virtual input byte lengths and hashes, explicit esbuild virtual inputs and
-zero-byte counts, and each output's byte length and hash. The verifier
+zero-byte counts, and each output's byte length and hash. The static sidecar
+records source/output byte lengths and hashes for `approval.css`,
+`approval.html`, `manifest.json`, and `popup.html`, distinguishing three exact
+byte copies from the manifest's JSON parse/two-space/newline serialization. The verifier
 independently asks `unzip -t` to parse the archive and then fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
 payload-tree hash, whole-ZIP hash, sidecar-byte hash, source binding, archive
-binding, dependency graph shape, JavaScript bundle/input shape, or canonical
-JSON drift. Generated outputs are ignored;
+binding, dependency graph shape, JavaScript bundle/input shape, static
+source/output mapping, or canonical JSON drift. Generated outputs are ignored;
 this document does not pretend an ordinary development build is a release row.
 
 The dependency evidence scope deliberately retains
@@ -52,12 +56,13 @@ The dependency evidence scope deliberately retains
 than a tree-shaken browser bundle, and no automatic package-to-input or legal
 crosswalk is claimed. The separate bundle record is deliberately scoped to the
 four emitted JavaScript files and esbuild's positive `bytesInOutput`
-attribution, which is an estimate rather than a byte partition. It does not
-cover copied HTML, CSS, `manifest.json`, icons, or build-tool/configuration/
-environment inputs. `declaredLicense` values are package metadata, not a legal
-conclusion; `Unknown` remains unknown. Neither attachment is a vulnerability
-scan, provenance signature, independent build comparison, or toolchain
-attestation.
+attribution, which is an estimate rather than a byte partition. The separate
+static record covers the exact four non-JavaScript files in today's eight-file
+payload; it does not claim absent icons or other assets. None of these records
+covers build-tool/configuration/environment inputs. `declaredLicense` values
+are package metadata, not a legal conclusion; `Unknown` remains unknown. No
+attachment is a vulnerability scan, provenance signature, independent build
+comparison, or toolchain attestation.
 
 For a real extension release, the reviewed `*.artifact.json` bytes and ZIP hash
 must be anchored in the release review/attestation system before comparing a
@@ -67,7 +72,7 @@ verifier accepts the canonical **upload ZIP** only. A package downloaded back
 from the Web Store is a CRX/store-repackaged object and remains UNVERIFIED; a
 future lane must remove only documented store-added signing/packaging and then
 compare the entire payload. Two genuinely independent clean builders, full
-static/build-environment input coverage, publisher MFA/least privilege, a provenance
+build-environment input coverage, publisher MFA/least privilege, a provenance
 signature, and an external security review also remain UNVERIFIED. Immutable CI
 action syntax is now repository-gated as described above, but no off-host run or
 upstream-source attestation is claimed. No Web Store upload or publisher-account
