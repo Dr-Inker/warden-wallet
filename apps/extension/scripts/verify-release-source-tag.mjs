@@ -124,7 +124,8 @@ async function main() {
     expectedPrimaryFingerprint,
     expectedSigningFingerprint,
     artifactManifest,
-    artifactManifestBytes: args.length >= 8 ? artifactManifestBytes : undefined,
+    artifactManifestBytes,
+    expectedArtifactManifestSha256,
     dualReleaseReportBytes,
     expectedDualReleaseReportSha256,
     artifactReviewSignatureBytes,
@@ -136,6 +137,9 @@ async function main() {
     expectedStorePackageSha256,
     expectedStoreExtensionId,
   });
+  if (result.artifactManifestSha256 !== artifactManifestSha256) {
+    fail("source tag verifier returned a different artifact manifest digest");
+  }
   console.log(`verified release tag ${result.tagRef}`);
   console.log(`tag object ${result.tagObject}`);
   console.log(`artifact source commit ${result.sourceCommit}`);
@@ -151,7 +155,7 @@ async function main() {
   console.log(`OpenPGP hash algorithm ${result.hashAlgorithm}`);
   console.log(`OpenPGP signature class ${result.signatureClass}`);
   console.log(`reviewed artifact ${artifactManifestPath}`);
-  console.log(`reviewed artifact manifest sha256 ${artifactManifestSha256}`);
+  console.log(`reviewed artifact manifest sha256 ${result.artifactManifestSha256}`);
   if (result.dualReleaseReport) {
     console.log(`verified local dual report ${dualReleaseReportPath}`);
     console.log(`dual report sha256 ${result.dualReleaseReport.sha256}`);

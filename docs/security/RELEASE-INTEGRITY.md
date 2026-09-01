@@ -114,14 +114,20 @@ and compares the explicit artifact bytes to their independent digest before
 parsing them or invoking GnuPG, then requires the canonical reviewed local-
 report schema/scope, and requires exact equality among the signed tag target,
 artifact source commit, and report source commit. The report and artifact
-extension versions must also match. The exact selected artifact bytes are read
-once, bounded to **8 MiB**, and parsed canonically. Their report record must
+extension versions must also match. The shared source-tag verifier itself
+requires this exact byte/digest pair for every call, checks it before GnuPG,
+derives the trusted manifest from the canonical buffer, and refuses divergence
+from any separately supplied parsed object. It returns the verified artifact
+digest, which the CLI cross-checks against the buffer it opened. The exact
+selected artifact bytes are read once, bounded to **8 MiB**, and parsed
+canonically. Their report record must
 match those bytes exactly; the
 report's ZIP, four evidence-sidecar, and eight unpacked-payload records must
 match every path, byte length, and SHA-256 declared by the manifest. Missing
 paired inputs or exact artifact bytes, a wrong report digest,
-malformed/noncanonical input, source/version mismatch, or any of those fourteen
-record mismatches fails closed. The report's own
+malformed/noncanonical input, source/version mismatch, any of those fourteen
+record mismatches, or disagreement between the CLI and shared-verifier digest
+fails closed. The report's own
 `signedTagClaim: not-asserted` and `independentBuilderClaim: not-asserted`
 labels remain truthful: subsequent composition is neither proof that the
 builders verified a tag nor evidence from independent builders.

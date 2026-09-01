@@ -477,18 +477,33 @@ afterEach(async () => {
 });
 
 function verify(options = {}) {
+  const hasOwn = (name) => Object.prototype.hasOwnProperty.call(options, name);
+  const artifactManifest = hasOwn("artifactManifest")
+    ? options.artifactManifest
+    : fixture.reviewedArtifact.artifactManifest;
+  const artifactManifestBytes = hasOwn("artifactManifestBytes")
+    ? options.artifactManifestBytes
+    : fixture.reviewedArtifact.artifactManifestBytes;
+  const expectedArtifactManifestSha256 = hasOwn("expectedArtifactManifestSha256")
+    ? options.expectedArtifactManifestSha256
+    : artifactManifestBytes instanceof Uint8Array
+      ? sha256(artifactManifestBytes)
+      : undefined;
+  const forwardedOptions = { ...options };
+  delete forwardedOptions.artifactManifest;
+  delete forwardedOptions.artifactManifestBytes;
+  delete forwardedOptions.expectedArtifactManifestSha256;
   return verifyReleaseSourceTag({
     repositoryRoot: fixture.repository,
     tagName: "release-fixture",
     expectedTagObject: fixture.releaseTagObject,
     expectedPrimaryFingerprint: fixture.fingerprint,
     expectedSigningFingerprint: fixture.signingFingerprint,
-    artifactManifest: {
-      source: { gitCommit: fixture.firstCommit },
-      extension: { version: FIXTURE_VERSION },
-    },
+    artifactManifest,
+    artifactManifestBytes,
+    expectedArtifactManifestSha256,
     environment: fixture.environment,
-    ...options,
+    ...forwardedOptions,
   });
 }
 
@@ -500,6 +515,26 @@ describe("release source annotated-tag verification", () => {
     })).rejects.toThrow(
       /exact artifact manifest bytes and independently supplied SHA-256 are required/,
     );
+    await expect(verify({
+      artifactManifestBytes: fixture.reviewedArtifact.artifactManifestBytes,
+      expectedArtifactManifestSha256: sha256(
+        fixture.reviewedArtifact.artifactManifestBytes,
+      ).toUpperCase(),
+      environment: {},
+    })).rejects.toThrow(/expected artifact manifest SHA-256 must be a lowercase digest/);
+    await expect(verify({
+      artifactManifestBytes: fixture.reviewedArtifact.artifactManifestBytes,
+      expectedArtifactManifestSha256: "0".repeat(64),
+      environment: {},
+    })).rejects.toThrow(/artifact manifest differs from the independently supplied SHA-256/);
+    await expect(verify({
+      artifactManifest: fixture.differentArtifact.artifactManifest,
+      artifactManifestBytes: fixture.reviewedArtifact.artifactManifestBytes,
+      expectedArtifactManifestSha256: sha256(
+        fixture.reviewedArtifact.artifactManifestBytes,
+      ),
+      environment: {},
+    })).rejects.toThrow(/supplied artifact manifest differs from the exact artifact manifest bytes/);
   });
 
   it("pins the private offline GnuPG launcher contract", () => {
@@ -526,6 +561,9 @@ describe("release source annotated-tag verification", () => {
       tagRef: "refs/tags/release-fixture",
       tagObject: fixture.releaseTagObject,
       sourceCommit: fixture.firstCommit,
+      artifactManifestSha256: sha256(
+        fixture.reviewedArtifact.artifactManifestBytes,
+      ),
       signingFingerprint: fixture.signingFingerprint,
       primaryFingerprint: fixture.fingerprint,
       signatureCreationDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
@@ -944,9 +982,13 @@ describe("release source annotated-tag verification", () => {
       .rejects.toThrow(/must be provided together/);
     const canonicalReportBytes = localDualReportBytes(fixture.firstCommit);
     await expect(verify({
+      artifactManifestBytes: undefined,
+      expectedArtifactManifestSha256: undefined,
       dualReleaseReportBytes: canonicalReportBytes,
       expectedDualReleaseReportSha256: sha256(canonicalReportBytes),
-    })).rejects.toThrow(/exact artifact manifest bytes are required/);
+    })).rejects.toThrow(
+      /exact artifact manifest bytes and independently supplied SHA-256 are required/,
+    );
   });
 
   it("requires canonical exact artifact bytes before comparing report records", async () => {
@@ -1009,14 +1051,14 @@ describe("release source annotated-tag verification", () => {
     await expect(verify({
       tagName: "lightweight-fixture",
       expectedTagObject: fixture.lightweightObject,
-      artifactManifest: { source: { gitCommit: fixture.secondCommit } },
+      ...releaseArtifact(fixture.secondCommit),
     })).rejects.toThrow(/annotated tag object/);
     await expect(verify({
       tagName: "moved-fixture",
       expectedTagObject: fixture.movedTagObject,
     })).rejects.toThrow(/moved or differs/);
     await expect(verify({
-      artifactManifest: { source: { gitCommit: fixture.secondCommit } },
+      ...releaseArtifact(fixture.secondCommit),
     })).rejects.toThrow(/differs from the artifact source commit/);
   });
 

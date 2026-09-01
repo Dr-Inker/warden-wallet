@@ -136,7 +136,12 @@ requested path before and after reading, and refuses device, inode, size,
 nanosecond modification/change-time, or returned-buffer-length drift across the
 read. The verifier bounds the selected artifact to **8 MiB**, checks its
 independent digest before parsing or invoking GnuPG, and requires its canonical
-artifact schema. It
+artifact schema. This binding is enforced by the shared source-tag verifier,
+not only by the CLI: every shared call requires the exact bytes and independent
+lowercase digest, derives the trusted manifest from that canonical buffer,
+refuses a separately supplied manifest object that differs from it, and returns
+the verified digest. The CLI cross-checks that returned digest against the
+bytes it opened. It
 bounds the report to **1 MiB**, checks the supplied digest before parsing or
 deriving claims from the report, requires its canonical schema and reviewed
 scope, and requires the

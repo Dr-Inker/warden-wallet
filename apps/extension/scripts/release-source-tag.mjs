@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { parseLocalDualReleaseReport } from "../../../scripts/local-dual-extension-release.mjs";
 import {
@@ -799,6 +800,7 @@ export async function verifyReleaseSourceTag({
   expectedSigningFingerprint,
   artifactManifest,
   artifactManifestBytes,
+  expectedArtifactManifestSha256,
   dualReleaseReportBytes,
   expectedDualReleaseReportSha256,
   artifactReviewSignatureBytes,
@@ -833,10 +835,43 @@ export async function verifyReleaseSourceTag({
     expectedSigningFingerprint,
     "expected signing fingerprint",
   );
-  const artifactCommit = artifactManifest?.source?.gitCommit;
+  if (
+    !(artifactManifestBytes instanceof Uint8Array) ||
+    expectedArtifactManifestSha256 === undefined
+  ) {
+    fail(
+      "exact artifact manifest bytes and independently supplied SHA-256 are required",
+    );
+  }
+  if (
+    typeof expectedArtifactManifestSha256 !== "string" ||
+    !SHA256_PATTERN.test(expectedArtifactManifestSha256)
+  ) {
+    fail("expected artifact manifest SHA-256 must be a lowercase digest");
+  }
+  const exactArtifactManifestBytes = Buffer.from(artifactManifestBytes);
+  if (
+    exactArtifactManifestBytes.length === 0 ||
+    exactArtifactManifestBytes.length > MAX_ARTIFACT_MANIFEST_BYTES
+  ) {
+    fail(
+      `artifact manifest must be between 1 and ${MAX_ARTIFACT_MANIFEST_BYTES} bytes`,
+    );
+  }
+  const artifactManifestSha256 = createHash("sha256")
+    .update(exactArtifactManifestBytes)
+    .digest("hex");
+  if (artifactManifestSha256 !== expectedArtifactManifestSha256) {
+    fail("artifact manifest differs from the independently supplied SHA-256");
+  }
+  const exactArtifactManifest = parseArtifactManifest(exactArtifactManifestBytes);
+  if (!isDeepStrictEqual(artifactManifest, exactArtifactManifest)) {
+    fail("supplied artifact manifest differs from the exact artifact manifest bytes");
+  }
+  const artifactCommit = exactArtifactManifest.source.gitCommit;
   assertFullSha1(artifactCommit, "artifact source commit");
   const artifactReview = await verifyExpectedArtifactReview({
-    artifactManifestBytes,
+    artifactManifestBytes: exactArtifactManifestBytes,
     dualReleaseReportBytes,
     expectedDualReleaseReportSha256,
     artifactReviewSignatureBytes,
@@ -848,8 +883,8 @@ export async function verifyReleaseSourceTag({
   const dualReleaseReport = verifyExpectedDualReleaseReport({
     dualReleaseReportBytes,
     expectedDualReleaseReportSha256,
-    artifactManifest,
-    artifactManifestBytes,
+    artifactManifest: exactArtifactManifest,
+    artifactManifestBytes: exactArtifactManifestBytes,
   });
   if (
     artifactReview !== null &&
@@ -858,7 +893,7 @@ export async function verifyReleaseSourceTag({
     fail("artifact review and dual release report authenticated different manifest bytes");
   }
   const storePackage = verifyExpectedStorePackage({
-    artifactManifestBytes,
+    artifactManifestBytes: exactArtifactManifestBytes,
     artifactReview,
     reviewedUploadArchiveBytes,
     storePackageBytes,
@@ -952,6 +987,7 @@ export async function verifyReleaseSourceTag({
     tagRef: initial.ref,
     tagObject: expectedTagObject,
     sourceCommit: targetCommit,
+    artifactManifestSha256,
     signingFingerprint: signature.signingFingerprint,
     primaryFingerprint: signature.primaryFingerprint,
     signatureCreationDate: signature.signatureCreationDate,
