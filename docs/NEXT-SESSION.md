@@ -1,16 +1,17 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C68 CLOSED; CONTINUE C6 AUDIT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C69 CONTRACTED; BEHAVIORAL RED NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** C68 is closed. Audit C6 for the next honest, bounded, executable
->   local hardening slice; write a C69 contract and behavioral RED before any
->   implementation. Do not broaden into executable provenance or production
->   trust, and do not imply cooperative-host checks defeat file-owner/root races.
+> - **TASK:** execute the bounded C69 private-working-directory RED below, commit
+>   it cleanly, and only then implement the contract. Do not broaden into
+>   executable provenance or production trust, and do not imply a private `cwd`
+>   confines a malicious same-UID executable or defeats file-owner/root races.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C68 behavioral RED
+> - **BASE:** C68 close SHA
+>   `5e49c3d482540d5adc5a1c3810b0556a91d20c5d`; behavioral RED
 >   `f0f751760b3910bafdc087948193a84bf1c36622`; implementation
 >   `c57e14cdd9ea15556e2e5fe3ae0f509bc360165e`; corrected implementation/evidence
 >   `a223edf8a1d8d5c11381756e9fd013ff4b8f5026`; evidence-ledger/full-gated SHA
@@ -19,12 +20,14 @@
 >   `47d419dae0dda40ad6ca461ab7cd81dc3ba32308`; implementation/evidence
 >   `5bb34f87d6e0fbafa53e1090fbc93fd67495a476`; behavioral RED
 >   `21213293cc184b80d8d397c102b01b3b2d85bf6a`.
-> - **READ:** this memo and the C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
+> - **READ:** this memo and the C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** `docs/NEXT-SESSION.md` for the C69 contract, then
->   only the files that contract names. C68 source/tests/README/security docs are
->   implementation-complete.
+> - **WRITE (edit lease):** for RED,
+>   `apps/extension/test/verify-release-cli.test.mjs` and this ledger only. After
+>   RED is committed and measured, implementation may also edit
+>   `apps/extension/scripts/verify-release.mjs`, `apps/extension/README.md`, and
+>   `docs/security/RELEASE-INTEGRITY.md`.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -33,22 +36,21 @@
 >   sign production bytes, publish, weaken C36/C38–C68 policy, or invent store
 >   provenance, freshness, reviewer, builder-independence, key-strength,
 >   publisher, or lifecycle policy.
-> - **ACCEPT:** prove the independent parser observes exact stable bytes through
->   an `O_RDONLY` descriptor whose underlying inode is **0400**, after exclusive
->   **0600** construction, sync, same-inode reader validation, and writer close.
->   Verify the sealed mode and unchanged identity through the reader before
->   unlink/exec. Preserve **0700** directory mode, C67/C66/C65/C64/C63 probes,
->   exact post-parser comparison, cleanup on every outcome, direct/pnpm
->   **0/6/7**, optional unpacked tree, canonical checks, unchanged output, exact
->   25-input recipe binding, and exact-SHA focused/extension/full evidence. New
->   work needs executable RED; provider stays fixed unavailable.
+> - **ACCEPT:** prove the independent parser starts with its `cwd` set to the
+>   exact private `warden-release-unzip-*` directory, measured **0700**, while
+>   observing exact stable bytes through C68's `O_RDONLY` descriptor and **0400**
+>   inode after the name is unlinked. Preserve C68/C67/C66/C65/C64/C63 probes,
+>   exclusive **0600** construction, identity/seal checks, exact post-parser
+>   comparison, cleanup on every outcome, direct/pnpm **0/6/7**, optional
+>   unpacked tree, canonical checks, unchanged output, exact 25-input recipe
+>   binding, and provider fixed unavailable.
 > - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
 >   extension artifacts, ephemeral GnuPG/files/repos/launchers/CRX fixtures
 >   under `/tmp`, and git commits only; no network key/package retrieval,
 >   production signature/key/tag, deploy, upload, publishing, live service,
 >   external message, secret persistence, legal ruling, or real-account/funds
 >   mutation.
-> - **RETURN:** C67 close/full SHAs plus C68 contract/RED/implementation/evidence/
+> - **RETURN:** C68 close/full SHAs plus C69 contract/RED/implementation/evidence/
 >   full/close SHAs, clean/dirty state,
 >   exact commands and outcomes, stable-byte proof and temp-copy mode/cleanup,
 >   preserved grammar/order/output/scope, invariant and independent-review
@@ -98,7 +100,8 @@
 > focused/release/extension-wide evidence, and the repository-wide FULL gate
 > recorded below. C68 is closed with a committed, measured behavioral RED, clean
 > implementation, exact single-contract/focused/release/extension evidence, and
-> the repository-wide FULL gate recorded below.
+> the repository-wide FULL gate recorded below. C69 is contracted below; its RED
+> is not yet run or committed.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -108,6 +111,28 @@
 > and operator-controlled signing remain external.
 > C68 is only cooperative-host least privilege. Do not manufacture a local proxy
 > for the remaining external trust/owner obligations.
+
+> ## 2026-09-01 C69 PRIVATE INFO-ZIP WORKING DIRECTORY — C6 PARTIAL, HOST TRUST EXTERNAL
+>
+> Contract: keep the C68 private **0700** directory alive while invoking
+> Info-ZIP and set that exact directory as the subprocess `cwd`. The archive name
+> remains unlinked first; Info-ZIP receives only the live `O_RDONLY` procfs
+> descriptor to the sealed **0400** inode. The executable probe must observe its
+> working directory beneath the controlled test `TMPDIR`, with the expected
+> `warden-release-unzip-*` basename and exact **0700** mode, plus C68's exact
+> digest, descriptor access mode zero, and inode mode **0400**. Cleanup remains
+> mandatory after success or failure.
+>
+> Behavioral RED: extend the C68 fake-Info-ZIP observation with `process.cwd()`
+> and its mode while preserving all C68 assertions. At the C68 close SHA it must
+> observe repository root `/opt/warden` rather than the private directory and
+> fail only the new working-directory expectation. Commit that failing contract
+> before changing the verifier.
+>
+> This limits accidental/cooperative relative-path reads or writes by Info-ZIP.
+> It is not a sandbox: a malicious same-UID executable can change directories or
+> access other permitted paths, and root/host/executable provenance remains
+> external. No invariant or production-trust status moves.
 
 > ## 2026-09-01 C68 READ-ONLY INFO-ZIP INODE — C6 PARTIAL, HOST TRUST EXTERNAL
 >
