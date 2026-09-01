@@ -91,13 +91,16 @@ GNUPGHOME=/path/to/release-verification-keyring \
   <expected-signing-fingerprint>
 ```
 
-An optional fifth argument selects an artifact manifest outside the default
-local release directory. The expected tag object is mandatory: a tag name and
-signer alone cannot reveal that an authorized signer force-moved the tag. The
-verifier resolves only the exact `refs/tags/<tag>` ref, requires it to equal the
-independent full object SHA both before and after verification, requires an
-annotated tag that points directly to the artifact's exact source commit, and
-rejects a lightweight or nested tag. It forces the OpenPGP backend and absolute
+This four-argument local/default tier is source-only: it selects the versioned
+artifact from the local release directory but has no independently supplied
+artifact digest, so it is not an independently anchored reviewed-artifact
+binding. To select an external reviewed artifact, append its path and an
+independently recorded lowercase SHA-256. The expected tag object is mandatory:
+a tag name and signer alone cannot reveal that an authorized signer force-moved
+the tag. The verifier resolves only the exact `refs/tags/<tag>` ref, requires it
+to equal the independent full object SHA both before and after verification,
+requires an annotated tag that points directly to the artifact's exact source
+commit, and rejects a lightweight or nested tag. It forces the OpenPGP backend and absolute
 Git/GPG executables, suppresses system/global Git configuration, and runs
 `git verify-tag --raw` against the expected object SHA rather than a mutable
 ref. Git's GPG child is an exact launcher in a private mode-0700 temporary
@@ -114,14 +117,16 @@ ambiguous signature results. When the primary key signs directly, the two
 expected fingerprints are identical.
 
 To compose this precondition with an already generated canonical local dual-
-build report, supply the explicit artifact path followed by the report path and
-an independently recorded lowercase report SHA-256:
+build report, supply the explicit artifact path and its independently recorded
+lowercase SHA-256, followed by the report path and independently recorded
+lowercase report SHA-256:
 
 ```sh
 GNUPGHOME=/path/to/release-verification-keyring \
   pnpm --filter @warden/extension release:verify-source-tag -- \
   <tag> <expected-tag-object-sha> <expected-primary-fingerprint> \
   <expected-signing-fingerprint> /path/to/reviewed.artifact.json \
+  <expected-artifact-manifest-sha256> \
   /path/to/rehearsal.dual-local.json <expected-dual-report-sha256>
 ```
 
@@ -130,8 +135,9 @@ requires a nonempty regular file within its ceiling, reads it through that one
 file handle, requires its canonical Linux procfs target to equal the normalized
 requested path before and after reading, and refuses device, inode, size,
 nanosecond modification/change-time, or returned-buffer-length drift across the
-read. The verifier bounds the selected artifact to **8 MiB** and requires its
-canonical artifact schema. It
+read. The verifier bounds the selected artifact to **8 MiB**, checks its
+independent digest before parsing or invoking GnuPG, and requires its canonical
+artifact schema. It
 bounds the report to **1 MiB**, checks the supplied digest before parsing or
 deriving claims from the report, requires its canonical schema and reviewed
 scope, and requires the
@@ -153,6 +159,7 @@ GNUPGHOME=/path/to/release-verification-keyring \
   pnpm --filter @warden/extension release:verify-source-tag -- \
   <tag> <expected-tag-object-sha> <source-primary-fingerprint> \
   <source-signing-fingerprint> /path/to/reviewed.artifact.json \
+  <expected-artifact-manifest-sha256> \
   /path/to/rehearsal.dual-local.json <expected-dual-report-sha256> \
   /path/to/reviewed.artifact.json.sig \
   <expected-review-signature-sha256> <review-primary-fingerprint> \
@@ -180,6 +187,7 @@ GNUPGHOME=/path/to/release-verification-keyring \
   pnpm --filter @warden/extension release:verify-source-tag -- \
   <tag> <expected-tag-object-sha> <source-primary-fingerprint> \
   <source-signing-fingerprint> /path/to/reviewed.artifact.json \
+  <expected-artifact-manifest-sha256> \
   /path/to/rehearsal.dual-local.json <expected-dual-report-sha256> \
   /path/to/reviewed.artifact.json.sig \
   <expected-review-signature-sha256> <review-primary-fingerprint> \

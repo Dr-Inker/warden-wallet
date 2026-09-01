@@ -1,4 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,22 +40,69 @@ describe("release-source CLI external files", () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-source-cli-test-"));
     temporaryDirectories.push(directory);
     const artifactPath = join(directory, "reviewed.artifact.json");
-    await writeFile(artifactPath, Buffer.from("{}\n"));
+    const artifactBytes = Buffer.from("{}\n");
+    await writeFile(artifactPath, artifactBytes);
 
-    const output = await rejectedOutput([
+    const baseArguments = [
       "release-test",
       "a".repeat(40),
       "A".repeat(40),
       "B".repeat(40),
       artifactPath,
       "0".repeat(64),
+    ];
+    const tierTails = [
+      [],
+      ["missing-report.json", "1".repeat(64)],
+      [
+        "missing-report.json",
+        "1".repeat(64),
+        "missing-signature",
+        "2".repeat(64),
+        "C".repeat(40),
+        "D".repeat(40),
+      ],
+      [
+        "missing-report.json",
+        "1".repeat(64),
+        "missing-signature",
+        "2".repeat(64),
+        "C".repeat(40),
+        "D".repeat(40),
+        "missing-store.crx",
+        "3".repeat(64),
+        "a".repeat(32),
+        "missing-upload.zip",
+      ],
+    ];
+    for (const tail of tierTails) {
+      const output = await rejectedOutput([...baseArguments, ...tail]);
+      expect(output).toMatch(
+        /reviewed artifact manifest differs from the independently supplied SHA-256/,
+      );
+      expect(output).not.toMatch(/usage: verify-release-source-tag/);
+      expect(output).not.toMatch(/artifact manifest is not valid JSON/);
+      expect(output).not.toMatch(/GNUPGHOME/);
+    }
+
+    const uppercaseOutput = await rejectedOutput([
+      ...baseArguments.slice(0, -1),
+      "A".repeat(64),
     ]);
-    expect(output).toMatch(
-      /reviewed artifact manifest differs from the independently supplied SHA-256/,
+    expect(uppercaseOutput).toMatch(
+      /expected artifact manifest SHA-256 must be a lowercase digest/,
     );
-    expect(output).not.toMatch(/usage: verify-release-source-tag/);
-    expect(output).not.toMatch(/artifact manifest is not valid JSON/);
-    expect(output).not.toMatch(/GNUPGHOME/);
+
+    const missingOutput = await rejectedOutput(baseArguments.slice(0, -1));
+    expect(missingOutput).toMatch(/usage: verify-release-source-tag/);
+
+    const exactOutput = await rejectedOutput([
+      ...baseArguments.slice(0, -1),
+      createHash("sha256").update(artifactBytes).digest("hex"),
+    ]);
+    expect(exactOutput).toMatch(/artifact manifest/);
+    expect(exactOutput).not.toMatch(/independently supplied SHA-256/);
+    expect(exactOutput).not.toMatch(/usage: verify-release-source-tag/);
   });
 
   it("rejects an oversized artifact manifest before reading and parsing it", async () => {
@@ -69,6 +117,7 @@ describe("release-source CLI external files", () => {
       "A".repeat(40),
       "B".repeat(40),
       artifactPath,
+      "0".repeat(64),
     ]);
     expect(output).toMatch(
       /reviewed artifact manifest must be a nonempty regular file no larger than 8388608 bytes/,
@@ -83,6 +132,7 @@ describe("release-source CLI external files", () => {
       "A".repeat(40),
       "B".repeat(40),
       emptyPath,
+      "0".repeat(64),
     ]);
     expect(emptyOutput).toMatch(/reviewed artifact manifest must be a nonempty regular file/);
 
@@ -96,6 +146,7 @@ describe("release-source CLI external files", () => {
       "A".repeat(40),
       "B".repeat(40),
       symlinkPath,
+      "0".repeat(64),
     ]);
     expect(symlinkOutput).toMatch(/could not be opened as a non-symlink regular file/);
   });

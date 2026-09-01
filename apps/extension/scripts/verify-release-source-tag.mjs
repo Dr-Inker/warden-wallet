@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,8 +24,8 @@ function fail(message) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (![4, 5, 7, 11, 15].includes(args.length)) {
-    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json [dual-local-report.json expected-dual-report-sha256 [artifact-review-signature expected-artifact-review-signature-sha256 expected-artifact-review-primary-fingerprint expected-artifact-review-signing-fingerprint [store-returned.crx expected-store-package-sha256 expected-store-extension-id reviewed-upload.zip]]]]");
+  if (![4, 6, 8, 12, 16].includes(args.length)) {
+    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json expected-artifact-manifest-sha256 [dual-local-report.json expected-dual-report-sha256 [artifact-review-signature expected-artifact-review-signature-sha256 expected-artifact-review-primary-fingerprint expected-artifact-review-signing-fingerprint [store-returned.crx expected-store-package-sha256 expected-store-extension-id reviewed-upload.zip]]]]");
   }
   const [
     tagName,
@@ -33,8 +34,13 @@ async function main() {
     expectedSigningFingerprint,
   ] = args;
   let artifactManifestPath;
+  let expectedArtifactManifestSha256;
   if (args[4]) {
     artifactManifestPath = resolve(args[4]);
+    expectedArtifactManifestSha256 = args[5];
+    if (!/^[0-9a-f]{64}$/.test(expectedArtifactManifestSha256)) {
+      fail("expected artifact manifest SHA-256 must be a lowercase digest");
+    }
   } else {
     const sourceManifest = JSON.parse(await readFile(join(appDirectory, "manifest.json"), "utf8"));
     const version = sourceManifest.version;
@@ -51,34 +57,43 @@ async function main() {
     MAX_ARTIFACT_MANIFEST_BYTES,
     "reviewed artifact manifest",
   );
+  const artifactManifestSha256 = createHash("sha256")
+    .update(artifactManifestBytes)
+    .digest("hex");
+  if (
+    expectedArtifactManifestSha256 !== undefined &&
+    artifactManifestSha256 !== expectedArtifactManifestSha256
+  ) {
+    fail("reviewed artifact manifest differs from the independently supplied SHA-256");
+  }
   const artifactManifest = parseArtifactManifest(artifactManifestBytes);
   let dualReleaseReportPath;
   let dualReleaseReportBytes;
   let expectedDualReleaseReportSha256;
-  if (args.length >= 7) {
-    dualReleaseReportPath = resolve(args[5]);
+  if (args.length >= 8) {
+    dualReleaseReportPath = resolve(args[6]);
     dualReleaseReportBytes = await readBoundedRegularFile(
       dualReleaseReportPath,
       MAX_DUAL_RELEASE_REPORT_BYTES,
       "dual release report",
     );
-    expectedDualReleaseReportSha256 = args[6];
+    expectedDualReleaseReportSha256 = args[7];
   }
   let artifactReviewSignaturePath;
   let artifactReviewSignatureBytes;
   let expectedArtifactReviewSignatureSha256;
   let expectedArtifactReviewPrimaryFingerprint;
   let expectedArtifactReviewSigningFingerprint;
-  if (args.length >= 11) {
-    artifactReviewSignaturePath = resolve(args[7]);
+  if (args.length >= 12) {
+    artifactReviewSignaturePath = resolve(args[8]);
     artifactReviewSignatureBytes = await readBoundedRegularFile(
       artifactReviewSignaturePath,
       MAX_ARTIFACT_REVIEW_SIGNATURE_BYTES,
       "artifact review signature",
     );
-    expectedArtifactReviewSignatureSha256 = args[8];
-    expectedArtifactReviewPrimaryFingerprint = args[9];
-    expectedArtifactReviewSigningFingerprint = args[10];
+    expectedArtifactReviewSignatureSha256 = args[9];
+    expectedArtifactReviewPrimaryFingerprint = args[10];
+    expectedArtifactReviewSigningFingerprint = args[11];
   }
   let storePackagePath;
   let storePackageBytes;
@@ -86,16 +101,16 @@ async function main() {
   let expectedStoreExtensionId;
   let reviewedUploadArchivePath;
   let reviewedUploadArchiveBytes;
-  if (args.length === 15) {
-    storePackagePath = resolve(args[11]);
+  if (args.length === 16) {
+    storePackagePath = resolve(args[12]);
     storePackageBytes = await readBoundedRegularFile(
       storePackagePath,
       MAX_CRX3_PACKAGE_BYTES,
       "store package",
     );
-    expectedStorePackageSha256 = args[12];
-    expectedStoreExtensionId = args[13];
-    reviewedUploadArchivePath = resolve(args[14]);
+    expectedStorePackageSha256 = args[13];
+    expectedStoreExtensionId = args[14];
+    reviewedUploadArchivePath = resolve(args[15]);
     reviewedUploadArchiveBytes = await readBoundedRegularFile(
       reviewedUploadArchivePath,
       MAX_CRX3_PACKAGE_BYTES,
@@ -109,7 +124,7 @@ async function main() {
     expectedPrimaryFingerprint,
     expectedSigningFingerprint,
     artifactManifest,
-    artifactManifestBytes: args.length >= 7 ? artifactManifestBytes : undefined,
+    artifactManifestBytes: args.length >= 8 ? artifactManifestBytes : undefined,
     dualReleaseReportBytes,
     expectedDualReleaseReportSha256,
     artifactReviewSignatureBytes,
@@ -136,6 +151,7 @@ async function main() {
   console.log(`OpenPGP hash algorithm ${result.hashAlgorithm}`);
   console.log(`OpenPGP signature class ${result.signatureClass}`);
   console.log(`reviewed artifact ${artifactManifestPath}`);
+  console.log(`reviewed artifact manifest sha256 ${artifactManifestSha256}`);
   if (result.dualReleaseReport) {
     console.log(`verified local dual report ${dualReleaseReportPath}`);
     console.log(`dual report sha256 ${result.dualReleaseReport.sha256}`);
