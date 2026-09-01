@@ -1,5 +1,129 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 C35 SAME-HOST DUAL-CHECKOUT RELEASE REHEARSAL — C6 PARTIAL, INDEPENDENT BUILDERS NOT CLAIMED
+>
+> Implementation commit
+> `c4dc241cdd91a25e743aac39de93fc4c7bc9f1b3` adds canonical
+> `warden.extension-local-dual-release-rehearsal.v1`, an exact 14-file
+> byte comparator/report, sequential temporary-clone orchestration, focused
+> mismatch tests, a package command, and scoped release documentation. Its
+> first clean integration run correctly remained red after the unit lane passed:
+> pnpm tried to open the shared store's SQLite index for writing under the
+> workspace's read-only `/root` policy and failed with `ERR_SQLITE_ERROR`.
+> Final fix commit `efba21b82dc6876dff1a94287ef9b5bf2bb2dc8b` makes the
+> already-offline install explicitly `--frozen-store`, records the shared store
+> as read-only, and passes the real two-clone lane. The failed SHA is not called
+> green. There was no dependency/lockfile or payload-byte change, deployment,
+> registry edit, Web Store or publisher action, secret, legal ruling,
+> provider-route change, or real-account/funds mutation.
+>
+> Real RED was captured before implementation:
+>
+> ```sh
+> pnpm --filter @warden/extension exec vitest run test/local-dual-release.test.mjs
+> ```
+>
+> It exited **1** because the focused contract did not exist. At clean final
+> implementation SHA `efba21b82dc6876dff1a94287ef9b5bf2bb2dc8b`, this
+> exact command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/local-dual-release.test.mjs test/release-recipe-input-evidence.test.mjs && pnpm --filter @warden/extension release:dual-local && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The focused files passed **8/8** tests. The real runner then sequentially
+> created `local-a` and `local-b` shared-object Git clones at the exact source
+> SHA, required each clone clean before install, ran
+> `pnpm install --frozen-lockfile --offline --frozen-store`, ran the incumbent
+> package/verify release gate, required the clone source still clean, retained
+> release bytes, and removed each checkout. It compared the exact six generated
+> release files plus all eight normalized unpacked payload files byte-for-byte.
+> Tests prove canonical order independent of caller order; one-byte mismatch,
+> missing, extra, duplicate, and moved-file refusal; exact 14-path refusal;
+> canonical report parsing; and duplicate-key/noncanonical JSON refusal.
+>
+> This exact repeat command also exited **0**, produced the same report hash,
+> found no leftover temporary checkout, and printed the same SHA before and
+> after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension release:dual-local && sha256sum apps/extension/release/warden-extension-0.0.1.dual-local.json && test -z "$(find /tmp -maxdepth 1 -type d -name 'warden-extension-dual-release-*' -print -quit)" && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> Both successful rehearsals produced a **3,810-byte** canonical report with
+> SHA-256
+> `7be24894cbda7822ec302bea550591af31adc973f9968f6afe765c01f6be55fd`.
+> It records source SHA `efba21b82dc6876dff1a94287ef9b5bf2bb2dc8b`, observed
+> Node/pnpm/esbuild `22.23.2` / `11.12.0` / `0.28.2`, and the **18,003-byte**
+> orchestrator SHA-256
+> `16e0cfc5ffd095d846fc5615e267e59bad8c8d0e6e100ba993ef34e7e3fda86d`.
+> A scan found no `/tmp/`, `/opt/`, or `/root/` path in the report, and a
+> filesystem check found zero remaining `warden-extension-dual-release-*`
+> temporary directories.
+>
+> Exact compared measurements are executable data, not prose grading:
+>
+> - unpacked `approval.css`: **6,670 bytes**,
+>   `07160245b22dc387603c5eff9f8f63c32370b6ccf0e843563743e4e01a302c8a`;
+>   `approval.html`: **4,867 bytes**,
+>   `1637e2d726600b55acc42514ab63b1afab72fcc48675cec5d0bef246588a620c`.
+> - unpacked `approval.js`: **23,735 bytes**,
+>   `2bc104b2a9415e711698380b242f8f2e2f0743efcbb975a3260f28a5e254d3cd`;
+>   `background.js`: **877,698 bytes**,
+>   `46e9a6e034c5edfda643823e293489e293e2860ddc9813e61b2b319636e22f01`.
+> - unpacked `content.js`: **8,269 bytes**,
+>   `6f3f0a595abaa108124f67d0845affafb3afdf94f5538117eeaf54a6e87777a3`;
+>   `manifest.json`: **719 bytes**,
+>   `5c80be31ad528469321db91a1fd63b1c00c83efe30bb8688fbd889c45e4de350`.
+> - unpacked `popup.html`: **377 bytes**,
+>   `94de7cf71c619bdab05a28242a3050ab9ce31d71666d05a3eeac80c255c6e6ae`;
+>   `popup.js`: **3,229 bytes**,
+>   `0cccd2fded426f383ed497d316191b129c57189bf220a7c12aa9b64b2451274c`.
+> - artifact manifest: **3,368 bytes**,
+>   `9ff5424bca25de8d88efdf92e3adac814ce8f69bf7140df34ec26af2e23bc498`;
+>   bundle sidecar: **29,047 bytes**,
+>   `d5e72948d2ce619d21c664a6339f6304cb00d51059f32b5b0a1481c2d653a6de`.
+> - recipe sidecar: **3,227 bytes**,
+>   `ea57b24334b28fd901577e1e6c3e97a7badf27c15ab41d494f983d5b578ca873`;
+>   dependency sidecar: **14,737 bytes**,
+>   `b1060689b0b7c9a0e644aaed6cc451ce587ed2c26bb9adecad413eb630b38c76`.
+> - static sidecar: **2,080 bytes**,
+>   `53d70ec83a3f54e17a8bf6ccc06f06f43da34077e1ab78753b6ab4bafc6f5699`;
+>   ZIP: **926,374 bytes**,
+>   `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`.
+>
+> From the same clean SHA, this exact command exited **0** and printed the same
+> SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **506/506**, typecheck/build passed, release
+> and dual-rehearsal tooling remained absent from `dist`, and diff/clean-tree
+> guards passed.
+>
+> Independent second-model review remains **UNVERIFIED**. A ledger-inclusive
+> full repository plus dual-rehearsal gate is intentionally deferred until this
+> record is committed; a later pickup memo must cite its exact SHA before
+> calling C35 fully closed.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded. Production provider routing remains fixed unavailable. C35 adds a
+> local rehearsal only.
+>
+> **Harsh residual:** C35 proves repeatability across two clean, separately
+> materialized source/install trees, but both run sequentially on one host,
+> share the source repository's Git objects, share one read-only pnpm content
+> store, and use the same Node/pnpm/esbuild executables, OS, runtime, hardware,
+> environment, and orchestrator. The source SHA is not a signed tag. The report
+> is unsigned and locally generated. This does not satisfy two independent
+> isolated builders or promote `WRD-REL-01`. There is still no off-host build,
+> provenance signature, store-returned-package comparison, publisher-control
+> evidence, legal disposition, external audit, deployment, or real-funds
+> evidence.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C34 CLOSED; C35 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
