@@ -387,7 +387,18 @@ local/central records, CRC/size drift, hidden bytes, comments, and trailing
 ambiguity. Archive order, compression, timestamps, and mode metadata can differ
 from the upload ZIP; exact path/content hashes, extension version, manifest
 permissions, CSP, update URL, and payload-tree hash cannot. The command also
-runs `unzip -t` over a temporary copy of the embedded ZIP and removes it.
+runs `unzip -t` over an unlinked live descriptor for the embedded ZIP. The
+standalone store verifier exclusively creates and syncs a **0600** copy of the
+already-verified archive bytes, opens and identity-checks a same-inode
+`O_RDONLY` handle, closes the writer, seals and verifies the inode at **0400**,
+unlinks the name, and passes only `/proc/<pid>/fd/<fd>` to Info-ZIP. After a
+zero exit it positionally compares the same handle with every original byte.
+Setup, parser, comparison, and cleanup failures fail closed, and the handle and
+private directory are removed on every outcome. This prevents pathname
+replacement and detects a completed parser-side rewrite. It remains
+cooperative-host least privilege: the store subprocess still inherits the
+verifier environment and working directory and has no runtime deadline,
+executable-provenance proof, sandbox, or same-UID/root defense.
 
 The format contract comes from Chromium's primary
 [`crx3.proto`](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx3.proto)

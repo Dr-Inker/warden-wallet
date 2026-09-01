@@ -234,4 +234,85 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
       privateDirectories: [],
     });
   });
+
+  it("rejects embedded descriptor mutation after the parser exits zero", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "warden-store-package-infozip-test-"),
+    );
+    temporaryDirectories.push(directory);
+    const archiveBytes = createCanonicalZip([
+      {
+        path: "manifest.json",
+        data: Buffer.from(`${JSON.stringify(MANIFEST, null, 2)}\n`),
+      },
+    ]);
+    const observationPath = join(directory, "mutation-observation.json");
+    const probeDirectory = join(directory, "mutation-probe-bin");
+    const probePath = join(probeDirectory, "unzip");
+    await mkdir(probeDirectory, { recursive: true });
+    await writeFile(probePath, `#!/usr/bin/env node
+import { createHash } from "node:crypto";
+import { chmod, readFile, writeFile } from "node:fs/promises";
+
+const inspectedPath = process.argv[3];
+const inspectedBytes = await readFile(inspectedPath);
+const replacementBytes = Buffer.alloc(inspectedBytes.length, 0x61);
+replacementBytes[0] = inspectedBytes[0] ^ 0xff;
+await chmod(inspectedPath, 0o600);
+await writeFile(inspectedPath, replacementBytes);
+await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
+  inspectedPath,
+  inspectedSha256: createHash("sha256").update(inspectedBytes).digest("hex"),
+  replacementSha256: createHash("sha256").update(replacementBytes).digest("hex"),
+  replacementBytes: replacementBytes.length,
+}));
+`);
+    await chmod(probePath, 0o755);
+
+    const originalPath = process.env.PATH;
+    const originalTmpdir = process.env.TMPDIR;
+    process.env.PATH = `${probeDirectory}:${originalPath ?? ""}`;
+    process.env.TMPDIR = directory;
+    let rejection;
+    try {
+      const { verifyEmbeddedArchiveWithInfoZip } = await import(
+        "../scripts/verify-store-package.mjs"
+      );
+      await verifyEmbeddedArchiveWithInfoZip(archiveBytes);
+    } catch (error) {
+      rejection = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      if (originalTmpdir === undefined) {
+        delete process.env.TMPDIR;
+      } else {
+        process.env.TMPDIR = originalTmpdir;
+      }
+    }
+
+    const observation = JSON.parse(await readFile(observationPath, "utf8"));
+    expect({
+      rejection,
+      inspectedPath: observation.inspectedPath,
+      inspectedSha256: observation.inspectedSha256,
+      replacementDiffers: observation.replacementSha256 !== sha256(archiveBytes),
+      replacementBytes: observation.replacementBytes,
+      privateDirectories: (await readdir(directory)).filter((name) =>
+        name.startsWith("warden-store-package-verify-")
+      ),
+    }).toEqual({
+      rejection: expect.stringMatching(
+        /temporary embedded archive bytes changed during independent unzip -t validation/,
+      ),
+      inspectedPath: expect.stringMatching(/^\/proc\/\d+\/fd\/\d+$/),
+      inspectedSha256: sha256(archiveBytes),
+      replacementDiffers: true,
+      replacementBytes: archiveBytes.length,
+      privateDirectories: [],
+    });
+  });
 });

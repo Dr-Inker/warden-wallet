@@ -407,7 +407,16 @@ duplicate, local/central-record, descriptor, extra-field, and trailing-byte
 checks. File ordering, compression, timestamps, and non-semantic archive mode
 metadata may differ; every payload path and byte, manifest permission, CSP
 directive, update URL, version, and payload-tree hash must still equal the
-reviewed artifact. `unzip -t` independently parses the embedded archive.
+reviewed artifact. `unzip -t` independently parses the embedded archive through
+an unlinked live descriptor. The standalone store verifier exclusively creates
+and syncs a `0600` copy of the already-verified embedded bytes, opens and checks
+a same-inode `O_RDONLY` handle, closes the writer, seals and verifies the inode
+at `0400`, unlinks the name, and passes `/proc/<pid>/fd/<fd>` to Info-ZIP. After
+a zero exit it compares the same handle positionally with every original byte,
+then closes the handle and removes the private directory on success or failure.
+This prevents pathname replacement and detects a completed parser-side rewrite;
+it does not yet minimize that store subprocess's inherited environment, set its
+private directory as `cwd`, or bound its runtime.
 
 The envelope follows Chromium's current primary sources: the
 [`crx3.proto` format](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx3.proto)
