@@ -1,31 +1,26 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C60 CLOSED; C61 NOT STARTED
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C61 IMPLEMENTED; FULL GATE PENDING
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** continue C6 with one bounded C61 contract: make the documented pnpm
->   `--` argument separator work consistently across all four public release
->   CLIs. Begin with an executable RED showing a documented verifier invocation
->   is rejected as the wrong arity because pnpm forwards a literal leading
->   separator. Add one strict shared normalizer which removes exactly one leading
->   `--` and nothing else; use it in tag-message, source-tag, artifact-signature,
->   and store-package commands. Preserve every positional grammar, validation
->   order, ceiling, and C36/C38–C60 security refusal.
+> - **TASK:** finish bounded C61 by committing this evidence ledger, running the
+>   FULL deploy-gate on that ledger-inclusive SHA, recording the exact command,
+>   outcome, measurements, and artifact identities, then closing the memo. Do
+>   not promote the implementation-only SHA or this pre-gate ledger prose to
+>   full-gate green.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C60 behavioral RED
->   `b12539e8f95fc2aa4f57db8b3f338e35987c0061`; final implementation
->   `0c80c96b15ed34a51b9a706fe51543f0ba1d4250`; ledger-inclusive, fully gated
->   SHA `401c66de0b3cb56b642c4f353ffde14dd32ef780`. The documentation-only
->   commit containing this memo is intentionally not described as gate green.
+> - **BASE:** C61 behavioral RED
+>   `8a82f20dde76664838edb775154bcbdc02cecd69`; implementation and clean
+>   focused/extension evidence SHA
+>   `2542ea787ca34c7a0a53cd1f9ad68f82b725e4aa`. No C61 ledger-inclusive SHA
+>   has passed the FULL deploy-gate yet.
 > - **READ:** this memo and the C60/C59/C50 entries; C6 in the client-security
 >   plan; all four package-exposed release CLIs, `package.json`, their usage
 >   docs/tests, stable reader, recipe evidence, and temp cleanup.
-> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
->   lease only one shared release-CLI argument normalizer, the four public CLI
->   entry points, their focused tests/docs, scoped ledger, and recipe-bound
->   evidence strictly changed by that helper.
+> - **WRITE (edit lease):** `docs/NEXT-SESSION.md` only, for C61 gate evidence
+>   and the next bounded handoff after the FULL deploy-gate passes.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -94,14 +89,106 @@
 > unused-code warnings remained non-fatal. Independent second-model review
 > remains **UNVERIFIED**.
 >
-> **Stop state:** C60 is closed. C61 has no code, RED, edit lease, shared
-> release-CLI argument normalizer, real store-returned package,
+> **Stop state:** C61 has an executable RED, implementation, shared normalizer,
+> recipe binding, focused/release and extension-wide gates, and direct/pnpm
+> argument-equivalence evidence. Its ledger-inclusive FULL deploy-gate remains
+> pending, so C61 is not closed. C61 has no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
 > `WRD-REL-03` remain `unimplemented`; every composed CLI/shared-verifier tier
 > pins exact artifact bytes, the source-tag signature authenticates that exact
 > digest, and a safe command emits its canonical message, but production trust
 > and operator-controlled signing remain external.
+
+> ## 2026-09-01 C61 SHARED RELEASE-CLI ARGUMENT NORMALIZATION — FULL GATE PENDING
+>
+> Behavioral RED commit
+> `8a82f20dde76664838edb775154bcbdc02cecd69` adds a package-exposed
+> store-verifier regression for the documented pnpm argument separator. From
+> that clean SHA, this exact command exited **1**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/verify-store-package-cli.test.mjs -t "accepts the documented pnpm argument separator before semantic validation"
+> ```
+>
+> Vitest ran one test, skipped three, and failed in **427 ms** because the
+> forwarded leading `--` produced five raw arguments and the verifier emitted
+> its usage error instead of reaching the expected lowercase package-digest
+> refusal.
+>
+> Implementation commit
+> `2542ea787ca34c7a0a53cd1f9ad68f82b725e4aa` adds the strict shared
+> `release-cli-arguments.mjs` helper. It accepts only an array of strings,
+> copies caller input, and removes exactly one leading literal `--`. Doubled,
+> interior, and trailing separators remain ordinary positional arguments for
+> the exact tag-message **2**, source-tag **5/6/8/12/16**,
+> artifact-signature **6**, and store-package **4/6** grammars. All four public
+> entry points import that helper; the old tag-message-only normalization was
+> removed. The helper is the twenty-fifth exact release-recipe input, so the
+> evidence scope/tests/docs now consistently require 25 reviewed non-payload
+> files.
+>
+> Actual package-manager invocations at that SHA proved the boundary that
+> motivated the RED. These exact commands each exited **1** after pnpm showed
+> it invoked Node with a literal leading `--`:
+>
+> ```sh
+> pnpm --filter @warden/extension release:source-tag-message -- missing.artifact.json AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+> pnpm --filter @warden/extension release:verify-source-tag -- release-test aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB missing.artifact.json CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+> pnpm --filter @warden/extension release:verify-artifact-signature -- missing.artifact.json missing.sig AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+> pnpm --filter @warden/extension release:verify-store -- missing.crx AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+> ```
+>
+> Tag-message, source-tag, and artifact-signature reached
+> `expected artifact manifest SHA-256 must be a lowercase digest`; store-package
+> reached `expected package SHA-256 must be a lowercase digest`. None emitted a
+> usage error. Focused regressions exercise that same first semantic refusal
+> with direct and leading-separator argv for all four commands. Helper tests
+> prove doubled/interior/trailing preservation and non-mutation.
+>
+> From clean implementation SHA
+> `2542ea787ca34c7a0a53cd1f9ad68f82b725e4aa`, this exact focused/release
+> command exited **0** and printed that SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/scripts/release-cli-arguments.mjs && node --check apps/extension/scripts/print-release-source-tag-message.mjs && node --check apps/extension/scripts/verify-release-source-tag.mjs && node --check apps/extension/scripts/verify-reviewed-artifact-signature.mjs && node --check apps/extension/scripts/verify-store-package.mjs && pnpm --filter @warden/extension exec vitest run test/release-cli-arguments.test.mjs test/release-source-tag-message.test.mjs test/verify-release-source-tag-cli.test.mjs test/verify-store-package-cli.test.mjs test/reviewed-artifact-signature.test.mjs test/release-recipe-input-evidence.test.mjs test/release-source-tag.test.mjs test/release-input-file.test.mjs test/release-artifact.test.mjs test/store-package.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension release:gate && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-tag-message-cli-test-*' -o -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' -o -name 'warden-recipe-evidence-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed **83/83** focused tests, typecheck, canonical package verification
+> with **8** payload files, **60** production/peer components, **4** JavaScript
+> bundles, **101** positive bundle inputs, **4** static inputs, **25** exact
+> recipe inputs, independent Info-ZIP parsing, cleanup, diff checks, and both
+> clean-tree guards.
+>
+> From that same clean SHA, this exact extension-wide command exited **0** and
+> printed that SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'release-cli-arguments|normalizeReleaseCliArguments|release-source-tag-message|print-release-source-tag-message|formatReleaseTagMessage|warden\.extension-release-tag\.v1|artifact-manifest-sha256|expected-default-artifact-manifest-sha256|expected-artifact-manifest-sha256|expected-detached-signature-sha256|source tag signed|source tag verifier returned|artifact signature verifier returned|reviewed artifact manifest differs|detached signature differs|release-input-file|readBoundedRegularFile|O_NOFOLLOW|verify-release-source-tag|release-source-tag|verify-reviewed-artifact-signature|reviewed-artifact-signature|verify-store-package|store-package|expectedArtifactManifestSha256|signedArtifactManifestSha256|artifactManifestSha256|artifactReview|reviewedUploadArchive|storePackage|expectedStorePackageSha256|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-tag-message-cli-test-*' -o -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed extension **583/583**, typecheck/build, emitted release-tooling
+> exclusion, selected cleanup, diff checks, and both clean-tree guards. At the
+> implementation SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `f6715c1bcf3d8c3c13b26c43a23749e5962898418713dd8ee0cb72ad4a0cb617`,
+> `4a19a3480ae4ef251400b88a03c81c63210f3a3379f283e5fea04d0b1c90163f`,
+> `92137bbc767f388fbfad580ee6372e3d827b5bea362d73dd9a89beb117ff2bc3`,
+> `9bb97e72befc7aed94f44feb99183b7d9302a300d229b415d725bd2cd58b8745`,
+> and `b17f11e1539cfeb320395137b124a9dd67b4fcb143b9f58511cfe1b4069d5398`.
+> The recipe sidecar was **5,125 bytes** and named 25 inputs. The new helper was
+> **435 bytes** at SHA-256
+> `355edd33cb7338ac6fdad711d192b60dba48b72fabcbf5ee174edf371f1d3085`.
+> ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> C61 changes only local release CLI argv handling, tests/docs, and the recipe
+> source set. Digest policy, stable reads, canonical parsing, Git/GnuPG/CRX
+> verification, composed bindings, and payload bytes are unchanged. The FULL
+> deploy-gate and independent second-model review remain **UNVERIFIED** here;
+> provider remains fixed unavailable.
 
 > ## 2026-09-01 C60 CANONICAL RELEASE-TAG MESSAGE GENERATOR — C6 PARTIAL, SIGNING AUTHORITY EXTERNAL
 >
