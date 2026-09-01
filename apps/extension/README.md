@@ -55,6 +55,10 @@ writer, seals the inode to `0400` through that reader and verifies its identity,
 size, and mode, then unlinks the filename and passes only the live read-
 descriptor path to Info-ZIP while setting the private `0700` directory as the
 subprocess working directory.
+The Info-ZIP child receives an explicit three-key environment: the verifier's
+`PATH` (or `/usr/bin:/bin` when absent), `LANG=C`, and `LC_ALL=C`. It does not
+directly inherit `TMPDIR`, home-directory variables, credentials, or other
+ambient verifier variables.
 It then positionally rereads the live descriptor and requires its length and
 every byte to remain identical after Info-ZIP exits. It closes/removes both
 handles and the directory on success or failure and never reopens the operator-
@@ -62,6 +66,10 @@ supplied archive path. The `0400` seal prevents accidental/cooperative writable
 reopens; it does not constrain the file owner or root from restoring permission.
 The private working directory limits accidental relative-path side effects but
 is not a sandbox for a malicious same-UID executable.
+The minimal child environment similarly limits direct disclosure to a
+cooperative executable and ordinary diagnostics; PATH still selects the
+executable, and it does not isolate secrets from a malicious same-UID process,
+root, or the host.
 To compare another canonical
 upload ZIP and all four evidence sidecars against an already reviewed artifact
 manifest:

@@ -29,6 +29,11 @@ const MAX_UPLOAD_EVIDENCE_BYTES = 256 * 1024 * 1024;
 const TEMPORARY_ARCHIVE_COMPARE_CHUNK_BYTES = 64 * 1024;
 const TEMPORARY_ARCHIVE_CHANGED_MESSAGE =
   "temporary archive bytes changed during independent unzip -t validation";
+const INFO_ZIP_ENVIRONMENT = Object.freeze({
+  PATH: process.env.PATH ?? "/usr/bin:/bin",
+  LANG: "C",
+  LC_ALL: "C",
+});
 
 function fail(message) {
   throw new Error(`extension release verify: ${message}`);
@@ -122,6 +127,7 @@ async function verifyArchiveWithInfoZip(archiveBytes) {
     await execFile("unzip", ["-t", descriptorPath], {
       cwd: temporaryDirectory,
       encoding: "utf8",
+      env: INFO_ZIP_ENVIRONMENT,
       maxBuffer: 4 * 1024 * 1024,
     });
     await assertTemporaryArchiveUnchanged(temporaryArchiveReadHandle, archiveBytes);

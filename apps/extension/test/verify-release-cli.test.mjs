@@ -184,21 +184,22 @@ describe("deterministic upload verifier CLI", () => {
     const replacementBytes = Buffer.from("replacement bytes are not the reviewed archive\n");
     await writeFile(replacementPath, replacementBytes);
     const observationPath = join(directory, "unzip-observation.json");
+    const exitCodeMarkerPath = join(directory, "unzip-exit-code-9");
     const probeDirectory = join(directory, "probe-bin");
     const probePath = join(probeDirectory, "unzip");
     await mkdir(probeDirectory, { recursive: true });
     await writeFile(probePath, `#!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const inspectedPath = process.argv[3];
 await rename(
-  process.env.WARDEN_TEST_REPLACEMENT_PATH,
-  process.env.WARDEN_TEST_REQUESTED_ARCHIVE_PATH,
+  ${JSON.stringify(replacementPath)},
+  ${JSON.stringify(inputPaths[0])},
 );
 const inspectedBytes = await readFile(inspectedPath);
-const temporaryDirectories = (await readdir(process.env.TMPDIR)).filter((name) =>
+const temporaryDirectories = (await readdir(${JSON.stringify(directory)})).filter((name) =>
   name.startsWith("warden-release-unzip-"),
 );
 if (temporaryDirectories.length !== 1) {
@@ -206,15 +207,18 @@ if (temporaryDirectories.length !== 1) {
 }
 const [archiveStat, directoryStat] = await Promise.all([
   stat(inspectedPath),
-  stat(join(process.env.TMPDIR, temporaryDirectories[0])),
+  stat(join(${JSON.stringify(directory)}, temporaryDirectories[0])),
 ]);
-await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
+await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
   inspectedPath,
   sha256: createHash("sha256").update(inspectedBytes).digest("hex"),
   archiveMode: archiveStat.mode & 0o777,
   directoryMode: directoryStat.mode & 0o777,
 }));
-process.exitCode = Number(process.env.WARDEN_TEST_UNZIP_EXIT_CODE ?? "0");
+try {
+  await access(${JSON.stringify(exitCodeMarkerPath)});
+  process.exitCode = 9;
+} catch {}
 `);
     await chmod(probePath, 0o755);
 
@@ -225,9 +229,6 @@ process.exitCode = Number(process.env.WARDEN_TEST_UNZIP_EXIT_CODE ?? "0");
         ...process.env,
         PATH: `${probeDirectory}:${process.env.PATH ?? ""}`,
         TMPDIR: directory,
-        WARDEN_TEST_REPLACEMENT_PATH: replacementPath,
-        WARDEN_TEST_REQUESTED_ARCHIVE_PATH: inputPaths[0],
-        WARDEN_TEST_OBSERVATION_PATH: observationPath,
       },
     });
     expect(result.stdout).toContain("independent ZIP reader unzip -t passed");
@@ -243,6 +244,7 @@ process.exitCode = Number(process.env.WARDEN_TEST_UNZIP_EXIT_CODE ?? "0");
 
     await writeFile(inputPaths[0], inputBytes[0]);
     await writeFile(replacementPath, replacementBytes);
+    await writeFile(exitCodeMarkerPath, "9\n");
     let rejected;
     try {
       await execFile(process.execPath, [verifierPath, ...inputPaths], {
@@ -252,10 +254,6 @@ process.exitCode = Number(process.env.WARDEN_TEST_UNZIP_EXIT_CODE ?? "0");
           ...process.env,
           PATH: `${probeDirectory}:${process.env.PATH ?? ""}`,
           TMPDIR: directory,
-          WARDEN_TEST_REPLACEMENT_PATH: replacementPath,
-          WARDEN_TEST_REQUESTED_ARCHIVE_PATH: inputPaths[0],
-          WARDEN_TEST_OBSERVATION_PATH: observationPath,
-          WARDEN_TEST_UNZIP_EXIT_CODE: "9",
         },
       });
     } catch (error) {
@@ -285,7 +283,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 const inspectedPath = process.argv[3];
 let replacementApplied = false;
 try {
-  await rename(process.env.WARDEN_TEST_REPLACEMENT_PATH, inspectedPath);
+  await rename(${JSON.stringify(replacementPath)}, inspectedPath);
   replacementApplied = true;
 } catch (error) {
   if (!/^\\/proc\\/\\d+\\/fd\\/\\d+$/.test(inspectedPath)) {
@@ -293,7 +291,7 @@ try {
   }
 }
 const inspectedBytes = await readFile(inspectedPath);
-await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
+await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
   inspectedPath,
   replacementApplied,
   sha256: createHash("sha256").update(inspectedBytes).digest("hex"),
@@ -308,8 +306,6 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
         ...process.env,
         PATH: `${probeDirectory}:${process.env.PATH ?? ""}`,
         TMPDIR: directory,
-        WARDEN_TEST_REPLACEMENT_PATH: replacementPath,
-        WARDEN_TEST_OBSERVATION_PATH: observationPath,
       },
     });
     expect(result.stdout).toContain("independent ZIP reader unzip -t passed");
@@ -341,7 +337,7 @@ const replacementBytes = Buffer.alloc(inspectedBytes.length, 0x61);
 replacementBytes[0] = inspectedBytes[0] ^ 0xff;
 await chmod(inspectedPath, 0o600);
 await writeFile(inspectedPath, replacementBytes);
-await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
+await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
   inspectedPath,
   inspectedSha256: createHash("sha256").update(inspectedBytes).digest("hex"),
   replacementSha256: createHash("sha256").update(replacementBytes).digest("hex"),
@@ -359,7 +355,6 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
           ...process.env,
           PATH: `${probeDirectory}:${process.env.PATH ?? ""}`,
           TMPDIR: directory,
-          WARDEN_TEST_OBSERVATION_PATH: observationPath,
         },
       });
       output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
@@ -409,7 +404,7 @@ if (flagsMatch === null) {
   throw new Error("expected octal descriptor flags");
 }
 const flags = Number.parseInt(flagsMatch[1], 8);
-await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
+await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
   inspectedPath,
   sha256: createHash("sha256").update(inspectedBytes).digest("hex"),
   accessMode: flags & 0o3,
@@ -427,7 +422,6 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
         ...process.env,
         PATH: `${probeDirectory}:${process.env.PATH ?? ""}`,
         TMPDIR: directory,
-        WARDEN_TEST_OBSERVATION_PATH: observationPath,
       },
     });
     expect(result.stdout).toContain("independent ZIP reader unzip -t passed");

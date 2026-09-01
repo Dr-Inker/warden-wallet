@@ -58,6 +58,9 @@ seals the inode to **0400** through that reader, verifies unchanged file type,
 device, inode, size, and exact mode, removes the filesystem name, and passes only
 the live read-descriptor path to Info-ZIP with the private **0700** directory as
 the subprocess working directory.
+The child environment contains exactly the verifier's `PATH` (falling back to
+`/usr/bin:/bin` when absent), `LANG=C`, and `LC_ALL=C`; `TMPDIR` and every other
+ambient verifier variable are not directly inherited.
 After Info-ZIP exits it positionally rereads that same handle in bounded chunks
 and requires the exact original length and bytes. It closes/removes both handles
 and the directory on success or failure and never reopens the operator-supplied
@@ -67,7 +70,12 @@ permissions handed to the parser and detects a completed parser-side rewrite;
 it does not establish trust against root, a writer opened before the seal, or a
 hostile process changing permissions/reopening procfs with greater rights or
 racing the comparison. The private working directory limits accidental relative-
-path effects; it does not confine a malicious same-UID executable. It then
+path effects; it does not confine a malicious same-UID executable.
+The minimal child environment limits direct ambient disclosure to cooperative
+tool behavior and diagnostics. It is not secret isolation: PATH still selects
+the executable, and a malicious same-UID process, root, or the host may access
+other permitted state. It does not attest or normalize the build environment.
+The verifier then
 fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
