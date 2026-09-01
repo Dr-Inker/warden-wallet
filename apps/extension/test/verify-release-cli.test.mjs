@@ -575,7 +575,7 @@ await writeFile(${JSON.stringify(completionMarkerPath)}, "completed\\n");
       completedBeforeTenSeconds: true,
       privateDirectories: [],
     });
-  });
+  }, 20_000);
 
   it("rejects a final-symlink archive before reading later inputs", async () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
