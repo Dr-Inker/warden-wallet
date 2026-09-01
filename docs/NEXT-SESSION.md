@@ -96,6 +96,119 @@
 > `WRD-REL-01`, `WRD-REL-02`, and `WRD-REL-03` remain `unimplemented`; C38 is
 > deliberately a synthetic exact-byte review-anchor precondition only.
 
+> ## 2026-09-01 C39 OPENPGP SIGNATURE POLICY — C6 PARTIAL, ALGORITHM IDS ARE NOT KEY GOVERNANCE
+>
+> Implementation commit
+> `9d29629d0700d23c61a62db5a0971e3a7d63c31e` hardens the single shared
+> OpenPGP machine-status parser used by both signed-source tags and reviewed-
+> artifact detached signatures. A cryptographically valid signature now also
+> needs an exact ten-argument OpenPGP `VALIDSIG` record, zero reserved field,
+> signature version **4 or 6**, canonical numeric octets, an explicitly allowed
+> public-key and hash algorithm, and exact binary-document signature class
+> **00**. Both verifiers and CLIs return/report the observed version,
+> public-key algorithm, hash algorithm, and signature class. There was no
+> dependency/lockfile or payload-byte change, production signature/key/trust-
+> store action, deployment, Web Store/publisher action, provider-route change,
+> legal ruling, secret persistence, or real-account/funds mutation.
+>
+> Real RED was captured from clean SHA
+> `de23a709e4cd96a86fe564c06e69a3bcb7240578` before implementation:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/openpgp-signature-policy.test.mjs
+> ```
+>
+> It exited **1** because `test/openpgp-signature-policy.test.mjs` did not
+> exist. At clean implementation SHA
+> `9d29629d0700d23c61a62db5a0971e3a7d63c31e`, this exact command exited **0**
+> and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/openpgp-signature-policy.test.mjs test/release-source-tag.test.mjs test/reviewed-artifact-signature.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && pnpm --filter @warden/extension release:gate && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-test-*' -o -name 'warden-reviewed-artifact-signature-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The focused files passed **35/35** tests, typecheck/build passed, and the real
+> upload release gate measured **8** payload files, **60** production/peer
+> components, **4** JavaScript bundles, **101** positive bundle inputs, **4**
+> static inputs, and **21** release-recipe inputs. Independent Info-ZIP parsing,
+> emitted-tooling exclusion, all four focused temp cleanup checks, diff checks,
+> and both clean-tree guards passed.
+>
+> The frozen public-key algorithm allowlist is **1/19/22/27/28**: RSA, ECDSA,
+> installed-GnuPG EdDSA compatibility, current-standard Ed25519, and Ed448. ID
+> **22** is an explicit compatibility exception: the current IANA registry and
+> RFC 9580 label its wire format EdDSALegacy/deprecated, but installed GnuPG
+> 2.4.4 emits 22 for `ed25519`. The hash allowlist is **8/9/10** for
+> SHA-256/384/512. RSA Sign-Only 3, DSA 17, encryption-only/reserved/private/
+> unknown public-key IDs, MD5/SHA-1/RIPEMD-160, SHA-224 11, uninstalled SHA-3,
+> unknown hash IDs, signature versions other than 4/6, nonzero reserved fields,
+> malformed octets, non-binary signature classes, missing primary fingerprint,
+> and extra `VALIDSIG` arguments fail closed.
+>
+> The **6** new policy tests exercise every allowed ID combination as a strict
+> transcript, real ephemeral RSA-2048 **1**, NIST-P256 ECDSA **19**, and
+> installed `ed25519`/EdDSA **22** detached signatures forced to SHA-256 **8**,
+> and v4/v6 key-ID-end semantics. A v4 `GOODSIG` key ID must match the low 64
+> fingerprint bits; a v6 key ID must match the high 64 bits; an exact complete
+> fingerprint is accepted for either. The v6/Ed25519-27 case is transcript-only
+> because installed GnuPG does not generate that current-standard wire format.
+>
+> Both real consumer suites additionally create cryptographically valid
+> SHA-224 **11** signatures: one signed annotated tag and one exact-byte detached
+> artifact signature. GnuPG reaches `VALIDSIG` for each, but the shared policy
+> rejects both with `hash algorithm 11 is not allowed`. This proves each
+> consumer enforces the policy rather than merely testing an isolated helper.
+> All keys, signatures, candidate files, and repositories remain ephemeral under
+> `/tmp` and are removed.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-test-*' -o -name 'warden-reviewed-artifact-signature-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **537/537**, typecheck/build passed, release
+> verification tooling remained absent from `dist`, no fixture/verifier temp
+> directory remained, and diff/clean-tree guards passed.
+>
+> The shared parser was **15,081 bytes** with SHA-256
+> `651c53dd2965e44a91ef020d40610a15f06f6a39e1b7fc29b9ffd5d73c6c9de5`;
+> the new **8,866-byte** policy test SHA-256 was
+> `d797731bba9cca366fb6d34c10eb9c9745dbe705274c3075450d95290f45035d`.
+> At the implementation SHA, the generated artifact, bundle, recipe,
+> dependency, and static sidecar SHA-256 values were respectively
+> `b948b90f69fa76ab760f77292e7ac6c5255da07061c23fe649de8aea21e6f21f`,
+> `ea4c2646ab6eca3beac73b513d15c3596a0b37c7e15007179005ad71cf3f15ae`,
+> `43fc57fc9b724c3cfc4ca7e911d4acd3402b8a3cff5995224c5cb6aad52560b7`,
+> `6c32a6802124a22239a6727105fc8c8f70f1a717971d9d0ccb7e4fbcb2dc3e3c`,
+> and `06e5013b4279f09c05e256c33ef667d1b47ea7ead51ff538289b472ad3297bdf`;
+> the recipe sidecar remained **4,372 bytes** and named 21 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> Installed `/usr/share/doc/gnupg/DETAILS.gz`, GnuPG 2.4.4/libgcrypt 1.10.3,
+> the current IANA OpenPGP registries, and RFC 9580 were checked on 2026-09-01
+> for status-field order, algorithm IDs, signature classes, and v4/v6 key-ID
+> semantics. Repository documentation links the primary IANA/RFC sources.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** an allowed algorithm ID is not a key-strength or identity
+> proof. This policy does not constrain RSA modulus length or the ECDSA curve,
+> attest GnuPG/keyring/executable/OS/runtime bytes, establish reviewer or tagger
+> authority, select a production key, govern ceremony/rotation/revocation,
+> validate a transparency log, prove an independent builder, compare a real
+> store return, establish publisher control, decide the deprecated-ID-22
+> production disposition, make a legal ruling, deploy, or exercise real funds.
+> The ledger-inclusive full repository/release/rehearsal gate is still pending
+> at this entry.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C37 CLOSED; C38 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
