@@ -1,16 +1,17 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C70 CLOSED; NEXT BOUNDED AUDIT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C71 CONTRACT; BEHAVIORAL RED NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** audit the verifier boundary after closed C70 and begin another
->   bounded cycle only if it has a locally executable RED and a material claim
->   narrower than sandboxing or production trust. Do not manufacture local
->   proxies for the remaining external obligations.
+> - **TASK:** add and commit the C71 behavioral RED proving a 12-second fake
+>   parser currently completes successfully, implement the adaptive direct-child
+>   timeout contracted below, and run the bounded evidence ladder. Do not claim
+>   process-group, descendant, sandbox, or production-executable confinement.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C70 evidence-ledger/full-gated SHA
+> - **BASE:** C70 close SHA
+>   `320d1d5186b592b5df77fdc4fbdb01f0b0f5ca94`; evidence-ledger/full-gated SHA
 >   `fab2e75f8d03e9e0157685b34a451103fa82786d`; implementation/evidence
 >   `c78649e7c63211697fb082b7a563f65e124b9e93`; contract SHA
 >   `86279a256335c466f6e1cdd37f4bf29d650f41b3`; behavioral RED
@@ -28,12 +29,13 @@
 >   `47d419dae0dda40ad6ca461ab7cd81dc3ba32308`; implementation/evidence
 >   `5bb34f87d6e0fbafa53e1090fbc93fd67495a476`; behavioral RED
 >   `21213293cc184b80d8d397c102b01b3b2d85bf6a`.
-> - **READ:** this memo and the C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
+> - **READ:** this memo and the C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** none until the next bounded contract is written and
->   committed. C70 source, tests, README, security docs, evidence ledger, and
->   closeout are complete.
+> - **WRITE (edit lease):** before the committed RED, only
+>   `apps/extension/test/verify-release-cli.test.mjs`; after that measured RED,
+>   only `apps/extension/scripts/verify-release.mjs`, that test, extension README,
+>   `docs/security/RELEASE-INTEGRITY.md`, and this ledger.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -42,7 +44,11 @@
 >   sign production bytes, publish, weaken C36/C38–C70 policy, or invent store
 >   provenance, freshness, reviewer, builder-independence, key-strength,
 >   publisher, or lifecycle policy.
-> - **ACCEPT:** prove the independent parser child receives exactly inherited
+> - **ACCEPT:** prove a parser that naturally completes only after 12 seconds is
+>   killed as the direct child before **10 seconds** for the sub-MiB fixture,
+>   cannot write its completion marker, fails verification, and leaves no private
+>   directory. Preserve C70's proof that the independent parser child receives
+>   exactly inherited
 >   `PATH` plus fixed `LANG=C` and `LC_ALL=C`, and does not directly inherit an
 >   unrelated parent marker or `TMPDIR`. Preserve C69's exact private **0700**
 >   `cwd`, C68's `O_RDONLY` descriptor and **0400** inode after unlink, and all
@@ -57,8 +63,8 @@
 >   production signature/key/tag, deploy, upload, publishing, live service,
 >   external message, secret persistence, legal ruling, or real-account/funds
 >   mutation.
-> - **RETURN:** C70 contract/RED/implementation/evidence/full/close SHAs and any
->   subsequent bounded-cycle SHAs, clean/dirty state,
+> - **RETURN:** C70 close/full SHAs plus C71 contract/RED/implementation/evidence/
+>   full/close SHAs, clean/dirty state,
 >   exact commands and outcomes, stable-byte proof and temp-copy mode/cleanup,
 >   preserved grammar/order/output/scope, invariant and independent-review
 >   status, explicit synthetic/production and same-host/independent gaps, and
@@ -111,7 +117,8 @@
 > SHA `4f43e19a525c1788476986a9e05374d1c346136f`. C70 is closed with a committed
 > contract, measured behavioral RED, clean implementation, and exact single-
 > contract, verifier-file, focused/release, extension-wide, and repository-wide
-> FULL evidence. Only this docs close commit follows the full-gated SHA.
+> FULL evidence at close SHA `320d1d5186b592b5df77fdc4fbdb01f0b0f5ca94`.
+> C71 is contract-only; no C71 test or source change exists yet.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -121,6 +128,24 @@
 > and operator-controlled signing remain external.
 > C68–C70 are only cooperative-host least privilege. Do not manufacture a local
 > proxy for the remaining external trust/owner obligations.
+
+> ## 2026-09-01 C71 BOUNDED INFO-ZIP DIRECT CHILD — C6 PARTIAL, HOST TRUST EXTERNAL
+>
+> Contract: calculate the Info-ZIP deadline from the already stable-read archive
+> byte length as `min(120000, 5000 + ceil(bytes / 1048576) * 1000)` milliseconds
+> and pass it to the existing `execFile` call with `killSignal: "SIGKILL"`. An
+> executable probe for the sub-MiB fixture must write a start marker, remain alive
+> for 12 seconds before writing a completion marker and exiting zero, and be
+> killed/fail closed before 10 seconds. The completion marker must remain absent,
+> and C70's environment, C69's working directory, C68's descriptor/inode seal,
+> C66's post-parser byte comparison, and success/failure cleanup remain intact.
+>
+> This bounds the direct parser child and verifier wait for the accepted archive
+> size. It does not kill a separately escaped descendant or process group, prove
+> executable provenance, constrain a malicious same-UID process, or create a
+> sandbox. The 120-second ceiling is a local availability policy, not evidence
+> about production host performance. No invariant or production-trust status
+> moves.
 
 > ## 2026-09-01 C70 MINIMAL INFO-ZIP CHILD ENVIRONMENT — C6 PARTIAL, HOST TRUST EXTERNAL
 >
