@@ -104,6 +104,99 @@
 > size-stability enforcement, while input provenance and host trust stay
 > external.
 
+> ## 2026-09-01 C51 SAME-SIZE RELEASE-INPUT MUTATION REFUSAL — C6 PARTIAL, HOST TRUST EXTERNAL
+>
+> Behavioral RED commit
+> `22fcd8dde24d3b04ad5d29e2ad91bb2d89d6603f` creates a **16 MiB** sparse
+> regular-file candidate, performs a finite burst of **64** in-place byte writes
+> at offset zero without changing its length, and invokes C50's production
+> shared reader concurrently. The expected mutation refusal failed because the
+> reader resolved successfully and produced no rejection error. Implementation
+> commit `9ab34f16511ae68b2bf479bf4f47cef4cb3f7481` closes that metadata-stability
+> gap for all ten caller-selected release inputs.
+>
+> `release-input-file.mjs` now takes both file-handle stats with bigint fields
+> and requires equality of `dev`, `ino`, `size`, `mtimeNs`, and `ctimeNs`; it
+> also requires the returned buffer length to equal the post-read bigint size.
+> Any disagreement is refused as a file change. C50's `O_NOFOLLOW`, nonempty
+> regular-file check, caller-specific pre-allocation ceiling, same-handle read,
+> and `finally` close remain. The composed, standalone review, and standalone
+> store CLIs require no caller changes and continue passing their exact buffers
+> to the incumbent canonical, digest, GnuPG, report, and CRX3 verifiers.
+>
+> The real RED was captured from clean SHA
+> `22fcd8dde24d3b04ad5d29e2ad91bb2d89d6603f` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-input-file.test.mjs
+> ```
+>
+> It exited **1** with one failed test in **35 ms** because the current reader
+> resolved and `rejection` remained `undefined`. The implementation test then
+> passed three additional independent runs in **24–37 ms**, guarding against a
+> lucky one-off scheduling result. From clean implementation SHA
+> `9ab34f16511ae68b2bf479bf4f47cef4cb3f7481`, this exact focused/release
+> command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/scripts/release-input-file.mjs && pnpm --filter @warden/extension exec vitest run test/release-input-file.test.mjs test/verify-store-package-cli.test.mjs test/verify-release-source-tag-cli.test.mjs test/release-recipe-input-evidence.test.mjs test/reviewed-artifact-signature.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension release:gate && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The six focused files passed **27/27**, typecheck passed, and the real upload
+> release gate passed canonical packaging/verification, independent Info-ZIP
+> parsing, **8** payload files, **60** production/peer components, **4**
+> JavaScript bundles, **101** positive bundle inputs, **4** static inputs, and
+> the unchanged exact set of **23** release-recipe inputs. No selected mutation,
+> CLI, verifier, or signature fixture directory remained.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'release-input-file|readBoundedRegularFile|O_NOFOLLOW|verify-release-source-tag|release-source-tag|verify-reviewed-artifact-signature|reviewed-artifact-signature|verify-store-package|store-package|artifactReview|reviewedUploadArchive|storePackage|expectedStorePackageSha256|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **564/564**, typecheck/build passed, release
+> tooling remained absent from `dist`, all selected temp cleanup checks passed,
+> and the diff/clean-tree guards passed.
+>
+> At the implementation SHA, the strengthened helper and its direct test were
+> respectively **1,637** and **1,840 bytes**, with SHA-256 values
+> `ea1a27acb898a1f089405e5c81a97f0f34b1c91e74723a4b178722a607599538`
+> and `650a7b74229c436d0da499aba0eedcc7afd211be2e73e38e23d49ea5e7caf95d`.
+> The generated artifact, bundle, recipe, dependency, and static sidecar
+> SHA-256 values were respectively
+> `a89f47fa29de986650e71d76ef44eb9832a6231deb10d62b6eff6b534c3cb413`,
+> `cf79d76dfac4c0c6241fd0f7660bf765e53c281f17ce253a1058c901bde32d0d`,
+> `8140852830da0b18b1a1b530b388d5bc28d0ba2bfa5f01f90db4c756dd7752bf`,
+> `d232c1d45a2c1d0fbce5b883e089f8826db7375db2f6c0e50c2fb9313e75cec4`,
+> and `9ec92d166442feb02c824f6b22f996b78ee75de940db785ca5eb64c077cfdfaf`.
+> The recipe sidecar remained **4,740 bytes** with 23 inputs and bound the
+> helper's new exact length/digest. ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> There was no dependency, lockfile, recipe-set, or payload-byte change.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** C51 detects ordinary same-size writes observable through
+> Linux inode timestamps; it is not protection against a privileged hostile
+> host able to falsify metadata or replace the runtime/toolchain. Final-only
+> no-symlink behavior does not authenticate parent-directory resolution or
+> input provenance. There is still no real store return, owner-approved
+> production extension id, publisher-control evidence, production artifact/tag/
+> review key/signature, freshness/trusted-time policy, key/storage/lifecycle
+> policy, transparency log, off-host independent build, host/toolchain
+> attestation, external audit, deployment, or legal disposition. Builders
+> remain same-host/shared-store and explicitly non-independent. The repository-
+> wide ledger-inclusive gate is intentionally pending until this entry is
+> committed; implementation-SHA evidence above must not be relabeled as that
+> gate.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C49 CLOSED; C50 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
