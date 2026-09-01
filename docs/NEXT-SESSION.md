@@ -104,6 +104,95 @@
 > parent path identity plus ordinary same-size metadata stability on Linux,
 > while input provenance and hostile-host trust remain external.
 
+> ## 2026-09-01 C53 STANDALONE REVIEWED-ARTIFACT DIGEST PIN — C6 PARTIAL, REVIEW AUTHORITY EXTERNAL
+>
+> Behavioral RED commit
+> `e82f77298b986a8f4900a7480e3ce6532ffcaee2` invokes the standalone store
+> CLI with a candidate, its exact digest, an expected extension id, a deliberately
+> wrong reviewed-artifact digest, and explicit reviewed upload/artifact paths.
+> The expected artifact-digest refusal did not exist: the C52 CLI rejected the
+> six-argument invocation at its old usage grammar. Implementation commit
+> `09aabc9f2dd67b53962366f1d95d9435501de7f4` adds the missing independent
+> artifact identity without changing the strict CRX3 or canonical artifact
+> parsers.
+>
+> Every standalone store invocation now takes exactly four required arguments,
+> or six when overriding the reviewed upload/artifact paths: candidate CRX,
+> independently recorded candidate SHA-256, independently reviewed extension
+> id, independently recorded reviewed-artifact-manifest SHA-256, then the two
+> optional paths. Both digests must be exact lowercase SHA-256. The artifact is
+> read once through C52's **8 MiB** stable/path-bound reader; its measured digest
+> must equal the independent argument before canonical artifact parsing,
+> reviewed-upload verification, or CRX3 parsing. Success prints that accepted
+> artifact digest alongside the incumbent package, header, extension-id,
+> publisher-key, embedded/upload ZIP, file-count, and payload-tree identities.
+> The candidate and reviewed upload retain their **512 MiB** ceilings.
+>
+> The real RED was captured from clean SHA
+> `e82f77298b986a8f4900a7480e3ce6532ffcaee2` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/verify-store-package-cli.test.mjs -t "requires an independent exact artifact-manifest digest before CRX handling"
+> ```
+>
+> It exited **1** with one failed and two skipped tests in **63 ms**: the received
+> error was the old five-input usage contract, not the required artifact-digest
+> mismatch. From clean implementation SHA
+> `09aabc9f2dd67b53962366f1d95d9435501de7f4`, this exact focused/release
+> command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/scripts/verify-store-package.mjs && pnpm --filter @warden/extension exec vitest run test/verify-store-package-cli.test.mjs test/store-package.test.mjs test/release-input-file.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension release:gate && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-input-file-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The five focused files passed **31/31**, including wrong, uppercase, missing,
+> and exact reviewed-artifact digests plus the incumbent wrong, uppercase,
+> missing, and exact candidate-digest behavior. With the exact artifact digest,
+> the deliberately invalid candidate proceeds to `Cr24` refusal; with a wrong
+> artifact digest it is refused first and no CRX parser error appears. Typecheck
+> and the real release gate passed canonical packaging/verification, independent
+> Info-ZIP parsing, **8** payload files, **60** production/peer components,
+> **4** JavaScript bundles, **101** positive bundle inputs, **4** static inputs,
+> and the unchanged exact set of **23** release-recipe inputs.
+>
+> From the same clean implementation SHA, this exact extension-wide command
+> exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'expected-artifact-manifest-sha256|artifact manifest sha256|reviewed artifact manifest differs|release-input-file|readBoundedRegularFile|O_NOFOLLOW|verify-release-source-tag|release-source-tag|verify-reviewed-artifact-signature|reviewed-artifact-signature|verify-store-package|store-package|artifactReview|reviewedUploadArchive|storePackage|expectedStorePackageSha256|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed extension **566/566**, typecheck/build, emitted release-tooling
+> exclusion, selected temp cleanup, diff checks, and both clean-tree guards.
+> At the implementation SHA, the standalone CLI was **5,446 bytes** with
+> SHA-256
+> `040525473a8bec33b19017e9e3a163e276d348f790f810bab47847a62e311287`;
+> its CLI test was **6,887 bytes** with SHA-256
+> `f52950acb3b81cf3333413ea91071a289bc7a561d157c90a584ed273a43f7311`.
+> The **4,740-byte**, 23-input recipe sidecar bound that exact CLI. The generated
+> artifact, bundle, recipe, dependency, and static sidecar SHA-256 values were
+> respectively
+> `acf9866b26c7430f43c09165c91a67209eff70d3e88f5496a775987a931b2475`,
+> `0b33748276b1d48ccc34ee1c4149b8d4ee68c759b03209cdf302e9e85597dd4d`,
+> `25fff094d7b8052f170b5611f0bba539f490ca699cafc23abf43c6a6a149e6b3`,
+> `c6074a78983d963df2f1ec852082298c4d00c06e4766404f03204de58ad982b0`,
+> and `0dbc6bb746a4b0385f40ed004a3afc1a7b667b8dce6808671a7bac4497a504f5`.
+> ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> The new digest is independent only when an operator obtains it through an
+> independent, approved channel. A caller who selects both the artifact file and
+> its digest controls both inputs; this lane does not prove signer/reviewer
+> authority, store acquisition, production extension-id ownership, independent
+> builders, or hostile-host integrity. The composed signed-source lane remains
+> the stronger authenticated-artifact path. `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; invariant statuses do not move. The
+> provider remains fixed unavailable and independent second-model review remains
+> **UNVERIFIED**. The ledger-inclusive full serial repo gate is intentionally
+> pending until this entry is committed.
+
 > ## 2026-09-01 C52 RELEASE-INPUT PARENT-SYMLINK REFUSAL — C6 PARTIAL, LINUX/HOST TRUST EXTERNAL
 >
 > Behavioral RED commit
