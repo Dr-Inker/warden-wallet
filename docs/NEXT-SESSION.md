@@ -1,17 +1,19 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C71 CONTRACT; BEHAVIORAL RED NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C71 RED MEASURED; IMPLEMENTATION NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** add and commit the C71 behavioral RED proving a 12-second fake
->   parser currently completes successfully, implement the adaptive direct-child
->   timeout contracted below, and run the bounded evidence ladder. Do not claim
+> - **TASK:** implement the C71 adaptive direct-child timeout against the
+>   committed behavioral RED and run the bounded evidence ladder. Do not claim
 >   process-group, descendant, sandbox, or production-executable confinement.
 > - **CWD:** `/opt/warden`.
 > - **BASE:** C70 close SHA
->   `320d1d5186b592b5df77fdc4fbdb01f0b0f5ca94`; evidence-ledger/full-gated SHA
+>   `320d1d5186b592b5df77fdc4fbdb01f0b0f5ca94`; C71 contract SHA
+>   `b4f6789dee83bd6411f38777fd40a9efaa71a7f1`; initial fixture
+>   `4c90b21baff1f6821103b2014f5872171dd0c307`; behavioral RED
+>   `58a535a86d54cdde8d129137bf369f1a5ac54ce5`; C70 evidence-ledger/full-gated SHA
 >   `fab2e75f8d03e9e0157685b34a451103fa82786d`; implementation/evidence
 >   `c78649e7c63211697fb082b7a563f65e124b9e93`; contract SHA
 >   `86279a256335c466f6e1cdd37f4bf29d650f41b3`; behavioral RED
@@ -32,9 +34,8 @@
 > - **READ:** this memo and the C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** before the committed RED, only
->   `apps/extension/test/verify-release-cli.test.mjs`; after that measured RED,
->   only `apps/extension/scripts/verify-release.mjs`, that test, extension README,
+> - **WRITE (edit lease):** only `apps/extension/scripts/verify-release.mjs`,
+>   `apps/extension/test/verify-release-cli.test.mjs`, extension README,
 >   `docs/security/RELEASE-INTEGRITY.md`, and this ledger.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
@@ -118,7 +119,8 @@
 > contract, measured behavioral RED, clean implementation, and exact single-
 > contract, verifier-file, focused/release, extension-wide, and repository-wide
 > FULL evidence at close SHA `320d1d5186b592b5df77fdc4fbdb01f0b0f5ca94`.
-> C71 is contract-only; no C71 test or source change exists yet.
+> C71 has a committed contract and measured behavioral RED; production source
+> remains unchanged.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -139,6 +141,25 @@
 > killed/fail closed before 10 seconds. The completion marker must remain absent,
 > and C70's environment, C69's working directory, C68's descriptor/inode seal,
 > C66's post-parser byte comparison, and success/failure cleanup remain intact.
+>
+> Contract commit `b4f6789dee83bd6411f38777fd40a9efaa71a7f1` precedes
+> initial fixture commit `4c90b21baff1f6821103b2014f5872171dd0c307`. The
+> first run at that SHA was not the behavioral RED: Vitest's default **5-second**
+> harness timeout fired first. No verifier/parser process or selected temporary
+> directory survived. Corrected behavioral RED commit
+> `58a535a86d54cdde8d129137bf369f1a5ac54ce5` changes only that test's harness
+> timeout to 20 seconds. From the clean corrected RED SHA, this exact command
+> exited **1**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/verify-release-cli.test.mjs -t "kills a stalled independent unzip direct child within its archive deadline"
+> ```
+>
+> Vitest ran one test, skipped twelve, and failed in **13.39 s** with all three
+> missing behaviors measured together: the verifier succeeded rather than
+> failing closed, the fake parser wrote its completion marker, and elapsed time
+> exceeded ten seconds. The fake did write its start marker, and the existing
+> success cleanup removed the private directory.
 >
 > This bounds the direct parser child and verifier wait for the accepted archive
 > size. It does not kill a separately escaped descendant or process group, prove
