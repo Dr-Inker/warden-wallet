@@ -35,6 +35,28 @@ afterEach(async () => {
 });
 
 describe("release-source CLI external files", () => {
+  it("requires an independent exact artifact digest before parsing or GnuPG", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "warden-release-source-cli-test-"));
+    temporaryDirectories.push(directory);
+    const artifactPath = join(directory, "reviewed.artifact.json");
+    await writeFile(artifactPath, Buffer.from("{}\n"));
+
+    const output = await rejectedOutput([
+      "release-test",
+      "a".repeat(40),
+      "A".repeat(40),
+      "B".repeat(40),
+      artifactPath,
+      "0".repeat(64),
+    ]);
+    expect(output).toMatch(
+      /reviewed artifact manifest differs from the independently supplied SHA-256/,
+    );
+    expect(output).not.toMatch(/usage: verify-release-source-tag/);
+    expect(output).not.toMatch(/artifact manifest is not valid JSON/);
+    expect(output).not.toMatch(/GNUPGHOME/);
+  });
+
   it("rejects an oversized artifact manifest before reading and parsing it", async () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-source-cli-test-"));
     temporaryDirectories.push(directory);
