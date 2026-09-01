@@ -115,7 +115,9 @@ describe("release-source CLI external files", () => {
     );
 
     const missingOutput = await rejectedOutput(baseArguments.slice(0, -1));
-    expect(missingOutput).toMatch(/usage: verify-release-source-tag/);
+    expect(missingOutput).toMatch(
+      /expected artifact manifest SHA-256 must be a lowercase digest/,
+    );
 
     const exactOutput = await rejectedOutput([
       ...baseArguments.slice(0, -1),

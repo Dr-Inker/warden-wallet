@@ -92,12 +92,12 @@ performed by this gate.
 
 `pnpm --filter @warden/extension release:verify-source-tag -- <tag>
 <expected-tag-object-sha> <expected-primary-fingerprint>
-<expected-signing-fingerprint>` checks a caller-selected release source against
-the local versioned artifact manifest. This four-argument local/default tier is
-source-only and supplies no independent artifact digest. Appending an explicit
-reviewed-manifest path requires its independently recorded lowercase SHA-256 as
-the next argument. All four source identity arguments are independent inputs;
-none is learned from the tag or artifact candidate. When the primary key signs
+<expected-signing-fingerprint> <expected-artifact-manifest-sha256>` checks a
+caller-selected release source against the local versioned artifact manifest.
+This five-argument local/default tier requires an independent exact artifact
+digest. Supplying an explicit reviewed-manifest path before that digest selects
+a different artifact. All five identity arguments are independent inputs; none
+is learned from the tag or artifact candidate. When the primary key signs
 directly, the two fingerprint arguments are the same.
 
 When the explicit artifact path and its digest are followed by a local dual-

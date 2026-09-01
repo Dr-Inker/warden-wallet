@@ -88,14 +88,13 @@ those values to an already reviewed artifact manifest with:
 GNUPGHOME=/path/to/release-verification-keyring \
   pnpm --filter @warden/extension release:verify-source-tag -- \
   <tag> <expected-tag-object-sha> <expected-primary-fingerprint> \
-  <expected-signing-fingerprint>
+  <expected-signing-fingerprint> <expected-artifact-manifest-sha256>
 ```
 
-This four-argument local/default tier is source-only: it selects the versioned
-artifact from the local release directory but has no independently supplied
-artifact digest, so it is not an independently anchored reviewed-artifact
-binding. To select an external reviewed artifact, append its path and an
-independently recorded lowercase SHA-256. The expected tag object is mandatory:
+This five-argument local/default tier selects the versioned artifact from the
+local release directory and requires its independently recorded lowercase SHA-
+256. To select an external reviewed artifact instead, supply its path before
+that digest. The expected tag object is mandatory:
 a tag name and signer alone cannot reveal that an authorized signer force-moved
 the tag. The verifier resolves only the exact `refs/tags/<tag>` ref, requires it
 to equal the independent full object SHA both before and after verification,

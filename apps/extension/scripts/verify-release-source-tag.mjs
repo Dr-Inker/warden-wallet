@@ -24,8 +24,8 @@ function fail(message) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (![4, 6, 8, 12, 16].includes(args.length)) {
-    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json expected-artifact-manifest-sha256 [dual-local-report.json expected-dual-report-sha256 [artifact-review-signature expected-artifact-review-signature-sha256 expected-artifact-review-primary-fingerprint expected-artifact-review-signing-fingerprint [store-returned.crx expected-store-package-sha256 expected-store-extension-id reviewed-upload.zip]]]]");
+  if (![5, 6, 8, 12, 16].includes(args.length)) {
+    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint expected-default-artifact-manifest-sha256 | verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint reviewed-artifact.json expected-artifact-manifest-sha256 [dual-local-report.json expected-dual-report-sha256 [artifact-review-signature expected-artifact-review-signature-sha256 expected-artifact-review-primary-fingerprint expected-artifact-review-signing-fingerprint [store-returned.crx expected-store-package-sha256 expected-store-extension-id reviewed-upload.zip]]]");
   }
   const [
     tagName,
@@ -34,13 +34,10 @@ async function main() {
     expectedSigningFingerprint,
   ] = args;
   let artifactManifestPath;
-  let expectedArtifactManifestSha256;
-  if (args[4]) {
+  let expectedArtifactManifestSha256 = args[4];
+  if (args.length >= 6) {
     artifactManifestPath = resolve(args[4]);
     expectedArtifactManifestSha256 = args[5];
-    if (!/^[0-9a-f]{64}$/.test(expectedArtifactManifestSha256)) {
-      fail("expected artifact manifest SHA-256 must be a lowercase digest");
-    }
   } else {
     const sourceManifest = JSON.parse(await readFile(join(appDirectory, "manifest.json"), "utf8"));
     const version = sourceManifest.version;
@@ -51,6 +48,9 @@ async function main() {
       releaseDirectory,
       `warden-extension-${version}.artifact.json`,
     );
+  }
+  if (!/^[0-9a-f]{64}$/.test(expectedArtifactManifestSha256)) {
+    fail("expected artifact manifest SHA-256 must be a lowercase digest");
   }
   const artifactManifestBytes = await readBoundedRegularFile(
     artifactManifestPath,
