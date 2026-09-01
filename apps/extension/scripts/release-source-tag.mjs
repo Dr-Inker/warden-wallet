@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import { parseLocalDualReleaseReport } from "../../../scripts/local-dual-extension-release.mjs";
+import { parseArtifactManifest } from "./release-artifact.mjs";
 
 const GIT_EXECUTABLE = "/usr/bin/git";
 const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
@@ -25,6 +26,7 @@ export const GIT_GPG_LAUNCHER_TEXT = [
 ].join("\n");
 const MAX_TAG_OBJECT_BYTES = 1024 * 1024;
 const MAX_DUAL_RELEASE_REPORT_BYTES = 1024 * 1024;
+const MAX_ARTIFACT_MANIFEST_BYTES = 8 * 1024 * 1024;
 const MAX_OPENPGP_TIME_VALUE = 0xffff_ffff;
 const FULL_SHA1_PATTERN = /^[0-9a-f]{40}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -94,6 +96,7 @@ function verifyExpectedDualReleaseReport({
   dualReleaseReportBytes,
   expectedDualReleaseReportSha256,
   artifactManifest,
+  artifactManifestBytes,
 }) {
   const reportSupplied = dualReleaseReportBytes !== undefined;
   const digestSupplied = expectedDualReleaseReportSha256 !== undefined;
@@ -102,6 +105,9 @@ function verifyExpectedDualReleaseReport({
   }
   if (!reportSupplied) {
     return null;
+  }
+  if (!(artifactManifestBytes instanceof Uint8Array)) {
+    fail("exact artifact manifest bytes are required with a dual release report");
   }
   if (!(dualReleaseReportBytes instanceof Uint8Array)) {
     fail("dual release report must be byte data");
@@ -127,22 +133,83 @@ function verifyExpectedDualReleaseReport({
   }
 
   const report = parseLocalDualReleaseReport(reportBytes);
-  const artifactCommit = artifactManifest?.source?.gitCommit;
-  if (report.source.gitCommit !== artifactCommit) {
+  const exactArtifactBytes = Buffer.from(artifactManifestBytes);
+  if (
+    exactArtifactBytes.length === 0 ||
+    exactArtifactBytes.length > MAX_ARTIFACT_MANIFEST_BYTES
+  ) {
+    fail(
+      `artifact manifest must be between 1 and ${MAX_ARTIFACT_MANIFEST_BYTES} bytes`,
+    );
+  }
+  const exactArtifactManifest = parseArtifactManifest(exactArtifactBytes);
+  if (exactArtifactManifest.source.gitCommit !== artifactManifest?.source?.gitCommit) {
+    fail("exact artifact manifest bytes differ from the supplied artifact source commit");
+  }
+  if (report.source.gitCommit !== exactArtifactManifest.source.gitCommit) {
     fail("dual release report source differs from the artifact source commit");
   }
-  const artifactVersion = artifactManifest?.extension?.version;
-  if (
-    typeof artifactVersion !== "string" ||
-    report.source.extensionVersion !== artifactVersion
-  ) {
+  const artifactVersion = exactArtifactManifest.extension.version;
+  if (report.source.extensionVersion !== artifactVersion) {
     fail("dual release report extension version differs from the artifact extension version");
+  }
+
+  const attachmentClaims = [
+    ["dependency evidence", exactArtifactManifest.dependencyEvidence],
+    ["bundle input evidence", exactArtifactManifest.bundleInputEvidence],
+    ["static input evidence", exactArtifactManifest.staticInputEvidence],
+    ["release recipe input evidence", exactArtifactManifest.releaseRecipeInputEvidence],
+  ];
+  const artifactManifestSha256 = createHash("sha256")
+    .update(exactArtifactBytes)
+    .digest("hex");
+  const expectedFiles = [
+    {
+      label: "artifact manifest",
+      path: `release/warden-extension-${artifactVersion}.artifact.json`,
+      bytes: exactArtifactBytes.length,
+      sha256: artifactManifestSha256,
+    },
+    {
+      label: "archive",
+      path: `release/${exactArtifactManifest.archive.file}`,
+      bytes: exactArtifactManifest.archive.bytes,
+      sha256: exactArtifactManifest.archive.sha256,
+    },
+    ...attachmentClaims.map(([label, attachment]) => ({
+      label,
+      path: `release/${attachment.file}`,
+      bytes: attachment.bytes,
+      sha256: attachment.sha256,
+    })),
+    ...exactArtifactManifest.payload.files.map((file) => ({
+      label: `unpacked payload ${file.path}`,
+      path: `release/unpacked/${file.path}`,
+      bytes: file.bytes,
+      sha256: file.sha256,
+    })),
+  ].sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+  if (expectedFiles.length !== 14) {
+    fail("artifact manifest does not declare the reviewed fourteen-file release set");
+  }
+  for (let index = 0; index < expectedFiles.length; index += 1) {
+    const expected = expectedFiles[index];
+    const actual = report.comparison.files[index];
+    if (
+      actual.path !== expected.path ||
+      actual.bytes !== expected.bytes ||
+      actual.sha256 !== expected.sha256
+    ) {
+      fail(`dual release report ${expected.label} record differs from the exact artifact manifest`);
+    }
   }
   return {
     sha256: actualSha256,
     sourceCommit: report.source.gitCommit,
     extensionVersion: report.source.extensionVersion,
     comparisonFileCount: report.comparison.fileCount,
+    artifactManifestSha256,
+    boundReleaseFileCount: expectedFiles.length,
     scope: { ...report.scope },
   };
 }
@@ -560,6 +627,7 @@ export async function verifyReleaseSourceTag({
   expectedPrimaryFingerprint,
   expectedSigningFingerprint,
   artifactManifest,
+  artifactManifestBytes,
   dualReleaseReportBytes,
   expectedDualReleaseReportSha256,
   environment,
@@ -591,6 +659,7 @@ export async function verifyReleaseSourceTag({
     dualReleaseReportBytes,
     expectedDualReleaseReportSha256,
     artifactManifest,
+    artifactManifestBytes,
   });
   const gnupgHome = await requireExplicitGnuPgHome(environment);
   const gitOptions = {

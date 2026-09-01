@@ -39,7 +39,8 @@ async function main() {
       `warden-extension-${version}.artifact.json`,
     );
   }
-  const artifactManifest = parseArtifactManifest(await readFile(artifactManifestPath));
+  const artifactManifestBytes = await readFile(artifactManifestPath);
+  const artifactManifest = parseArtifactManifest(artifactManifestBytes);
   let dualReleaseReportPath;
   let dualReleaseReportBytes;
   let expectedDualReleaseReportSha256;
@@ -55,6 +56,7 @@ async function main() {
     expectedPrimaryFingerprint,
     expectedSigningFingerprint,
     artifactManifest,
+    artifactManifestBytes: args.length === 7 ? artifactManifestBytes : undefined,
     dualReleaseReportBytes,
     expectedDualReleaseReportSha256,
   });
@@ -79,6 +81,8 @@ async function main() {
     console.log(`dual report source commit ${result.dualReleaseReport.sourceCommit}`);
     console.log(`dual report extension version ${result.dualReleaseReport.extensionVersion}`);
     console.log(`dual report compared files ${result.dualReleaseReport.comparisonFileCount}`);
+    console.log(`bound artifact manifest sha256 ${result.dualReleaseReport.artifactManifestSha256}`);
+    console.log(`bound release files ${result.dualReleaseReport.boundReleaseFileCount}`);
     console.log("dual report scope same-host sequential shared-store; independent builders not asserted");
   }
 }

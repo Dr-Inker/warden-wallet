@@ -55,8 +55,12 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function localDualReportBytes(sourceGitCommit, extensionVersion = FIXTURE_VERSION) {
-  const files = releaseComparisonPaths(extensionVersion).map((path) => ({
+function localDualReportBytes(
+  sourceGitCommit,
+  extensionVersion = FIXTURE_VERSION,
+  releaseFiles,
+) {
+  const files = releaseFiles ?? releaseComparisonPaths(extensionVersion).map((path) => ({
     path,
     data: Buffer.from(`canonical signed-source fixture bytes for ${path}\n`),
   }));
@@ -107,9 +111,31 @@ function releaseArtifact(sourceGitCommit) {
     toolchain: { node: "22.23.2", pnpm: "11.12.0", esbuild: "0.28.2" },
     ...ARTIFACT_ATTACHMENTS,
   });
+  const artifactManifestBytes = Buffer.from(
+    serializeArtifactManifest(artifactManifest),
+    "utf8",
+  );
   return {
     artifactManifest,
-    artifactManifestBytes: Buffer.from(serializeArtifactManifest(artifactManifest), "utf8"),
+    artifactManifestBytes,
+    releaseFiles: [
+      {
+        path: `release/warden-extension-${FIXTURE_VERSION}.artifact.json`,
+        data: artifactManifestBytes,
+      },
+      {
+        path: `release/warden-extension-${FIXTURE_VERSION}.zip`,
+        data: archiveBytes,
+      },
+      ...Object.values(ARTIFACT_ATTACHMENTS).map((attachment) => ({
+        path: `release/${attachment.file}`,
+        data: attachment.bytes,
+      })),
+      ...entries.map((entry) => ({
+        path: `release/unpacked/${entry.path}`,
+        data: entry.data,
+      })),
+    ],
   };
 }
 
@@ -381,17 +407,25 @@ describe("release source annotated-tag verification", () => {
   });
 
   it("rejects a separately valid dual report for a different source commit", async () => {
+    const artifact = releaseArtifact(fixture.firstCommit);
     const dualReleaseReportBytes = localDualReportBytes(fixture.secondCommit);
     await expect(verify({
+      ...artifact,
       dualReleaseReportBytes,
       expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
     })).rejects.toThrow(/dual release report source differs from the artifact source commit/);
   });
 
   it("binds the signed source to an independently digested canonical dual report", async () => {
-    const dualReleaseReportBytes = localDualReportBytes(fixture.firstCommit);
+    const artifact = releaseArtifact(fixture.firstCommit);
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      artifact.releaseFiles,
+    );
     const expectedDualReleaseReportSha256 = sha256(dualReleaseReportBytes);
     await expect(verify({
+      ...artifact,
       dualReleaseReportBytes,
       expectedDualReleaseReportSha256,
     })).resolves.toMatchObject({
@@ -401,6 +435,8 @@ describe("release source annotated-tag verification", () => {
         sourceCommit: fixture.firstCommit,
         extensionVersion: FIXTURE_VERSION,
         comparisonFileCount: 14,
+        artifactManifestSha256: sha256(artifact.artifactManifestBytes),
+        boundReleaseFileCount: 14,
         scope: {
           checkoutModel: "same-host-sequential-local-shared-object-clones",
           dependencyStoreModel: "shared-readonly-pnpm-content-addressed-store",
@@ -413,7 +449,17 @@ describe("release source annotated-tag verification", () => {
 
   it("rejects a report whose fourteen records do not describe the selected artifact", async () => {
     const artifact = releaseArtifact(fixture.firstCommit);
-    const dualReleaseReportBytes = localDualReportBytes(fixture.firstCommit);
+    const mismatchedFiles = artifact.releaseFiles.map((file) => ({
+      path: file.path,
+      data: file.path.endsWith(".artifact.json")
+        ? Buffer.concat([file.data, Buffer.from(" ")])
+        : file.data,
+    }));
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      mismatchedFiles,
+    );
     await expect(verify({
       ...artifact,
       dualReleaseReportBytes,
@@ -421,13 +467,48 @@ describe("release source annotated-tag verification", () => {
     })).rejects.toThrow(/dual release report artifact manifest record differs/);
   });
 
+  it("rejects archive, evidence-sidecar, and unpacked-payload record drift", async () => {
+    const artifact = releaseArtifact(fixture.firstCommit);
+    const cases = [
+      [`release/warden-extension-${FIXTURE_VERSION}.zip`, /archive record differs/],
+      [
+        `release/warden-extension-${FIXTURE_VERSION}.bundle-inputs.json`,
+        /bundle input evidence record differs/,
+      ],
+      ["release/unpacked/background.js", /unpacked payload background.js record differs/],
+    ];
+    for (const [path, expectedError] of cases) {
+      const mismatchedFiles = artifact.releaseFiles.map((file) => {
+        if (file.path !== path) {
+          return file;
+        }
+        const data = Buffer.from(file.data);
+        data[0] ^= 1;
+        return { path: file.path, data };
+      });
+      const dualReleaseReportBytes = localDualReportBytes(
+        fixture.firstCommit,
+        FIXTURE_VERSION,
+        mismatchedFiles,
+      );
+      await expect(verify({
+        ...artifact,
+        dualReleaseReportBytes,
+        expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+      })).rejects.toThrow(expectedError);
+    }
+  });
+
   it("checks the independent report digest before parsing candidate bytes", async () => {
+    const artifact = releaseArtifact(fixture.firstCommit);
     const dualReleaseReportBytes = Buffer.from("not canonical report JSON\n");
     await expect(verify({
+      ...artifact,
       dualReleaseReportBytes,
       expectedDualReleaseReportSha256: "0".repeat(64),
     })).rejects.toThrow(/differs from the independently supplied SHA-256/);
     await expect(verify({
+      ...artifact,
       dualReleaseReportBytes,
       expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
     })).rejects.toThrow(/not valid JSON/);
@@ -435,19 +516,50 @@ describe("release source annotated-tag verification", () => {
       .rejects.toThrow(/must be provided together/);
     await expect(verify({ expectedDualReleaseReportSha256: "0".repeat(64) }))
       .rejects.toThrow(/must be provided together/);
+    const canonicalReportBytes = localDualReportBytes(fixture.firstCommit);
+    await expect(verify({
+      dualReleaseReportBytes: canonicalReportBytes,
+      expectedDualReleaseReportSha256: sha256(canonicalReportBytes),
+    })).rejects.toThrow(/exact artifact manifest bytes are required/);
+  });
+
+  it("requires canonical exact artifact bytes before comparing report records", async () => {
+    const artifact = releaseArtifact(fixture.firstCommit);
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      artifact.releaseFiles,
+    );
+    await expect(verify({
+      ...artifact,
+      artifactManifestBytes: Buffer.concat([
+        artifact.artifactManifestBytes,
+        Buffer.from(" "),
+      ]),
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+    })).rejects.toThrow(/canonical generated JSON serialization/);
   });
 
   it("rejects a canonical dual report for a different extension version", async () => {
+    const artifact = releaseArtifact(fixture.firstCommit);
     const dualReleaseReportBytes = localDualReportBytes(fixture.firstCommit, "9.8.7");
     await expect(verify({
+      ...artifact,
       dualReleaseReportBytes,
       expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
     })).rejects.toThrow(/extension version differs/);
   });
 
   it("retains key, subkey, and signature refusal after binding the report", async () => {
-    const dualReleaseReportBytes = localDualReportBytes(fixture.firstCommit);
+    const artifact = releaseArtifact(fixture.firstCommit);
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      artifact.releaseFiles,
+    );
     const reportOptions = {
+      ...artifact,
       dualReleaseReportBytes,
       expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
     };

@@ -125,12 +125,16 @@ GNUPGHOME=/path/to/release-verification-keyring \
   /path/to/rehearsal.dual-local.json <expected-dual-report-sha256>
 ```
 
-The verifier bounds the report to **1 MiB**, checks the supplied digest before
-parsing or deriving claims from the report, requires its canonical schema and
-reviewed scope, and requires the signed tag target, artifact source commit, and
-report source commit to be
-identical. It also requires the report and artifact extension versions to
-match. This composes two local evidence lanes; the report continues to say
+The verifier reads the selected artifact bytes once, bounds them to **8 MiB**,
+and requires their canonical artifact schema. It bounds the report to **1
+MiB**, checks the supplied digest before parsing or deriving claims from the
+report, requires its canonical schema and reviewed scope, and requires the
+signed tag target, artifact source commit, and report source commit to be
+identical. The report and artifact extension versions must match. The report's
+artifact-manifest record must equal the exact selected manifest bytes; its ZIP,
+four evidence-sidecar, and eight unpacked-payload records must equal all paths,
+byte lengths, and SHA-256 values declared by that manifest. This composes two
+local evidence lanes; the report continues to say
 `signedTagClaim: not-asserted` about its own generation and
 `independentBuilderClaim: not-asserted` about its same-host builders.
 

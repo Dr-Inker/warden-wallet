@@ -104,9 +104,14 @@ two preconditions. It bounds the report to **1 MiB**, hashes and compares the
 selected bytes before parsing them, requires the canonical reviewed local-
 report schema/scope, and requires exact equality among the signed tag target,
 artifact source commit, and report source commit. The report and artifact
-extension versions must also
-match. Missing paired inputs, a wrong report digest, malformed/noncanonical
-report bytes, or either source/version mismatch fails closed. The report's own
+extension versions must also match. The exact selected artifact bytes are read
+once, bounded to **8 MiB**, and parsed canonically. Their report record must
+match those bytes exactly; the
+report's ZIP, four evidence-sidecar, and eight unpacked-payload records must
+match every path, byte length, and SHA-256 declared by the manifest. Missing
+paired inputs or exact artifact bytes, a wrong report digest,
+malformed/noncanonical input, source/version mismatch, or any of those fourteen
+record mismatches fails closed. The report's own
 `signedTagClaim: not-asserted` and `independentBuilderClaim: not-asserted`
 labels remain truthful: subsequent composition is neither proof that the
 builders verified a tag nor evidence from independent builders.
