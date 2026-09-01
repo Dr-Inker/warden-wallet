@@ -1,4 +1,12 @@
-import { mkdtemp, open, rm, truncate, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  rm,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,6 +27,31 @@ afterEach(async () => {
 });
 
 describe("stable bounded release input files", () => {
+  it("rejects a symlink in a parent path component", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "warden-release-input-file-test-"));
+    temporaryDirectories.push(directory);
+    const actualDirectory = join(directory, "actual");
+    const linkedDirectory = join(directory, "linked");
+    await mkdir(actualDirectory);
+    await writeFile(join(actualDirectory, "candidate.bin"), "candidate bytes\n");
+    await symlink(actualDirectory, linkedDirectory, "dir");
+
+    let rejection;
+    try {
+      await readBoundedRegularFile(
+        join(linkedDirectory, "candidate.bin"),
+        1024,
+        "parent symlink candidate",
+      );
+    } catch (error) {
+      rejection = error;
+    }
+    expect(rejection).toBeInstanceOf(Error);
+    expect(rejection?.message).toMatch(
+      /opened path differs from the normalized requested path/,
+    );
+  });
+
   it("rejects same-size in-place mutation during a stable-handle read", async () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-input-file-test-"));
     temporaryDirectories.push(directory);
