@@ -150,13 +150,19 @@ if (descriptor !== null) {
   }
   accessMode = Number.parseInt(flagsMatch[1], 8) & 0o3;
 }
-const inspectedStat = await stat(inspectedPath);
+const workingDirectory = process.cwd();
+const [inspectedStat, workingDirectoryStat] = await Promise.all([
+  stat(inspectedPath),
+  stat(workingDirectory),
+]);
 await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
   inspectedPath,
   replacementApplied,
   sha256: createHash("sha256").update(inspectedBytes).digest("hex"),
   accessMode,
   inodeMode: inspectedStat.mode & 0o777,
+  workingDirectory,
+  workingDirectoryMode: workingDirectoryStat.mode & 0o777,
 }));
 `),
     ]);
@@ -221,6 +227,10 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
       sha256: observation.sha256,
       accessMode: observation.accessMode,
       inodeMode: observation.inodeMode,
+      workingDirectoryIsPrivate: observation.workingDirectory.startsWith(
+        `${directory}/warden-store-package-verify-`,
+      ),
+      workingDirectoryMode: observation.workingDirectoryMode,
       privateDirectories: (await readdir(directory)).filter((name) =>
         name.startsWith("warden-store-package-verify-")
       ),
@@ -231,6 +241,8 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
       sha256: sha256(archiveBytes),
       accessMode: 0,
       inodeMode: 0o400,
+      workingDirectoryIsPrivate: true,
+      workingDirectoryMode: 0o700,
       privateDirectories: [],
     });
   });
