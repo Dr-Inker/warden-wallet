@@ -26,8 +26,9 @@
 >   SHA `f395d96850eefa148f81af0b7378caff126a5fa5`. The documentation-only commit
 >   containing this memo is intentionally not described as gate green.
 > - **READ:** this memo and the C41/C40/C39 entries immediately below; C6 in the
->   client-security plan; `apps/extension/scripts/openpgp-signature-policy.mjs`
->   and focused tests; both signed-source and reviewed-artifact verifiers and
+>   client-security plan; the shared parser in
+>   `apps/extension/scripts/release-source-tag.mjs` and focused tests; both
+>   signed-source and reviewed-artifact verifiers and
 >   their real cryptographic fixtures/CLIs; release-recipe evidence/tests;
 >   `apps/extension/README.md`; `docs/security/RELEASE-INTEGRITY.md`; RFC 9580's
 >   time-field encoding; and GnuPG's `VALIDSIG` status contract.
@@ -107,6 +108,109 @@
 > `unimplemented`; C41 establishes a fixed offline option vector, not host or
 > executable attestation, key strength/authority/lifecycle, fresh signature
 > age, independent build provenance, publisher control, or production release.
+>
+> ## 2026-09-01 C42 STRICT OPENPGP SIGNATURE TIMES — C6 PARTIAL, FRESHNESS IS OWNER POLICY
+>
+> Behavioral RED commit
+> `2803fa5a111f078ee8e9c59923280a5ed2096600` first proves the shared parser
+> discarded all three `VALIDSIG` time fields. Contract-correction commit
+> `569fd009bc739ee40d1eb86815f29cf9f7959f94` preserves that RED while aligning
+> expiration with RFC 9580: GnuPG reports an absolute expiry, but the four-octet
+> wire value is the lifetime delta from signature creation. Implementation
+> commit `22bf835d2f6cd03319e7d96fc8c7dfe97e69bef9` strictly parses a canonical
+> UTC `YYYY-MM-DD` creation date and either canonical decimal epoch seconds or
+> GnuPG basic ISO `YYYYMMDDTHHMMSS` timestamps. Creation is bounded to
+> **0..4,294,967,295**, its separately reported date must equal the normalized
+> UTC date, and expiration is either zero/`null` or strictly later with a delta
+> no greater than **4,294,967,295**. Both verifier results and both CLIs now
+> return/print the normalized creation date, creation timestamp, and expiration
+> (`never` when absent). C39/C40 algorithm and exact primary/signing-key policy,
+> C41's fixed offline launcher, and Git's annotated-tag semantics are unchanged.
+>
+> The corrected real RED was captured from clean SHA
+> `569fd009bc739ee40d1eb86815f29cf9f7959f94` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/openpgp-signature-policy.test.mjs -t "normalizes documented decimal and basic ISO timestamps within the unsigned four-octet range"
+> ```
+>
+> It exited **1** because the old parser's successful result contained none of
+> `signatureCreationDate`, `signatureTimestamp`, or
+> `signatureExpirationTimestamp`. At clean implementation SHA
+> `22bf835d2f6cd03319e7d96fc8c7dfe97e69bef9`, this exact command exited **0**
+> and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/openpgp-signature-policy.test.mjs test/release-source-tag.test.mjs test/reviewed-artifact-signature.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && pnpm --filter @warden/extension release:gate && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The focused files passed **42/42** tests, typecheck/build passed, and the real
+> upload release gate measured **8** payload files, **60** production/peer
+> components, **4** JavaScript bundles, **101** positive bundle inputs, **4**
+> static inputs, and **21** release-recipe inputs. Independent Info-ZIP parsing,
+> emitted-tooling exclusion, all five fixture/launcher cleanup checks, diff
+> checks, and both clean-tree guards passed. No reviewed recipe-file-set,
+> dependency/lockfile, or payload-byte change occurred.
+>
+> Independently specified synthetic cases accept creation epoch **0**, creation
+> maximum **4,294,967,295**, decimal and basic-ISO encoding of the same second,
+> and absolute expiration **6,083,188,095** for creation **1,788,220,800**—an
+> exact maximum lifetime delta. They reject leading-zero/negative/malformed
+> values, invalid calendar dates/times, creation **4,294,967,296**, creation/date
+> disagreement, expiration at/before creation, and expiration **6,083,188,096**
+> or its basic-ISO equivalent, one second beyond the maximum lifetime. Real RSA,
+> ECDSA, EdDSA, signed-tag, direct-primary, expected-subkey, and detached-
+> signature fixtures all still pass; unexpected sibling, wrong identity,
+> missing-key, unapproved-hash, bad-signature, and ambiguous-status cases still
+> fail closed. The reviewed-artifact production CLI prints all three normalized
+> values over the same authenticated bytes.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **544/544**, typecheck/build passed, release
+> verification tooling and the new field names remained absent from `dist`, no
+> launcher/fixture/verifier temp directory remained, and diff/clean-tree guards
+> passed.
+>
+> The signed-source module was **20,381 bytes** with SHA-256
+> `1732dc3da5443bf89ae042dceb67e070d77ca86223b9f80c9e5e751c03a5ac69`.
+> The OpenPGP-policy, signed-source, and reviewed-artifact test files were
+> respectively **12,921**, **16,149**, and **14,196 bytes**, with SHA-256 values
+> `686f3e9a323b682ef6c372ba948f45bbf870ca9172ff8d60ed8da1c294370bd0`,
+> `44d1a9fcb4a4f918ea38fd31c620bb57540e89555ea8a04931e2b2a242f749d6`,
+> and `37fd4b428595b14a8c8fa5b1cb6fa02f8c52121c89df7f6b86c5084ab82fd051`.
+> At the implementation SHA, the generated artifact, bundle, recipe,
+> dependency, and static sidecar SHA-256 values were respectively
+> `fef76882a941263473dceddd00fc896944d595dcf30e06d30e75b87fc4ba1fb3`,
+> `d5dc2a9d4fd7af4fc2298d0ecfde2ce2efca7e27fe3a9e075157bac4e2067cb9`,
+> `9bc0854f77c1892fc2c275e1cdd5995c777528dd04b2162f5d88745d6b00527a`,
+> `23dd7807d4a2451d051de745fdc7c28d90628bbd377b1cf7aa62145ade2bc637`,
+> and `4f1ccc8cabc4028671723031faa69931c27391ea04ed153b3861912be9f43149`;
+> the recipe sidecar remained **4,372 bytes** and named 21 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** internally consistent time metadata is not trustworthy
+> present time or freshness policy. This slice does not choose maximum signature
+> age/clock skew/release windows, constrain key strength/curve, establish
+> reviewer/tagger authority, select a production keyring/key/subkey, govern key
+> ceremony/rotation/revocation, attest Git/GnuPG/shell/OS/runtime/clock bytes,
+> validate a transparency log, prove an independent builder, compare a real
+> store return, establish publisher control, make a legal ruling, deploy, or
+> exercise real funds. The ledger-inclusive full repository/release/rehearsal
+> gate is still pending at this entry.
 >
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C40 CLOSED; C41 NOT STARTED
 >
