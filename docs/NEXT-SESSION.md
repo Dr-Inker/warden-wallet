@@ -107,6 +107,113 @@
 > requires independent exact CRX and artifact-manifest digests, while the input
 > channels, production trust, and hostile-host boundary remain external.
 
+> ## 2026-09-01 C54 STANDALONE DETACHED-REVIEW ARTIFACT PIN — C6 PARTIAL, REVIEW AUTHORITY EXTERNAL
+>
+> Behavioral RED commit
+> `b6f005f571ce4f96c44213d54923413a3aae2c3d` invokes the production
+> detached-review CLI with an exact artifact/signature pair, a deliberately
+> wrong artifact digest, and the incumbent exact primary/signing fingerprints.
+> The expected digest refusal did not exist: the C53 CLI rejected the five-
+> argument invocation at its old four-argument usage grammar. Implementation
+> commit `4267a82b7a3567f87a4560802dbed195541a6844` adds the missing
+> independent artifact identity without changing the shared strict OpenPGP or
+> canonical-artifact parsers.
+>
+> Every standalone detached-review invocation now takes exactly five explicit
+> arguments: reviewed artifact path, detached-signature path, independently
+> recorded artifact-manifest SHA-256, independently selected full primary
+> fingerprint, and independently selected full signing fingerprint. The digest
+> must be exact lowercase SHA-256. The artifact and signature are read once
+> through the shared stable/path-bound reader with the incumbent **8 MiB** and
+> **1 MiB** ceilings. The measured artifact digest must equal the independent
+> value before GnuPG or canonical parsing, and the shared verifier's returned
+> artifact digest must equal it again before success is printed.
+>
+> The real RED was captured from clean SHA
+> `b6f005f571ce4f96c44213d54923413a3aae2c3d` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/reviewed-artifact-signature.test.mjs -t "requires an independent exact artifact digest before invoking GnuPG"
+> ```
+>
+> It exited **1** with one failed and eight skipped tests in approximately
+> **283 ms**: the received error was the old four-argument usage contract, not
+> the required artifact-digest mismatch. From clean implementation SHA
+> `4267a82b7a3567f87a4560802dbed195541a6844`, this exact focused/release
+> command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/scripts/verify-reviewed-artifact-signature.mjs && pnpm --filter @warden/extension exec vitest run test/reviewed-artifact-signature.test.mjs test/openpgp-signature-policy.test.mjs test/release-input-file.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension release:gate && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-input-file-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The five focused files passed **35/35**. Wrong, uppercase, and missing
+> artifact identities fail closed; the wrong-digest case runs with no
+> `GNUPGHOME` and reaches the digest mismatch instead of a GnuPG/keyring error,
+> proving refusal precedes GnuPG. The exact digest passes the real ephemeral
+> Ed25519 detached-signature fixture, and the incumbent one-byte artifact,
+> changed/malformed/trailing/concatenated signature, sibling subkey, key,
+> packet, time, and algorithm refusals remain. Typecheck and the real release
+> gate passed canonical packaging/verification, independent Info-ZIP parsing,
+> **8** payload files, **60** production/peer components, **4** JavaScript
+> bundles, **101** positive bundle inputs, **4** static inputs, and the unchanged
+> exact set of **23** release-recipe inputs.
+>
+> From the same clean implementation SHA, this exact extension-wide command
+> exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'expected-artifact-manifest-sha256|artifact signature verifier returned|reviewed artifact manifest differs|release-input-file|readBoundedRegularFile|O_NOFOLLOW|verify-release-source-tag|release-source-tag|verify-reviewed-artifact-signature|reviewed-artifact-signature|verify-store-package|store-package|artifactReview|reviewedUploadArchive|storePackage|expectedStorePackageSha256|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed extension **567/567**, typecheck/build, emitted release-tooling
+> exclusion, selected temp cleanup, diff checks, and both clean-tree guards. A
+> disappearing unrelated `/tmp/systemd-private-*` directory produced one
+> non-fatal `find` warning; the selected cleanup assertion and whole command
+> exited 0. The standalone CLI was **3,190 bytes** with SHA-256
+> `853a8437d62949b7e0c0529f17b0339006ca6f206892287f308baf68d501f975`;
+> its **15,689-byte** real fixture test SHA-256 was
+> `dd635345d1d86427f691a6eb4d3c23131cf8738c6b423ee18cf3de12bdc0f3f0`.
+> The **4,740-byte**, 23-input recipe sidecar bound that exact CLI. Generated
+> artifact, bundle, recipe, dependency, and static sidecar SHA-256 values were
+> respectively
+> `b6944106ec75c2d398450619c600a7586b0fd180e29f11f5c90f445499646e47`,
+> `61e03b92b7bc318622be32ab7a7d5c9698448d8b9af880dab3775c52579bb879`,
+> `2b146f2e7856050ca8adef938cd75244fb2f76fd4b9e8c968dd516283c23a92f`,
+> `90337ada8aa98389ba9eba0fba797747ec4bf6b62906aae28e733acc8c64b3b1`,
+> and `9fe146549ebac8665329c48f838908d63cb1ccc061f7d35be171d205cef9fa04`.
+> ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> One explicitly non-gating diagnostic run exposed the exact positive fixture
+> result before the temporary print was removed and the tree was proven byte-
+> clean again. It authenticated a **2,273-byte** artifact with SHA-256
+> `3d3105c30ea08a0a55f1c7529111ee8a2b308e436c14a0e2f68ec5b68922e9fb`
+> and a **119-byte** signature with SHA-256
+> `c256a84132f3614a2d99aef98d4450695f1509ddabac965657c16c381333d0fa`.
+> The ephemeral signing and primary fingerprints were respectively
+> `97F287FF9C261167D24304433DD2533BA923E9BB` and
+> `6E0CD62DEE87C91D2901626196207E6BAC88E76C`; creation date/timestamp were
+> `2026-09-01` / `1788293318`, expiration was `never`, and version/public-key/
+> hash/class were **4/22/10/00**. These run-local identities and signature bytes
+> are synthetic, regenerated, and are not stable production evidence.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** C54 pins the exact standalone artifact bytes but does not
+> establish who approved or independently recorded that digest. No production
+> artifact, signature, review key/subkey, reviewer authority, freshness/trusted-
+> time rule, key strength/storage/lifecycle policy, transparency log, off-host
+> independent build, host/toolchain attestation, publisher-control evidence,
+> real store return, external audit, deployment, legal disposition, or real-
+> funds evidence exists. The repository-wide ledger-inclusive gate is pending
+> until this entry is committed; the implementation-SHA evidence above must not
+> be relabeled as that gate.
+
 > ## 2026-09-01 C53 STANDALONE REVIEWED-ARTIFACT DIGEST PIN — C6 PARTIAL, REVIEW AUTHORITY EXTERNAL
 >
 > Behavioral RED commit
