@@ -87,6 +87,26 @@ action syntax is now repository-gated as described above, but no off-host run or
 upstream-source attestation is claimed. No Web Store upload or publisher-account
 mutation is performed by this gate.
 
+### Same-host dual-checkout rehearsal (C6 partial)
+
+`pnpm --filter @warden/extension release:dual-local` is an executable local
+determinism rehearsal. From one clean source SHA it creates two sequential local
+shared-object Git clones under a temporary directory. In each clone it runs
+`pnpm install --frozen-lockfile --offline` against the host's shared pnpm store,
+then runs the incumbent `release:gate`. The first checkout is removed before the
+second begins. The comparator requires the exact six release files and eight
+unpacked payload files, compares all 14 byte-for-byte, and writes a canonical
+ignored `*.dual-local.json` report with the source SHA, observed toolchain,
+orchestrator hash, commands, scope, byte lengths, and hashes. Tests fail closed
+on missing, extra, duplicate, moved, one-byte-different, or noncanonical report
+data; temporary checkouts are removed on both success and failure.
+
+This rehearsal is deliberately labelled same-host and shared-store. It is not
+the C6 requirement for two isolated independent builders at one signed tag, and
+it does not exercise a clean remote package store, a distinct OS/runtime,
+separate toolchain executable bytes, an off-host trust domain, or a provenance
+signature. It cannot promote `WRD-REL-01` by itself.
+
 This document is the addressable record `scripts/deploy-gate.sh` checks against
 (spec §17 item L7, plan Task 11 item 5): for every release SHA that is a
 deploy candidate, this table's row for that SHA must carry the artifact hash

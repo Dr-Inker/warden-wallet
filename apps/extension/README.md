@@ -78,6 +78,28 @@ controls. Replacing the ZIP and all five unsigned, co-generated JSON files is no
 detected unless the reviewed manifest/hash is anchored somewhere the builder
 cannot rewrite.
 
+## Same-host dual-checkout rehearsal
+
+From a clean committed tree, this command sequentially materializes two local
+shared-object Git clones under `/tmp`, runs an offline frozen-lockfile install
+and the full extension release gate in each, removes the first checkout before
+starting the second, and compares the six release files plus all eight unpacked
+payload files byte-for-byte:
+
+```sh
+pnpm --filter @warden/extension release:dual-local
+```
+
+It writes an ignored canonical
+`warden-extension-<version>.dual-local.json` report containing the source SHA,
+observed Node/pnpm/esbuild versions, orchestrator source hash, exact commands,
+scope labels, and all 14 compared byte lengths/hashes. Missing, extra, moved,
+or changed output fails closed, and temporary checkouts are removed on success
+or failure. This is a deterministic-build rehearsal on one host with one pnpm
+content-addressed store and one toolchain. It is not evidence from two
+independent builders, a signed tag, a fresh off-host environment, or a Web Store
+release.
+
 ## Manifest permissions
 
 - `storage` is used by the background service worker for encrypted persistent
