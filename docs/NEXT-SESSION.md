@@ -1,17 +1,18 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C74 STORE CHILD ENVIRONMENT CONTRACT NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C74 BEHAVIORAL RED MEASURED; IMPLEMENT NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** commit the C74 contract, add and commit its behavioral probe, run
->   the exact RED, then implement and verify the smallest exact child-
->   environment change. Do not claim timeout, sandbox, or executable
+> - **TASK:** commit this RED ledger, then implement and verify the smallest
+>   exact child-environment change. Do not claim timeout, sandbox, or executable
 >   confinement.
 > - **CWD:** `/opt/warden`.
 > - **BASE:** C73 close SHA
->   `ff4100e17767cf4945468adfab32f92d1719f348`; behavioral RED SHA
+>   `ff4100e17767cf4945468adfab32f92d1719f348`; C74 contract SHA
+>   `3914a39ab39c8a6cfb074654c5b6e2e78be68147`; behavioral RED SHA
+>   `00bc2c6ba99db422e53fd7b94fe9c7097ee8dac8`; C73 behavioral RED SHA
 >   `e87845cc9affd7ffba0bf8d2ffa28aba4ca3c306`; implementation/evidence
 >   `8c4d020d7a4aead78aec9e88d077d6d892c6f6af`; contract SHA
 >   `77206bf96ac1c0f3a68bf24db93ebe47f3cee209`; evidence-ledger/full-gated SHA
@@ -148,8 +149,9 @@
 > implementation, exact single-contract, focused/release, extension-wide, and
 > repository-wide FULL evidence at close SHA
 > `ff4100e17767cf4945468adfab32f92d1719f348` and evidence-ledger/full-gated SHA
-> `19cfdccdb7657a5e5a94abab1c4554f92a2fbca8`. C74 is contract-only until its
-> commit, behavioral RED, implementation, and executable evidence exist.
+> `19cfdccdb7657a5e5a94abab1c4554f92a2fbca8`. C74 has a committed contract and
+> measured behavioral RED; its implementation and executable green evidence do
+> not yet exist.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -185,6 +187,24 @@
 > provenance, or normalize the release-build environment. No invariant or
 > production-trust status moves. Independent second-model review remains
 > **UNVERIFIED**.
+>
+> Contract commit `3914a39ab39c8a6cfb074654c5b6e2e78be68147`
+> precedes behavioral RED commit
+> `00bc2c6ba99db422e53fd7b94fe9c7097ee8dac8`. From that clean RED SHA, this
+> exact command exited **1**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/test/verify-store-package-infozip.test.mjs && pnpm --filter @warden/extension exec vitest run test/verify-store-package-infozip.test.mjs -t "keeps the independent parser on the verified embedded archive descriptor"
+> ```
+>
+> Vitest ran the selected test, skipped one, and failed at the new environment
+> predicates in **103 ms**. Every C73 predicate passed: exact descriptor digest,
+> access mode zero, inode mode **0400**, refused replacement, exact private
+> **0700** working directory, successful CLI output, and empty cleanup. The child
+> instead inherited the unrelated marker, `TMPDIR`, and the ambient process
+> environment; `LANG`/`LC_ALL` were both `C.UTF-8` instead of `C`. The expected
+> `PATH` was preserved. No marker value was logged or persisted. This is the
+> contracted behavioral RED, not a harness or syntax failure.
 
 > ## 2026-09-01 C73 STORE-PACKAGE INFO-ZIP PRIVATE WORKING DIRECTORY — C6 PARTIAL
 >
