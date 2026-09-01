@@ -353,4 +353,81 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
       privateDirectories: [],
     });
   });
+
+  it("kills a stalled store unzip direct child within its archive deadline", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "warden-store-package-infozip-test-"),
+    );
+    temporaryDirectories.push(directory);
+    const archiveBytes = createCanonicalZip([
+      {
+        path: "manifest.json",
+        data: Buffer.from(`${JSON.stringify(MANIFEST, null, 2)}\n`),
+      },
+    ]);
+    const startMarkerPath = join(directory, "timeout-probe-started");
+    const completionMarkerPath = join(directory, "timeout-probe-completed");
+    const probeDirectory = join(directory, "timeout-probe-bin");
+    const probePath = join(probeDirectory, "unzip");
+    await mkdir(probeDirectory, { recursive: true });
+    await writeFile(probePath, `#!/usr/bin/env node
+import { writeFile } from "node:fs/promises";
+
+await writeFile(${JSON.stringify(startMarkerPath)}, "started\\n");
+await new Promise((resolve) => setTimeout(resolve, 12_000));
+await writeFile(${JSON.stringify(completionMarkerPath)}, "completed\\n");
+`);
+    await chmod(probePath, 0o755);
+
+    const originalPath = process.env.PATH;
+    const originalTmpdir = process.env.TMPDIR;
+    process.env.PATH = `${probeDirectory}:${originalPath ?? ""}`;
+    process.env.TMPDIR = directory;
+    const startedAt = performance.now();
+    let rejection;
+    try {
+      const { verifyEmbeddedArchiveWithInfoZip } = await import(
+        "../scripts/verify-store-package.mjs"
+      );
+      await verifyEmbeddedArchiveWithInfoZip(archiveBytes);
+    } catch (error) {
+      rejection = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      if (originalTmpdir === undefined) {
+        delete process.env.TMPDIR;
+      } else {
+        process.env.TMPDIR = originalTmpdir;
+      }
+    }
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(await readFile(startMarkerPath, "utf8")).toBe("started\n");
+    let completionMarkerPresent = true;
+    try {
+      await readFile(completionMarkerPath);
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+      completionMarkerPresent = false;
+    }
+    expect({
+      failedClosed: /independent unzip -t validation failed/.test(rejection ?? ""),
+      completionMarkerPresent,
+      completedBeforeTenSeconds: elapsedMs < 10_000,
+      privateDirectories: (await readdir(directory)).filter((name) =>
+        name.startsWith("warden-store-package-verify-")
+      ),
+    }).toEqual({
+      failedClosed: true,
+      completionMarkerPresent: false,
+      completedBeforeTenSeconds: true,
+      privateDirectories: [],
+    });
+  }, 20_000);
 });
