@@ -15,6 +15,7 @@ export const RELEASE_RECIPE_INPUT_PATHS = Object.freeze([
   "apps/extension/scripts/print-release-source-tag-message.mjs",
   "apps/extension/scripts/production-dependency-evidence.mjs",
   "apps/extension/scripts/release-artifact.mjs",
+  "apps/extension/scripts/release-cli-arguments.mjs",
   "apps/extension/scripts/release-input-file.mjs",
   "apps/extension/scripts/release-recipe-input-evidence.mjs",
   "apps/extension/scripts/release-source-tag.mjs",
@@ -34,7 +35,7 @@ export const RELEASE_RECIPE_INPUT_PATHS = Object.freeze([
 
 const SCOPE = Object.freeze({
   type: "extension-release-recipe-repository-inputs",
-  inputCoverage: "twenty-four-reviewed-non-payload-files-only",
+  inputCoverage: "twenty-five-reviewed-non-payload-files-only",
   executableCoverage: "not-asserted",
   runtimeEnvironmentCoverage: "not-asserted",
 });
@@ -90,7 +91,7 @@ function normalizeInputPaths(inputPaths) {
   }
   const normalized = [...inputPaths].sort(compareUtf8);
   if (JSON.stringify(normalized) !== JSON.stringify(RELEASE_RECIPE_INPUT_PATHS)) {
-    fail("input paths must contain exactly the twenty-four reviewed release recipe files");
+    fail("input paths must contain exactly the twenty-five reviewed release recipe files");
   }
   return normalized;
 }
@@ -127,7 +128,7 @@ function assertEvidenceShape(evidence) {
   }
   assertHash(evidence.artifact.archiveSha256, "evidence archiveSha256");
   if (!Array.isArray(evidence.inputs) || evidence.inputs.length !== RELEASE_RECIPE_INPUT_PATHS.length) {
-    fail("evidence must contain exactly twenty-four release recipe inputs");
+    fail("evidence must contain exactly twenty-five release recipe inputs");
   }
   for (let index = 0; index < RELEASE_RECIPE_INPUT_PATHS.length; index += 1) {
     const input = evidence.inputs[index];

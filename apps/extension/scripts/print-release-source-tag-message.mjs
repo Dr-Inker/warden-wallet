@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { parseArtifactManifest } from "./release-artifact.mjs";
+import { normalizeReleaseCliArguments } from "./release-cli-arguments.mjs";
 import { readBoundedRegularFile } from "./release-input-file.mjs";
 import {
   MAX_ARTIFACT_MANIFEST_BYTES,
@@ -12,8 +13,7 @@ function fail(message) {
 }
 
 async function main() {
-  const rawArgs = process.argv.slice(2);
-  const args = rawArgs[0] === "--" ? rawArgs.slice(1) : rawArgs;
+  const args = normalizeReleaseCliArguments(process.argv.slice(2));
   if (args.length !== 2) {
     fail(
       "usage: print-release-source-tag-message.mjs reviewed-artifact.json expected-artifact-manifest-sha256",

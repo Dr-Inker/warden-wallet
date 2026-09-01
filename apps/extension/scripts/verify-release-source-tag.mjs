@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseArtifactManifest } from "./release-artifact.mjs";
+import { normalizeReleaseCliArguments } from "./release-cli-arguments.mjs";
 import { readBoundedRegularFile } from "./release-input-file.mjs";
 import {
   MAX_ARTIFACT_MANIFEST_BYTES,
@@ -23,7 +24,7 @@ function fail(message) {
 }
 
 async function main() {
-  const args = process.argv.slice(2);
+  const args = normalizeReleaseCliArguments(process.argv.slice(2));
   if (![5, 6, 8, 12, 16].includes(args.length)) {
     fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint expected-default-artifact-manifest-sha256 | verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint reviewed-artifact.json expected-artifact-manifest-sha256 [dual-local-report.json expected-dual-report-sha256 [artifact-review-signature expected-artifact-review-signature-sha256 expected-artifact-review-primary-fingerprint expected-artifact-review-signing-fingerprint [store-returned.crx expected-store-package-sha256 expected-store-extension-id reviewed-upload.zip]]]");
   }

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 import { parseArtifactManifest } from "./release-artifact.mjs";
+import { normalizeReleaseCliArguments } from "./release-cli-arguments.mjs";
 import { readBoundedRegularFile } from "./release-input-file.mjs";
 import {
   MAX_DETACHED_SIGNATURE_BYTES,
@@ -14,7 +15,7 @@ function fail(message) {
 }
 
 async function main() {
-  const args = process.argv.slice(2);
+  const args = normalizeReleaseCliArguments(process.argv.slice(2));
   if (args.length !== 6) {
     fail("usage: verify-reviewed-artifact-signature.mjs reviewed-artifact.json detached-signature expected-artifact-manifest-sha256 expected-detached-signature-sha256 expected-primary-fingerprint expected-signing-fingerprint");
   }

@@ -36,6 +36,25 @@ afterEach(async () => {
 });
 
 describe("release-source CLI external files", () => {
+  it("accepts the documented pnpm argument separator before semantic validation", async () => {
+    for (const separator of [[], ["--"]]) {
+      const output = await rejectedOutput([
+        ...separator,
+        "release-test",
+        "a".repeat(40),
+        "A".repeat(40),
+        "B".repeat(40),
+        "missing.artifact.json",
+        "C".repeat(64),
+      ]);
+
+      expect(output).toMatch(
+        /expected artifact manifest SHA-256 must be a lowercase digest/,
+      );
+      expect(output).not.toMatch(/usage: verify-release-source-tag/);
+    }
+  });
+
   it("requires an independent digest for the auto-selected local artifact", async () => {
     const sourceArguments = [
       "release-test",

@@ -40,7 +40,7 @@ under `apps/extension/release/`:
   lengths/hashes and distinguishes the three exact byte copies from
   `manifest.json`'s JSON parse/two-space/newline serialization; and
 - `warden-extension-<version>.recipe-inputs.json`, a canonical byte/hash map of
-  the exact 24 reviewed non-payload repository files that declare the install
+  the exact 25 reviewed non-payload repository files that declare the install
   and release recipe: root/workspace configuration, the extension/core package
   manifests, and every release module. It explicitly does not attest installed
   executables, runtime behavior, the OS, or the environment.
@@ -93,6 +93,11 @@ lowercase digest before canonical parsing, and writes only the C59 message plus
 one terminal newline to stdout. It does not invoke Git or GnuPG, access a key,
 or create, move, sign, or push a tag. The separately governed signing procedure
 may consume those exact stdout bytes; this helper is not signer authorization.
+
+The four public release commands in this section accept either direct Node
+arguments or pnpm's one literal leading `--` separator. Their shared normalizer
+removes exactly one leading separator; a doubled, interior, or trailing `--`
+remains a positional argument and cannot bypass each command's exact arity.
 
 After an owner has independently recorded a release tag name, its annotated-tag
 object SHA, and the full primary and signing-key OpenPGP fingerprints, bind

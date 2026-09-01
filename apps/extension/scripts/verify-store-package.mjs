@@ -10,6 +10,7 @@ import {
   parseArtifactManifest,
   verifyArtifactArchive,
 } from "./release-artifact.mjs";
+import { normalizeReleaseCliArguments } from "./release-cli-arguments.mjs";
 import { readBoundedRegularFile } from "./release-input-file.mjs";
 import {
   MAX_CRX3_PACKAGE_BYTES,
@@ -32,7 +33,7 @@ async function main() {
   if (typeof version !== "string" || !/^\d+(?:\.\d+){0,3}$/.test(version)) {
     fail(`invalid source manifest version: ${String(version)}`);
   }
-  const args = process.argv.slice(2);
+  const args = normalizeReleaseCliArguments(process.argv.slice(2));
   if (![4, 6].includes(args.length)) {
     fail("usage: verify-store-package.mjs candidate.crx expected-package-sha256 expected-extension-id expected-artifact-manifest-sha256 [reviewed-upload.zip reviewed-artifact.json]");
   }

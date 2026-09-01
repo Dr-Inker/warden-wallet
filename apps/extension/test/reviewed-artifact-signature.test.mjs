@@ -297,6 +297,25 @@ describe("reviewed artifact detached-signature verification", () => {
     expect(result.stdout).toContain(`artifact source commit ${"a".repeat(40)}`);
   });
 
+  it("accepts the documented pnpm argument separator before semantic validation", async () => {
+    for (const separator of [[], ["--"]]) {
+      const output = await rejectedCli([
+        ...separator,
+        fixture.artifactPath,
+        fixture.signaturePath,
+        "A".repeat(64),
+        sha256(fixture.signatureBytes),
+        fixture.fingerprint,
+        fixture.signingFingerprint,
+      ]);
+
+      expect(output).toMatch(
+        /expected artifact manifest SHA-256 must be a lowercase digest/,
+      );
+      expect(output).not.toMatch(/usage: verify-reviewed-artifact-signature/);
+    }
+  });
+
   it("requires an independent exact artifact digest before invoking GnuPG", async () => {
     const wrongDigest = await rejectedCli([
       fixture.artifactPath,
