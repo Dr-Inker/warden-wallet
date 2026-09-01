@@ -1,17 +1,17 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C72 BEHAVIORAL RED; IMPLEMENTATION NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C72 IMPLEMENTED; FULL LEDGER GATE NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** implement C72 against the committed behavioral RED: make the
->   standalone store-package CLI's independent parser receive the exact already-
->   verified embedded ZIP through an unlinked read-only descriptor, reject
->   post-parser byte mutation, and leave no private directory.
+> - **TASK:** commit this C72 evidence ledger, run the exact clean-SHA FULL gate
+>   recorded below, then write and commit the docs-only close memo. Do not claim
+>   store-child environment, `cwd`, timeout, sandbox, or executable confinement.
 > - **CWD:** `/opt/warden`.
 > - **BASE:** C72 behavioral RED SHA
->   `b20e3dd77932327394003c57970c0476be47c3bb`; contract SHA
+>   `b20e3dd77932327394003c57970c0476be47c3bb`; implementation/evidence
+>   `a99054d5c5b51a30d564a3d2b6081769ba8d5a2e`; contract SHA
 >   `ba854a8ed5aed6bf99c52fb5d0ee03a89bb9cec9`; C71 close SHA
 >   `6fd9b34fbf4dd294b71bbe7bbd7cfce7402b3a80`; evidence-ledger/full-gated SHA
 >   `7facbd975fb46649c3950c9ae47fa3fe7ddd573f`; implementation/evidence
@@ -40,9 +40,9 @@
 > - **READ:** this memo and the C72/C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** `apps/extension/scripts/verify-store-package.mjs`,
->   `apps/extension/README.md`, `docs/security/RELEASE-INTEGRITY.md`, and this
->   ledger. The C72 test is implementation-complete.
+> - **WRITE (edit lease):** `docs/NEXT-SESSION.md` only for evidence-ledger and
+>   closeout. C72 source, tests, README, and security docs are implementation-
+>   complete.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -129,8 +129,11 @@
 > FULL evidence at close SHA `320d1d5186b592b5df77fdc4fbdb01f0b0f5ca94`.
 > C71 is closed with a committed contract, corrected/measured behavioral RED,
 > clean implementation, and exact single-contract, verifier-file,
-> focused/release, extension-wide, and repository-wide FULL evidence. Only this
-> docs close commit follows the full-gated SHA.
+> focused/release, extension-wide, and repository-wide FULL evidence at close
+> SHA `6fd9b34fbf4dd294b71bbe7bbd7cfce7402b3a80`.
+> C72 has a committed contract, measured behavioral RED, clean implementation,
+> and exact single-contract, focused/release, and extension-wide evidence. Its
+> evidence-ledger commit, FULL gate, and close commit remain.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -138,7 +141,7 @@
 > pins exact artifact bytes, the source-tag signature authenticates that exact
 > digest, and a safe command emits its canonical message, but production trust
 > and operator-controlled signing remain external.
-> C68–C71 are only cooperative-host least privilege. Do not manufacture a local
+> C68–C72 are only cooperative-host least privilege. Do not manufacture a local
 > proxy for the remaining external trust/owner obligations.
 
 > ## 2026-09-01 C72 STORE-PACKAGE EMBEDDED-ZIP STABLE DESCRIPTOR — C6 PARTIAL
@@ -183,6 +186,76 @@
 > instead of the independently expected embedded ZIP digest
 > `a13bc0e7b079d6523d2be54888cb85844c6b6261e6e6abfc176365fd6ca36be3`.
 > This is the contracted behavioral RED, not a harness or syntax failure.
+>
+> Implementation/evidence commit
+> `a99054d5c5b51a30d564a3d2b6081769ba8d5a2e` uses exclusive
+> `O_CREAT|O_EXCL|O_RDWR|O_NOFOLLOW` construction at **0600**, syncs and
+> identity-checks a same-inode `O_RDONLY|O_NOFOLLOW` handle, closes the writer,
+> seals/verifies **0400**, unlinks the name, passes the live descriptor, and
+> positionally compares every original byte after parser success. A direct
+> module entry guard keeps the CLI executable while exposing only the embedded-
+> archive handoff for its mutation probe. README and release-integrity prose
+> state the store-specific residual environment/`cwd`/runtime boundary.
+>
+> From that clean implementation/evidence SHA, this exact single-contract
+> command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/scripts/verify-store-package.mjs && node --check apps/extension/test/verify-store-package-infozip.test.mjs && pnpm --filter @warden/extension exec vitest run test/verify-store-package-infozip.test.mjs && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-store-package-infozip-test-*' -o -name 'warden-store-package-verify-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed **2/2** tests, syntax, selected cleanup, diff checks, and both clean-
+> tree guards. The first probe saw the independently expected embedded digest
+> through `/proc/<pid>/fd/<fd>`, access mode zero, inode mode **0400**, a refused
+> rename, successful CLI completion, and empty cleanup. The second restored
+> mode **0600** through procfs, rewrote the exact-length inode, exited zero, and
+> was rejected by the post-parser byte comparison with empty cleanup.
+>
+> From that same clean SHA, this exact focused/release command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/scripts/verify-store-package.mjs && node --check apps/extension/test/verify-store-package-infozip.test.mjs && pnpm --filter @warden/extension exec vitest run test/verify-store-package-infozip.test.mjs test/verify-store-package-cli.test.mjs test/store-package.test.mjs test/release-source-tag.test.mjs test/verify-release-source-tag-cli.test.mjs test/release-recipe-input-evidence.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension release:gate && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-store-package-infozip-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-recipe-evidence-test-*' -o -name 'warden-release-unzip-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed **54/54** focused tests, typecheck, canonical verification of **8**
+> payload files, **60** production/peer components, **4** JavaScript bundles,
+> **101** positive bundle inputs, **4** static inputs, **25** exact recipe inputs,
+> the canonical unpacked tree, real upload Info-ZIP parsing, selected cleanup,
+> diff checks, and both clean-tree guards.
+>
+> From that same clean SHA, this exact extension-wide command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'verifyEmbeddedArchiveWithInfoZip|temporary embedded archive|warden-store-package-verify|release-cli-arguments|normalizeReleaseCliArguments|release-input-file|readBoundedRegularFile|O_NOFOLLOW|MAX_UPLOAD_ARCHIVE_BYTES|MAX_UPLOAD_ARTIFACT_MANIFEST_BYTES|MAX_UPLOAD_EVIDENCE_BYTES|verifyArchiveWithInfoZip|assertTemporaryArchiveUnchanged|TEMPORARY_ARCHIVE_COMPARE_CHUNK_BYTES|temporaryArchiveReadHandle|temporaryArchiveWriteHandle|descriptorPath|warden-release-unzip|cwd: temporaryDirectory|INFO_ZIP_ENVIRONMENT|INFO_ZIP_TIMEOUT|killSignal|LC_ALL|read-only seal|chmod\(0o400\)|release-source-tag-message|print-release-source-tag-message|formatReleaseTagMessage|warden\.extension-release-tag\.v1|artifact-manifest-sha256|expected-default-artifact-manifest-sha256|expected-artifact-manifest-sha256|expected-detached-signature-sha256|source tag signed|source tag verifier returned|artifact signature verifier returned|reviewed artifact manifest differs|detached signature differs|verify-release-source-tag|release-source-tag|verify-reviewed-artifact-signature|reviewed-artifact-signature|verify-store-package|store-package|verify-release|expectedArtifactManifestSha256|signedArtifactManifestSha256|artifactManifestSha256|artifactReview|reviewedUploadArchive|storePackage|expectedStorePackageSha256|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-store-package-infozip-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-verify-cli-test-*' -o -name 'warden-release-unzip-*' -o -name 'warden-release-tag-message-cli-test-*' -o -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed extension **599/599**, typecheck/build, emitted release-tooling
+> exclusion (including the store descriptor helper), selected cleanup, diff
+> checks, and both clean-tree guards. At this SHA the artifact, bundle, recipe,
+> dependency, and static sidecar SHA-256 values were respectively
+> `d164fa484bf640b5f0efd2052f98e86476929c5e990b4df95a028c2b2f44ce36`,
+> `f2f2dadfd2e4d7a9da0a6d11bbc7f12e3a66ed353d18c32589acc2a15ab19cd5`,
+> `c5e5863e03b10b35f88f97fb2d8ac3c2d287a654fcde1bef066ded879b918267`,
+> `7784e81ab1829c260013d7a56fd9e557faf8e2116807081fc57d9452f2631479`,
+> and `0bd01101e4f6f828e01c58bad16f8a5836e6615ef7210b932151c1ac7dd813b7`.
+> The recipe sidecar remained **5,126 bytes** with 25 inputs. The store verifier
+> was **9,714 bytes** at SHA-256
+> `03c8eced2f4d8dbb95b2dac389dec66136373f69ff7a0289dfe67ebb60fe1624`.
+> ZIP SHA-256 and payload-tree SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> Exact standalone/composed store grammar, digest/id/signature checks, output,
+> upload-verifier C63–C71 behavior, and provider fixed unavailable are unchanged.
+>
+> After committing this evidence ledger, run this exact FULL command from its
+> clean SHA. It is not green until its exit, repeated SHA, and measurements are
+> recorded in the close memo:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'verifyEmbeddedArchiveWithInfoZip|temporary embedded archive|warden-store-package-verify|release-cli-arguments|normalizeReleaseCliArguments|release-input-file|readBoundedRegularFile|O_NOFOLLOW|MAX_UPLOAD_ARCHIVE_BYTES|MAX_UPLOAD_ARTIFACT_MANIFEST_BYTES|MAX_UPLOAD_EVIDENCE_BYTES|verifyArchiveWithInfoZip|assertTemporaryArchiveUnchanged|TEMPORARY_ARCHIVE_COMPARE_CHUNK_BYTES|temporaryArchiveReadHandle|temporaryArchiveWriteHandle|descriptorPath|warden-release-unzip|cwd: temporaryDirectory|INFO_ZIP_ENVIRONMENT|INFO_ZIP_TIMEOUT|killSignal|LC_ALL|read-only seal|chmod\(0o400\)|release-source-tag-message|print-release-source-tag-message|formatReleaseTagMessage|warden\.extension-release-tag\.v1|artifact-manifest-sha256|expected-default-artifact-manifest-sha256|expected-artifact-manifest-sha256|expected-detached-signature-sha256|source tag signed|source tag verifier returned|artifact signature verifier returned|artifact manifest sha256|reviewed artifact manifest differs|detached signature differs|openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|expectedArtifactManifestSha256|signedArtifactManifestSha256|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|reviewedUploadArchive|storePackage|expectedPackageSha256|expectedStorePackageSha256|expectedStoreExtensionId|dualReleaseReport|expectedDualReleaseReportSha256|artifactManifestSha256|boundReleaseFileCount|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-store-package-infozip-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-verify-cli-test-*' -o -name 'warden-release-unzip-*' -o -name 'warden-release-tag-message-cli-test-*' -o -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
 >
 > This is a synthetic downstream-handoff test, not a real publisher signature,
 > returned Web Store package, executable-provenance claim, sandbox, same-UID or
