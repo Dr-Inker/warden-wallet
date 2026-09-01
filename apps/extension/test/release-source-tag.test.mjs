@@ -96,7 +96,7 @@ function crxProofBytes(publicKey, signature) {
   ]);
 }
 
-function storeCrxBytes(archiveBytes) {
+function storeCrxBytes(archiveBytes, { verifiedContentsBytes } = {}) {
   const crxId = Buffer.from(sha256(storeDeveloperPublicKey), "hex").subarray(0, 16);
   const signedData = protobufBytes(1, crxId);
   const signedDataLength = Buffer.alloc(4);
@@ -107,7 +107,7 @@ function storeCrxBytes(archiveBytes) {
     signedData,
     archiveBytes,
   ]);
-  const header = Buffer.concat([
+  const headerFields = [
     protobufBytes(2, crxProofBytes(
       storeDeveloperPublicKey,
       sign("sha256", signedBytes, storeDeveloperKeys.privateKey),
@@ -116,8 +116,12 @@ function storeCrxBytes(archiveBytes) {
       storePublisherPublicKey,
       sign("sha256", signedBytes, storePublisherKeys.privateKey),
     )),
-    protobufBytes(10000, signedData),
-  ]);
+  ];
+  if (verifiedContentsBytes !== undefined) {
+    headerFields.push(protobufBytes(4, verifiedContentsBytes));
+  }
+  headerFields.push(protobufBytes(10000, signedData));
+  const header = Buffer.concat(headerFields);
   const fixed = Buffer.alloc(12);
   fixed.write("Cr24", 0, "ascii");
   fixed.writeUInt32LE(3, 4);
@@ -659,6 +663,47 @@ describe("release source annotated-tag verification", () => {
       expectedStoreExtensionId,
       requiredStorePublisherKeySha256: storePublisherKeySha256,
     })).rejects.toThrow(/store|reviewed upload|archive|payload/);
+  });
+
+  it("rejects a separately valid store package with a different exact CRX digest", async () => {
+    const approvedCrxBytes = storeCrxBytes(fixture.reviewedArtifact.archiveBytes);
+    const differentCrxBytes = storeCrxBytes(
+      fixture.reviewedArtifact.archiveBytes,
+      { verifiedContentsBytes: Buffer.from("different valid CRX3 header bytes\n") },
+    );
+    expect(sha256(differentCrxBytes)).not.toBe(sha256(approvedCrxBytes));
+    for (const crxBytes of [approvedCrxBytes, differentCrxBytes]) {
+      expect(verifyStorePackage({
+        crxBytes,
+        artifactManifest: fixture.reviewedArtifact.artifactManifest,
+        expectedExtensionId: expectedStoreExtensionId,
+        requiredPublisherKeySha256: storePublisherKeySha256,
+      })).toMatchObject({
+        extensionId: expectedStoreExtensionId,
+        treeSha256: fixture.reviewedArtifact.artifactManifest.payload.treeSha256,
+      });
+    }
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      fixture.reviewedArtifact.releaseFiles,
+    );
+    await expect(verify({
+      ...fixture.reviewedArtifact,
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+      artifactReviewSignatureBytes: fixture.reviewedArtifactSignatureBytes,
+      expectedArtifactReviewSignatureSha256: sha256(
+        fixture.reviewedArtifactSignatureBytes,
+      ),
+      expectedArtifactReviewPrimaryFingerprint: fixture.fingerprint,
+      expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
+      reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
+      storePackageBytes: differentCrxBytes,
+      expectedStorePackageSha256: sha256(approvedCrxBytes),
+      expectedStoreExtensionId,
+      requiredStorePublisherKeySha256: storePublisherKeySha256,
+    })).rejects.toThrow(/store package differs from the independently supplied SHA-256/);
   });
 
   it("authenticates one reviewed upload and its store-returned CRX3 package", async () => {
