@@ -120,6 +120,7 @@ async function verifyArchiveWithInfoZip(archiveBytes) {
     await unlink(temporaryArchivePath);
     const descriptorPath = `/proc/${process.pid}/fd/${temporaryArchiveReadHandle.fd}`;
     await execFile("unzip", ["-t", descriptorPath], {
+      cwd: temporaryDirectory,
       encoding: "utf8",
       maxBuffer: 4 * 1024 * 1024,
     });

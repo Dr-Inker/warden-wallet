@@ -53,12 +53,15 @@ same stable-read archive bytes. It opens and verifies a same-inode read-only
 handle after syncing the exclusive `0600` construction writer, closes the
 writer, seals the inode to `0400` through that reader and verifies its identity,
 size, and mode, then unlinks the filename and passes only the live read-
-descriptor path to Info-ZIP.
+descriptor path to Info-ZIP while setting the private `0700` directory as the
+subprocess working directory.
 It then positionally rereads the live descriptor and requires its length and
 every byte to remain identical after Info-ZIP exits. It closes/removes both
 handles and the directory on success or failure and never reopens the operator-
 supplied archive path. The `0400` seal prevents accidental/cooperative writable
 reopens; it does not constrain the file owner or root from restoring permission.
+The private working directory limits accidental relative-path side effects but
+is not a sandbox for a malicious same-UID executable.
 To compare another canonical
 upload ZIP and all four evidence sidecars against an already reviewed artifact
 manifest:
