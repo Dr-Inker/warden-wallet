@@ -235,6 +235,19 @@ function verify(options = {}) {
   });
 }
 
+async function rejectedCli(arguments_, environment = fixture.environment) {
+  try {
+    await execFile(process.execPath, [verifierCli, ...arguments_], {
+      env: environment,
+      encoding: "utf8",
+      maxBuffer: 2 * 1024 * 1024,
+    });
+  } catch (error) {
+    return `${error.stdout ?? ""}${error.stderr ?? ""}`;
+  }
+  throw new Error("reviewed artifact verifier CLI unexpectedly succeeded");
+}
+
 describe("reviewed artifact detached-signature verification", () => {
   it("authenticates the exact artifact bytes plus full primary and signing fingerprints", async () => {
     await expect(verify()).resolves.toEqual({
@@ -280,6 +293,39 @@ describe("reviewed artifact detached-signature verification", () => {
     expect(result.stdout).toContain("OpenPGP hash algorithm 10");
     expect(result.stdout).toContain("OpenPGP signature class 00");
     expect(result.stdout).toContain(`artifact source commit ${"a".repeat(40)}`);
+  });
+
+  it("requires an independent exact artifact digest before invoking GnuPG", async () => {
+    const wrongDigest = await rejectedCli([
+      fixture.artifactPath,
+      fixture.signaturePath,
+      "0".repeat(64),
+      fixture.fingerprint,
+      fixture.signingFingerprint,
+    ], {});
+    expect(wrongDigest).toMatch(
+      /reviewed artifact manifest differs from the independently supplied SHA-256/,
+    );
+    expect(wrongDigest).not.toMatch(/GNUPGHOME/);
+
+    const uppercaseDigest = await rejectedCli([
+      fixture.artifactPath,
+      fixture.signaturePath,
+      sha256(fixture.artifactBytes).toUpperCase(),
+      fixture.fingerprint,
+      fixture.signingFingerprint,
+    ]);
+    expect(uppercaseDigest).toMatch(
+      /expected artifact manifest SHA-256 must be a lowercase digest/,
+    );
+
+    const missingDigest = await rejectedCli([
+      fixture.artifactPath,
+      fixture.signaturePath,
+      fixture.fingerprint,
+      fixture.signingFingerprint,
+    ]);
+    expect(missingDigest).toMatch(/expected-artifact-manifest-sha256/);
   });
 
   it("rejects a one-byte artifact change or independently supplied wrong identity", async () => {
