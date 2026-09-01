@@ -117,14 +117,16 @@ describe("canonical release source-tag message", () => {
   it("prints only the canonical message for exact stable artifact bytes", async () => {
     const created = await fixture();
     const artifactManifestSha256 = sha256(created.artifactManifestBytes);
-    const result = await execFile(
-      process.execPath,
-      [printerPath, created.artifactManifestPath, artifactManifestSha256],
-      { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
-    );
+    for (const separator of [[], ["--"]]) {
+      const result = await execFile(
+        process.execPath,
+        [printerPath, ...separator, created.artifactManifestPath, artifactManifestSha256],
+        { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
+      );
 
-    expect(result.stdout).toBe(expectedMessage(artifactManifestSha256));
-    expect(result.stderr).toBe("");
+      expect(result.stdout).toBe(expectedMessage(artifactManifestSha256));
+      expect(result.stderr).toBe("");
+    }
   });
 
   it("requires exactly one path and one independent lowercase digest", async () => {

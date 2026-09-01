@@ -12,7 +12,8 @@ function fail(message) {
 }
 
 async function main() {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  const args = rawArgs[0] === "--" ? rawArgs.slice(1) : rawArgs;
   if (args.length !== 2) {
     fail(
       "usage: print-release-source-tag-message.mjs reviewed-artifact.json expected-artifact-manifest-sha256",
