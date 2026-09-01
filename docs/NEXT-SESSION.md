@@ -1,17 +1,19 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C69 CONTRACTED; BEHAVIORAL RED NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C69 RED COMMITTED; IMPLEMENT NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** execute the bounded C69 private-working-directory RED below, commit
->   it cleanly, and only then implement the contract. Do not broaden into
->   executable provenance or production trust, and do not imply a private `cwd`
->   confines a malicious same-UID executable or defeats file-owner/root races.
+> - **TASK:** implement the bounded C69 private-working-directory contract
+>   against its clean behavioral RED, then run exact single-contract and broader
+>   release evidence. Do not broaden into executable provenance or production
+>   trust, and do not imply a private `cwd` confines a malicious same-UID
+>   executable or defeats file-owner/root races.
 > - **CWD:** `/opt/warden`.
 > - **BASE:** C68 close SHA
->   `5e49c3d482540d5adc5a1c3810b0556a91d20c5d`; behavioral RED
+>   `5e49c3d482540d5adc5a1c3810b0556a91d20c5d`; C69 behavioral RED
+>   `8c1828de1de1cdc7369f1131c3fc47636ed15b0c`; C68 behavioral RED
 >   `f0f751760b3910bafdc087948193a84bf1c36622`; implementation
 >   `c57e14cdd9ea15556e2e5fe3ae0f509bc360165e`; corrected implementation/evidence
 >   `a223edf8a1d8d5c11381756e9fd013ff4b8f5026`; evidence-ledger/full-gated SHA
@@ -23,11 +25,10 @@
 > - **READ:** this memo and the C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** for RED,
->   `apps/extension/test/verify-release-cli.test.mjs` and this ledger only. After
->   RED is committed and measured, implementation may also edit
+> - **WRITE (edit lease):**
 >   `apps/extension/scripts/verify-release.mjs`, `apps/extension/README.md`, and
->   `docs/security/RELEASE-INTEGRITY.md`.
+>   `docs/security/RELEASE-INTEGRITY.md`; update this ledger only for evidence.
+>   The committed behavioral test is the contract and should not be weakened.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -100,8 +101,8 @@
 > focused/release/extension-wide evidence, and the repository-wide FULL gate
 > recorded below. C68 is closed with a committed, measured behavioral RED, clean
 > implementation, exact single-contract/focused/release/extension evidence, and
-> the repository-wide FULL gate recorded below. C69 is contracted below; its RED
-> is not yet run or committed.
+> the repository-wide FULL gate recorded below. C69 has a committed, measured
+> behavioral RED and no implementation yet.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -123,11 +124,20 @@
 > digest, descriptor access mode zero, and inode mode **0400**. Cleanup remains
 > mandatory after success or failure.
 >
-> Behavioral RED: extend the C68 fake-Info-ZIP observation with `process.cwd()`
-> and its mode while preserving all C68 assertions. At the C68 close SHA it must
-> observe repository root `/opt/warden` rather than the private directory and
-> fail only the new working-directory expectation. Commit that failing contract
-> before changing the verifier.
+> Behavioral RED commit `8c1828de1de1cdc7369f1131c3fc47636ed15b0c`
+> extends the C68 fake-Info-ZIP observation with `process.cwd()` and its mode
+> while preserving all C68 assertions. From that clean SHA, this exact command
+> exited **1**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/verify-release-cli.test.mjs -t "runs independent unzip on the sealed descriptor from its private directory"
+> ```
+>
+> Vitest ran one test, skipped ten, and failed in **1.41 s** solely because the
+> inherited working directory did not begin with the controlled test directory's
+> `warden-release-unzip-*` path. Exact stable bytes, descriptor access mode zero,
+> inode mode **0400**, parser success, and cleanup all passed before that new
+> predicate.
 >
 > This limits accidental/cooperative relative-path reads or writes by Info-ZIP.
 > It is not a sandbox: a malicious same-UID executable can change directories or
