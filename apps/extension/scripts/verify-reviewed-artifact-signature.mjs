@@ -58,6 +58,11 @@ async function main() {
   console.log(`signature sha256 ${verified.signatureSha256}`);
   console.log(`OpenPGP signing fingerprint ${verified.signingFingerprint}`);
   console.log(`OpenPGP primary fingerprint ${verified.primaryFingerprint}`);
+  console.log(`OpenPGP signature creation date ${verified.signatureCreationDate}`);
+  console.log(`OpenPGP signature timestamp ${verified.signatureTimestamp}`);
+  console.log(
+    `OpenPGP signature expiration ${verified.signatureExpirationTimestamp ?? "never"}`,
+  );
   console.log(`OpenPGP signature version ${verified.signatureVersion}`);
   console.log(`OpenPGP public-key algorithm ${verified.publicKeyAlgorithm}`);
   console.log(`OpenPGP hash algorithm ${verified.hashAlgorithm}`);

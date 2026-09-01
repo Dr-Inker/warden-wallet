@@ -21,6 +21,7 @@ export const GIT_GPG_LAUNCHER_TEXT = [
   "",
 ].join("\n");
 const MAX_TAG_OBJECT_BYTES = 1024 * 1024;
+const MAX_OPENPGP_TIME_VALUE = 0xffff_ffff;
 const FULL_SHA1_PATTERN = /^[0-9a-f]{40}$/;
 const FINGERPRINT_PATTERN = /^[0-9A-F]{40}(?:[0-9A-F]{24})?$/;
 export const OPENPGP_RELEASE_SIGNATURE_POLICY = Object.freeze({
@@ -97,6 +98,66 @@ function parseCanonicalOpenPgpOctet(value, label) {
     openPgpFail(`${label} must be a canonical decimal octet`);
   }
   return parsed;
+}
+
+function utcTimestampFromParts(parts, label, maximum) {
+  const [year, month, day, hour, minute, second] = parts.map(Number);
+  const milliseconds = Date.UTC(year, month - 1, day, hour, minute, second);
+  const date = new Date(milliseconds);
+  const timestamp = milliseconds / 1000;
+  if (
+    !Number.isInteger(timestamp) ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day ||
+    date.getUTCHours() !== hour ||
+    date.getUTCMinutes() !== minute ||
+    date.getUTCSeconds() !== second ||
+    timestamp < 0 ||
+    timestamp > maximum
+  ) {
+    openPgpFail(`${label} must be a valid UTC time in the allowed OpenPGP range`);
+  }
+  return timestamp;
+}
+
+function parseOpenPgpStatusTimestamp(value, label, maximum) {
+  if (typeof value !== "string") {
+    openPgpFail(
+      `${label} must be canonical decimal epoch seconds or a basic ISO 8601 UTC time`,
+    );
+  }
+  if (/^(?:0|[1-9][0-9]{0,9})$/.test(value)) {
+    const timestamp = Number(value);
+    if (timestamp <= maximum) {
+      return timestamp;
+    }
+    openPgpFail(`${label} is outside the allowed OpenPGP range`);
+  }
+  const basicIso = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/.exec(value);
+  if (!basicIso) {
+    openPgpFail(
+      `${label} must be canonical decimal epoch seconds or a basic ISO 8601 UTC time`,
+    );
+  }
+  return utcTimestampFromParts(basicIso.slice(1), label, maximum);
+}
+
+function parseOpenPgpCreationDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    openPgpFail("VALIDSIG creation date must be a canonical UTC YYYY-MM-DD date");
+  }
+  utcTimestampFromParts(
+    [...match.slice(1), "0", "0", "0"],
+    "VALIDSIG creation date",
+    MAX_OPENPGP_TIME_VALUE,
+  );
+  return value;
+}
+
+function openPgpUtcDate(timestamp) {
+  return new Date(timestamp * 1000).toISOString().slice(0, 10);
 }
 
 function goodSignatureIdentityMatches(signingFingerprint, value) {
@@ -181,6 +242,29 @@ export function parseSingleOpenPgpSignatureStatus(
       "VALIDSIG signing fingerprint differs from the independently supplied signing key",
     );
   }
+  const signatureCreationDate = parseOpenPgpCreationDate(validArguments[1]);
+  const signatureTimestamp = parseOpenPgpStatusTimestamp(
+    validArguments[2],
+    "VALIDSIG creation timestamp",
+    MAX_OPENPGP_TIME_VALUE,
+  );
+  if (signatureCreationDate !== openPgpUtcDate(signatureTimestamp)) {
+    openPgpFail("VALIDSIG creation date differs from its UTC creation timestamp");
+  }
+  const parsedExpirationTimestamp = parseOpenPgpStatusTimestamp(
+    validArguments[3],
+    "VALIDSIG expiration timestamp",
+    signatureTimestamp + MAX_OPENPGP_TIME_VALUE,
+  );
+  const signatureExpirationTimestamp = parsedExpirationTimestamp === 0
+    ? null
+    : parsedExpirationTimestamp;
+  if (
+    signatureExpirationTimestamp !== null &&
+    signatureExpirationTimestamp <= signatureTimestamp
+  ) {
+    openPgpFail("VALIDSIG expiration timestamp must be after its creation timestamp");
+  }
   const signatureVersion = parseCanonicalOpenPgpOctet(
     validArguments[4],
     "VALIDSIG signature version",
@@ -228,6 +312,9 @@ export function parseSingleOpenPgpSignatureStatus(
   return {
     signingFingerprint,
     primaryFingerprint,
+    signatureCreationDate,
+    signatureTimestamp,
+    signatureExpirationTimestamp,
     signatureVersion,
     publicKeyAlgorithm,
     hashAlgorithm,
@@ -524,6 +611,9 @@ export async function verifyReleaseSourceTag({
     sourceCommit: targetCommit,
     signingFingerprint: signature.signingFingerprint,
     primaryFingerprint: signature.primaryFingerprint,
+    signatureCreationDate: signature.signatureCreationDate,
+    signatureTimestamp: signature.signatureTimestamp,
+    signatureExpirationTimestamp: signature.signatureExpirationTimestamp,
     signatureVersion: signature.signatureVersion,
     publicKeyAlgorithm: signature.publicKeyAlgorithm,
     hashAlgorithm: signature.hashAlgorithm,

@@ -139,8 +139,21 @@ Ed25519, Ed448, and SHA-256/384/512. The current
 and binary-document class. ID 22 is deliberately documented as a compatibility
 exception: RFC 9580 calls that encoding EdDSALegacy and deprecated, while the
 installed GnuPG 2.4.4 `ed25519` fixture emits 22. The result reports signature
-version, public-key algorithm, hash algorithm, and class. Algorithm IDs alone
-do not attest RSA size, ECC curve, key storage, ownership, or lifecycle.
+version, public-key algorithm, hash algorithm, and class.
+
+The `VALIDSIG` creation date must also be a valid canonical UTC `YYYY-MM-DD`
+value. Its creation and expiration timestamp fields accept the two encodings
+documented by installed GnuPG: canonical decimal epoch seconds and basic ISO
+`YYYYMMDDTHHMMSS`. Both normalize to integer seconds. Creation must fit RFC
+9580's unsigned four-octet OpenPGP time field and its UTC date must equal the
+separate creation-date field. Zero expiration normalizes to `never`; a nonzero
+absolute expiration must be strictly later than creation and their difference
+must fit the unsigned four-octet signature-expiration interval. Both verifier
+results and CLIs report the normalized date, creation timestamp, and expiration.
+This proves internal structure only: it does not choose a maximum signature
+age, accepted clock skew, release window, or trustworthy present time.
+Algorithm IDs alone do not attest RSA size, ECC curve, key storage, ownership,
+or lifecycle.
 For the accompanying `GOODSIG` key ID, the matcher uses the low 64 fingerprint
 bits for v4 and high 64 bits for v6, or accepts the exact full fingerprint, as
 defined by the registry's key-ID rules.
@@ -184,8 +197,10 @@ signature, malformed, trailing, wrong-artifact, or wrong-fingerprint results
 fail closed. Temporary files are removed on success and failure; GnuPG may
 still maintain state inside the explicitly selected caller keyring.
 The same shared allowlist requires public-key ID **1/19/22/27/28**, SHA-2 ID
-**8/9/10**, and exact binary-document signature class **00** before accepting
-the reviewed bytes.
+**8/9/10**, exact binary-document signature class **00**, and the same
+creation-date/timestamp/expiration structural contract before accepting the
+reviewed bytes. The normalized time fields are returned and printed, but no
+signature-age or clock-skew policy is inferred.
 
 The contract follows GnuPG's primary
 [`--verify` documentation](https://gnupg.org/documentation/manuals/gnupg/Operational-GPG-Commands.html),

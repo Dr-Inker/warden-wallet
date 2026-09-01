@@ -157,7 +157,7 @@ describe("shared OpenPGP release signature policy", () => {
     expect(Object.isFrozen(OPENPGP_RELEASE_SIGNATURE_POLICY.hashAlgorithms)).toBe(true);
   });
 
-  it("normalizes documented decimal and basic ISO timestamps within the unsigned four-octet range", () => {
+  it("normalizes documented decimal and basic ISO times under OpenPGP ranges", () => {
     const primary = "A".repeat(40);
     expect(parseStatus(statusLine({ primary }), primary)).toMatchObject({
       signatureCreationDate: "2026-09-01",
@@ -227,7 +227,7 @@ describe("shared OpenPGP release signature policy", () => {
       "6083188096",
       "20260901T00000",
       "20260230T000000",
-      "21060207T062816",
+      "21621008T062816",
     ]) {
       expect(() => parseStatus(statusLine({
         primary,

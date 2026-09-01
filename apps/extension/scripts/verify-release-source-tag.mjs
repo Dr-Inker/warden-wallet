@@ -53,6 +53,11 @@ async function main() {
   console.log(`artifact source commit ${result.sourceCommit}`);
   console.log(`OpenPGP signing fingerprint ${result.signingFingerprint}`);
   console.log(`OpenPGP primary fingerprint ${result.primaryFingerprint}`);
+  console.log(`OpenPGP signature creation date ${result.signatureCreationDate}`);
+  console.log(`OpenPGP signature timestamp ${result.signatureTimestamp}`);
+  console.log(
+    `OpenPGP signature expiration ${result.signatureExpirationTimestamp ?? "never"}`,
+  );
   console.log(`OpenPGP signature version ${result.signatureVersion}`);
   console.log(`OpenPGP public-key algorithm ${result.publicKeyAlgorithm}`);
   console.log(`OpenPGP hash algorithm ${result.hashAlgorithm}`);

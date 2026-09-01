@@ -115,13 +115,22 @@ expected fingerprints are identical.
 
 The shared OpenPGP policy also requires the exact ten-argument OpenPGP
 `VALIDSIG` shape, a zero reserved field, signature version **4 or 6**, canonical
-numeric octets, and binary-document signature class `00`. Its explicit public-key algorithm allowlist is
+numeric octets, and binary-document signature class `00`. The creation date
+must be an exact valid UTC `YYYY-MM-DD` value. GnuPG's documented canonical
+decimal epoch-seconds form and its basic ISO `YYYYMMDDTHHMMSS` form are both
+normalized: creation must fit the unsigned four-octet OpenPGP time range and
+must map back to the reported UTC date; expiration is either zero/`never` or
+later than creation with a lifetime delta no larger than the unsigned four-
+octet signature-expiration interval. These structural checks do not choose a
+maximum signature age, permitted clock skew, or release freshness policy. Its
+explicit public-key algorithm allowlist is
 RSA **1**, ECDSA **19**, installed-GnuPG EdDSA compatibility **22**, Ed25519
 **27**, and Ed448 **28**; its digest allowlist is SHA-256/384/512 **8/9/10**.
 ID 22 is an explicit compatibility exception because installed GnuPG 2.4.4
 emits it for `ed25519`, although the current OpenPGP registry labels that wire
-format EdDSALegacy and deprecated. The verifier reports the observed signature
-version, public-key algorithm, hash algorithm, and class. These IDs do not prove
+format EdDSALegacy and deprecated. The verifier reports normalized signature
+creation date, creation timestamp, expiration (or `never`), version, public-key
+algorithm, hash algorithm, and class. These values do not prove
 an RSA modulus size, ECDSA curve, hardware-backed key, signer ownership, or key
 lifecycle; those remain separate production policy.
 The `GOODSIG` identity comparison uses the low 64 fingerprint bits for v4 and
@@ -162,8 +171,10 @@ an unexpected sibling subkey under the same primary fails closed. It then
 parses the already authenticated artifact bytes under the canonical artifact
 schema. Temporary files are removed on success or failure. Direct primary-key
 signing uses the same full fingerprint for both expected values.
-The same explicit public-key **1/19/22/27/28**, SHA-2 **8/9/10**, and binary-
-document class **00** policy applies before the artifact is accepted.
+The same exact time-field normalization/range/cross-check contract, explicit
+public-key **1/19/22/27/28**, SHA-2 **8/9/10**, and binary-document class **00**
+policy applies before the artifact is accepted. Its reported time metadata is
+structural evidence, not an owner-approved age or clock policy.
 
 This follows GnuPG's primary
 [`--verify` detached-signature contract](https://gnupg.org/documentation/manuals/gnupg/Operational-GPG-Commands.html),
