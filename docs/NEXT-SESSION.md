@@ -130,12 +130,13 @@
 > **256** (**0400**). It still observed the exact stable archive digest through
 > an access-mode-zero (`O_RDONLY`) procfs descriptor, normal success, and cleanup.
 >
-> This reduces accidental or malicious reopen-for-write authority for a normal
-> same-UID, non-root parser after the seal. It does not authenticate `unzip`,
-> revoke a writer opened before sealing, prevent a privileged process from
-> reopening or changing the inode, or defeat a hostile host racing the bounded
-> post-parser comparison. No invariant moves; the production trust, publisher,
-> reviewer, store-return, and independently hosted builder gaps remain.
+> This prevents accidental/cooperative reopen-for-write by a normal same-UID,
+> non-root parser after the seal. It does not authenticate `unzip`, constrain a
+> malicious file owner that restores write permission, revoke a writer opened
+> before sealing, prevent a privileged process from reopening or changing the
+> inode, or defeat a hostile host racing the bounded post-parser comparison. No
+> invariant moves; the production trust, publisher, reviewer, store-return, and
+> independently hosted builder gaps remain.
 
 > ## 2026-09-01 C67 READ-ONLY INFO-ZIP DESCRIPTOR — C6 PARTIAL, EXECUTABLE/HOST TRUST EXTERNAL
 >

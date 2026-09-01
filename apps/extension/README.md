@@ -57,7 +57,9 @@ descriptor path to Info-ZIP.
 It then positionally rereads the live descriptor and requires its length and
 every byte to remain identical after Info-ZIP exits. It closes/removes both
 handles and the directory on success or failure and never reopens the operator-
-supplied archive path. To compare another canonical
+supplied archive path. The `0400` seal prevents accidental/cooperative writable
+reopens; it does not constrain the file owner or root from restoring permission.
+To compare another canonical
 upload ZIP and all four evidence sidecars against an already reviewed artifact
 manifest:
 

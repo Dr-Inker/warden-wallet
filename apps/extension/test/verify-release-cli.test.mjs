@@ -235,7 +235,7 @@ process.exitCode = Number(process.env.WARDEN_TEST_UNZIP_EXIT_CODE ?? "0");
     expect(observation.inspectedPath).not.toBe(inputPaths[0]);
     expect(observation.sha256).toBe(sha256(inputBytes[0]));
     expect(observation.sha256).not.toBe(sha256(replacementBytes));
-    expect(observation.archiveMode).toBe(0o600);
+    expect(observation.archiveMode).toBe(0o400);
     expect(observation.directoryMode).toBe(0o700);
     expect((await readdir(directory)).filter((name) =>
       name.startsWith("warden-release-unzip-"),
@@ -333,12 +333,13 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
     await mkdir(probeDirectory, { recursive: true });
     await writeFile(probePath, `#!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 
 const inspectedPath = process.argv[3];
 const inspectedBytes = await readFile(inspectedPath);
 const replacementBytes = Buffer.alloc(inspectedBytes.length, 0x61);
 replacementBytes[0] = inspectedBytes[0] ^ 0xff;
+await chmod(inspectedPath, 0o600);
 await writeFile(inspectedPath, replacementBytes);
 await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
   inspectedPath,
