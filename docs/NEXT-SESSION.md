@@ -1,17 +1,17 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C69 CLOSED; NEXT BOUNDED AUDIT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C70 CONTRACT; BEHAVIORAL RED NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** audit the verifier boundary after closed C69 and begin another
->   bounded cycle only if it has a locally executable RED and a material claim
->   narrower than sandboxing or production trust. Do not broaden into executable
->   provenance or production trust, and do not imply a private `cwd` confines a
->   malicious same-UID executable or defeats file-owner/root races.
+> - **TASK:** add and commit the C70 behavioral RED proving the Info-ZIP child
+>   directly inherits an unrelated marker today, implement the exact three-key
+>   child environment contracted below, and run the bounded evidence ladder.
+>   Do not broaden environment minimization into sandboxing or production trust.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C69 evidence-ledger/full-gated SHA
+> - **BASE:** C69 close SHA
+>   `4f43e19a525c1788476986a9e05374d1c346136f`; evidence-ledger/full-gated SHA
 >   `c500cb88815d5a20e18f06b37918b994a9d57799`; C69 implementation/evidence
 >   `a206228cacd95197bbd677af6309f1a130db2f2a`; behavioral RED
 >   `8c1828de1de1cdc7369f1131c3fc47636ed15b0c`; C68 close SHA
@@ -24,12 +24,13 @@
 >   `47d419dae0dda40ad6ca461ab7cd81dc3ba32308`; implementation/evidence
 >   `5bb34f87d6e0fbafa53e1090fbc93fd67495a476`; behavioral RED
 >   `21213293cc184b80d8d397c102b01b3b2d85bf6a`.
-> - **READ:** this memo and the C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
+> - **READ:** this memo and the C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** none until the next bounded contract is written and
->   committed. C69 source, tests, README, security docs, evidence ledger, and
->   closeout are complete.
+> - **WRITE (edit lease):** before the committed RED, only
+>   `apps/extension/test/verify-release-cli.test.mjs`; after that measured RED,
+>   only `apps/extension/scripts/verify-release.mjs`, that test, extension README,
+>   `docs/security/RELEASE-INTEGRITY.md`, and this ledger.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -38,10 +39,11 @@
 >   sign production bytes, publish, weaken C36/C38–C68 policy, or invent store
 >   provenance, freshness, reviewer, builder-independence, key-strength,
 >   publisher, or lifecycle policy.
-> - **ACCEPT:** prove the independent parser starts with its `cwd` set to the
->   exact private `warden-release-unzip-*` directory, measured **0700**, while
->   observing exact stable bytes through C68's `O_RDONLY` descriptor and **0400**
->   inode after the name is unlinked. Preserve C68/C67/C66/C65/C64/C63 probes,
+> - **ACCEPT:** prove the independent parser child receives exactly inherited
+>   `PATH` plus fixed `LANG=C` and `LC_ALL=C`, and does not directly inherit an
+>   unrelated parent marker or `TMPDIR`. Preserve C69's exact private **0700**
+>   `cwd`, C68's `O_RDONLY` descriptor and **0400** inode after unlink, and all
+>   C67/C66/C65/C64/C63 probes,
 >   exclusive **0600** construction, identity/seal checks, exact post-parser
 >   comparison, cleanup on every outcome, direct/pnpm **0/6/7**, optional
 >   unpacked tree, canonical checks, unchanged output, exact 25-input recipe
@@ -52,8 +54,8 @@
 >   production signature/key/tag, deploy, upload, publishing, live service,
 >   external message, secret persistence, legal ruling, or real-account/funds
 >   mutation.
-> - **RETURN:** C69 contract/RED/implementation/evidence/full/close SHAs and any
->   subsequent bounded-cycle SHAs, clean/dirty state,
+> - **RETURN:** C69 close/full SHAs plus C70 contract/RED/implementation/evidence/
+>   full/close SHAs, clean/dirty state,
 >   exact commands and outcomes, stable-byte proof and temp-copy mode/cleanup,
 >   preserved grammar/order/output/scope, invariant and independent-review
 >   status, explicit synthetic/production and same-host/independent gaps, and
@@ -102,8 +104,9 @@
 > implementations, focused/release/extension-wide evidence, and their
 > repository-wide FULL gates recorded below. C69 is closed with a committed,
 > measured behavioral RED, clean implementation, exact single-contract,
-> focused/release, extension-wide, and repository-wide FULL evidence. Only this
-> docs close commit follows the full-gated SHA.
+> focused/release, extension-wide, and repository-wide FULL evidence at close
+> SHA `4f43e19a525c1788476986a9e05374d1c346136f`. C70 is contract-only; no C70
+> test or source change exists yet.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -111,8 +114,26 @@
 > pins exact artifact bytes, the source-tag signature authenticates that exact
 > digest, and a safe command emits its canonical message, but production trust
 > and operator-controlled signing remain external.
-> C68 is only cooperative-host least privilege. Do not manufacture a local proxy
-> for the remaining external trust/owner obligations.
+> C68/C69 are only cooperative-host least privilege. Do not manufacture a local
+> proxy for the remaining external trust/owner obligations.
+
+> ## 2026-09-01 C70 MINIMAL INFO-ZIP CHILD ENVIRONMENT — C6 PARTIAL, HOST TRUST EXTERNAL
+>
+> Contract: invoke Info-ZIP with an explicit environment containing exactly the
+> parent verifier's `PATH` (or `/usr/bin:/bin` when it is absent), `LANG=C`, and
+> `LC_ALL=C`. A dedicated executable probe must receive the expected PATH and
+> fixed locale but no unrelated parent marker and no `TMPDIR`; it must still
+> observe C69's exact **0700** private working directory and C68's exact stable
+> bytes through an access-mode-zero descriptor on the **0400** inode. Existing
+> hostile probes may embed their fixture paths in their generated scripts, but
+> production code must not introduce a test-only environment pass-through.
+>
+> This reduces direct ambient-environment disclosure to a cooperative Info-ZIP
+> process and its ordinary diagnostics. It is not secret isolation or a sandbox:
+> the inherited PATH still selects the executable, a malicious same-UID process
+> may be able to inspect the parent or other host state, and root/host/executable
+> provenance remains external. It does not attest or normalize the release build
+> environment. No invariant or production-trust status moves.
 
 > ## 2026-09-01 C69 PRIVATE INFO-ZIP WORKING DIRECTORY — C6 PARTIAL, HOST TRUST EXTERNAL
 >
