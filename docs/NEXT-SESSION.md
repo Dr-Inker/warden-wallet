@@ -1,5 +1,94 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C34 CLOSED; C35 NOT STARTED
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the next Warden implementation/review session.
+> - **TASK:** continue C6 with one bounded C35 contract: add an executable,
+>   sequential same-host two-clean-checkout determinism rehearsal for the
+>   extension release. Begin with a fresh read-only map and real RED. Each
+>   checkout must install from the frozen lockfile, run the incumbent release
+>   gate, and compare every generated release file by exact bytes/hash. Record
+>   the source SHA, declared/observed toolchain, commands, checkout model, and
+>   compared hashes. Call it a local rehearsal, never two independent builders,
+>   a signed-tag build, off-host provenance, or production release evidence.
+> - **CWD:** `/opt/warden`.
+> - **BASE:** C34 implementation
+>   `4bfb2c3ef7ae17f43bed952a19a6c8f66b333755`; ledger-inclusive, fully gated
+>   SHA `6b20ef3866d9ee54354c779620668925c6e360bc`. The documentation-only commit
+>   containing this memo is intentionally not described as gate green.
+> - **READ:** this memo and the C34/C33 entries immediately below; C6 in the
+>   client-security plan; `apps/extension/package.json`; the release package,
+>   verifier, recipe-evidence module, and focused tests; root `.gitignore` and
+>   pnpm workspace/install configuration; `docs/TOOLCHAIN.md`; and
+>   `docs/security/RELEASE-INTEGRITY.md`.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the smallest local dual-checkout runner, unit/integration test,
+>   package command, and release documentation set required by the measured
+>   contract.
+> - **DO_NOT_TOUCH:** `.superpowers/**`,
+>   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
+>   publisher/account state, secrets, the empty production release registry,
+>   or the C1a production extension-id/permitted-origin owner decision. Do not
+>   call shared-host/shared-store local checkouts independent builders or a
+>   signed release.
+> - **ACCEPT:** executable RED; two separately materialized clean source
+>   checkouts at one exact SHA; sequential frozen-lockfile installs and release
+>   gates; exact comparison of ZIP, manifest, and four sidecars; mismatch and
+>   missing-file refusal tests; canonical machine-readable report without temp
+>   paths; exact-SHA integration evidence; cleanup after success/failure; a
+>   committed/full-gated ledger; and explicit same-host/shared-toolchain/store
+>   limits. Keep the provider fixed unavailable.
+> - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, temporary clean
+>   checkouts and package installs under `/tmp`, ignored generated extension
+>   artifacts, and git commits only; no deploy, upload, publishing, live service,
+>   external message, secret creation, legal ruling, or real-account/funds
+>   mutation.
+> - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
+>   and outcomes, checkout/install model, compared file hashes, cleanup result,
+>   unchanged or promoted invariants, independent-review status, explicit
+>   coverage gaps, and remaining owner/counsel/external-state blockers.
+>
+> **C34 ledger-inclusive gate:** from a clean tree at
+> `6b20ef3866d9ee54354c779620668925c6e360bc`, this exact command exited **0**
+> and printed that same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && if rg -n 'release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|warden\.extension-artifact\.v5|warden\.extension-production-dependency-evidence\.v1|warden\.extension-js-bundle-input-evidence\.v1|warden\.extension-static-input-evidence\.v1|warden\.extension-release-recipe-input-evidence\.v1' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed action pins **2/2**, core **700/700**, extension **502/502**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
+> measured Argon2 benchmark, canonical ZIP/four-sidecar verification,
+> independent Info-ZIP parsing, emitted release-tooling exclusion, diff checks,
+> and both clean-tree guards. Release verification measured **8 files**, **60
+> production/peer components**, **4 JavaScript bundles**, **101 positive bundle
+> inputs**, **4 static source/output records**, and **15 recipe inputs**. At this
+> ledger SHA the 3,227-byte recipe sidecar SHA-256 was
+> `f9ce8ff71b3527d8f67bbdea309fe5cadad9c5055cf7b16384d25387bec81a2e`,
+> static-sidecar SHA-256 was
+> `4837aec9fd68fa5a70f7e422c3f4a2350e39f6aa13b3cdd2b681e83a04a9c152`,
+> bundle-sidecar SHA-256 was
+> `382cc69c61fb23a594677a416a992f21d45b8c1260fa49cb17e2e34083998a7e`,
+> artifact-manifest SHA-256 was
+> `54ef5a4a86f405784588d38bb59bc036cf9340100e96fa1506d540c4a73be73d`,
+> dependency-sidecar SHA-256 was
+> `f396395efddc46e43c35d4f76e6fe6562e17929850c215612d05496841a3e808`,
+> payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`,
+> and ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`.
+> Known Anchor test-middleman key mismatch, legacy macro-`cfg`, and Rust
+> unused-code warnings remained non-fatal. Independent second-model review is
+> still **UNVERIFIED**.
+>
+> **Stop state:** C34 is closed. C35 has no code, RED, edit lease, dependency
+> change, release-registry edit, deployment, publisher action, or legal
+> adjudication. The ignored local `apps/extension/release/` output may exist; it
+> is reproducible evidence, not a tracked or reviewed release candidate.
+
 > ## 2026-09-01 C34 DETERMINISTIC RELEASE-RECIPE INPUT EVIDENCE — C6 PARTIAL, EXECUTION/ENVIRONMENT COVERAGE NOT CLAIMED
 >
 > Implementation commit
@@ -98,10 +187,10 @@
 >   `verify-release.mjs`: **6,002 bytes**, SHA-256
 >   `f41053b1165a2e4018108e62560ca7543655f40de3b88d0313ac9b62c318e92d`.
 >
-> Independent second-model review remains **UNVERIFIED**. A ledger-inclusive
-> full repository gate is intentionally deferred until this record is
-> committed; a later pickup memo must cite its exact SHA before calling C34
-> fully closed.
+> Independent second-model review remains **UNVERIFIED**. The ledger-inclusive
+> full repository gate subsequently passed at
+> `6b20ef3866d9ee54354c779620668925c6e360bc`; the clean-break pickup memo
+> immediately above records its exact executable command and measurements.
 >
 > **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
 > `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
