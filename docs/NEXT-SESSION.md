@@ -1,24 +1,29 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C64 IMPLEMENTED; FULL LEDGER GATE PENDING
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C64 CLOSED; C65 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** close the bounded C64 stable-byte Info-ZIP slice. Commit this
->   evidence ledger, run the exact clean-SHA FULL gate, then record the result
->   in a docs-only close memo. Do not broaden into executable provenance,
->   production trust, or a new C65 contract before C64 is closed.
+> - **TASK:** continue C6 with one bounded C65 contract: keep the stable archive
+>   copy open, unlink its temporary name, and make Info-ZIP inspect the still-
+>   open descriptor through procfs so pathname replacement cannot redirect the
+>   independent parser. Begin with executable RED proving replacement of C64's
+>   named temp file currently changes the bytes the probe reads. Preserve exact
+>   **0/6/7**, separator/default behavior, order, output, modes, cleanup, and
+>   canonical checks. Do not claim executable or hostile-host trust.
 > - **CWD:** `/opt/warden`.
 > - **BASE:** C64 behavioral RED
 >   `1d925595e5c59c55ab7d1ae6293bf9b01ee73532`; implementation
 >   `b50dd7c585311ca2fc5adb4f398d28b5975d6923`; mode/cleanup evidence
->   `246563d521326b820a00756363638af0de6b1fdd`; C63 final fully gated SHA
->   `fb46c916c6a0013666fcf62f3f5a7e94b0ab4cc0`.
-> - **READ:** this memo and the C64/C63/C62/C52/C51/C50/C36 entries; the exact
->   C64 FULL command below; C6 in the client-security plan; current clean status.
-> - **WRITE (edit lease):** `docs/NEXT-SESSION.md` only for C64 closeout after
->   the full gate. Source, tests, and security docs are implementation-complete.
+>   `246563d521326b820a00756363638af0de6b1fdd`; evidence ledger and final fully
+>   gated SHA `01eddd67adaeb917f5dfb97bf8ce3e86f7aa0f51`.
+> - **READ:** this memo and the C64/C63/C52/C51/C50/C36 entries; C6 in the
+>   client-security plan; upload verifier/probe test, shared procfs reader,
+>   Node file-handle lifetime, Info-ZIP invocation, docs, and temp cleanup.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the upload verifier, focused probe test and docs, scoped ledger,
+>   and recipe evidence strictly changed by the already-bound verifier.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -27,11 +32,12 @@
 >   sign production bytes, publish, weaken C36/C38–C64 policy, or invent store
 >   provenance, freshness, reviewer, builder-independence, key-strength,
 >   publisher, or lifecycle policy.
-> - **ACCEPT:** retain executable path-replacement RED; exact stable-byte digest,
->   **0700/0600** temp modes, success/failure cleanup, all C63 refusals,
->   direct/pnpm **0/6/7**, optional unpacked tree, canonical checks, unchanged
->   output, 25-input recipe binding, and exact-SHA focused/extension evidence.
->   Add only a committed clean-SHA FULL result; provider stays fixed unavailable.
+> - **ACCEPT:** executable named-temp replacement RED; Info-ZIP receives the
+>   procfs path of the exact still-open archive descriptor after its filesystem
+>   name is removed; descriptor and **0700** directory close/remove on success
+>   and failure; C64/C63 tests, direct/pnpm **0/6/7**, optional unpacked tree,
+>   canonical checks, unchanged output, 25-input recipe binding, and exact-SHA
+>   gates stay green; provider stays fixed unavailable.
 > - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
 >   extension artifacts, ephemeral GnuPG/files/repos/launchers/CRX fixtures
 >   under `/tmp`, and git commits only; no network key/package retrieval,
@@ -83,9 +89,9 @@
 > unused-code warnings remained non-fatal. Independent second-model review
 > remains **UNVERIFIED**.
 >
-> **Stop state:** C64 has executable RED and a clean implementation with focused,
-> release, and extension-wide evidence recorded below. Its evidence-ledger
-> commit and repository-wide FULL gate are the only remaining closeout steps.
+> **Stop state:** C64 is closed at the exact clean, fully gated evidence-ledger
+> SHA and command recorded below. C65 has no code, RED, or edit lease; Info-ZIP
+> receives C64's private but still named temporary archive path.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -164,13 +170,41 @@
 > `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
 > and `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
 >
-> After committing this evidence ledger, run this exact FULL command from its
-> clean SHA. It is not green until its exit, repeated SHA, and measurements are
-> recorded in the close memo:
+> Evidence-ledger commit and final fully gated SHA
+> `01eddd67adaeb917f5dfb97bf8ce3e86f7aa0f51` ran this exact FULL command from
+> a clean tree. It exited **0** and printed that same SHA before and after:
 >
 > ```sh
 > git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'release-cli-arguments|normalizeReleaseCliArguments|release-input-file|readBoundedRegularFile|O_NOFOLLOW|MAX_UPLOAD_ARCHIVE_BYTES|MAX_UPLOAD_ARTIFACT_MANIFEST_BYTES|MAX_UPLOAD_EVIDENCE_BYTES|verifyArchiveWithInfoZip|warden-release-unzip|release-source-tag-message|print-release-source-tag-message|formatReleaseTagMessage|warden\.extension-release-tag\.v1|artifact-manifest-sha256|expected-default-artifact-manifest-sha256|expected-artifact-manifest-sha256|expected-detached-signature-sha256|source tag signed|source tag verifier returned|artifact signature verifier returned|artifact manifest sha256|reviewed artifact manifest differs|detached signature differs|openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|expectedArtifactManifestSha256|signedArtifactManifestSha256|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|reviewedUploadArchive|storePackage|expectedPackageSha256|expectedStorePackageSha256|expectedStoreExtensionId|dualReleaseReport|expectedDualReleaseReportSha256|artifactManifestSha256|boundReleaseFileCount|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-release-verify-cli-test-*' -o -name 'warden-release-unzip-*' -o -name 'warden-release-tag-message-cli-test-*' -o -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
 > ```
+>
+> It passed action pins **2/2**, core **700/700**, extension **592/592**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
+> measured Argon2 benchmark, canonical ZIP/five-sidecar verification with
+> **25** recipe inputs, stable-copy Info-ZIP parsing, the real sequential two-
+> clean-checkout rehearsal, emitted release-tooling exclusion, selected temp
+> cleanup, diff checks, and both clean-tree guards. Argon2 elapsed p50/p95 were
+> **939.1/965.3 ms**, host-task delay p50/p95 were **63.2/69.1 ms**, and
+> password-buffer wiping was true. The final rehearsal compared **14** files
+> and produced a **3,810-byte** canonical report with SHA-256
+> `58c24376ce506f73350f33d26e3dea98c83774ab8318e13dd0013bbc1c34447a`.
+> At this ledger SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `8c2ef6886aa451f8ef282d4bfa7e0ecaf1543020180ce123b96773c61c5a0ca5`,
+> `3f45416e080ce42da1b46f55adeea9d3e9af404f3511ab19db1bd9f7684e3736`,
+> `4b648253555ecabdef228b1756dc9db604a662fb56588b513b6414628ad66d89`,
+> `91e6167b1213ca7e22a32f1599d19cb0093766267a9613417e0e0ac7f0a0f62f`,
+> and `3bf9e55301c921659aa72c99997efe952ee94ba20ead011af1b2a4b1bce905b8`;
+> their byte sizes were **3,368**, **29,047**, **5,125**, **14,737**, and
+> **2,080**. ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> at **926,374 bytes**, and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> No selected fixture/verifier/rehearsal temp directory remained. Known Anchor
+> test-middleman key mismatch, legacy macro-`cfg`, target-`cfg`, and Rust
+> unused-code warnings remained non-fatal. Independent second-model review
+> remains **UNVERIFIED**.
 >
 > **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
 > `WRD-REL-03` remain `unimplemented`. A malicious same-user host can still
@@ -179,8 +213,7 @@
 > executable provenance. No production signer/reviewer/publisher authority,
 > real store return, off-host independent build, deployment, upload, legal
 > ruling, or trust-store mutation exists. Provider remains fixed unavailable.
-> Independent second-model review remains **UNVERIFIED**. The evidence-ledger
-> commit and FULL gate are pending.
+> Independent second-model review remains **UNVERIFIED**. C64 is closed.
 
 > ## 2026-09-01 C63 STABLE UPLOAD-VERIFIER FILE INPUTS — C6 PARTIAL, HOST TRUST EXTERNAL
 >
