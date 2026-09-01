@@ -30,11 +30,12 @@ steps ahead of the audit; the repository test cannot enforce host-side policy.
 unpacked payload, canonical Chrome Web Store upload ZIP, adjacent artifact
 manifest, and canonical `*.sbom.json` production-dependency evidence sidecar
 from a clean commit under the exact JavaScript toolchain pins in
-`docs/TOOLCHAIN.md`. The sidecar records the installed pnpm `--prod` closure and
-package-declared license strings without host paths or unsaved dependencies. It
-binds the clean source and ZIP hash; artifact-manifest schema v2 in turn binds
-the exact sidecar byte length and SHA-256. The verifier independently asks
-`unzip -t` to parse the archive and then fail-closes on archive metadata,
+`docs/TOOLCHAIN.md`. A read-only walk records the pnpm-installed `package.json`
+production closure and package-declared license strings without host paths or
+dev dependencies. It binds the clean source and ZIP hash; artifact-manifest
+schema v2 in turn binds the exact sidecar byte length and SHA-256. The verifier
+independently asks `unzip -t` to parse the archive and then fail-closes on
+archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
 payload-tree hash, whole-ZIP hash, sidecar-byte hash, source binding, archive
 binding, graph shape, or canonical JSON drift. Generated outputs are ignored;

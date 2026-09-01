@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative } from "node:path";
 
 export const PRODUCTION_DEPENDENCY_EVIDENCE_SCHEMA =
   "warden.extension-production-dependency-evidence.v1";
@@ -74,6 +76,185 @@ function assertSource(source) {
 
 function componentId(kind, name, version) {
   return `${kind === "registry" ? "npm" : "workspace"}:${name}@${version}`;
+}
+
+async function readPackageJson(packageDirectory) {
+  const packagePath = join(packageDirectory, "package.json");
+  let packageJson;
+  try {
+    packageJson = JSON.parse(await readFile(packagePath, "utf8"));
+  } catch (error) {
+    fail(`installed package.json is unreadable at ${packagePath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!isPlainObject(packageJson)) {
+    fail(`installed package.json root must be an object at ${packagePath}`);
+  }
+  return packageJson;
+}
+
+function isWithin(parent, candidate) {
+  const path = relative(parent, candidate);
+  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+}
+
+async function resolveInstalledDependency(fromDirectory, name, repositoryRoot) {
+  const packageSegments = name.split("/");
+  let cursor = fromDirectory;
+  while (true) {
+    const candidate = join(cursor, "node_modules", ...packageSegments);
+    try {
+      const candidateStat = await lstat(candidate);
+      if (!candidateStat.isDirectory() && !candidateStat.isSymbolicLink()) {
+        fail(`installed dependency path is not a directory or symlink: ${name}`);
+      }
+      const resolved = await realpath(candidate);
+      if (!isWithin(repositoryRoot, resolved)) {
+        fail(`installed dependency escapes the repository: ${name}`);
+      }
+      return resolved;
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) {
+      return undefined;
+    }
+    cursor = parent;
+  }
+}
+
+function productionDependencyDeclarations(packageJson, packageName) {
+  const dependencies = packageJson.dependencies ?? {};
+  const optionalDependencies = packageJson.optionalDependencies ?? {};
+  const peerDependencies = packageJson.peerDependencies ?? {};
+  const peerDependenciesMeta = packageJson.peerDependenciesMeta ?? {};
+  if (
+    !isPlainObject(dependencies) ||
+    !isPlainObject(optionalDependencies) ||
+    !isPlainObject(peerDependencies) ||
+    !isPlainObject(peerDependenciesMeta)
+  ) {
+    fail(`production dependency declarations are invalid for ${packageName}`);
+  }
+  const declarations = new Map();
+  for (const name of Object.keys(dependencies)) {
+    assertPackageName(name, `dependency name declared by ${packageName}`);
+    declarations.set(name, { optional: false });
+  }
+  for (const name of Object.keys(optionalDependencies)) {
+    assertPackageName(name, `optional dependency name declared by ${packageName}`);
+    if (!declarations.has(name)) {
+      declarations.set(name, { optional: true });
+    }
+  }
+  for (const name of Object.keys(peerDependencies)) {
+    assertPackageName(name, `peer dependency name declared by ${packageName}`);
+    if (!declarations.has(name)) {
+      const metadata = peerDependenciesMeta[name];
+      if (metadata !== undefined && !isPlainObject(metadata)) {
+        fail(`peer dependency metadata is invalid for ${packageName} -> ${name}`);
+      }
+      declarations.set(name, { optional: metadata?.optional === true });
+    }
+  }
+  return [...declarations.entries()].sort(([left], [right]) => compareUtf8(left, right));
+}
+
+export async function collectInstalledProductionDependencyReports({
+  rootDirectory,
+  repositoryRoot,
+}) {
+  const canonicalRepositoryRoot = await realpath(repositoryRoot);
+  const canonicalRootDirectory = await realpath(rootDirectory);
+  if (!isWithin(canonicalRepositoryRoot, canonicalRootDirectory)) {
+    fail("production dependency root must be inside the repository");
+  }
+  const registryRoot = join(canonicalRepositoryRoot, "node_modules");
+  const workspaces = new Map();
+  const visitedPackageRoots = new Set();
+  const licenseVersions = new Map();
+
+  async function inspectPackage(packageDirectory, expectedName) {
+    const packageJson = await readPackageJson(packageDirectory);
+    assertPackageName(packageJson.name, `installed package name at ${packageDirectory}`);
+    assertVersion(packageJson.version, `installed package version for ${packageJson.name}`);
+    if (expectedName !== undefined && packageJson.name !== expectedName) {
+      fail(`installed package identity disagrees: expected ${expectedName}, got ${packageJson.name}`);
+    }
+    const workspace = !isWithin(registryRoot, packageDirectory);
+    const node = workspace
+      ? { from: packageJson.name, version: `link:${packageJson.name}`, dependencies: {} }
+      : {
+        from: packageJson.name,
+        version: packageJson.version,
+        resolved: "https://registry.npmjs.org/",
+        dependencies: {},
+      };
+    if (workspace && !workspaces.has(packageJson.name)) {
+      workspaces.set(packageJson.name, {
+        name: packageJson.name,
+        version: packageJson.version,
+        dependencies: node.dependencies,
+      });
+    }
+    if (!workspace) {
+      const declaredLicense =
+        typeof packageJson.license === "string" && packageJson.license.length > 0
+          ? packageJson.license
+          : "Unknown";
+      const licenseKey = `${declaredLicense}\0${packageJson.name}`;
+      const versions = licenseVersions.get(licenseKey) ?? new Set();
+      versions.add(packageJson.version);
+      licenseVersions.set(licenseKey, versions);
+    }
+
+    if (visitedPackageRoots.has(packageDirectory)) {
+      delete node.dependencies;
+      return node;
+    }
+    visitedPackageRoots.add(packageDirectory);
+    for (const [dependencyName, declaration] of productionDependencyDeclarations(
+      packageJson,
+      packageJson.name,
+    )) {
+      const dependencyRoot = await resolveInstalledDependency(
+        packageDirectory,
+        dependencyName,
+        canonicalRepositoryRoot,
+      );
+      if (dependencyRoot === undefined) {
+        if (declaration.optional) {
+          continue;
+        }
+        fail(`required production dependency is not installed: ${packageJson.name} -> ${dependencyName}`);
+      }
+      node.dependencies[dependencyName] = await inspectPackage(dependencyRoot, dependencyName);
+    }
+    return node;
+  }
+
+  const rootPackage = await readPackageJson(canonicalRootDirectory);
+  const rootNode = await inspectPackage(canonicalRootDirectory, rootPackage.name);
+  const rootWorkspace = workspaces.get(rootPackage.name);
+  rootWorkspace.dependencies = rootNode.dependencies;
+
+  const licenseReport = {};
+  for (const key of [...licenseVersions.keys()].sort(compareUtf8)) {
+    const [license, name] = key.split("\0");
+    const records = licenseReport[license] ?? [];
+    records.push({
+      name,
+      versions: [...licenseVersions.get(key)].sort(compareUtf8),
+      license,
+    });
+    licenseReport[license] = records;
+  }
+  return {
+    dependencyReport: [...workspaces.values()].sort((left, right) => compareUtf8(left.name, right.name)),
+    licenseReport,
+  };
 }
 
 function collectDeclaredLicenses(licenseReport) {

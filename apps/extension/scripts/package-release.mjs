@@ -19,6 +19,7 @@ import { promisify } from "node:util";
 import { version as esbuildVersion } from "esbuild";
 
 import {
+  collectInstalledProductionDependencyReports,
   createProductionDependencyEvidence,
   serializeProductionDependencyEvidence,
   verifyProductionDependencyEvidenceAttachment,
@@ -61,14 +62,6 @@ function fail(message) {
 async function readJson(path, label) {
   try {
     return JSON.parse(await readFile(path, "utf8"));
-  } catch (error) {
-    fail(`${label} is not readable JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-function parseCommandJson(text, label) {
-  try {
-    return JSON.parse(text);
   } catch (error) {
     fail(`${label} is not readable JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -254,23 +247,11 @@ async function main() {
   const artifactManifestFileName = `warden-extension-${version}.artifact.json`;
   const dependencyEvidenceFileName = `warden-extension-${version}.sbom.json`;
   const archiveBytes = createCanonicalZip(entries);
-  const { stdout: dependencyReportOutput } = await run("pnpm", [
-    "--filter",
-    "@warden/extension...",
-    "list",
-    "--prod",
-    "--depth",
-    "Infinity",
-    "--json",
-  ]);
-  const { stdout: licenseReportOutput } = await run("pnpm", [
-    "--filter",
-    "@warden/extension...",
-    "licenses",
-    "list",
-    "--prod",
-    "--json",
-  ]);
+  const { dependencyReport, licenseReport } =
+    await collectInstalledProductionDependencyReports({
+      rootDirectory: appDirectory,
+      repositoryRoot,
+    });
   const { stdout: postInventoryStatus } = await run("git", [
     "status",
     "--porcelain=v1",
@@ -280,8 +261,8 @@ async function main() {
     fail(`dependency inventory changed the source tree:\n${postInventoryStatus.trimEnd()}`);
   }
   const dependencyEvidence = createProductionDependencyEvidence({
-    dependencyReport: parseCommandJson(dependencyReportOutput, "pnpm production dependency report"),
-    licenseReport: parseCommandJson(licenseReportOutput, "pnpm production license report"),
+    dependencyReport,
+    licenseReport,
     rootPackage: { name: "@warden/extension", version },
     source: releaseEnvironment.source,
     archiveFileName,

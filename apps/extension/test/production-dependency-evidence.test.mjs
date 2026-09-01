@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   PRODUCTION_DEPENDENCY_EVIDENCE_SCHEMA,
+  collectInstalledProductionDependencyReports,
   createProductionDependencyEvidence,
   parseProductionDependencyEvidence,
   serializeProductionDependencyEvidence,
@@ -13,6 +17,8 @@ import {
   createArtifactManifest,
   createCanonicalZip,
 } from "../scripts/release-artifact.mjs";
+
+const temporaryDirectories = [];
 
 const SOURCE = Object.freeze({
   gitCommit: "a".repeat(40),
@@ -35,6 +41,19 @@ const EXTENSION_MANIFEST = Object.freeze({
     extension_pages: "script-src 'self'; object-src 'self';",
   },
 });
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
+});
+
+async function writePackage(directory, packageJson) {
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`);
+}
 
 function payloadEntries() {
   return [
@@ -150,6 +169,60 @@ function makeEvidence(reverse = false, archiveBytes = Buffer.from("canonical zip
 }
 
 describe("canonical production dependency evidence", () => {
+  it("walks only installed production package.json dependencies and preserves missing licenses as Unknown", async () => {
+    const repositoryRoot = await mkdtemp(join(tmpdir(), "warden-installed-closure-test-"));
+    temporaryDirectories.push(repositoryRoot);
+    await writePackage(repositoryRoot, {
+      name: "@warden/extension",
+      version: "1.2.3",
+      dependencies: { runtime: "1.0.0" },
+      devDependencies: { "dev-only": "1.0.0" },
+    });
+    await writePackage(join(repositoryRoot, "node_modules", "runtime"), {
+      name: "runtime",
+      version: "1.0.0",
+      license: "MIT",
+      dependencies: { nested: "2.0.0" },
+      peerDependencies: { "peer-runtime": "3.0.0" },
+    });
+    await writePackage(join(repositoryRoot, "node_modules", "nested"), {
+      name: "nested",
+      version: "2.0.0",
+    });
+    await writePackage(join(repositoryRoot, "node_modules", "dev-only"), {
+      name: "dev-only",
+      version: "1.0.0",
+      license: "ISC",
+    });
+    await writePackage(join(repositoryRoot, "node_modules", "peer-runtime"), {
+      name: "peer-runtime",
+      version: "3.0.0",
+      license: "Apache-2.0",
+    });
+
+    const reports = await collectInstalledProductionDependencyReports({
+      rootDirectory: repositoryRoot,
+      repositoryRoot,
+    });
+    const evidence = createProductionDependencyEvidence({
+      ...reports,
+      rootPackage: { name: "@warden/extension", version: "1.2.3" },
+      source: SOURCE,
+      archiveFileName: "warden-extension-1.2.3.zip",
+      archiveBytes: Buffer.from("canonical zip fixture"),
+    });
+
+    expect(evidence.components.map((component) => component.id)).toEqual([
+      "npm:nested@2.0.0",
+      "npm:peer-runtime@3.0.0",
+      "npm:runtime@1.0.0",
+      "workspace:@warden/extension@1.2.3",
+    ]);
+    expect(evidence.components.find((component) => component.name === "nested")?.declaredLicense)
+      .toBe("Unknown");
+    expect(serializeProductionDependencyEvidence(evidence)).not.toContain("dev-only");
+  });
+
   it("is host-path independent, canonically ordered, and explicitly disclaims bundle coverage", () => {
     const forward = makeEvidence(false);
     const reverse = makeEvidence(true);
