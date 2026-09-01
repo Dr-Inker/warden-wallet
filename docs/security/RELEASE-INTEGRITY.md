@@ -53,15 +53,19 @@ reviewed-artifact detached-signature verifier plus their CLIs, and the one
 shared public-release-CLI argument normalizer. The verifier
 independently asks `unzip -t` to parse a private temporary copy of the same
 stable-read archive bytes. It opens and verifies a same-inode `O_RDONLY` handle
-after syncing the exclusive construction writer, closes the writer, removes the
-filesystem name, and passes only the live read-descriptor path to Info-ZIP.
+after syncing the exclusive **0600** construction writer, closes the writer,
+seals the inode to **0400** through that reader, verifies unchanged file type,
+device, inode, size, and exact mode, removes the filesystem name, and passes only
+the live read-descriptor path to Info-ZIP.
 After Info-ZIP exits it positionally rereads that same handle in bounded chunks
 and requires the exact original length and bytes. It closes/removes both handles
 and the directory on success or failure and never reopens the operator-supplied
 archive path. This
-is least privilege for the file description handed to the parser and detects a
-completed parser-side rewrite; it does not establish trust against a hostile
-process reopening procfs with greater rights or racing the comparison. It then
+is least privilege for the file description and cooperative non-root inode
+permissions handed to the parser and detects a completed parser-side rewrite;
+it does not establish trust against root, a writer opened before the seal, or a
+hostile process changing permissions/reopening procfs with greater rights or
+racing the comparison. It then
 fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,

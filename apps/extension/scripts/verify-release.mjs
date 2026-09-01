@@ -106,6 +106,17 @@ async function verifyArchiveWithInfoZip(archiveBytes) {
     }
     await temporaryArchiveWriteHandle.close();
     temporaryArchiveWriteHandle = undefined;
+    await temporaryArchiveReadHandle.chmod(0o400);
+    const sealed = await temporaryArchiveReadHandle.stat({ bigint: true });
+    if (
+      !sealed.isFile() ||
+      sealed.dev !== readable.dev ||
+      sealed.ino !== readable.ino ||
+      sealed.size !== readable.size ||
+      Number(sealed.mode & 0o777n) !== 0o400
+    ) {
+      throw new Error("temporary archive read-only seal differs from the synced archive");
+    }
     await unlink(temporaryArchivePath);
     const descriptorPath = `/proc/${process.pid}/fd/${temporaryArchiveReadHandle.fd}`;
     await execFile("unzip", ["-t", descriptorPath], {
