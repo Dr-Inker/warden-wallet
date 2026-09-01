@@ -105,6 +105,96 @@
 > exact digest, but production trust and operator-controlled signing remain
 > external.
 
+> ## 2026-09-01 C60 CANONICAL RELEASE-TAG MESSAGE GENERATOR — C6 PARTIAL, SIGNING AUTHORITY EXTERNAL
+>
+> Behavioral RED commit
+> `b12539e8f95fc2aa4f57db8b3f338e35987c0061` requires an exported formatter
+> for C59's exact signed artifact identity. The focused test failed because the
+> formatter was `undefined`. Implementation commit
+> `82eeda37cf18d07c577824017b704ce41ec79dae` added the formatter, read-only
+> command, tests, documentation, and recipe binding. Follow-up commit
+> `0c80c96b15ed34a51b9a706fe51543f0ba1d4250` accepts the literal conventional
+> `--` separator forwarded by pnpm and regression-tests both direct and pnpm
+> argument shapes.
+>
+> `release:source-tag-message` takes only a reviewed artifact-manifest path and
+> its independently recorded lowercase SHA-256. It uses the incumbent
+> `O_NOFOLLOW`, procfs-path-checked stable reader with the **8 MiB** artifact
+> ceiling, hashes before parsing, requires the exact digest and canonical
+> artifact serialization, then writes only
+> `warden.extension-release-tag.v1`, the one
+> `artifact-manifest-sha256 <lowercase-sha256>` line, and one terminal newline.
+> The C59 signed-tag parser now calls the same formatter when enforcing its
+> authenticated message bytes. The generator imports no Git/GnuPG execution,
+> creates no tag or file, accesses no key, and has no signing/pushing behavior.
+> Its source is the twenty-fourth exact release-recipe input.
+>
+> The RED was captured from clean SHA
+> `b12539e8f95fc2aa4f57db8b3f338e35987c0061` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag-message.test.mjs -t "formats the exact authenticated artifact identity for an operator"
+> ```
+>
+> It exited **1** with one failed test in **485 ms**: the expected function was
+> `undefined`. From clean final implementation SHA
+> `0c80c96b15ed34a51b9a706fe51543f0ba1d4250`, this exact focused/release
+> command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/scripts/print-release-source-tag-message.mjs && node --check apps/extension/scripts/release-source-tag.mjs && pnpm --filter @warden/extension exec vitest run test/release-source-tag-message.test.mjs test/release-source-tag.test.mjs test/release-input-file.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension release:gate && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-tag-message-cli-test-*' -o -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-recipe-evidence-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The five focused files passed **50/50**, typecheck passed, and the real release
+> gate packaged and verified **8** payload files, **60** production/peer
+> components, **4** JavaScript bundles, **101** positive bundle inputs, **4**
+> static inputs, the exact **24** release-recipe inputs, and independent Info-ZIP
+> parsing. Formatter/CLI tests cover exact bytes, direct and pnpm separator
+> shapes, wrong/uppercase/missing/extra digest arguments, noncanonical, empty,
+> oversized, and final-symlink artifacts; the shared reader's incumbent tests
+> retain parent-symlink and same-size mutation refusal.
+>
+> From the same clean SHA, this exact extension-wide command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'release-source-tag-message|formatReleaseTagMessage|warden\.extension-release-tag\.v1|artifact-manifest-sha256|expected-default-artifact-manifest-sha256|expected-artifact-manifest-sha256|expected-detached-signature-sha256|source tag signed|source tag verifier returned|artifact signature verifier returned|reviewed artifact manifest differs|detached signature differs|release-input-file|readBoundedRegularFile|O_NOFOLLOW|verify-release-source-tag|release-source-tag|verify-reviewed-artifact-signature|reviewed-artifact-signature|verify-store-package|store-package|expectedArtifactManifestSha256|signedArtifactManifestSha256|artifactManifestSha256|artifactReview|reviewedUploadArchive|storePackage|expectedStorePackageSha256|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-tag-message-cli-test-*' -o -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed extension **577/577**, typecheck/build, emitted release-tooling
+> exclusion, selected temp cleanup, diff checks, and both clean-tree guards. At
+> this implementation SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `0a94b21bcad6a3469f7fa0f2f9979b0c69ff761f173a474d7ed0859e7c855c6d`,
+> `2ddc2c6b7bdadc210810afc998c2139916d397c15684ae9c4ba8055d9f74146a`,
+> `fa8bca60c99a660c63ab50080a9fd095612f10e609c2388eeb8e36f77d5148e1`,
+> `d9e94eee6e7b801e60bd53a93aedba9fff22fd29c438f4983fe228866a719b3e`,
+> and `8e267df045f1cde56393ee11378566e738bdbc311b06851042577533d68073e2`.
+> The **4,938-byte** recipe sidecar named 24 inputs. The **1,444-byte** printer
+> was SHA-256
+> `efe3b06c06c1154b0c3abb7c370409a520d0ee19b52838e2b45c844572d2f5a9`;
+> the shared formatter/verifier module was **36,830 bytes** at SHA-256
+> `394033ae8c8d736d77a8d722cca524d0f2bae51cd7e110bcfe15a8c245a5401b`.
+> ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> With that exact artifact digest, the documented pnpm command emitted exactly:
+>
+> ```text
+> warden.extension-release-tag.v1
+> artifact-manifest-sha256 0a94b21bcad6a3469f7fa0f2f9979b0c69ff761f173a474d7ed0859e7c855c6d
+> ```
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; no production tag/message/artifact,
+> signer/reviewer/key authority, off-host independent build, real store return,
+> publisher control, deployment, or legal adjudication exists. Provider routing
+> remains fixed unavailable. Independent second-model review remains
+> **UNVERIFIED**. The repository-wide ledger-inclusive gate has not yet run for
+> C60; no such claim is made.
+
 > ## 2026-09-01 C59 SIGNED TAG ARTIFACT PIN — C6 PARTIAL, SIGNER AUTHORITY EXTERNAL
 >
 > Behavioral RED commit
