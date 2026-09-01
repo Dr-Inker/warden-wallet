@@ -88,6 +88,123 @@
 > `WRD-REL-02`, and `WRD-REL-03` remain `unimplemented`; C36 is deliberately
 > fixture/parser/comparator evidence only.
 
+> ## 2026-09-01 C37 SIGNED RELEASE-SOURCE PRECONDITION — C6 PARTIAL, SYNTHETIC TAG ONLY
+>
+> Implementation commit
+> `b21184003e7d1c67cb5a3f8fbf257a7c00404374` adds a fail-closed
+> annotated-tag/source/signature verifier, explicit CLI/package command,
+> machine-readable GnuPG status parser, ephemeral Git/GPG integration fixtures,
+> release-recipe binding, and scoped release documentation. The release-recipe
+> record now binds **19** reviewed non-payload files. There was no dependency or
+> lockfile change, payload-byte change, production tag/key/trust-store edit,
+> fetch/push, deployment, Web Store/publisher action, provider-route change,
+> legal ruling, secret persistence, or real-account/funds mutation.
+>
+> Real RED was captured from clean SHA
+> `81ad05e1dcf630e526eefa3d9fb2c3842517b65a` before implementation:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs
+> ```
+>
+> It exited **1** because `test/release-source-tag.test.mjs` did not exist. At
+> clean implementation SHA `b21184003e7d1c67cb5a3f8fbf257a7c00404374`,
+> this exact command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension release:gate && if rg -n 'release-source-tag|verify-release-source-tag|extension release source tag|GNUPGHOME must explicitly select' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The focused files passed **21/21** tests. The real upload release gate then
+> measured **8** payload files, **60** production/peer components, **4**
+> JavaScript bundles, **101** positive bundle inputs, **4** static inputs, and
+> **19** release-recipe inputs; independent Info-ZIP parsing, emitted-tooling
+> exclusion, diff checks, and both clean-tree guards passed.
+>
+> The **6** signed-source tests generate an Ed25519 signing key only in a
+> mode-0700 temporary `GNUPGHOME` and create/sign/mutate refs only in a
+> temporary Git repository. The accepted fixture is one exact annotated tag
+> object whose `object` header directly names the artifact source commit. The
+> production API requires separate caller inputs for tag name, full lowercase
+> tag-object SHA, full 40/64-hex primary OpenPGP fingerprint, parsed artifact,
+> and an explicit absolute existing `GNUPGHOME`; it never derives those
+> identity anchors from the candidate.
+>
+> Verification resolves only exact `refs/tags/<name>`, checks the ref against
+> the expected object before and after signature verification, bounds the tag
+> object to **1,048,576 bytes**, and requires exactly one each of the `object`,
+> `type commit`, matching `tag`, and nonempty `tagger` headers. It verifies the
+> expected object SHA rather than the mutable ref with absolute `/usr/bin/git`
+> and `/usr/bin/gpg`, command-line `gpg.format=openpgp`, both generic and
+> OpenPGP-specific program pins, and system/global/environment Git-config
+> suppression. The fixture deliberately installs hostile local and
+> environment verifier overrides; the pinned command still passes.
+>
+> The raw-status parser requires exactly one `NEWSIG`, terminal `GOODSIG`, and
+> cryptographic `VALIDSIG`; cross-checks the `GOODSIG` identity against the
+> signing fingerprint; and binds `VALIDSIG`'s primary fingerprint to the full
+> independent value. A real cryptographically tampered tag, force-moved tag,
+> lightweight tag, wrong artifact commit, wrong primary fingerprint,
+> revision-like name, missing explicit keyring, nested target, duplicate tag
+> header, duplicate signature/status, expired-key status, and unavailable-key
+> status all fail. Unknown future status keywords are ignored per the installed
+> GnuPG machine-interface contract.
+>
+> Git primary-source documentation for `verify-tag --raw` and annotated versus
+> lightweight/signed tags, GnuPG unattended-use documentation, and the locally
+> installed GnuPG 2.4.4 `DETAILS` status contract were checked on 2026-09-01
+> and linked from repository docs. No tag exists in this repository and the
+> production CLI was deliberately not run: no owner-selected production tag,
+> tag-object anchor, signer fingerprint, or verification keyring exists.
+>
+> At the implementation SHA, the verifier core was **12,101 bytes** with
+> SHA-256
+> `dbba82008fb6c26ad16d4cb4c05d5abe7fd73ef9ceef160bd79638d1276224e4`;
+> the **2,068-byte** CLI SHA-256 was
+> `dfc5710a3e1cef3f1d13e75066c5c04d1e65bb173ce2fc984dc879b228696d96`;
+> and the **9,900-byte** focused test SHA-256 was
+> `3ca9439539ea5d60d935c612570a5254151d15c4a763e1ea3192a882ebc8dab7`.
+> The generated artifact, bundle, recipe, dependency, and static sidecar
+> SHA-256 values were respectively
+> `a657d08e87bdab6cee08effe19de574f6401714aa6af1fe16446edc7197fb33a`,
+> `7def5b031abf7d7570d5d28dd10a0bf615db3f7ad0b443820741df5ea2709d41`,
+> `73f728963f960a7402374923ebc1d4d25379e42342da394c455c0af5c40ca1c0`,
+> `c12c7e55eb8aa3fc292ce0f281032a9896f226e23ed8fce36d9fdb28004fb290`,
+> and `8ec2acaf73a17d58d07eaa191afd65cc9a7dc0d5752832fb562442d1711be3a8`;
+> the recipe sidecar was **3,974 bytes** and named 19 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'release-source-tag|verify-release-source-tag|extension release source tag|GNUPGHOME must explicitly select' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d -name 'warden-release-source-tag-test-*' -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **523/523**, typecheck/build passed, release
+> verification tooling remained absent from `dist`, no fixture temp directory
+> remained, and diff/clean-tree guards passed.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable. C37 is a
+> synthetic release-source precondition, not evidence of a real signed release
+> or independent build. Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** the tag-object SHA and primary fingerprint must be
+> anchored independently or the comparison is circular. The unsigned artifact
+> JSON still needs an external reviewed anchor. The caller-selected GnuPG home,
+> installed Git/GnuPG executables, OS, and their runtime behavior are not
+> attested. A configured GnuPG home controls local key material and auxiliary
+> behavior. There is no production tag/key convention, key ceremony, expiry or
+> rotation policy, independent builder, provenance signature, publisher-
+> control evidence, off-host run, real store comparison, legal disposition,
+> external audit, deployment, or real-funds evidence. The ledger-inclusive
+> full repository/release/rehearsal gate is still pending at this entry.
+
 > ## 2026-09-01 C36 STORE-RETURNED CRX3 PAYLOAD VERIFIER — C6 PARTIAL, REAL WEB STORE PACKAGE NOT CLAIMED
 >
 > Implementation commit
