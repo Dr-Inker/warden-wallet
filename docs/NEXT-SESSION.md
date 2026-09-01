@@ -1,5 +1,108 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 C33 DETERMINISTIC STATIC-PAYLOAD SOURCE EVIDENCE — C6 PARTIAL, BUILD-ENVIRONMENT COVERAGE NOT CLAIMED
+>
+> Implementation commit
+> `f4fc63b3789a4552a94b29a491e26f1749eb7156` adds canonical
+> `warden.extension-static-input-evidence.v1`, artifact-manifest schema v4,
+> exact build-source transformation descriptors, strict
+> generation/parsing/attachment verification, package/verify integration,
+> focused tamper tests, and scoped release documentation. There was no
+> dependency/lockfile change, payload-byte change, deployment, registry edit,
+> Web Store or publisher action, secret, legal ruling, provider-route change,
+> or real-account/funds mutation.
+>
+> Real RED was captured before implementation:
+>
+> ```sh
+> pnpm --filter @warden/extension exec vitest run test/static-input-evidence.test.mjs
+> ```
+>
+> It exited **1** because the focused contract did not exist. The first
+> four-file focused run after implementation also correctly remained red because
+> its tamper fixture replaced a nonexistent `21`-byte value and therefore made
+> no mutation; the vector was corrected to the measured `22` bytes before any
+> green claim.
+>
+> At clean implementation SHA
+> `f4fc63b3789a4552a94b29a491e26f1749eb7156`, this exact command exited **0**
+> and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/static-input-evidence.test.mjs test/bundle-input-evidence.test.mjs test/production-dependency-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension release:gate && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The four focused files passed **24/24** tests, then package/verify passed for
+> the canonical ZIP, all three evidence sidecars, canonical unpacked tree, and
+> independent `unzip -t` reader. Tests prove canonical ordering independent of
+> build-result/payload order and host paths; exact three-byte-copy plus one
+> JSON-canonicalization mapping; actual source/output byte and hash capture;
+> missing/extra mapping refusal, including an invented icon; transformation
+> drift refusal; sidecar/manifest/archive/output binding; byte tamper refusal;
+> and duplicate-key/noncanonical JSON refusal. The incumbent bundle,
+> dependency, and artifact tests remain **4/4**, **5/5**, and **11/11**.
+>
+> From the same clean SHA, this exact command also exited **0** and printed the
+> same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|warden\.extension-artifact\.v4|warden\.extension-static-input-evidence\.v1' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **498/498**, typecheck/build passed, release
+> tooling remained absent from `dist`, and diff/clean-tree guards passed.
+>
+> `pnpm --filter @warden/extension release:gate` was then rerun at the same
+> clean SHA and exited **0** again. Both successful runs produced exactly **4
+> static source/output records** in a **2,080-byte** sidecar with SHA-256
+> `9aba3374143a6f0684e74cb420da293c4a78a6241da4f9dc9a76c5e98eab5ce4`.
+> The bundle-sidecar SHA-256 was
+> `ffc2ccf10077533a2b1704a38909b6d2b782729f0009505e1c956dcbfb236991`,
+> artifact-manifest SHA-256 was
+> `632b9c88a989e97b86c66aef0560dac8dcbb3eb5034f74efa6ad71c88fc573ef`,
+> dependency-sidecar SHA-256 was
+> `025f7ad258827a062a22c1a21f498bfc70d167ba846013b82ff81d81b7988214`,
+> payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`,
+> and ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`.
+> A scan found no `/opt/`, `/root/`, `node_modules`, `devDependencies`,
+> `unsavedDependencies`, or `icon` string in the new sidecar.
+>
+> Per-file measurements are executable data, not prose grading:
+>
+> - `approval.css`: byte-copy, **6,670 source/output bytes**, SHA-256
+>   `07160245b22dc387603c5eff9f8f63c32370b6ccf0e843563743e4e01a302c8a`.
+> - `approval.html`: byte-copy, **4,867 source/output bytes**, SHA-256
+>   `1637e2d726600b55acc42514ab63b1afab72fcc48675cec5d0bef246588a620c`.
+> - `manifest.json`: JSON parse/two-space/newline transformation, **671 source
+>   bytes** with SHA-256
+>   `8aabfe8907d3324ecff46a169f3fed3ac895ccabea207adb2b2aac24cb7bc662`
+>   to **719 output bytes** with SHA-256
+>   `5c80be31ad528469321db91a1fd63b1c00c83efe30bb8688fbd889c45e4de350`.
+> - `popup.html`: byte-copy, **377 source/output bytes**, SHA-256
+>   `94de7cf71c619bdab05a28242a3050ab9ce31d71666d05a3eeac80c255c6e6ae`.
+>
+> Independent second-model review remains **UNVERIFIED**. A ledger-inclusive
+> full repository gate is intentionally deferred until this record is
+> committed; a later pickup memo must cite its exact SHA before calling C33
+> fully closed.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+> Production provider routing remains fixed unavailable. C33 changes release
+> evidence only.
+>
+> **Harsh residual:** C33 source-hashes the exact four non-JavaScript files in
+> today's eight-file payload and refuses invented records; it does not prove
+> that absent icons or other assets should exist. Together C32/C33 now map all
+> eight emitted payload files, but neither captures esbuild/build-script source,
+> build configuration, environment variables, OS/runtime behavior, or toolchain
+> executable bytes. Source and payload evidence remains unsigned and
+> co-generated. There is still no independent builder, provenance signature,
+> store-returned-package comparison, publisher-control evidence, off-host run,
+> legal disposition, external audit, deployment, or real-funds evidence.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C32 CLOSED; C33 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
