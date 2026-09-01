@@ -1,5 +1,109 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C47 CLOSED; C48 NOT STARTED
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the next Warden implementation/review session.
+> - **TASK:** continue C6 with one bounded C48 contract: align the incumbent
+>   standalone store-package verification entry point with C47's exact-package
+>   rule by requiring an independently supplied lowercase CRX SHA-256 and
+>   checking it before CRX parsing. Begin with a fresh read-only map and a real
+>   CLI-level RED showing that a separately selected digest cannot be ignored.
+>   Preserve C36's strict CRX3/envelope/payload verification, C47's composed
+>   signed-source lane, independently supplied extension id, official production
+>   publisher-key requirement, and honest synthetic/offline scope. Do not fetch
+>   or claim a real Web Store package.
+> - **CWD:** `/opt/warden`.
+> - **BASE:** C47 behavioral RED
+>   `aacc49143c1cee80bed00baa05bee3f884ee923a`; implementation
+>   `3022d5241d1b067b532b834b581f79eb8b2a1d0e`; ledger-inclusive, fully gated
+>   SHA `c34375cead91064cbaddd373a859e15da4978359`. The documentation-only commit
+>   containing this memo is intentionally not described as gate green.
+> - **READ:** this memo and the C47/C46/C36 entries; C6 in the client-security
+>   plan; `apps/extension/scripts/store-package.mjs`, its standalone CLI and
+>   fixtures/tests; C47's exact-digest-before-parse composition and ordering
+>   tests; release-recipe evidence/tests; `apps/extension/README.md`; and
+>   `docs/security/RELEASE-INTEGRITY.md`.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the smallest standalone expected-package-digest boundary,
+>   command-line plumbing, CLI-level digest/ordering RED and refusals, recipe
+>   binding if the reviewed file set changes, and scoped docs.
+> - **DO_NOT_TOUCH:** `.superpowers/**`,
+>   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
+>   publisher/account state, production tags/keys/trust stores, secrets, the
+>   empty production release registry, or the C1a production extension-id/
+>   permitted-origin owner decision. Do not fetch a store package/key, push,
+>   tag, sign production bytes, publish, weaken C36/C39–C47 policy, or invent
+>   store provenance, freshness, reviewer, builder-independence, key-strength,
+>   publisher, or lifecycle policy.
+> - **ACCEPT:** executable CLI-level RED proving the standalone verifier accepts
+>   a candidate without comparing an independently supplied exact digest;
+>   mandatory lowercase expected SHA-256; mismatch refused before CRX parsing;
+>   valid exact digest preserves C36's strict verifier/report; usage/docs match
+>   the new interface; C47's composed exact digest and all earlier strict
+>   refusals remain; exact-SHA focused/release evidence; committed/full-gated
+>   ledger; and explicit synthetic-CRX versus real-store and same-host versus
+>   independent limits. Keep the provider fixed unavailable.
+> - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
+>   extension artifacts, ephemeral keys/files/repos/launchers/CRX fixtures under
+>   `/tmp`, and git commits only; no network key/package retrieval, production
+>   signature/key/tag, deploy, upload, publishing, live service, external
+>   message, secret persistence, legal ruling, or real-account/funds mutation.
+> - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
+>   and outcomes, standalone/composed package-digest behavior, exact artifact/
+>   upload/report/signature/CRX relationships and digests, preserved scope,
+>   unchanged or promoted invariants, independent-review status, explicit
+>   synthetic/production and same-host/independent gaps, and remaining owner/
+>   counsel/external-state blockers.
+>
+> **C47 ledger-inclusive gate:** from a clean tree at
+> `c34375cead91064cbaddd373a859e15da4978359`, this exact command exited **0**
+> and printed that same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|reviewedUploadArchive|storePackage|expectedStorePackageSha256|expectedStoreExtensionId|dualReleaseReport|expectedDualReleaseReportSha256|artifactManifestSha256|boundReleaseFileCount|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed action pins **2/2**, core **700/700**, extension **560/560**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
+> measured Argon2 benchmark, canonical ZIP/five-sidecar verification with
+> **22** recipe inputs, independent Info-ZIP parsing, the real sequential
+> two-clean-checkout rehearsal, emitted release-tooling exclusion, all seven
+> temp-directory cleanup checks, diff checks, and both clean-tree guards. The
+> Argon2 elapsed p50/p95 were **924.1/958.4 ms**, host-task delay p50/p95 were
+> **62.4/67.9 ms**, and password-buffer wiping was true. The final rehearsal
+> compared **14** files and produced a **3,810-byte** canonical report with
+> SHA-256
+> `b87c7370308ce9169f4d483474fe85db800ae9594af5e5045d5d0dddd904aca3`.
+> At this ledger SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `9ac44dbf943dd566e7be0f5a813149a7c673153977e1a946f4f15c7d9d994b01`,
+> `739f5642a306cea138dfed93863254afb30fb90751dd3c6091411168d17c6334`,
+> `b66b7c4d455daaaf08c0098fff3a9981de31341c9035fb9a4169af62dea19d13`,
+> `2a22f09b679a9d0363d5e5e9c411d81483c897dd6b79265dbc83d6c9937c8147`,
+> and `6a692a9013f04007700ffbf62c5b5feff0a3dc4c701bcba7bb1b9f8c34877093`;
+> the recipe sidecar was **4,553 bytes** and named 22 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> No dual-release, store-verifier, GPG-launcher, OpenPGP-policy, signed-source,
+> or reviewed-artifact fixture/verifier temporary directory remained. Known
+> Anchor test-middleman key mismatch, legacy macro-`cfg`, and Rust unused-code
+> warnings remained non-fatal. Independent second-model review is still
+> **UNVERIFIED**.
+>
+> **Stop state:** C47 is closed. C48 has no code, RED, edit lease, dependency
+> change, standalone exact-CRX digest requirement, real store-returned package,
+> production reviewer/tag/key/signature, release-registry edit, Web Store
+> account/action, deployment, or legal adjudication. `WRD-REL-01`,
+> `WRD-REL-02`, and `WRD-REL-03` remain `unimplemented`; C47 authenticates an
+> exact independently hashed offline CRX3 only inside the composed signed-source
+> lane, while the older standalone store-verification entry point still merely
+> reports its candidate digest.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C46 CLOSED; C47 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
