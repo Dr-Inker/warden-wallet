@@ -192,7 +192,11 @@ async function detachedArtifactSignature(name, artifactBytes) {
     signaturePath,
     artifactPath,
   ], { env: fixture.environment });
-  return readFile(signaturePath);
+  return {
+    artifactPath,
+    signaturePath,
+    signatureBytes: await readFile(signaturePath),
+  };
 }
 
 beforeAll(async () => {
@@ -295,10 +299,12 @@ beforeAll(async () => {
     fixture.fingerprint,
   );
   fixture.reviewedArtifact = releaseArtifact(fixture.firstCommit);
-  fixture.reviewedArtifactSignatureBytes = await detachedArtifactSignature(
+  fixture.reviewedArtifactSignature = await detachedArtifactSignature(
     "reviewed-release",
     fixture.reviewedArtifact.artifactManifestBytes,
   );
+  fixture.reviewedArtifactSignatureBytes =
+    fixture.reviewedArtifactSignature.signatureBytes;
   fixture.differentArtifact = releaseArtifact(
     fixture.firstCommit,
     Buffer.from("body { color: #654321; }\n"),
@@ -510,6 +516,81 @@ describe("release source annotated-tag verification", () => {
       expectedArtifactReviewPrimaryFingerprint: fixture.fingerprint,
       expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
     })).rejects.toThrow(/reviewed artifact|artifact review|signature/);
+  });
+
+  it("authenticates one exact artifact buffer through review, source, and output binding", async () => {
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      fixture.reviewedArtifact.releaseFiles,
+    );
+    const expectedArtifactReviewSignatureSha256 = sha256(
+      fixture.reviewedArtifactSignatureBytes,
+    );
+    await expect(verify({
+      ...fixture.reviewedArtifact,
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+      artifactReviewSignatureBytes: fixture.reviewedArtifactSignatureBytes,
+      expectedArtifactReviewSignatureSha256,
+      expectedArtifactReviewPrimaryFingerprint: fixture.fingerprint,
+      expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
+    })).resolves.toMatchObject({
+      sourceCommit: fixture.firstCommit,
+      artifactReview: {
+        artifactSha256: sha256(fixture.reviewedArtifact.artifactManifestBytes),
+        signatureSha256: expectedArtifactReviewSignatureSha256,
+        primaryFingerprint: fixture.fingerprint,
+        signingFingerprint: fixture.signingFingerprint,
+      },
+      dualReleaseReport: {
+        artifactManifestSha256: sha256(
+          fixture.reviewedArtifact.artifactManifestBytes,
+        ),
+        boundReleaseFileCount: 14,
+      },
+    });
+  });
+
+  it("checks the independent review-signature digest before candidate use", async () => {
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      fixture.reviewedArtifact.releaseFiles,
+    );
+    const options = {
+      ...fixture.reviewedArtifact,
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+      artifactReviewSignatureBytes: Buffer.from("not an OpenPGP signature\n"),
+      expectedArtifactReviewSignatureSha256: "0".repeat(64),
+      expectedArtifactReviewPrimaryFingerprint: fixture.fingerprint,
+      expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
+    };
+    await expect(verify(options)).rejects.toThrow(
+      /artifact review signature differs from the independently supplied SHA-256/,
+    );
+    await expect(verify({
+      ...options,
+      expectedArtifactReviewSignatureSha256: sha256(
+        options.artifactReviewSignatureBytes,
+      ),
+    })).rejects.toThrow(/NODATA|signature|status/);
+    await expect(verify({
+      ...fixture.reviewedArtifact,
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+      artifactReviewSignatureBytes: fixture.reviewedArtifactSignatureBytes,
+    })).rejects.toThrow(/must be provided together/);
+    await expect(verify({
+      ...fixture.reviewedArtifact,
+      artifactReviewSignatureBytes: fixture.reviewedArtifactSignatureBytes,
+      expectedArtifactReviewSignatureSha256: sha256(
+        fixture.reviewedArtifactSignatureBytes,
+      ),
+      expectedArtifactReviewPrimaryFingerprint: fixture.fingerprint,
+      expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
+    })).rejects.toThrow(/requires the exact dual release report binding/);
   });
 
   it("rejects a report whose fourteen records do not describe the selected artifact", async () => {

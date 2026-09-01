@@ -27,6 +27,7 @@ export const GIT_GPG_LAUNCHER_TEXT = [
 const MAX_TAG_OBJECT_BYTES = 1024 * 1024;
 const MAX_DUAL_RELEASE_REPORT_BYTES = 1024 * 1024;
 const MAX_ARTIFACT_MANIFEST_BYTES = 8 * 1024 * 1024;
+const MAX_ARTIFACT_REVIEW_SIGNATURE_BYTES = 1024 * 1024;
 const MAX_OPENPGP_TIME_VALUE = 0xffff_ffff;
 const FULL_SHA1_PATTERN = /^[0-9a-f]{40}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -90,6 +91,78 @@ function assertFullSha1(value, label) {
   if (typeof value !== "string" || !FULL_SHA1_PATTERN.test(value)) {
     fail(`${label} must be a full lowercase 40-character Git object SHA`);
   }
+}
+
+async function verifyExpectedArtifactReview({
+  artifactManifestBytes,
+  dualReleaseReportBytes,
+  expectedDualReleaseReportSha256,
+  artifactReviewSignatureBytes,
+  expectedArtifactReviewSignatureSha256,
+  expectedArtifactReviewPrimaryFingerprint,
+  expectedArtifactReviewSigningFingerprint,
+  environment,
+}) {
+  const suppliedValues = [
+    artifactReviewSignatureBytes,
+    expectedArtifactReviewSignatureSha256,
+    expectedArtifactReviewPrimaryFingerprint,
+    expectedArtifactReviewSigningFingerprint,
+  ];
+  const suppliedCount = suppliedValues.filter((value) => value !== undefined).length;
+  if (suppliedCount === 0) {
+    return null;
+  }
+  if (suppliedCount !== suppliedValues.length) {
+    fail("artifact review signature bytes, SHA-256, and primary/signing fingerprints must be provided together");
+  }
+  if (
+    dualReleaseReportBytes === undefined ||
+    expectedDualReleaseReportSha256 === undefined
+  ) {
+    fail("artifact review signature requires the exact dual release report binding");
+  }
+  if (!(artifactManifestBytes instanceof Uint8Array)) {
+    fail("exact artifact manifest bytes are required with an artifact review signature");
+  }
+  if (!(artifactReviewSignatureBytes instanceof Uint8Array)) {
+    fail("artifact review signature must be byte data");
+  }
+  const signatureBytes = Buffer.from(artifactReviewSignatureBytes);
+  if (
+    signatureBytes.length === 0 ||
+    signatureBytes.length > MAX_ARTIFACT_REVIEW_SIGNATURE_BYTES
+  ) {
+    fail(
+      `artifact review signature must be between 1 and ${MAX_ARTIFACT_REVIEW_SIGNATURE_BYTES} bytes`,
+    );
+  }
+  if (
+    typeof expectedArtifactReviewSignatureSha256 !== "string" ||
+    !SHA256_PATTERN.test(expectedArtifactReviewSignatureSha256)
+  ) {
+    fail("expected artifact review signature SHA-256 must be a lowercase digest");
+  }
+  const actualSignatureSha256 = createHash("sha256")
+    .update(signatureBytes)
+    .digest("hex");
+  if (actualSignatureSha256 !== expectedArtifactReviewSignatureSha256) {
+    fail("artifact review signature differs from the independently supplied SHA-256");
+  }
+  const { verifyReviewedArtifactSignature } = await import(
+    "./reviewed-artifact-signature.mjs"
+  );
+  const verified = await verifyReviewedArtifactSignature({
+    artifactBytes: artifactManifestBytes,
+    signatureBytes,
+    expectedPrimaryFingerprint: expectedArtifactReviewPrimaryFingerprint,
+    expectedSigningFingerprint: expectedArtifactReviewSigningFingerprint,
+    environment,
+  });
+  if (verified.signatureSha256 !== expectedArtifactReviewSignatureSha256) {
+    fail("artifact review verifier returned a different signature digest");
+  }
+  return verified;
 }
 
 function verifyExpectedDualReleaseReport({
@@ -630,6 +703,10 @@ export async function verifyReleaseSourceTag({
   artifactManifestBytes,
   dualReleaseReportBytes,
   expectedDualReleaseReportSha256,
+  artifactReviewSignatureBytes,
+  expectedArtifactReviewSignatureSha256,
+  expectedArtifactReviewPrimaryFingerprint,
+  expectedArtifactReviewSigningFingerprint,
   environment,
 }) {
   if (typeof repositoryRoot !== "string" || repositoryRoot.length === 0) {
@@ -655,6 +732,16 @@ export async function verifyReleaseSourceTag({
   );
   const artifactCommit = artifactManifest?.source?.gitCommit;
   assertFullSha1(artifactCommit, "artifact source commit");
+  const artifactReview = await verifyExpectedArtifactReview({
+    artifactManifestBytes,
+    dualReleaseReportBytes,
+    expectedDualReleaseReportSha256,
+    artifactReviewSignatureBytes,
+    expectedArtifactReviewSignatureSha256,
+    expectedArtifactReviewPrimaryFingerprint,
+    expectedArtifactReviewSigningFingerprint,
+    environment,
+  });
   const dualReleaseReport = verifyExpectedDualReleaseReport({
     dualReleaseReportBytes,
     expectedDualReleaseReportSha256,
@@ -759,6 +846,12 @@ export async function verifyReleaseSourceTag({
   };
   if (dualReleaseReport !== null) {
     result.dualReleaseReport = dualReleaseReport;
+  }
+  if (artifactReview !== null) {
+    if (artifactReview.artifactSha256 !== dualReleaseReport?.artifactManifestSha256) {
+      fail("artifact review and dual release report authenticated different manifest bytes");
+    }
+    result.artifactReview = artifactReview;
   }
   return result;
 }

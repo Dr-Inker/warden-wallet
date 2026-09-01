@@ -138,6 +138,32 @@ local evidence lanes; the report continues to say
 `signedTagClaim: not-asserted` about its own generation and
 `independentBuilderClaim: not-asserted` about its same-host builders.
 
+To additionally authenticate that same exact artifact buffer with the detached
+review signature, append the signature path, its independently recorded
+lowercase SHA-256, and the independent review primary/signing fingerprints:
+
+```sh
+GNUPGHOME=/path/to/release-verification-keyring \
+  pnpm --filter @warden/extension release:verify-source-tag -- \
+  <tag> <expected-tag-object-sha> <source-primary-fingerprint> \
+  <source-signing-fingerprint> /path/to/reviewed.artifact.json \
+  /path/to/rehearsal.dual-local.json <expected-dual-report-sha256> \
+  /path/to/reviewed.artifact.json.sig \
+  <expected-review-signature-sha256> <review-primary-fingerprint> \
+  <review-signing-fingerprint>
+```
+
+The selected keyring must already contain both independently selected public
+keys if the source tag and artifact review use different keys. The four review
+arguments are atomic and require the report-binding arguments. The verifier
+bounds the signature to **1 MiB**, checks its independent digest before asking
+GnuPG to interpret it, and passes the one artifact buffer read by the CLI to
+both the detached-signature verifier and the fourteen-output binder. A valid
+review signature for any other canonical artifact therefore fails. Success
+reports the exact artifact, report, and review-signature hashes plus both pairs
+of full OpenPGP fingerprints. It does not establish that the supplied review
+key belongs to an authorized reviewer.
+
 The shared OpenPGP policy also requires the exact ten-argument OpenPGP
 `VALIDSIG` shape, a zero reserved field, signature version **4 or 6**, canonical
 numeric octets, and binary-document signature class `00`. The creation date
@@ -168,9 +194,10 @@ This precondition follows Git's primary
 [`--status-fd` unattended-use guidance](https://www.gnupg.org/documentation/manuals/gnupg/Unattended-Usage-of-GPG.html).
 The selected public key must already exist in the explicitly selected,
 absolute caller-controlled GnuPG home. The command does not create a key or
-tag, retrieve a missing key, choose production identities, authenticate the
-unsigned artifact manifest's external review anchor, attest the Git/GPG/shell/
-OS bytes, or prove an independent builder.
+tag, retrieve a missing key, choose production identities or reviewer
+authority, attest the Git/GPG/shell/OS bytes, or prove an independent builder.
+Without the four review-signature arguments, the artifact manifest's external
+review anchor remains unauthenticated.
 Fixture-only temporary repositories and keys do not promote `WRD-REL-01`.
 
 ## Reviewed artifact detached-signature precondition

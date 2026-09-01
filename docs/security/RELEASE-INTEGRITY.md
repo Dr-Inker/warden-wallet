@@ -116,6 +116,20 @@ record mismatches fails closed. The report's own
 labels remain truthful: subsequent composition is neither proof that the
 builders verified a tag nor evidence from independent builders.
 
+Four additional trailing arguments compose the detached artifact-review lane
+with that exact source/report verification: the detached-signature path, an
+independently recorded lowercase signature SHA-256, and independent full review
+primary/signing fingerprints. The arguments are atomic and are accepted only
+with the exact artifact and dual-report inputs. The CLI reads the artifact once;
+the verifier bounds the signature to **1 MiB**, checks the expected signature
+digest before asking GnuPG to parse the candidate, then passes the same artifact
+buffer to detached-signature verification and the fourteen-record binder. The
+returned artifact digest must equal the report-bound artifact digest. A valid
+signature over a different canonical manifest, wrong signature digest, missing
+review field, wrong review key/subkey, or malformed signature fails closed. The
+explicit `GNUPGHOME` must already contain both public keys when source and review
+identities differ.
+
 The verifier accepts only an exact valid `refs/tags/<tag>` ref whose current
 object id equals the supplied full lowercase SHA-1 before and after signature
 verification. This explicit tag-object anchor is what makes a force-moved tag
@@ -183,10 +197,10 @@ The behavior follows Git's primary
 checked 2026-09-01 alongside the installed GnuPG 2.4.4 `DETAILS` contract.
 The explicitly selected, absolute caller-controlled `GNUPGHOME` must already
 contain the selected public key. This lane does not create a key or tag, select
-the production tag/object/primary fingerprint/signing fingerprint, authenticate
-the external anchor for the unsigned artifact JSON,
-attest the Git, GnuPG, shell, OS, or runtime bytes, or supply a second
-independent builder.
+the production tag/object/primary fingerprint/signing fingerprint or reviewer
+authority, attest the Git, GnuPG, shell, OS, or runtime bytes, or supply a second
+independent builder. Without the optional four review-signature arguments, it
+does not authenticate the external anchor for the unsigned artifact JSON.
 Its ephemeral test key and repository therefore do not promote `WRD-REL-01`.
 
 ### Reviewed artifact detached signature (C6 partial; fixture-only)

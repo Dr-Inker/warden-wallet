@@ -16,8 +16,8 @@ function fail(message) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (![4, 5, 7].includes(args.length)) {
-    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json [dual-local-report.json expected-dual-report-sha256]]");
+  if (![4, 5, 7, 11].includes(args.length)) {
+    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json [dual-local-report.json expected-dual-report-sha256 [artifact-review-signature expected-artifact-review-signature-sha256 expected-artifact-review-primary-fingerprint expected-artifact-review-signing-fingerprint]]]");
   }
   const [
     tagName,
@@ -44,10 +44,22 @@ async function main() {
   let dualReleaseReportPath;
   let dualReleaseReportBytes;
   let expectedDualReleaseReportSha256;
-  if (args.length === 7) {
+  if (args.length >= 7) {
     dualReleaseReportPath = resolve(args[5]);
     dualReleaseReportBytes = await readFile(dualReleaseReportPath);
     expectedDualReleaseReportSha256 = args[6];
+  }
+  let artifactReviewSignaturePath;
+  let artifactReviewSignatureBytes;
+  let expectedArtifactReviewSignatureSha256;
+  let expectedArtifactReviewPrimaryFingerprint;
+  let expectedArtifactReviewSigningFingerprint;
+  if (args.length === 11) {
+    artifactReviewSignaturePath = resolve(args[7]);
+    artifactReviewSignatureBytes = await readFile(artifactReviewSignaturePath);
+    expectedArtifactReviewSignatureSha256 = args[8];
+    expectedArtifactReviewPrimaryFingerprint = args[9];
+    expectedArtifactReviewSigningFingerprint = args[10];
   }
   const result = await verifyReleaseSourceTag({
     repositoryRoot,
@@ -56,9 +68,13 @@ async function main() {
     expectedPrimaryFingerprint,
     expectedSigningFingerprint,
     artifactManifest,
-    artifactManifestBytes: args.length === 7 ? artifactManifestBytes : undefined,
+    artifactManifestBytes: args.length >= 7 ? artifactManifestBytes : undefined,
     dualReleaseReportBytes,
     expectedDualReleaseReportSha256,
+    artifactReviewSignatureBytes,
+    expectedArtifactReviewSignatureSha256,
+    expectedArtifactReviewPrimaryFingerprint,
+    expectedArtifactReviewSigningFingerprint,
   });
   console.log(`verified release tag ${result.tagRef}`);
   console.log(`tag object ${result.tagObject}`);
@@ -84,6 +100,23 @@ async function main() {
     console.log(`bound artifact manifest sha256 ${result.dualReleaseReport.artifactManifestSha256}`);
     console.log(`bound release files ${result.dualReleaseReport.boundReleaseFileCount}`);
     console.log("dual report scope same-host sequential shared-store; independent builders not asserted");
+  }
+  if (result.artifactReview) {
+    console.log(`verified artifact review signature ${artifactReviewSignaturePath}`);
+    console.log(`artifact review signature sha256 ${result.artifactReview.signatureSha256}`);
+    console.log(`artifact review manifest sha256 ${result.artifactReview.artifactSha256}`);
+    console.log(
+      `artifact review signing fingerprint ${result.artifactReview.signingFingerprint}`,
+    );
+    console.log(
+      `artifact review primary fingerprint ${result.artifactReview.primaryFingerprint}`,
+    );
+    console.log(
+      `artifact review signature creation date ${result.artifactReview.signatureCreationDate}`,
+    );
+    console.log(
+      `artifact review signature expiration ${result.artifactReview.signatureExpirationTimestamp ?? "never"}`,
+    );
   }
 }
 
