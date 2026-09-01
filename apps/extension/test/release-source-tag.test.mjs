@@ -287,6 +287,9 @@ describe("release source annotated-tag verification", () => {
     await expect(verify({
       expectedSigningFingerprint: fixture.signingFingerprint.slice(0, 16),
     })).rejects.toThrow(/expected signing fingerprint must be a 40- or 64-character/);
+    await expect(verify({
+      expectedPrimaryFingerprint: "not-a-fingerprint",
+    })).rejects.toThrow(/expected primary fingerprint must be a 40- or 64-character/);
   });
 
   it("refuses an unexpected sibling subkey and accepts only the independently selected key", async () => {
