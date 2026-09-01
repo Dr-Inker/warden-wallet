@@ -316,6 +316,24 @@ describe("release source annotated-tag verification", () => {
     });
   });
 
+  it("ignores mutable keyring options while verifying the selected signing key", async () => {
+    const optionsPath = join(fixture.gnupgHome, "gpg.conf");
+    const emptyKeyringPath = join(fixture.root, "hostile-empty-keyring.kbx");
+    await writeFile(
+      optionsPath,
+      `no-default-keyring\nkeyring ${emptyKeyringPath}\n`,
+      { mode: 0o600 },
+    );
+    try {
+      await expect(verify()).resolves.toMatchObject({
+        signingFingerprint: fixture.signingFingerprint,
+        primaryFingerprint: fixture.fingerprint,
+      });
+    } finally {
+      await rm(optionsPath, { force: true });
+    }
+  });
+
   it("rejects a cryptographically valid tag made with an unapproved hash", async () => {
     await expect(verify({
       tagName: "unapproved-hash-fixture",
