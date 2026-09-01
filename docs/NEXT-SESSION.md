@@ -93,6 +93,124 @@
 > `WRD-REL-02`, and `WRD-REL-03` remain `unimplemented`; C37 is deliberately a
 > synthetic signed-source precondition only.
 
+> ## 2026-09-01 C38 REVIEWED-ARTIFACT DETACHED SIGNATURE — C6 PARTIAL, SYNTHETIC REVIEW KEY ONLY
+>
+> Implementation commit
+> `2d416bf7e4a293186b7bb4a0b4317a22c95011c0` adds an offline,
+> fail-closed exact-byte detached-signature verifier and production CLI/package
+> command, factors C37's strict single-OpenPGP-signature parser into a shared
+> seam, adds canonical-artifact/ephemeral-key integration and mutation tests,
+> binds the two new modules into release-recipe evidence, and documents the
+> limits. The recipe record now covers **21** reviewed non-payload files. There
+> was no dependency/lockfile or payload-byte change, production signature/key/
+> trust-store action, deployment, Web Store/publisher action, provider-route
+> change, legal ruling, secret persistence, or real-account/funds mutation.
+>
+> Real RED was captured from clean SHA
+> `f8bcba7266555bd049ad14f19e280565cbc37292` before implementation:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/reviewed-artifact-signature.test.mjs
+> ```
+>
+> It exited **1** because `test/reviewed-artifact-signature.test.mjs` did not
+> exist. At clean implementation SHA
+> `2d416bf7e4a293186b7bb4a0b4317a22c95011c0`, this exact command exited **0**
+> and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/reviewed-artifact-signature.test.mjs test/release-source-tag.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension release:gate && if rg -n 'reviewed-artifact-signature|verify-reviewed-artifact-signature|reviewed extension artifact signature|release-source-tag|verify-release-source-tag|OpenPGP verification' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' -o -name 'warden-release-source-tag-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The focused files passed **27/27** tests. The real upload release gate then
+> measured **8** payload files, **60** production/peer components, **4**
+> JavaScript bundles, **101** positive bundle inputs, **4** static inputs, and
+> **21** release-recipe inputs; independent Info-ZIP parsing, emitted-tooling
+> exclusion, all focused temp cleanup checks, diff checks, and both clean-tree
+> guards passed.
+>
+> The **6** C38 tests create an Ed25519 key only in a mode-0700 temporary
+> `GNUPGHOME`, construct a canonical artifact manifest plus detached binary
+> signatures only under `/tmp`, and execute both the verifier API and the real
+> production CLI. The accepted result reports the exact artifact/signature byte
+> lengths and SHA-256 values plus the GnuPG signing and primary fingerprints.
+> A hostile keyring `gpg.conf` enabling auto retrieval/import is present during
+> success to prove the production verifier's `--no-options` control.
+>
+> The API accepts byte arrays only, caps the reviewed artifact at **8,388,608
+> bytes** and detached signature at **1,048,576 bytes**, requires an independent
+> full 40/64-hex primary fingerprint and explicit absolute existing
+> `GNUPGHOME`, writes only mode-0600 files beneath a private temporary
+> directory, and always removes it. The CLI additionally refuses symlinks/
+> non-regular/empty/oversize inputs and parses the already authenticated bytes
+> under the exact canonical artifact schema.
+>
+> Verification invokes absolute `/usr/bin/gpg` with `--no-options`, explicit
+> homedir, batch/no-TTY mode, no automatic key import/retrieval, cleared
+> automatic key location, `--status-fd=1`, and explicit detached-signature and
+> data filenames. The shared parser requires exactly one `NEWSIG`, terminal
+> `GOODSIG`, and cryptographic `VALIDSIG`; cross-checks signing identity; and
+> binds the reported primary fingerprint to the complete independent value.
+> One-byte artifact drift, changed/malformed/trailing signature packets,
+> concatenated valid signatures, wrong primary fingerprint, missing key,
+> absent keyring selection, empty/non-byte/oversize inputs, expired/revoked/
+> failed statuses, and ambiguous machine status fail closed.
+>
+> GnuPG's primary operational-command documentation explicitly recommends the
+> two-filename detached form and warns against implicit filename inference.
+> Its unattended-use and no-auto-key-retrieve documentation plus installed
+> GnuPG 2.4.4/libgcrypt 1.10.3 behavior were checked on 2026-09-01 and linked
+> from repository docs. No production artifact or review signature exists and
+> no production review key, reviewer authority, key ceremony, or rotation/
+> revocation policy was selected.
+>
+> At the implementation SHA, the verifier core was **4,150 bytes** with SHA-256
+> `5c420ecba20fa234663cfc4deea059a87963b42bf9288634e670e18f747dc3ed`;
+> the **2,364-byte** CLI SHA-256 was
+> `1cf64521d032800a03e78ee87caac487dd8236534c01beffaa1308e5c5f2aa16`;
+> and the **9,012-byte** focused test SHA-256 was
+> `e17b6fa8c980ecc98eb9f87c0e51e6cb2d7ca4fd7cbf0627168b338a7e4babc0`.
+> The generated artifact, bundle, recipe, dependency, and static sidecar
+> SHA-256 values were respectively
+> `f3145099648063fc959ca2a5741c7100bc1d00510604ad0ea3619c54bf50b923`,
+> `a403420bc7fd81d966a5545588755d211e9726644b3b4055213228af797abd3a`,
+> `2f232ef210c72144e253499f7e45fb2d9bb8753706d7c28a72490a44c63baae8`,
+> `2680991c03f69b20f3bbbe8a945bb07071196d72672c49e5b95b1116bb145998`,
+> and `816ccf825701fb9bc7bbb24595150c03a00dac9b82e4f2e05b95389626c00d0f`;
+> the recipe sidecar was **4,372 bytes** and named 21 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'reviewed-artifact-signature|verify-reviewed-artifact-signature|reviewed extension artifact signature|release-source-tag|verify-release-source-tag|OpenPGP verification' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' -o -name 'warden-release-source-tag-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **529/529**, typecheck/build passed, release
+> verification tooling remained absent from `dist`, no fixture/verifier temp
+> directory remained, and diff/clean-tree guards passed.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable. C38 is a
+> synthetic exact-byte review-anchor precondition, not a real signed review or
+> provenance claim. Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** authenticating a signature says nothing unless the
+> fingerprint and reviewer authority are independently governed. The selected
+> GnuPG home, installed executable, OS, and runtime are not attested; GnuPG may
+> maintain local state inside that explicitly selected home. There is no real
+> signature, production review key, key ceremony/rotation/revocation workflow,
+> hardware-backed signer evidence, transparency log, independent builder,
+> provenance statement, publisher-control evidence, off-host run, real store
+> comparison, legal disposition, external audit, deployment, or real-funds
+> evidence. The ledger-inclusive full repository/release/rehearsal gate is
+> still pending at this entry.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C36 CLOSED; C37 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
