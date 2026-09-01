@@ -38,7 +38,7 @@
 >   at arity today; one reviewed helper strips exactly one leading separator;
 >   direct Node and pnpm-separated forms reach the same first semantic check for
 >   all four commands; missing, doubled, interior, or trailing separators cannot
->   bypass exact **2**, **5/6/8/12/16**, **4/6**, or **3/6** arity; every digest,
+>   bypass exact **2**, **5/6/8/12/16**, **6**, or **4/6** arity; every digest,
 >   canonical-input, stable-reader, Git/GnuPG, CRX, tag-message, report/review/
 >   store, and cleanup refusal remains; the helper is recipe-bound; exact-SHA
 >   focused/release evidence; committed/full-gated ledger; provider fixed

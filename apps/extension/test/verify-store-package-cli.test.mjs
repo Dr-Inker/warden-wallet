@@ -112,6 +112,20 @@ afterEach(async () => {
 });
 
 describe("standalone store-package CLI", () => {
+  it("accepts the documented pnpm argument separator before semantic validation", async () => {
+    const created = await fixture();
+    const output = await rejectedOutput([
+      "--",
+      created.candidatePath,
+      "A".repeat(64),
+      "a".repeat(32),
+      sha256(created.artifactManifestBytes),
+    ]);
+
+    expect(output).toMatch(/expected package SHA-256 must be a lowercase digest/);
+    expect(output).not.toMatch(/usage: verify-store-package/);
+  });
+
   it("requires an independent exact artifact-manifest digest before CRX handling", async () => {
     const created = await fixture();
     const commonArgs = [
