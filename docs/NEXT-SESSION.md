@@ -1,5 +1,124 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 C34 DETERMINISTIC RELEASE-RECIPE INPUT EVIDENCE — C6 PARTIAL, EXECUTION/ENVIRONMENT COVERAGE NOT CLAIMED
+>
+> Implementation commit
+> `4bfb2c3ef7ae17f43bed952a19a6c8f66b333755` adds canonical
+> `warden.extension-release-recipe-input-evidence.v1`, artifact-manifest schema
+> v5, an exact 15-file non-payload recipe set, live repository-byte
+> verification, package/verify integration, focused tamper tests, and scoped
+> release documentation. There was no dependency/lockfile or payload-byte
+> change, deployment, registry edit, Web Store or publisher action, secret,
+> legal ruling, provider-route change, or real-account/funds mutation.
+>
+> Real RED was captured before implementation:
+>
+> ```sh
+> pnpm --filter @warden/extension exec vitest run test/release-recipe-input-evidence.test.mjs
+> ```
+>
+> It exited **1** because the focused contract did not exist. At clean
+> implementation SHA `4bfb2c3ef7ae17f43bed952a19a6c8f66b333755`, this
+> exact command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-recipe-input-evidence.test.mjs test/static-input-evidence.test.mjs test/bundle-input-evidence.test.mjs test/production-dependency-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension release:gate && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The five focused files passed **28/28** tests, then package/verify passed for
+> the canonical ZIP, all four evidence sidecars, canonical unpacked tree, and
+> independent `unzip -t` reader. Tests prove canonical order independent of
+> caller order; exact 15-path refusal on missing/extra declarations; missing or
+> moved file refusal; source-byte and path/hash capture without host paths;
+> lockfile-record agreement with the incumbent artifact source hash;
+> sidecar/manifest/archive/source binding; live checked-out repository-byte
+> drift refusal; byte tamper refusal; and duplicate-key/noncanonical JSON
+> refusal. The incumbent static, bundle, dependency, and artifact tests remain
+> **4/4**, **4/4**, **5/5**, and **11/11**.
+>
+> From the same clean SHA, this exact command also exited **0** and printed the
+> same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **502/502**, typecheck/build passed, release
+> tooling remained absent from `dist`, and diff/clean-tree guards passed.
+>
+> `pnpm --filter @warden/extension release:gate` was then rerun at the same
+> clean SHA and exited **0** again. Both successful runs produced exactly **15
+> recipe input records** in a **3,227-byte** sidecar with SHA-256
+> `4c852b539e50318b78793f46ff6a819ff7541788bfafc451ed005fcc3f2ca2d4`.
+> The static-sidecar SHA-256 was
+> `a4b3821b84081e408af98c582074175bf55949510efd13921213984e2d5d3df1`,
+> bundle-sidecar SHA-256 was
+> `0cd021f205c3619398573128616c532edc1bf05af71cbf71a8ff5767f74e090f`,
+> artifact-manifest SHA-256 was
+> `416f00691167a29d8ba74d29d4c4b157ff9a99d84187e113001f77c99bf727f2`,
+> dependency-sidecar SHA-256 was
+> `67d81b6aabb777889f7bfe8252e076567bbb309bfb8fd5dc472e35fe52362979`,
+> payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`,
+> and ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`.
+> A scan found no `/opt/`, `/root/`, `node_modules`, `devDependencies`, or
+> `unsavedDependencies` string in the new sidecar.
+>
+> Exact input measurements are executable data, not prose grading:
+>
+> - `.node-version`: **8 bytes**, SHA-256
+>   `08062faf0d7a2d22f5d7933c50e975dd1527034275597be7c1b3b9fd2b9d079a`;
+>   `.npmrc`: **24 bytes**, SHA-256
+>   `c9b2bfaa64b4a1f0393b77c307494c187060c10b236bd9a5f26103edf5bd65e7`.
+> - `apps/extension/package.json`: **761 bytes**, SHA-256
+>   `a30f32220b2240aad99118b254d1d98e2ece04ed6f2c1a2380077537f9633f38`;
+>   root `package.json`: **382 bytes**, SHA-256
+>   `fb1d906d98970c6c2f22a0316b5d9232fb4d4098e3cd69b2843b8a38101fd832`;
+>   `packages/core/package.json`: **2,140 bytes**, SHA-256
+>   `d3ea13fddbd6ce65bfbd791e9df38ba66f80aaabbffd3750206f6642f8a060f4`.
+> - `pnpm-lock.yaml`: **66,889 bytes**, SHA-256
+>   `e323bc2a356902dfc9e0f8724458a1dc5310b54aaa336c46ddf0f85eecde6567`;
+>   `pnpm-workspace.yaml`: **160 bytes**, SHA-256
+>   `fe6dd17597c09283ed427217083bcfe99cad8e5deae944fb4090225bce087f54`.
+> - `build.mjs`: **10,000 bytes**, SHA-256
+>   `faedefe12371b305826d9a7c88a43c58036b89ebc9828c1a3bc51e2d04298e2b`;
+>   `bundle-input-evidence.mjs`: **17,549 bytes**, SHA-256
+>   `b372333d917fe483c2ae931aa4057343b635dd842064eb34bf46a0f8d73cf095`.
+> - `package-release.mjs`: **17,858 bytes**, SHA-256
+>   `2a31edf80ec58f351bf76e40b355466e8db1c79165e063384088fdec6d331dc0`;
+>   `production-dependency-evidence.mjs`: **21,620 bytes**, SHA-256
+>   `3860247ade31222207834fe5f8d08fce83307d174d1453d03099cb657368d783`.
+> - `release-artifact.mjs`: **38,649 bytes**, SHA-256
+>   `82efc3717486613ba490f50ca82bf8a91d4760e755830848f3a3c0b777c4fa26`;
+>   `release-recipe-input-evidence.mjs`: **9,160 bytes**, SHA-256
+>   `a115d4f47186917cc8810e749b8b209d36627e3ee5c7f8fb768e4c178537ec1a`.
+> - `static-input-evidence.mjs`: **10,419 bytes**, SHA-256
+>   `c0802437758961f53666234e4fb8c259cd5ebf2f5d7ecc47cda02ded6cb31219`;
+>   `verify-release.mjs`: **6,002 bytes**, SHA-256
+>   `f41053b1165a2e4018108e62560ca7543655f40de3b88d0313ac9b62c318e92d`.
+>
+> Independent second-model review remains **UNVERIFIED**. A ledger-inclusive
+> full repository gate is intentionally deferred until this record is
+> committed; a later pickup memo must cite its exact SHA before calling C34
+> fully closed.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded. Production provider routing remains fixed unavailable. C34 changes
+> release evidence only.
+>
+> **Harsh residual:** C34 hashes the exact repository files the current release
+> path declares and checks them against the current checkout, but the record is
+> unsigned and co-generated by code included in its own measured set. It cannot
+> prove which code or executable actually ran, Node/pnpm/esbuild executable
+> bytes, package-manager semantics, environment variables, OS/runtime behavior,
+> hardware, isolation, or absence of a compromised builder. There is still no
+> second isolated clean build, signed tag, independent builder, provenance
+> signature, store-returned-package comparison, publisher-control evidence,
+> off-host run, legal disposition, external audit, deployment, or real-funds
+> evidence.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C33 CLOSED; C34 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
