@@ -1,14 +1,17 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C74 FULL-GATED; CLOSE COMMIT NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C75 STORE CHILD DEADLINE CONTRACT NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** commit this docs-only C74 close memo. Do not claim timeout,
->   sandbox, or executable confinement.
+> - **TASK:** commit the C75 contract, add and commit its behavioral probe, run
+>   the exact RED, then implement and verify the smallest direct-child deadline
+>   change. Do not claim process-group, descendant, sandbox, or executable
+>   confinement.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C73 close SHA
+> - **BASE:** C74 close SHA
+>   `c0f0ede0ba8a4b6d537901f658e282b59b1669e1`; C73 close SHA
 >   `ff4100e17767cf4945468adfab32f92d1719f348`; C74 contract SHA
 >   `3914a39ab39c8a6cfb074654c5b6e2e78be68147`; behavioral RED SHA
 >   `00bc2c6ba99db422e53fd7b94fe9c7097ee8dac8`; implementation/evidence
@@ -47,28 +50,30 @@
 >   `47d419dae0dda40ad6ca461ab7cd81dc3ba32308`; implementation/evidence
 >   `5bb34f87d6e0fbafa53e1090fbc93fd67495a476`; behavioral RED
 >   `21213293cc184b80d8d397c102b01b3b2d85bf6a`.
-> - **READ:** this memo and the C74/C73/C72/C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
+> - **READ:** this memo and the C75/C74/C73/C72/C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** `docs/NEXT-SESSION.md` only for closeout. C74 source,
->   tests, README, and release-integrity prose are implementation-complete.
+> - **WRITE (edit lease):** `docs/NEXT-SESSION.md`,
+>   `apps/extension/scripts/verify-store-package.mjs`,
+>   `apps/extension/test/verify-store-package-infozip.test.mjs`,
+>   `apps/extension/README.md`, and `docs/security/RELEASE-INTEGRITY.md` only.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
 >   empty production release registry, or the C1a production extension-id/
 >   permitted-origin owner decision. Do not fetch a key/package, push, tag,
->   sign production bytes, publish, weaken C36/C38–C74 policy, or invent store
+>   sign production bytes, publish, weaken C36/C38–C75 policy, or invent store
 >   provenance, freshness, reviewer, builder-independence, key-strength,
 >   publisher, or lifecycle policy.
-> - **ACCEPT:** after the store-package verifier has authenticated and parsed a
->   CRX3 fixture, prove its independent parser receives exactly parent `PATH`
->   (or `/usr/bin:/bin` if absent), `LANG=C`, and `LC_ALL=C`, without a parent
->   marker or `TMPDIR`. Preserve C73's exact private **0700** `cwd`, C72's exact
->   embedded ZIP digest, `O_RDONLY` descriptor, **0400** inode, refused pathname
->   replacement, exact post-parser comparison, and empty cleanup. The test may
->   mock only the already-covered upstream CRX3 cryptographic/parser result and
->   production code must not add a test-only pass-through. Preserve C71's
->   bounded direct child, C70's upload-parser environment, C69's upload-parser
+> - **ACCEPT:** calculate the store Info-ZIP deadline from verified embedded ZIP
+>   length as `min(120000, 5000 + ceil(bytes / 1048576) * 1000)` milliseconds,
+>   use `killSignal: "SIGKILL"`, and prove a sub-MiB direct child that sleeps 12
+>   seconds is killed/fail-closed before 10 seconds without writing its
+>   completion marker. Preserve C74's exact three-key environment, C73's exact
+>   private **0700** `cwd`, C72's exact embedded ZIP digest, `O_RDONLY`
+>   descriptor, **0400** inode, refused pathname replacement, exact post-parser
+>   comparison, and empty cleanup. Preserve C71's upload-parser bounded direct
+>   child, C70's upload-parser environment, C69's upload-parser
 >   private **0700** `cwd`, C68's descriptor/inode seal, and all C67/C66/C65/C64/C63 upload-verifier probes,
 >   exclusive **0600** construction, identity/seal checks, exact post-parser
 >   comparison, cleanup on every outcome, direct/pnpm **0/6/7**, optional
@@ -80,7 +85,7 @@
 >   production signature/key/tag, deploy, upload, publishing, live service,
 >   external message, secret persistence, legal ruling, or real-account/funds
 >   mutation.
-> - **RETURN:** C73 close/full SHAs plus C74 contract/RED/implementation/evidence/
+> - **RETURN:** C74 close/full SHAs plus C75 contract/RED/implementation/evidence/
 >   full/close SHAs and any
 >   subsequent bounded-cycle SHAs, clean/dirty state,
 >   exact commands and outcomes, stable-byte proof and temp-copy mode/cleanup,
@@ -148,12 +153,12 @@
 > implementation, exact single-contract, focused/release, extension-wide, and
 > repository-wide FULL evidence at close SHA
 > `ff4100e17767cf4945468adfab32f92d1719f348` and evidence-ledger/full-gated SHA
-> `19cfdccdb7657a5e5a94abab1c4554f92a2fbca8`. C74 has a committed contract,
-> measured behavioral RED, clean implementation, and exact single-contract,
-> focused/release, extension-wide, and repository-wide FULL evidence at
-> evidence-ledger/full-gated SHA
-> `21f15aa5ea709685c60c18e80410f532fb0423fb`. Only this docs-only close commit
-> remains.
+> `19cfdccdb7657a5e5a94abab1c4554f92a2fbca8`. C74 is closed with a committed
+> contract, measured behavioral RED, clean implementation, exact single-
+> contract, focused/release, extension-wide, and repository-wide FULL evidence
+> at close SHA `c0f0ede0ba8a4b6d537901f658e282b59b1669e1` and evidence-ledger/full-gated
+> SHA `21f15aa5ea709685c60c18e80410f532fb0423fb`. C75 is contract-only until its
+> commit, behavioral RED, implementation, and executable evidence exist.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -161,8 +166,31 @@
 > pins exact artifact bytes, the source-tag signature authenticates that exact
 > digest, and a safe command emits its canonical message, but production trust
 > and operator-controlled signing remain external.
-> C68–C74 are only cooperative-host least privilege. Do not manufacture a local
+> C68–C75 are only cooperative-host least privilege. Do not manufacture a local
 > proxy for the remaining external trust/owner obligations.
+
+> ## 2026-09-01 C75 STORE-PACKAGE BOUNDED INFO-ZIP DIRECT CHILD — C6 PARTIAL
+>
+> Contract: calculate the standalone store verifier's Info-ZIP deadline from the
+> already verified embedded archive length as
+> `min(120000, 5000 + ceil(bytes / 1048576) * 1000)` milliseconds and pass it to
+> the existing `execFile` call with `killSignal: "SIGKILL"`. A sub-MiB direct-
+> child probe must write a start marker, remain alive for 12 seconds before
+> writing a completion marker and exiting zero, and be killed/fail closed before
+> 10 seconds. The completion marker must remain absent and the private
+> `warden-store-package-verify-*` directory must be removed.
+>
+> Give this test an explicit 20-second harness deadline so Vitest cannot replace
+> the required behavioral measurement. Preserve C74's exact minimal environment,
+> C73's exact **0700** working directory, C72's descriptor/inode seal and post-
+> parser byte comparison, and success/failure cleanup. The test may call the
+> exported downstream handoff directly; it must not weaken the independently
+> covered store-package cryptographic or artifact comparison path.
+>
+> Node's `execFile` deadline controls only the direct child. It is not a process-
+> group or descendant guarantee and adds no sandbox, same-UID/root defense, or
+> executable provenance. No invariant or production-trust status moves.
+> Independent second-model review remains **UNVERIFIED**.
 
 > ## 2026-09-01 C74 STORE-PACKAGE MINIMAL INFO-ZIP CHILD ENVIRONMENT — C6 PARTIAL
 >
