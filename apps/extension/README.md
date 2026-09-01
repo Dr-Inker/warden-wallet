@@ -127,7 +127,8 @@ GNUPGHOME=/path/to/release-verification-keyring \
 
 The CLI opens each external candidate without following a final symlink,
 requires a nonempty regular file within its ceiling, reads it through that one
-file handle, and refuses size drift across the read. The verifier bounds the
+file handle, and refuses device, inode, size, nanosecond modification/change-
+time, or returned-buffer-length drift across the read. The verifier bounds the
 selected artifact to **8 MiB** and requires its canonical artifact schema. It
 bounds the report to **1 MiB**, checks the supplied digest before parsing or
 deriving claims from the report, requires its canonical schema and reviewed

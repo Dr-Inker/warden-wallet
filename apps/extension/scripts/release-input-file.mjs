@@ -25,14 +25,26 @@ export async function readBoundedRegularFile(path, maximumBytes, label) {
     );
   }
   try {
-    const before = await handle.stat();
-    if (!before.isFile() || before.size <= 0 || before.size > maximumBytes) {
+    const before = await handle.stat({ bigint: true });
+    if (
+      !before.isFile() ||
+      before.size <= 0n ||
+      before.size > BigInt(maximumBytes)
+    ) {
       fail(`${label} must be a nonempty regular file no larger than ${maximumBytes} bytes`);
     }
     const bytes = await handle.readFile();
-    const after = await handle.stat();
-    if (!after.isFile() || bytes.length !== before.size || after.size !== before.size) {
-      fail(`${label} changed size while it was being read`);
+    const after = await handle.stat({ bigint: true });
+    if (
+      !after.isFile() ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs ||
+      BigInt(bytes.length) !== after.size
+    ) {
+      fail(`${label} changed while it was being read`);
     }
     return bytes;
   } finally {
