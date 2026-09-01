@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 import { parseArtifactManifest } from "./release-artifact.mjs";
@@ -14,11 +15,15 @@ function fail(message) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length !== 4) {
-    fail("usage: verify-reviewed-artifact-signature.mjs reviewed-artifact.json detached-signature expected-primary-fingerprint expected-signing-fingerprint");
+  if (args.length !== 5) {
+    fail("usage: verify-reviewed-artifact-signature.mjs reviewed-artifact.json detached-signature expected-artifact-manifest-sha256 expected-primary-fingerprint expected-signing-fingerprint");
   }
   const artifactPath = resolve(args[0]);
   const signaturePath = resolve(args[1]);
+  const expectedArtifactSha256 = args[2];
+  if (!/^[0-9a-f]{64}$/.test(expectedArtifactSha256)) {
+    fail("expected artifact manifest SHA-256 must be a lowercase digest");
+  }
   const [artifactBytes, signatureBytes] = await Promise.all([
     readBoundedRegularFile(
       artifactPath,
@@ -31,12 +36,19 @@ async function main() {
       "detached signature",
     ),
   ]);
+  const artifactSha256 = createHash("sha256").update(artifactBytes).digest("hex");
+  if (artifactSha256 !== expectedArtifactSha256) {
+    fail("reviewed artifact manifest differs from the independently supplied SHA-256");
+  }
   const verified = await verifyReviewedArtifactSignature({
     artifactBytes,
     signatureBytes,
-    expectedPrimaryFingerprint: args[2],
-    expectedSigningFingerprint: args[3],
+    expectedPrimaryFingerprint: args[3],
+    expectedSigningFingerprint: args[4],
   });
+  if (verified.artifactSha256 !== expectedArtifactSha256) {
+    fail("artifact signature verifier returned a different artifact digest");
+  }
   const artifactManifest = parseArtifactManifest(artifactBytes);
   console.log(`verified reviewed artifact ${artifactPath}`);
   console.log(`detached signature ${signaturePath}`);

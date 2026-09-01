@@ -236,15 +236,18 @@ Its ephemeral test key and repository therefore do not promote `WRD-REL-01`.
 
 `GNUPGHOME=/path/to/artifact-review-keyring pnpm --filter @warden/extension
 release:verify-artifact-signature -- <reviewed-artifact.json>
-<detached-signature> <expected-primary-fingerprint>
-<expected-signing-fingerprint>` authenticates the exact artifact-manifest bytes
-before parsing them. The artifact path, signature path, complete primary and
-signing OpenPGP fingerprints, and absolute verification keyring are all caller-
-controlled inputs; none is adopted from the candidate. When the primary key
-signs directly, the two fingerprints are the same.
+<detached-signature> <expected-artifact-manifest-sha256>
+<expected-primary-fingerprint> <expected-signing-fingerprint>` authenticates
+the exact artifact-manifest bytes before parsing them. The artifact path,
+signature path, independently recorded lowercase artifact digest, complete
+primary and signing OpenPGP fingerprints, and absolute verification keyring are
+all caller-controlled inputs; none is adopted from the candidate. When the
+primary key signs directly, the two fingerprints are the same.
 
 The CLI refuses non-regular/symlink inputs, caps the artifact at **8 MiB** and
-signature at **1 MiB**, reads each once, and rejects size drift. The verifier
+signature at **1 MiB**, reads each once, and rejects size drift. It checks the
+artifact buffer against the independent digest before GnuPG or canonical
+parsing and cross-checks the verifier's returned artifact digest. The verifier
 places those exact in-memory bytes in mode-0600 files under a private temporary
 directory and invokes absolute `/usr/bin/gpg` with `--no-options`, `--batch`,
 `--no-tty`, `--no-auto-key-import`, `--no-auto-key-retrieve`, an empty automatic
@@ -272,8 +275,10 @@ and documented
 checked 2026-09-01 against installed GnuPG 2.4.4.
 
 This is an executable review-anchor precondition, not a real review anchor or
-provenance claim. No production artifact was signed, no production review key
-or signing subkey or reviewer authority was selected, and no key ceremony,
+provenance claim. A digest is independent only if its approval/recording channel
+is independent of the selected file. No production artifact was signed, no
+production review key or signing subkey or reviewer authority was selected, and
+no key ceremony,
 strength/curve rule, rotation/revocation workflow, host attestation,
 transparency log, or independent build exists.
 Only ephemeral fixture keys and bytes have passed, so `WRD-REL-01` remains

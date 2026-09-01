@@ -272,6 +272,7 @@ describe("reviewed artifact detached-signature verification", () => {
       verifierCli,
       fixture.artifactPath,
       fixture.signaturePath,
+      sha256(fixture.artifactBytes),
       fixture.fingerprint,
       fixture.signingFingerprint,
     ], {
