@@ -125,7 +125,7 @@ function assertEvidenceShape(evidence) {
   }
   assertHash(evidence.artifact.archiveSha256, "evidence archiveSha256");
   if (!Array.isArray(evidence.inputs) || evidence.inputs.length !== RELEASE_RECIPE_INPUT_PATHS.length) {
-    fail("evidence must contain exactly twenty-one release recipe inputs");
+    fail("evidence must contain exactly twenty-two release recipe inputs");
   }
   for (let index = 0; index < RELEASE_RECIPE_INPUT_PATHS.length; index += 1) {
     const input = evidence.inputs[index];

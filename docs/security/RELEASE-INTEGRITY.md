@@ -44,7 +44,7 @@ zero-byte counts, and each output's byte length and hash. The static sidecar
 records source/output byte lengths and hashes for `approval.css`,
 `approval.html`, `manifest.json`, and `popup.html`, distinguishing three exact
 byte copies from the manifest's JSON parse/two-space/newline serialization. The
-recipe sidecar records exact byte lengths and SHA-256 hashes for the 21 reviewed
+recipe sidecar records exact byte lengths and SHA-256 hashes for the 22 reviewed
 non-payload files that declare the install/release path: `.node-version`,
 `.npmrc`, both root/workspace pnpm configuration files, root/extension/core
 package manifests, the upload package/verification modules, the CRX3
@@ -129,6 +129,26 @@ signature over a different canonical manifest, wrong signature digest, missing
 review field, wrong review key/subkey, or malformed signature fails closed. The
 explicit `GNUPGHOME` must already contain both public keys when source and review
 identities differ.
+
+Three more trailing arguments compose the offline store-returned-package lane:
+the candidate CRX3 path, an independently reviewed expected extension id, and
+the exact reviewed upload ZIP path. This tuple is atomic and requires the full
+report plus detached-review binding. The selected artifact bytes remain the
+single manifest input: the upload ZIP must equal its canonical archive byte-for-
+byte, while the strict CRX3 verifier checks the independently supplied extension
+id, required Chrome Web Store publisher proof, all included signatures, bounded
+protobuf/header structure, embedded ZIP grammar, and every payload byte against
+that same artifact. The store-repacked ZIP may differ in archive metadata, but
+its file count and payload-tree digest must equal the reviewed upload. A valid
+store package or reviewed upload for a different canonical artifact therefore
+fails closed.
+
+The composition reports the manifest, reviewed-upload, CRX3, embedded-archive,
+extension-id, publisher-key, and payload-tree identities. It remains an offline
+comparison of caller-supplied bytes: it neither downloads a package nor proves
+that the candidate came from the Web Store. Tests use generated developer and
+publisher keys and synthetic CRX3 files, so they do not promote `WRD-REL-02` or
+replace the existing real-returned-package and owner-approved-id requirements.
 
 The verifier accepts only an exact valid `refs/tags/<tag>` ref whose current
 object id equals the supplied full lowercase SHA-1 before and after signature

@@ -40,7 +40,7 @@ under `apps/extension/release/`:
   lengths/hashes and distinguishes the three exact byte copies from
   `manifest.json`'s JSON parse/two-space/newline serialization; and
 - `warden-extension-<version>.recipe-inputs.json`, a canonical byte/hash map of
-  the exact 21 reviewed non-payload repository files that declare the install
+  the exact 22 reviewed non-payload repository files that declare the install
   and release recipe: root/workspace configuration, the extension/core package
   manifests, and every release module. It explicitly does not attest installed
   executables, runtime behavior, the OS, or the environment.
@@ -163,6 +163,35 @@ review signature for any other canonical artifact therefore fails. Success
 reports the exact artifact, report, and review-signature hashes plus both pairs
 of full OpenPGP fingerprints. It does not establish that the supplied review
 key belongs to an authorized reviewer.
+
+To additionally bind an offline store-returned CRX3 candidate to that same
+authenticated artifact and the exact reviewed upload ZIP, append the candidate
+path, independently reviewed extension id, and reviewed upload path:
+
+```sh
+GNUPGHOME=/path/to/release-verification-keyring \
+  pnpm --filter @warden/extension release:verify-source-tag -- \
+  <tag> <expected-tag-object-sha> <source-primary-fingerprint> \
+  <source-signing-fingerprint> /path/to/reviewed.artifact.json \
+  /path/to/rehearsal.dual-local.json <expected-dual-report-sha256> \
+  /path/to/reviewed.artifact.json.sig \
+  <expected-review-signature-sha256> <review-primary-fingerprint> \
+  <review-signing-fingerprint> /path/to/store-returned.crx \
+  <expected-store-extension-id> /path/to/reviewed-upload.zip
+```
+
+These three store arguments are atomic and require the exact report and review
+bindings above. The CLI reads the candidate and reviewed upload once. The
+reviewed upload must be the canonical ZIP declared by the authenticated
+artifact; the CRX3 envelope must pass the incumbent strict protobuf, developer-
+proof, Chrome Web Store publisher-proof, signature, embedded-ZIP, extension-id,
+and payload checks against that same artifact. The embedded store ZIP may use
+different archive metadata, but its exact payload tree and file count must
+equal the reviewed upload. Success reports the authenticated manifest, reviewed
+upload, CRX3 package, embedded archive, publisher-key, extension-id, and payload-
+tree identities. This offline composition does not download anything or prove
+that the supplied CRX3 actually came from the Web Store; fixture CRX3 packages
+remain synthetic.
 
 The shared OpenPGP policy also requires the exact ten-argument OpenPGP
 `VALIDSIG` shape, a zero reserved field, signature version **4 or 6**, canonical

@@ -661,6 +661,82 @@ describe("release source annotated-tag verification", () => {
     })).rejects.toThrow(/store|reviewed upload|archive|payload/);
   });
 
+  it("authenticates one reviewed upload and its store-returned CRX3 package", async () => {
+    const storePackageBytes = storeCrxBytes(fixture.reviewedArtifact.archiveBytes);
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      fixture.reviewedArtifact.releaseFiles,
+    );
+    await expect(verify({
+      ...fixture.reviewedArtifact,
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+      artifactReviewSignatureBytes: fixture.reviewedArtifactSignatureBytes,
+      expectedArtifactReviewSignatureSha256: sha256(
+        fixture.reviewedArtifactSignatureBytes,
+      ),
+      expectedArtifactReviewPrimaryFingerprint: fixture.fingerprint,
+      expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
+      reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
+      storePackageBytes,
+      expectedStoreExtensionId,
+      requiredStorePublisherKeySha256: storePublisherKeySha256,
+    })).resolves.toMatchObject({
+      sourceCommit: fixture.firstCommit,
+      storePackage: {
+        artifactManifestSha256: sha256(
+          fixture.reviewedArtifact.artifactManifestBytes,
+        ),
+        reviewedUploadArchiveSha256: sha256(
+          fixture.reviewedArtifact.archiveBytes,
+        ),
+        packageBytes: storePackageBytes.length,
+        packageSha256: sha256(storePackageBytes),
+        embeddedArchiveBytes: fixture.reviewedArtifact.archiveBytes.length,
+        embeddedArchiveSha256: sha256(fixture.reviewedArtifact.archiveBytes),
+        extensionId: expectedStoreExtensionId,
+        publisherKeySha256: storePublisherKeySha256,
+        files: fixture.reviewedArtifact.entries.length,
+        treeSha256: fixture.reviewedArtifact.artifactManifest.payload.treeSha256,
+      },
+    });
+  });
+
+  it("requires an atomic store tuple, an artifact review, and the independent extension id", async () => {
+    const storePackageBytes = storeCrxBytes(fixture.reviewedArtifact.archiveBytes);
+    await expect(verify({
+      reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
+    })).rejects.toThrow(/must be provided together/);
+    await expect(verify({
+      reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
+      storePackageBytes,
+      expectedStoreExtensionId,
+      requiredStorePublisherKeySha256: storePublisherKeySha256,
+    })).rejects.toThrow(/requires the exact artifact review binding/);
+
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      fixture.reviewedArtifact.releaseFiles,
+    );
+    await expect(verify({
+      ...fixture.reviewedArtifact,
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+      artifactReviewSignatureBytes: fixture.reviewedArtifactSignatureBytes,
+      expectedArtifactReviewSignatureSha256: sha256(
+        fixture.reviewedArtifactSignatureBytes,
+      ),
+      expectedArtifactReviewPrimaryFingerprint: fixture.fingerprint,
+      expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
+      reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
+      storePackageBytes,
+      expectedStoreExtensionId: "a".repeat(32),
+      requiredStorePublisherKeySha256: storePublisherKeySha256,
+    })).rejects.toThrow(/extension id differs/);
+  });
+
   it("checks the independent review-signature digest before candidate use", async () => {
     const dualReleaseReportBytes = localDualReportBytes(
       fixture.firstCommit,

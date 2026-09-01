@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import { parseLocalDualReleaseReport } from "../../../scripts/local-dual-extension-release.mjs";
-import { parseArtifactManifest } from "./release-artifact.mjs";
+import {
+  parseArtifactManifest,
+  verifyArtifactArchive,
+} from "./release-artifact.mjs";
+import { verifyStorePackage } from "./store-package.mjs";
 
 const GIT_EXECUTABLE = "/usr/bin/git";
 const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
@@ -163,6 +167,83 @@ async function verifyExpectedArtifactReview({
     fail("artifact review verifier returned a different signature digest");
   }
   return verified;
+}
+
+function verifyExpectedStorePackage({
+  artifactManifestBytes,
+  artifactReview,
+  reviewedUploadArchiveBytes,
+  storePackageBytes,
+  expectedStoreExtensionId,
+  requiredStorePublisherKeySha256,
+}) {
+  const suppliedValues = [
+    reviewedUploadArchiveBytes,
+    storePackageBytes,
+    expectedStoreExtensionId,
+  ];
+  const suppliedCount = suppliedValues.filter((value) => value !== undefined).length;
+  if (suppliedCount === 0 && requiredStorePublisherKeySha256 === undefined) {
+    return null;
+  }
+  if (suppliedCount !== suppliedValues.length) {
+    fail("reviewed upload archive, store package, and expected extension id must be provided together");
+  }
+  if (artifactReview === null) {
+    fail("store package verification requires the exact artifact review binding");
+  }
+  if (!(artifactManifestBytes instanceof Uint8Array)) {
+    fail("exact artifact manifest bytes are required with a store package");
+  }
+  if (!(reviewedUploadArchiveBytes instanceof Uint8Array)) {
+    fail("reviewed upload archive must be byte data");
+  }
+  if (!(storePackageBytes instanceof Uint8Array)) {
+    fail("store package must be byte data");
+  }
+
+  const exactArtifactManifest = parseArtifactManifest(artifactManifestBytes);
+  let approved;
+  try {
+    approved = verifyArtifactArchive({
+      archiveBytes: reviewedUploadArchiveBytes,
+      artifactManifest: exactArtifactManifest,
+    });
+  } catch (error) {
+    fail(
+      `reviewed upload archive verification failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  let verified;
+  try {
+    verified = verifyStorePackage({
+      crxBytes: storePackageBytes,
+      artifactManifest: exactArtifactManifest,
+      expectedExtensionId: expectedStoreExtensionId,
+      requiredPublisherKeySha256: requiredStorePublisherKeySha256,
+    });
+  } catch (error) {
+    fail(
+      `store package verification failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (verified.treeSha256 !== approved.treeSha256 || verified.files !== approved.files) {
+    fail("store package and reviewed upload verification disagree");
+  }
+  return {
+    artifactManifestSha256: artifactReview.artifactSha256,
+    reviewedUploadArchiveSha256: approved.archiveSha256,
+    packageBytes: verified.packageBytes,
+    packageSha256: verified.packageSha256,
+    headerBytes: verified.headerBytes,
+    headerSha256: verified.headerSha256,
+    embeddedArchiveBytes: verified.archiveBytes.length,
+    embeddedArchiveSha256: verified.archiveSha256,
+    extensionId: verified.extensionId,
+    publisherKeySha256: verified.publisherKeySha256,
+    files: verified.files,
+    treeSha256: verified.treeSha256,
+  };
 }
 
 function verifyExpectedDualReleaseReport({
@@ -707,6 +788,10 @@ export async function verifyReleaseSourceTag({
   expectedArtifactReviewSignatureSha256,
   expectedArtifactReviewPrimaryFingerprint,
   expectedArtifactReviewSigningFingerprint,
+  reviewedUploadArchiveBytes,
+  storePackageBytes,
+  expectedStoreExtensionId,
+  requiredStorePublisherKeySha256,
   environment,
 }) {
   if (typeof repositoryRoot !== "string" || repositoryRoot.length === 0) {
@@ -747,6 +832,20 @@ export async function verifyReleaseSourceTag({
     expectedDualReleaseReportSha256,
     artifactManifest,
     artifactManifestBytes,
+  });
+  if (
+    artifactReview !== null &&
+    artifactReview.artifactSha256 !== dualReleaseReport?.artifactManifestSha256
+  ) {
+    fail("artifact review and dual release report authenticated different manifest bytes");
+  }
+  const storePackage = verifyExpectedStorePackage({
+    artifactManifestBytes,
+    artifactReview,
+    reviewedUploadArchiveBytes,
+    storePackageBytes,
+    expectedStoreExtensionId,
+    requiredStorePublisherKeySha256,
   });
   const gnupgHome = await requireExplicitGnuPgHome(environment);
   const gitOptions = {
@@ -848,10 +947,10 @@ export async function verifyReleaseSourceTag({
     result.dualReleaseReport = dualReleaseReport;
   }
   if (artifactReview !== null) {
-    if (artifactReview.artifactSha256 !== dualReleaseReport?.artifactManifestSha256) {
-      fail("artifact review and dual release report authenticated different manifest bytes");
-    }
     result.artifactReview = artifactReview;
+  }
+  if (storePackage !== null) {
+    result.storePackage = storePackage;
   }
   return result;
 }

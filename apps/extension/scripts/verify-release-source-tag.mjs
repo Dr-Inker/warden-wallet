@@ -16,8 +16,8 @@ function fail(message) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (![4, 5, 7, 11].includes(args.length)) {
-    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json [dual-local-report.json expected-dual-report-sha256 [artifact-review-signature expected-artifact-review-signature-sha256 expected-artifact-review-primary-fingerprint expected-artifact-review-signing-fingerprint]]]");
+  if (![4, 5, 7, 11, 14].includes(args.length)) {
+    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json [dual-local-report.json expected-dual-report-sha256 [artifact-review-signature expected-artifact-review-signature-sha256 expected-artifact-review-primary-fingerprint expected-artifact-review-signing-fingerprint [store-returned.crx expected-store-extension-id reviewed-upload.zip]]]]");
   }
   const [
     tagName,
@@ -54,12 +54,24 @@ async function main() {
   let expectedArtifactReviewSignatureSha256;
   let expectedArtifactReviewPrimaryFingerprint;
   let expectedArtifactReviewSigningFingerprint;
-  if (args.length === 11) {
+  if (args.length >= 11) {
     artifactReviewSignaturePath = resolve(args[7]);
     artifactReviewSignatureBytes = await readFile(artifactReviewSignaturePath);
     expectedArtifactReviewSignatureSha256 = args[8];
     expectedArtifactReviewPrimaryFingerprint = args[9];
     expectedArtifactReviewSigningFingerprint = args[10];
+  }
+  let storePackagePath;
+  let storePackageBytes;
+  let expectedStoreExtensionId;
+  let reviewedUploadArchivePath;
+  let reviewedUploadArchiveBytes;
+  if (args.length === 14) {
+    storePackagePath = resolve(args[11]);
+    storePackageBytes = await readFile(storePackagePath);
+    expectedStoreExtensionId = args[12];
+    reviewedUploadArchivePath = resolve(args[13]);
+    reviewedUploadArchiveBytes = await readFile(reviewedUploadArchivePath);
   }
   const result = await verifyReleaseSourceTag({
     repositoryRoot,
@@ -75,6 +87,9 @@ async function main() {
     expectedArtifactReviewSignatureSha256,
     expectedArtifactReviewPrimaryFingerprint,
     expectedArtifactReviewSigningFingerprint,
+    reviewedUploadArchiveBytes,
+    storePackageBytes,
+    expectedStoreExtensionId,
   });
   console.log(`verified release tag ${result.tagRef}`);
   console.log(`tag object ${result.tagObject}`);
@@ -117,6 +132,22 @@ async function main() {
     console.log(
       `artifact review signature expiration ${result.artifactReview.signatureExpirationTimestamp ?? "never"}`,
     );
+  }
+  if (result.storePackage) {
+    console.log(`verified store-returned package ${storePackagePath}`);
+    console.log(`against reviewed upload ${reviewedUploadArchivePath}`);
+    console.log(`store package bytes ${result.storePackage.packageBytes}`);
+    console.log(`store package sha256 ${result.storePackage.packageSha256}`);
+    console.log(`store extension id ${result.storePackage.extensionId}`);
+    console.log(`store publisher key sha256 ${result.storePackage.publisherKeySha256}`);
+    console.log(
+      `store embedded archive sha256 ${result.storePackage.embeddedArchiveSha256}`,
+    );
+    console.log(
+      `reviewed upload archive sha256 ${result.storePackage.reviewedUploadArchiveSha256}`,
+    );
+    console.log(`store payload files ${result.storePackage.files}`);
+    console.log(`store payload tree sha256 ${result.storePackage.treeSha256}`);
   }
 }
 
