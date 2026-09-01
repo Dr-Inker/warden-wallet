@@ -163,6 +163,12 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
   inodeMode: inspectedStat.mode & 0o777,
   workingDirectory,
   workingDirectoryMode: workingDirectoryStat.mode & 0o777,
+  environmentKeys: Object.keys(process.env).sort(),
+  path: process.env.PATH ?? null,
+  lang: process.env.LANG ?? null,
+  lcAll: process.env.LC_ALL ?? null,
+  secretMarkerPresent: Object.hasOwn(process.env, "WARDEN_TEST_UNZIP_SECRET_MARKER"),
+  tmpdirPresent: Object.hasOwn(process.env, "TMPDIR"),
 }));
 `),
     ]);
@@ -184,6 +190,7 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
     const originalArgv = process.argv;
     const originalPath = process.env.PATH;
     const originalTmpdir = process.env.TMPDIR;
+    const originalSecretMarker = process.env.WARDEN_TEST_UNZIP_SECRET_MARKER;
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     process.argv = [
       process.execPath,
@@ -197,6 +204,8 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
     ];
     process.env.PATH = `${probeDirectory}:${originalPath ?? ""}`;
     process.env.TMPDIR = directory;
+    process.env.WARDEN_TEST_UNZIP_SECRET_MARKER = "must-not-reach-store-parser";
+    const expectedChildPath = process.env.PATH;
     let cliReportedSuccess = false;
     try {
       await import("../scripts/verify-store-package.mjs");
@@ -215,6 +224,11 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
       } else {
         process.env.TMPDIR = originalTmpdir;
       }
+      if (originalSecretMarker === undefined) {
+        delete process.env.WARDEN_TEST_UNZIP_SECRET_MARKER;
+      } else {
+        process.env.WARDEN_TEST_UNZIP_SECRET_MARKER = originalSecretMarker;
+      }
       log.mockRestore();
     }
 
@@ -231,6 +245,12 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
         `${directory}/warden-store-package-verify-`,
       ),
       workingDirectoryMode: observation.workingDirectoryMode,
+      environmentKeys: observation.environmentKeys,
+      path: observation.path,
+      lang: observation.lang,
+      lcAll: observation.lcAll,
+      secretMarkerPresent: observation.secretMarkerPresent,
+      tmpdirPresent: observation.tmpdirPresent,
       privateDirectories: (await readdir(directory)).filter((name) =>
         name.startsWith("warden-store-package-verify-")
       ),
@@ -243,6 +263,12 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
       inodeMode: 0o400,
       workingDirectoryIsPrivate: true,
       workingDirectoryMode: 0o700,
+      environmentKeys: ["LANG", "LC_ALL", "PATH"],
+      path: expectedChildPath,
+      lang: "C",
+      lcAll: "C",
+      secretMarkerPresent: false,
+      tmpdirPresent: false,
       privateDirectories: [],
     });
   });
