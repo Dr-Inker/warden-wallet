@@ -130,18 +130,20 @@ review field, wrong review key/subkey, or malformed signature fails closed. The
 explicit `GNUPGHOME` must already contain both public keys when source and review
 identities differ.
 
-Three more trailing arguments compose the offline store-returned-package lane:
-the candidate CRX3 path, an independently reviewed expected extension id, and
-the exact reviewed upload ZIP path. This tuple is atomic and requires the full
-report plus detached-review binding. The selected artifact bytes remain the
-single manifest input: the upload ZIP must equal its canonical archive byte-for-
-byte, while the strict CRX3 verifier checks the independently supplied extension
-id, required Chrome Web Store publisher proof, all included signatures, bounded
-protobuf/header structure, embedded ZIP grammar, and every payload byte against
-that same artifact. The store-repacked ZIP may differ in archive metadata, but
-its file count and payload-tree digest must equal the reviewed upload. A valid
-store package or reviewed upload for a different canonical artifact therefore
-fails closed.
+Four more trailing arguments compose the offline store-returned-package lane:
+the candidate CRX3 path, its independently recorded lowercase SHA-256, an
+independently reviewed expected extension id, and the exact reviewed upload ZIP
+path. This tuple is atomic and requires the full report plus detached-review
+binding. The candidate digest is checked before CRX parsing, and the parser's
+returned package digest must equal that input. The selected artifact bytes
+remain the single manifest input: the upload ZIP must equal its canonical
+archive byte-for-byte, while the strict CRX3 verifier checks the independently
+supplied extension id, required Chrome Web Store publisher proof, all included
+signatures, bounded protobuf/header structure, embedded ZIP grammar, and every
+payload byte against that same artifact. The store-repacked ZIP may differ in
+archive metadata, but its file count and payload-tree digest must equal the
+reviewed upload. A different exact CRX, valid store package, or reviewed upload
+for a different canonical artifact therefore fails closed.
 
 The composition reports the manifest, reviewed-upload, CRX3, embedded-archive,
 extension-id, publisher-key, and payload-tree identities. It remains an offline

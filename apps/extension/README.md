@@ -166,7 +166,8 @@ key belongs to an authorized reviewer.
 
 To additionally bind an offline store-returned CRX3 candidate to that same
 authenticated artifact and the exact reviewed upload ZIP, append the candidate
-path, independently reviewed extension id, and reviewed upload path:
+path, its independently recorded lowercase SHA-256, independently reviewed
+extension id, and reviewed upload path:
 
 ```sh
 GNUPGHOME=/path/to/release-verification-keyring \
@@ -177,15 +178,18 @@ GNUPGHOME=/path/to/release-verification-keyring \
   /path/to/reviewed.artifact.json.sig \
   <expected-review-signature-sha256> <review-primary-fingerprint> \
   <review-signing-fingerprint> /path/to/store-returned.crx \
-  <expected-store-extension-id> /path/to/reviewed-upload.zip
+  <expected-store-package-sha256> <expected-store-extension-id> \
+  /path/to/reviewed-upload.zip
 ```
 
-These three store arguments are atomic and require the exact report and review
-bindings above. The CLI reads the candidate and reviewed upload once. The
-reviewed upload must be the canonical ZIP declared by the authenticated
+These four store arguments are atomic and require the exact report and review
+bindings above. The CLI reads the candidate and reviewed upload once, then
+checks the independently supplied CRX3 digest before parsing the candidate.
+The reviewed upload must be the canonical ZIP declared by the authenticated
 artifact; the CRX3 envelope must pass the incumbent strict protobuf, developer-
 proof, Chrome Web Store publisher-proof, signature, embedded-ZIP, extension-id,
-and payload checks against that same artifact. The embedded store ZIP may use
+and payload checks against that same artifact. The parser's returned package
+digest must equal the independent input. The embedded store ZIP may use
 different archive metadata, but its exact payload tree and file count must
 equal the reviewed upload. Success reports the authenticated manifest, reviewed
 upload, CRX3 package, embedded archive, publisher-key, extension-id, and payload-

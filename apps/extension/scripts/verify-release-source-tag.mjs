@@ -16,8 +16,8 @@ function fail(message) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (![4, 5, 7, 11, 14].includes(args.length)) {
-    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json [dual-local-report.json expected-dual-report-sha256 [artifact-review-signature expected-artifact-review-signature-sha256 expected-artifact-review-primary-fingerprint expected-artifact-review-signing-fingerprint [store-returned.crx expected-store-extension-id reviewed-upload.zip]]]]");
+  if (![4, 5, 7, 11, 15].includes(args.length)) {
+    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json [dual-local-report.json expected-dual-report-sha256 [artifact-review-signature expected-artifact-review-signature-sha256 expected-artifact-review-primary-fingerprint expected-artifact-review-signing-fingerprint [store-returned.crx expected-store-package-sha256 expected-store-extension-id reviewed-upload.zip]]]]");
   }
   const [
     tagName,
@@ -63,14 +63,16 @@ async function main() {
   }
   let storePackagePath;
   let storePackageBytes;
+  let expectedStorePackageSha256;
   let expectedStoreExtensionId;
   let reviewedUploadArchivePath;
   let reviewedUploadArchiveBytes;
-  if (args.length === 14) {
+  if (args.length === 15) {
     storePackagePath = resolve(args[11]);
     storePackageBytes = await readFile(storePackagePath);
-    expectedStoreExtensionId = args[12];
-    reviewedUploadArchivePath = resolve(args[13]);
+    expectedStorePackageSha256 = args[12];
+    expectedStoreExtensionId = args[13];
+    reviewedUploadArchivePath = resolve(args[14]);
     reviewedUploadArchiveBytes = await readFile(reviewedUploadArchivePath);
   }
   const result = await verifyReleaseSourceTag({
@@ -89,6 +91,7 @@ async function main() {
     expectedArtifactReviewSigningFingerprint,
     reviewedUploadArchiveBytes,
     storePackageBytes,
+    expectedStorePackageSha256,
     expectedStoreExtensionId,
   });
   console.log(`verified release tag ${result.tagRef}`);

@@ -174,12 +174,14 @@ function verifyExpectedStorePackage({
   artifactReview,
   reviewedUploadArchiveBytes,
   storePackageBytes,
+  expectedStorePackageSha256,
   expectedStoreExtensionId,
   requiredStorePublisherKeySha256,
 }) {
   const suppliedValues = [
     reviewedUploadArchiveBytes,
     storePackageBytes,
+    expectedStorePackageSha256,
     expectedStoreExtensionId,
   ];
   const suppliedCount = suppliedValues.filter((value) => value !== undefined).length;
@@ -187,7 +189,7 @@ function verifyExpectedStorePackage({
     return null;
   }
   if (suppliedCount !== suppliedValues.length) {
-    fail("reviewed upload archive, store package, and expected extension id must be provided together");
+    fail("reviewed upload archive, store package, SHA-256, and expected extension id must be provided together");
   }
   if (artifactReview === null) {
     fail("store package verification requires the exact artifact review binding");
@@ -200,6 +202,18 @@ function verifyExpectedStorePackage({
   }
   if (!(storePackageBytes instanceof Uint8Array)) {
     fail("store package must be byte data");
+  }
+  if (
+    typeof expectedStorePackageSha256 !== "string" ||
+    !SHA256_PATTERN.test(expectedStorePackageSha256)
+  ) {
+    fail("expected store package SHA-256 must be a lowercase digest");
+  }
+  const actualStorePackageSha256 = createHash("sha256")
+    .update(storePackageBytes)
+    .digest("hex");
+  if (actualStorePackageSha256 !== expectedStorePackageSha256) {
+    fail("store package differs from the independently supplied SHA-256");
   }
 
   const exactArtifactManifest = parseArtifactManifest(artifactManifestBytes);
@@ -229,6 +243,9 @@ function verifyExpectedStorePackage({
   }
   if (verified.treeSha256 !== approved.treeSha256 || verified.files !== approved.files) {
     fail("store package and reviewed upload verification disagree");
+  }
+  if (verified.packageSha256 !== expectedStorePackageSha256) {
+    fail("store package verifier returned a different package digest");
   }
   return {
     artifactManifestSha256: artifactReview.artifactSha256,
@@ -790,6 +807,7 @@ export async function verifyReleaseSourceTag({
   expectedArtifactReviewSigningFingerprint,
   reviewedUploadArchiveBytes,
   storePackageBytes,
+  expectedStorePackageSha256,
   expectedStoreExtensionId,
   requiredStorePublisherKeySha256,
   environment,
@@ -844,6 +862,7 @@ export async function verifyReleaseSourceTag({
     artifactReview,
     reviewedUploadArchiveBytes,
     storePackageBytes,
+    expectedStorePackageSha256,
     expectedStoreExtensionId,
     requiredStorePublisherKeySha256,
   });

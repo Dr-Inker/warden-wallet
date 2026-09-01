@@ -660,6 +660,7 @@ describe("release source annotated-tag verification", () => {
       expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
       reviewedUploadArchiveBytes: fixture.differentArtifact.archiveBytes,
       storePackageBytes: differentCrxBytes,
+      expectedStorePackageSha256: sha256(differentCrxBytes),
       expectedStoreExtensionId,
       requiredStorePublisherKeySha256: storePublisherKeySha256,
     })).rejects.toThrow(/store|reviewed upload|archive|payload/);
@@ -725,6 +726,7 @@ describe("release source annotated-tag verification", () => {
       expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
       reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
       storePackageBytes,
+      expectedStorePackageSha256: sha256(storePackageBytes),
       expectedStoreExtensionId,
       requiredStorePublisherKeySha256: storePublisherKeySha256,
     })).resolves.toMatchObject({
@@ -748,7 +750,7 @@ describe("release source annotated-tag verification", () => {
     });
   });
 
-  it("requires an atomic store tuple, an artifact review, and the independent extension id", async () => {
+  it("requires an atomic store tuple, an artifact review, and independent digest/id", async () => {
     const storePackageBytes = storeCrxBytes(fixture.reviewedArtifact.archiveBytes);
     await expect(verify({
       reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
@@ -756,6 +758,12 @@ describe("release source annotated-tag verification", () => {
     await expect(verify({
       reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
       storePackageBytes,
+      expectedStoreExtensionId,
+    })).rejects.toThrow(/must be provided together/);
+    await expect(verify({
+      reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
+      storePackageBytes,
+      expectedStorePackageSha256: sha256(storePackageBytes),
       expectedStoreExtensionId,
       requiredStorePublisherKeySha256: storePublisherKeySha256,
     })).rejects.toThrow(/requires the exact artifact review binding/);
@@ -777,9 +785,42 @@ describe("release source annotated-tag verification", () => {
       expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
       reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
       storePackageBytes,
+      expectedStorePackageSha256: sha256(storePackageBytes),
       expectedStoreExtensionId: "a".repeat(32),
       requiredStorePublisherKeySha256: storePublisherKeySha256,
     })).rejects.toThrow(/extension id differs/);
+  });
+
+  it("checks the independent store-package digest before candidate parsing", async () => {
+    const storePackageBytes = Buffer.from("not a CRX3 package\n");
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      fixture.reviewedArtifact.releaseFiles,
+    );
+    const options = {
+      ...fixture.reviewedArtifact,
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+      artifactReviewSignatureBytes: fixture.reviewedArtifactSignatureBytes,
+      expectedArtifactReviewSignatureSha256: sha256(
+        fixture.reviewedArtifactSignatureBytes,
+      ),
+      expectedArtifactReviewPrimaryFingerprint: fixture.fingerprint,
+      expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
+      reviewedUploadArchiveBytes: fixture.reviewedArtifact.archiveBytes,
+      storePackageBytes,
+      expectedStorePackageSha256: "0".repeat(64),
+      expectedStoreExtensionId,
+      requiredStorePublisherKeySha256: storePublisherKeySha256,
+    };
+    await expect(verify(options)).rejects.toThrow(
+      /store package differs from the independently supplied SHA-256/,
+    );
+    await expect(verify({
+      ...options,
+      expectedStorePackageSha256: sha256(storePackageBytes),
+    })).rejects.toThrow(/store package verification failed.*CRX3/);
   });
 
   it("checks the independent review-signature digest before candidate use", async () => {
