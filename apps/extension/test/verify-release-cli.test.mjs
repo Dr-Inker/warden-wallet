@@ -445,6 +445,84 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
     )).toEqual([]);
   });
 
+  it("gives independent unzip only the contracted child environment", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
+    temporaryDirectories.push(directory);
+    const { inputBytes, inputPaths } = await writePackagedInputs(directory);
+    const observationPath = join(directory, "child-environment-observation.json");
+    const probeDirectory = join(directory, "child-environment-probe-bin");
+    const probePath = join(probeDirectory, "unzip");
+    await mkdir(probeDirectory, { recursive: true });
+    await writeFile(probePath, `#!/usr/bin/env node
+import { createHash } from "node:crypto";
+import { readFile, stat, writeFile } from "node:fs/promises";
+
+const inspectedPath = process.argv[3];
+const descriptor = /^\\/proc\\/(\\d+)\\/fd\\/(\\d+)$/.exec(inspectedPath);
+if (descriptor === null) {
+  throw new Error("expected a procfs descriptor path");
+}
+const workingDirectory = process.cwd();
+const [inspectedBytes, descriptorInfo, inspectedStat, workingDirectoryStat] = await Promise.all([
+  readFile(inspectedPath),
+  readFile("/proc/" + descriptor[1] + "/fdinfo/" + descriptor[2], "utf8"),
+  stat(inspectedPath),
+  stat(workingDirectory),
+]);
+const flagsMatch = /^flags:\\s+([0-7]+)$/m.exec(descriptorInfo);
+if (flagsMatch === null) {
+  throw new Error("expected octal descriptor flags");
+}
+const flags = Number.parseInt(flagsMatch[1], 8);
+await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
+  inspectedPath,
+  sha256: createHash("sha256").update(inspectedBytes).digest("hex"),
+  accessMode: flags & 0o3,
+  inodeMode: inspectedStat.mode & 0o777,
+  workingDirectory,
+  workingDirectoryMode: workingDirectoryStat.mode & 0o777,
+  environmentKeys: Object.keys(process.env).sort(),
+  path: process.env.PATH,
+  lang: process.env.LANG,
+  lcAll: process.env.LC_ALL,
+  secretMarkerPresent: Object.hasOwn(process.env, "WARDEN_TEST_UNZIP_SECRET_MARKER"),
+  tmpdirPresent: Object.hasOwn(process.env, "TMPDIR"),
+}));
+`);
+    await chmod(probePath, 0o755);
+    const expectedPath = `${probeDirectory}:${process.env.PATH ?? ""}`;
+
+    const result = await execFile(process.execPath, [verifierPath, ...inputPaths], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      env: {
+        ...process.env,
+        PATH: expectedPath,
+        TMPDIR: directory,
+        WARDEN_TEST_UNZIP_SECRET_MARKER: "must-not-reach-child",
+      },
+    });
+    expect(result.stdout).toContain("independent ZIP reader unzip -t passed");
+    const observation = JSON.parse(await readFile(observationPath, "utf8"));
+    expect(observation.inspectedPath).toMatch(/^\/proc\/\d+\/fd\/\d+$/);
+    expect(observation.sha256).toBe(sha256(inputBytes[0]));
+    expect(observation.accessMode).toBe(0);
+    expect(observation.inodeMode).toBe(0o400);
+    expect(observation.workingDirectory.startsWith(
+      `${directory}/warden-release-unzip-`,
+    )).toBe(true);
+    expect(observation.workingDirectoryMode).toBe(0o700);
+    expect(observation.secretMarkerPresent).toBe(false);
+    expect(observation.tmpdirPresent).toBe(false);
+    expect(observation.environmentKeys).toEqual(["LANG", "LC_ALL", "PATH"]);
+    expect(observation.path).toBe(expectedPath);
+    expect(observation.lang).toBe("C");
+    expect(observation.lcAll).toBe("C");
+    expect((await readdir(directory)).filter((name) =>
+      name.startsWith("warden-release-unzip-"),
+    )).toEqual([]);
+  });
+
   it("rejects a final-symlink archive before reading later inputs", async () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
     temporaryDirectories.push(directory);
