@@ -99,13 +99,21 @@ function goodSignatureIdentityMatches(signingFingerprint, value) {
     : signingFingerprint.startsWith(identity);
 }
 
-export function parseSingleOpenPgpSignatureStatus(statusText, expectedSignerFingerprint) {
+export function parseSingleOpenPgpSignatureStatus(
+  statusText,
+  expectedPrimaryFingerprintValue,
+  expectedSigningFingerprintValue,
+) {
   if (typeof statusText !== "string") {
     openPgpFail("machine status must be text");
   }
   const expectedPrimaryFingerprint = normalizeOpenPgpFingerprint(
-    expectedSignerFingerprint,
-    "expected signer fingerprint",
+    expectedPrimaryFingerprintValue,
+    "expected primary fingerprint",
+  );
+  const expectedSigningFingerprint = normalizeOpenPgpFingerprint(
+    expectedSigningFingerprintValue,
+    "expected signing fingerprint",
   );
   const statuses = [];
   for (const line of statusText.split("\n")) {
@@ -152,6 +160,11 @@ export function parseSingleOpenPgpSignatureStatus(statusText, expectedSignerFing
     validArguments[0],
     "VALIDSIG signing fingerprint",
   );
+  if (signingFingerprint !== expectedSigningFingerprint) {
+    openPgpFail(
+      "VALIDSIG signing fingerprint differs from the independently supplied signing key",
+    );
+  }
   const signatureVersion = parseCanonicalOpenPgpOctet(
     validArguments[4],
     "VALIDSIG signature version",
@@ -188,7 +201,9 @@ export function parseSingleOpenPgpSignatureStatus(statusText, expectedSignerFing
     "VALIDSIG primary fingerprint",
   );
   if (primaryFingerprint !== expectedPrimaryFingerprint) {
-    openPgpFail("VALIDSIG primary fingerprint differs from the independently supplied signer");
+    openPgpFail(
+      "VALIDSIG primary fingerprint differs from the independently supplied primary key",
+    );
   }
   const goodSignatureIdentity = terminalStatuses[0].argumentsText.split(" ")[0];
   if (!goodSignatureIdentityMatches(signingFingerprint, goodSignatureIdentity)) {
@@ -348,7 +363,8 @@ export async function verifyReleaseSourceTag({
   repositoryRoot,
   tagName,
   expectedTagObject,
-  expectedSignerFingerprint,
+  expectedPrimaryFingerprint,
+  expectedSigningFingerprint,
   artifactManifest,
   environment,
 }) {
@@ -365,9 +381,13 @@ export async function verifyReleaseSourceTag({
     fail("selected tag name is invalid");
   }
   assertFullSha1(expectedTagObject, "expected tag object");
-  const expectedPrimaryFingerprint = normalizeOpenPgpFingerprint(
-    expectedSignerFingerprint,
-    "expected signer fingerprint",
+  const normalizedExpectedPrimaryFingerprint = normalizeOpenPgpFingerprint(
+    expectedPrimaryFingerprint,
+    "expected primary fingerprint",
+  );
+  const normalizedExpectedSigningFingerprint = normalizeOpenPgpFingerprint(
+    expectedSigningFingerprint,
+    "expected signing fingerprint",
   );
   const artifactCommit = artifactManifest?.source?.gitCommit;
   assertFullSha1(artifactCommit, "artifact source commit");
@@ -435,7 +455,8 @@ export async function verifyReleaseSourceTag({
   }
   const signature = parseSingleOpenPgpSignatureStatus(
     verification.stderr,
-    expectedPrimaryFingerprint,
+    normalizedExpectedPrimaryFingerprint,
+    normalizedExpectedSigningFingerprint,
   );
   if (verification.exitCode !== 0) {
     fail(`git verify-tag exited ${verification.exitCode} despite parsed status`);

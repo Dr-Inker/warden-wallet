@@ -30,14 +30,14 @@ async function git(arguments_, env = process.env) {
   return command(GIT, arguments_, { cwd: fixture.repository, env });
 }
 
-async function signedTag(name, message, env) {
+async function signedTag(name, message, env, signingFingerprint = fixture.signingFingerprint) {
   await git([
     "-c",
     `gpg.program=${GPG}`,
     "tag",
     "-s",
     "-u",
-    fixture.fingerprint,
+    `${signingFingerprint}!`,
     "-m",
     message,
     name,
@@ -81,6 +81,42 @@ beforeAll(async () => {
   if (!/^[0-9A-F]{40}(?:[0-9A-F]{24})?$/.test(fixture.fingerprint ?? "")) {
     throw new Error("failed to create an ephemeral full OpenPGP fingerprint");
   }
+  for (let index = 0; index < 2; index += 1) {
+    await command(GPG, [
+      "--batch",
+      "--homedir",
+      fixture.gnupgHome,
+      "--pinentry-mode",
+      "loopback",
+      "--passphrase",
+      "",
+      "--quick-add-key",
+      fixture.fingerprint,
+      "ed25519",
+      "sign",
+      "0",
+    ]);
+  }
+  const keysWithSubkeys = await command(GPG, [
+    "--batch",
+    "--homedir",
+    fixture.gnupgHome,
+    "--with-colons",
+    "--list-secret-keys",
+  ]);
+  const fingerprints = keysWithSubkeys.stdout.split("\n")
+    .map((line) => line.split(":"))
+    .filter((fields) => fields[0] === "fpr")
+    .map((fields) => fields[9]);
+  if (
+    fingerprints.length !== 3 ||
+    fingerprints[0] !== fixture.fingerprint ||
+    fingerprints.some((fingerprint) => !/^[0-9A-F]{40}(?:[0-9A-F]{24})?$/.test(fingerprint))
+  ) {
+    throw new Error("failed to create two distinct ephemeral signing subkeys");
+  }
+  [fixture.fingerprint, fixture.signingFingerprint, fixture.siblingSigningFingerprint] =
+    fingerprints;
 
   await git(["init", "--quiet"]);
   await git(["config", "user.name", "Warden release fixture"]);
@@ -93,6 +129,18 @@ beforeAll(async () => {
     "release-fixture",
     "fixture valid release",
     fixture.environment,
+  );
+  fixture.siblingTagObject = await signedTag(
+    "sibling-signing-fixture",
+    "fixture valid sibling signing subkey",
+    fixture.environment,
+    fixture.siblingSigningFingerprint,
+  );
+  fixture.primaryTagObject = await signedTag(
+    "primary-signing-fixture",
+    "fixture valid primary signing key",
+    fixture.environment,
+    fixture.fingerprint,
   );
   await writeFile(join(fixture.gnupgHome, "gpg.conf"), "digest-algo SHA224\n", {
     mode: 0o600,
@@ -148,7 +196,7 @@ beforeAll(async () => {
     "-f",
     "-s",
     "-u",
-    fixture.fingerprint,
+    `${fixture.signingFingerprint}!`,
     "-m",
     "fixture after move",
     "moved-fixture",
@@ -180,7 +228,8 @@ function verify(options = {}) {
     repositoryRoot: fixture.repository,
     tagName: "release-fixture",
     expectedTagObject: fixture.releaseTagObject,
-    expectedSignerFingerprint: fixture.fingerprint,
+    expectedPrimaryFingerprint: fixture.fingerprint,
+    expectedSigningFingerprint: fixture.signingFingerprint,
     artifactManifest: { source: { gitCommit: fixture.firstCommit } },
     environment: fixture.environment,
     ...options,
@@ -188,13 +237,13 @@ function verify(options = {}) {
 }
 
 describe("release source annotated-tag verification", () => {
-  it("binds an exact annotated tag object, artifact commit, and primary fingerprint", async () => {
+  it("binds an exact annotated tag object plus primary and signing fingerprints", async () => {
     await expect(verify()).resolves.toEqual({
       tagName: "release-fixture",
       tagRef: "refs/tags/release-fixture",
       tagObject: fixture.releaseTagObject,
       sourceCommit: fixture.firstCommit,
-      signingFingerprint: fixture.fingerprint,
+      signingFingerprint: fixture.signingFingerprint,
       primaryFingerprint: fixture.fingerprint,
       signatureVersion: 4,
       publicKeyAlgorithm: 22,
@@ -218,14 +267,50 @@ describe("release source annotated-tag verification", () => {
     })).rejects.toThrow(/differs from the artifact source commit/);
   });
 
-  it("rejects a bad signature and an independently supplied wrong signer", async () => {
+  it("rejects a bad signature and independently supplied wrong identities", async () => {
     await expect(verify({
       tagName: "bad-signature-fixture",
       expectedTagObject: fixture.badTagObject,
     })).rejects.toThrow(/BADSIG|signature/);
     await expect(verify({
-      expectedSignerFingerprint: "0".repeat(40),
-    })).rejects.toThrow(/differs from the independently supplied signer/);
+      expectedPrimaryFingerprint: "0".repeat(40),
+    })).rejects.toThrow(/differs from the independently supplied primary key/);
+    await expect(verify({
+      expectedSigningFingerprint: "0".repeat(40),
+    })).rejects.toThrow(/differs from the independently supplied signing key/);
+    await expect(verify({
+      expectedPrimaryFingerprint: fixture.signingFingerprint,
+    })).rejects.toThrow(/differs from the independently supplied primary key/);
+    await expect(verify({
+      expectedSigningFingerprint: fixture.fingerprint,
+    })).rejects.toThrow(/differs from the independently supplied signing key/);
+    await expect(verify({
+      expectedSigningFingerprint: fixture.signingFingerprint.slice(0, 16),
+    })).rejects.toThrow(/expected signing fingerprint must be a 40- or 64-character/);
+  });
+
+  it("refuses an unexpected sibling subkey and accepts only the independently selected key", async () => {
+    const siblingOptions = {
+      tagName: "sibling-signing-fixture",
+      expectedTagObject: fixture.siblingTagObject,
+    };
+    await expect(verify(siblingOptions))
+      .rejects.toThrow(/signing fingerprint differs from the independently supplied signing key/);
+    await expect(verify({
+      ...siblingOptions,
+      expectedSigningFingerprint: fixture.siblingSigningFingerprint,
+    })).resolves.toMatchObject({
+      signingFingerprint: fixture.siblingSigningFingerprint,
+      primaryFingerprint: fixture.fingerprint,
+    });
+    await expect(verify({
+      tagName: "primary-signing-fixture",
+      expectedTagObject: fixture.primaryTagObject,
+      expectedSigningFingerprint: fixture.fingerprint,
+    })).resolves.toMatchObject({
+      signingFingerprint: fixture.fingerprint,
+      primaryFingerprint: fixture.fingerprint,
+    });
   });
 
   it("rejects a cryptographically valid tag made with an unapproved hash", async () => {
@@ -246,7 +331,7 @@ describe("release source annotated-tag verification", () => {
       "[GNUPG:] FUTURE_STATUS ignored-for-forward-compatibility",
       "",
     ].join("\n");
-    expect(parseSingleOpenPgpSignatureStatus(validStatus, primary)).toEqual({
+    expect(parseSingleOpenPgpSignatureStatus(validStatus, primary, signing)).toEqual({
       signingFingerprint: signing,
       primaryFingerprint: primary,
       signatureVersion: 4,
@@ -257,10 +342,12 @@ describe("release source annotated-tag verification", () => {
     expect(() => parseSingleOpenPgpSignatureStatus(
       validStatus.replace("[GNUPG:] TRUST_UNDEFINED", "[GNUPG:] NEWSIG\n[GNUPG:] TRUST_UNDEFINED"),
       primary,
+      signing,
     )).toThrow(/exactly one signature/);
     expect(() => parseSingleOpenPgpSignatureStatus(
       validStatus.replace("[GNUPG:] GOODSIG", "[GNUPG:] EXPKEYSIG"),
       primary,
+      signing,
     )).toThrow(/EXPKEYSIG/);
     expect(() => parseSingleOpenPgpSignatureStatus(
       validStatus.replace(
@@ -268,6 +355,7 @@ describe("release source annotated-tag verification", () => {
         `[GNUPG:] VALIDSIG ${signing} 2026-09-01 1788220800 0 4 0 22 8 00 ${primary}\n[GNUPG:] TRUST_UNDEFINED`,
       ),
       primary,
+      signing,
     )).toThrow(/exactly one cryptographic VALIDSIG/);
     expect(() => parseSingleOpenPgpSignatureStatus(
       validStatus.replace(
@@ -275,6 +363,7 @@ describe("release source annotated-tag verification", () => {
         `[GNUPG:] ERRSIG ${"C".repeat(16)} 22 8 00 1788220800 9 ${signing}\n[GNUPG:] NO_PUBKEY ${"C".repeat(16)}`,
       ),
       primary,
+      signing,
     )).toThrow(/ERRSIG|NO_PUBKEY/);
   });
 

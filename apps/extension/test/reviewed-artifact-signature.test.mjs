@@ -74,6 +74,34 @@ beforeAll(async () => {
   if (!/^[0-9A-F]{40}(?:[0-9A-F]{24})?$/.test(fixture.fingerprint ?? "")) {
     throw new Error("failed to create an ephemeral artifact-review fingerprint");
   }
+  for (let index = 0; index < 2; index += 1) {
+    await gpg([
+      "--batch",
+      "--pinentry-mode",
+      "loopback",
+      "--passphrase",
+      "",
+      "--quick-add-key",
+      fixture.fingerprint,
+      "ed25519",
+      "sign",
+      "0",
+    ]);
+  }
+  const keysWithSubkeys = await gpg(["--batch", "--with-colons", "--list-secret-keys"]);
+  const fingerprints = keysWithSubkeys.stdout.split("\n")
+    .map((line) => line.split(":"))
+    .filter((fields) => fields[0] === "fpr")
+    .map((fields) => fields[9]);
+  if (
+    fingerprints.length !== 3 ||
+    fingerprints[0] !== fixture.fingerprint ||
+    fingerprints.some((fingerprint) => !/^[0-9A-F]{40}(?:[0-9A-F]{24})?$/.test(fingerprint))
+  ) {
+    throw new Error("failed to create two distinct ephemeral artifact-review signing subkeys");
+  }
+  [fixture.fingerprint, fixture.signingFingerprint, fixture.siblingSigningFingerprint] =
+    fingerprints;
   const entries = [
     { path: "background.js", data: Buffer.from("globalThis.background = true;\n") },
     { path: "manifest.json", data: Buffer.from(`${JSON.stringify(MANIFEST, null, 2)}\n`) },
@@ -109,6 +137,8 @@ beforeAll(async () => {
   fixture.artifactPath = join(fixture.root, "reviewed-artifact.json");
   const firstSignaturePath = join(fixture.root, "reviewed-artifact.json.sig");
   const secondSignaturePath = join(fixture.root, "reviewed-artifact.second.sig");
+  const siblingSignaturePath = join(fixture.root, "reviewed-artifact.sibling.sig");
+  const primarySignaturePath = join(fixture.root, "reviewed-artifact.primary.sig");
   const unapprovedHashSignaturePath = join(
     fixture.root,
     "reviewed-artifact.unapproved-hash.sig",
@@ -123,7 +153,7 @@ beforeAll(async () => {
       "--passphrase",
       "",
       "--local-user",
-      fixture.fingerprint,
+      `${fixture.signingFingerprint}!`,
       "--detach-sign",
       "--output",
       signaturePath,
@@ -141,7 +171,37 @@ beforeAll(async () => {
     "--passphrase",
     "",
     "--local-user",
-    fixture.fingerprint,
+    `${fixture.siblingSigningFingerprint}!`,
+    "--detach-sign",
+    "--output",
+    siblingSignaturePath,
+    fixture.artifactPath,
+  ]);
+  fixture.siblingSignatureBytes = await readFile(siblingSignaturePath);
+  await gpg([
+    "--batch",
+    "--yes",
+    "--pinentry-mode",
+    "loopback",
+    "--passphrase",
+    "",
+    "--local-user",
+    `${fixture.fingerprint}!`,
+    "--detach-sign",
+    "--output",
+    primarySignaturePath,
+    fixture.artifactPath,
+  ]);
+  fixture.primarySignatureBytes = await readFile(primarySignaturePath);
+  await gpg([
+    "--batch",
+    "--yes",
+    "--pinentry-mode",
+    "loopback",
+    "--passphrase",
+    "",
+    "--local-user",
+    `${fixture.signingFingerprint}!`,
     "--digest-algo",
     "SHA224",
     "--detach-sign",
@@ -168,20 +228,21 @@ function verify(options = {}) {
   return verifyReviewedArtifactSignature({
     artifactBytes: fixture.artifactBytes,
     signatureBytes: fixture.signatureBytes,
-    expectedSignerFingerprint: fixture.fingerprint,
+    expectedPrimaryFingerprint: fixture.fingerprint,
+    expectedSigningFingerprint: fixture.signingFingerprint,
     environment: fixture.environment,
     ...options,
   });
 }
 
 describe("reviewed artifact detached-signature verification", () => {
-  it("authenticates the exact artifact bytes and full primary fingerprint", async () => {
+  it("authenticates the exact artifact bytes plus full primary and signing fingerprints", async () => {
     await expect(verify()).resolves.toEqual({
       artifactBytes: fixture.artifactBytes.length,
       artifactSha256: sha256(fixture.artifactBytes),
       signatureBytes: fixture.signatureBytes.length,
       signatureSha256: sha256(fixture.signatureBytes),
-      signingFingerprint: fixture.fingerprint,
+      signingFingerprint: fixture.signingFingerprint,
       primaryFingerprint: fixture.fingerprint,
       signatureVersion: 4,
       publicKeyAlgorithm: 22,
@@ -196,6 +257,7 @@ describe("reviewed artifact detached-signature verification", () => {
       fixture.artifactPath,
       fixture.signaturePath,
       fixture.fingerprint,
+      fixture.signingFingerprint,
     ], {
       env: fixture.environment,
       encoding: "utf8",
@@ -204,6 +266,9 @@ describe("reviewed artifact detached-signature verification", () => {
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain(`artifact sha256 ${sha256(fixture.artifactBytes)}`);
     expect(result.stdout).toContain(`signature sha256 ${sha256(fixture.signatureBytes)}`);
+    expect(result.stdout).toContain(
+      `OpenPGP signing fingerprint ${fixture.signingFingerprint}`,
+    );
     expect(result.stdout).toContain(`OpenPGP primary fingerprint ${fixture.fingerprint}`);
     expect(result.stdout).toContain("OpenPGP public-key algorithm 22");
     expect(result.stdout).toContain("OpenPGP hash algorithm 10");
@@ -211,13 +276,41 @@ describe("reviewed artifact detached-signature verification", () => {
     expect(result.stdout).toContain(`artifact source commit ${"a".repeat(40)}`);
   });
 
-  it("rejects a one-byte artifact change or independently supplied wrong key", async () => {
+  it("rejects a one-byte artifact change or independently supplied wrong identity", async () => {
     const changedArtifact = Buffer.from(fixture.artifactBytes);
     changedArtifact[0] ^= 1;
     await expect(verify({ artifactBytes: changedArtifact }))
       .rejects.toThrow(/BADSIG|signature/);
-    await expect(verify({ expectedSignerFingerprint: "0".repeat(40) }))
-      .rejects.toThrow(/differs from the independently supplied signer/);
+    await expect(verify({ expectedPrimaryFingerprint: "0".repeat(40) }))
+      .rejects.toThrow(/differs from the independently supplied primary key/);
+    await expect(verify({ expectedSigningFingerprint: "0".repeat(40) }))
+      .rejects.toThrow(/differs from the independently supplied signing key/);
+    await expect(verify({ expectedPrimaryFingerprint: fixture.signingFingerprint }))
+      .rejects.toThrow(/differs from the independently supplied primary key/);
+    await expect(verify({ expectedSigningFingerprint: fixture.fingerprint }))
+      .rejects.toThrow(/differs from the independently supplied signing key/);
+    await expect(verify({
+      expectedSigningFingerprint: fixture.signingFingerprint.slice(0, 16),
+    })).rejects.toThrow(/expected artifact-review signing fingerprint must be a 40- or 64-character/);
+  });
+
+  it("refuses an unexpected sibling subkey and accepts only the independently selected key", async () => {
+    await expect(verify({ signatureBytes: fixture.siblingSignatureBytes }))
+      .rejects.toThrow(/signing fingerprint differs from the independently supplied signing key/);
+    await expect(verify({
+      signatureBytes: fixture.siblingSignatureBytes,
+      expectedSigningFingerprint: fixture.siblingSigningFingerprint,
+    })).resolves.toMatchObject({
+      signingFingerprint: fixture.siblingSigningFingerprint,
+      primaryFingerprint: fixture.fingerprint,
+    });
+    await expect(verify({
+      signatureBytes: fixture.primarySignatureBytes,
+      expectedSigningFingerprint: fixture.fingerprint,
+    })).resolves.toMatchObject({
+      signingFingerprint: fixture.fingerprint,
+      primaryFingerprint: fixture.fingerprint,
+    });
   });
 
   it("rejects malformed, changed, trailing, or concatenated signature packets", async () => {

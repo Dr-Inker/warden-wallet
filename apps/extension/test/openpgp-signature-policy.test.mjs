@@ -8,16 +8,29 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   OPENPGP_RELEASE_SIGNATURE_POLICY,
-  parseSingleOpenPgpSignatureStatus,
+  parseSingleOpenPgpSignatureStatus as parseOpenPgpStatus,
 } from "../scripts/release-source-tag.mjs";
 
 const execFile = promisify(execFileCallback);
 const GPG = "/usr/bin/gpg";
 const fixture = {};
+const DEFAULT_SIGNING_FINGERPRINT = `${"B".repeat(24)}${"C".repeat(16)}`;
+
+function parseStatus(
+  statusText,
+  expectedPrimaryFingerprint,
+  expectedSigningFingerprint = DEFAULT_SIGNING_FINGERPRINT,
+) {
+  return parseOpenPgpStatus(
+    statusText,
+    expectedPrimaryFingerprint,
+    expectedSigningFingerprint,
+  );
+}
 
 function statusLine({
   primary = "A".repeat(40),
-  signing = `${"B".repeat(24)}${"C".repeat(16)}`,
+  signing = DEFAULT_SIGNING_FINGERPRINT,
   goodSignatureIdentity = "C".repeat(16),
   signatureVersion = "4",
   reserved = "0",
@@ -108,7 +121,7 @@ async function exerciseInstalledAlgorithm({ name, generator, expectedAlgorithm }
     dataPath,
   ]);
   expect(verification.stderr).toContain("Good signature");
-  expect(parseSingleOpenPgpSignatureStatus(verification.stdout, fingerprint)).toMatchObject({
+  expect(parseStatus(verification.stdout, fingerprint, fingerprint)).toMatchObject({
     primaryFingerprint: fingerprint,
     signatureVersion: 4,
     publicKeyAlgorithm: expectedAlgorithm,
@@ -145,7 +158,7 @@ describe("shared OpenPGP release signature policy", () => {
     const primary = "A".repeat(40);
     for (const publicKeyAlgorithm of OPENPGP_RELEASE_SIGNATURE_POLICY.publicKeyAlgorithms) {
       for (const hashAlgorithm of OPENPGP_RELEASE_SIGNATURE_POLICY.hashAlgorithms) {
-        expect(parseSingleOpenPgpSignatureStatus(statusLine({
+        expect(parseStatus(statusLine({
           primary,
           publicKeyAlgorithm: String(publicKeyAlgorithm),
           hashAlgorithm: String(hashAlgorithm),
@@ -161,19 +174,19 @@ describe("shared OpenPGP release signature policy", () => {
   it("rejects weak, deprecated-unapproved, encryption-only, unknown, or malformed ids", () => {
     const primary = "A".repeat(40);
     for (const publicKeyAlgorithm of ["0", "2", "3", "17", "18", "20", "29", "255"]) {
-      expect(() => parseSingleOpenPgpSignatureStatus(
+      expect(() => parseStatus(
         statusLine({ primary, publicKeyAlgorithm }),
         primary,
       )).toThrow(/public-key algorithm .*not allowed/);
     }
     for (const hashAlgorithm of ["0", "1", "2", "3", "11", "12", "14", "255"]) {
-      expect(() => parseSingleOpenPgpSignatureStatus(
+      expect(() => parseStatus(
         statusLine({ primary, hashAlgorithm }),
         primary,
       )).toThrow(/hash algorithm .*not allowed/);
     }
     for (const publicKeyAlgorithm of ["01", "-1", "256", "1x"]) {
-      expect(() => parseSingleOpenPgpSignatureStatus(
+      expect(() => parseStatus(
         statusLine({ primary, publicKeyAlgorithm }),
         primary,
       )).toThrow(/canonical decimal octet/);
@@ -183,36 +196,36 @@ describe("shared OpenPGP release signature policy", () => {
   it("requires an exact binary-document signature class and exact OpenPGP status shape", () => {
     const primary = "A".repeat(40);
     for (const signatureClass of ["01", "02", "10", "FF"]) {
-      expect(() => parseSingleOpenPgpSignatureStatus(
+      expect(() => parseStatus(
         statusLine({ primary, signatureClass }),
         primary,
       )).toThrow(/signature class .*not allowed/);
     }
     for (const signatureClass of ["0", "000", "GG"]) {
-      expect(() => parseSingleOpenPgpSignatureStatus(
+      expect(() => parseStatus(
         statusLine({ primary, signatureClass }),
         primary,
       )).toThrow(/exactly one hexadecimal octet/);
     }
-    expect(() => parseSingleOpenPgpSignatureStatus(
+    expect(() => parseStatus(
       statusLine({ primary, reserved: "1" }),
       primary,
     )).toThrow(/reserved field must be zero/);
     for (const signatureVersion of ["0", "3", "5", "7", "255"]) {
-      expect(() => parseSingleOpenPgpSignatureStatus(
+      expect(() => parseStatus(
         statusLine({ primary, signatureVersion }),
         primary,
       )).toThrow(/signature version .*not allowed/);
     }
-    expect(() => parseSingleOpenPgpSignatureStatus(
+    expect(() => parseStatus(
       statusLine({ primary, signatureVersion: "04" }),
       primary,
     )).toThrow(/signature version must be a canonical decimal octet/);
-    expect(() => parseSingleOpenPgpSignatureStatus(
+    expect(() => parseStatus(
       statusLine({ primary, primaryField: "" }),
       primary,
     )).toThrow(/exactly ten arguments/);
-    expect(() => parseSingleOpenPgpSignatureStatus(
+    expect(() => parseStatus(
       statusLine({ primary, trailingArguments: ["unexpected"] }),
       primary,
     )).toThrow(/exactly ten arguments/);
@@ -220,31 +233,49 @@ describe("shared OpenPGP release signature policy", () => {
 
   it("matches v4 and v6 key ids at the correct fingerprint end", () => {
     const v4Signing = `${"A".repeat(24)}${"B".repeat(16)}`;
-    expect(parseSingleOpenPgpSignatureStatus(statusLine({
+    expect(parseStatus(statusLine({
       primary: v4Signing,
       signing: v4Signing,
       goodSignatureIdentity: "B".repeat(16),
-    }), v4Signing)).toMatchObject({ signingFingerprint: v4Signing });
+    }), v4Signing, v4Signing)).toMatchObject({ signingFingerprint: v4Signing });
 
     const v6Signing = `${"C".repeat(16)}${"D".repeat(48)}`;
-    expect(parseSingleOpenPgpSignatureStatus(statusLine({
+    expect(parseStatus(statusLine({
       primary: v6Signing,
       signing: v6Signing,
       goodSignatureIdentity: "C".repeat(16),
       signatureVersion: "6",
       publicKeyAlgorithm: "27",
-    }), v6Signing)).toMatchObject({
+    }), v6Signing, v6Signing)).toMatchObject({
       signingFingerprint: v6Signing,
       signatureVersion: 6,
       publicKeyAlgorithm: 27,
     });
-    expect(() => parseSingleOpenPgpSignatureStatus(statusLine({
+    expect(() => parseStatus(statusLine({
       primary: v6Signing,
       signing: v6Signing,
       goodSignatureIdentity: "D".repeat(16),
       signatureVersion: "6",
       publicKeyAlgorithm: "27",
-    }), v6Signing)).toThrow(/GOODSIG identity differs/);
+    }), v6Signing, v6Signing)).toThrow(/GOODSIG identity differs/);
+  });
+
+  it("requires independent exact primary and signing fingerprints", () => {
+    const primary = "A".repeat(40);
+    const signing = DEFAULT_SIGNING_FINGERPRINT;
+    const status = statusLine({ primary, signing });
+    expect(parseStatus(status, primary, signing)).toMatchObject({
+      signingFingerprint: signing,
+      primaryFingerprint: primary,
+    });
+    expect(() => parseStatus(status, primary, "D".repeat(40)))
+      .toThrow(/signing fingerprint differs from the independently supplied signing key/);
+    expect(() => parseStatus(status, "D".repeat(40), signing))
+      .toThrow(/primary fingerprint differs from the independently supplied primary key/);
+    expect(() => parseStatus(status, primary, signing.slice(0, 16)))
+      .toThrow(/expected signing fingerprint must be a 40- or 64-character/);
+    expect(() => parseStatus(status, "not-a-fingerprint", signing))
+      .toThrow(/expected primary fingerprint must be a 40- or 64-character/);
   });
 
   it("observes the approved RSA, ECDSA, and installed EdDSA ids from real signatures", async () => {

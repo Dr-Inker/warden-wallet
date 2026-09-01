@@ -81,16 +81,17 @@ the builder cannot rewrite.
 ## Signed release-source precondition
 
 After an owner has independently recorded a release tag name, its annotated-tag
-object SHA, and the full primary OpenPGP fingerprint, bind those values to an
-already reviewed artifact manifest with:
+object SHA, and the full primary and signing-key OpenPGP fingerprints, bind
+those values to an already reviewed artifact manifest with:
 
 ```sh
 GNUPGHOME=/path/to/release-verification-keyring \
   pnpm --filter @warden/extension release:verify-source-tag -- \
-  <tag> <expected-tag-object-sha> <expected-primary-fingerprint>
+  <tag> <expected-tag-object-sha> <expected-primary-fingerprint> \
+  <expected-signing-fingerprint>
 ```
 
-An optional fourth argument selects an artifact manifest outside the default
+An optional fifth argument selects an artifact manifest outside the default
 local release directory. The expected tag object is mandatory: a tag name and
 signer alone cannot reveal that an authorized signer force-moved the tag. The
 verifier resolves only the exact `refs/tags/<tag>` ref, requires it to equal the
@@ -101,8 +102,10 @@ Git/GPG executables, suppresses system/global Git configuration, and runs
 `git verify-tag --raw` against the expected object SHA rather than a mutable
 ref. Its machine-status parser requires exactly one `NEWSIG`, `GOODSIG`, and
 cryptographic `VALIDSIG`, binds the reported primary fingerprint to the full
-independent value, and rejects bad, expired, revoked, missing-key, or ambiguous
-signature results.
+independent primary value and the reported signing fingerprint to its separate
+full independent signing-key value, and rejects bad, expired, revoked, missing-
+key, unexpected sibling-subkey, or ambiguous signature results. When the
+primary key signs directly, the two expected fingerprints are identical.
 
 The shared OpenPGP policy also requires the exact ten-argument OpenPGP
 `VALIDSIG` shape, a zero reserved field, signature version **4 or 6**, canonical
@@ -138,17 +141,20 @@ bytes with an owner-approved review key, verify that detached signature with:
 GNUPGHOME=/path/to/artifact-review-keyring \
   pnpm --filter @warden/extension release:verify-artifact-signature -- \
   /path/to/reviewed.artifact.json /path/to/reviewed.artifact.json.sig \
-  <expected-primary-fingerprint>
+  <expected-primary-fingerprint> <expected-signing-fingerprint>
 ```
 
-All three inputs are explicit. The command rejects symlinks and bounds the
+All four inputs are explicit. The command rejects symlinks and bounds the
 artifact manifest to 8 MiB and detached signature to 1 MiB, copies their exact
 bytes to a private temporary directory, and invokes absolute `/usr/bin/gpg`
 with no options file, no prompts, no automatic key import/retrieval, and both
 the signature and data filenames. It applies the same strict one-signature
 `NEWSIG`/`GOODSIG`/`VALIDSIG` and full-primary-fingerprint checks as the signed
-source lane, then parses the already authenticated artifact bytes under the
-canonical artifact schema. Temporary files are removed on success or failure.
+source lane, plus exact independently supplied signing-fingerprint equality;
+an unexpected sibling subkey under the same primary fails closed. It then
+parses the already authenticated artifact bytes under the canonical artifact
+schema. Temporary files are removed on success or failure. Direct primary-key
+signing uses the same full fingerprint for both expected values.
 The same explicit public-key **1/19/22/27/28**, SHA-2 **8/9/10**, and binary-
 document class **00** policy applies before the artifact is accepted.
 
@@ -158,10 +164,11 @@ This follows GnuPG's primary
 and documented
 [`--no-auto-key-retrieve` behavior](https://gnupg.org/documentation/manuals/gnupg/GPG-Configuration-Options.html).
 The command authenticates bytes only after the owner has independently chosen
-and provisioned the review key. It does not sign anything, establish reviewer
-authority, provide a key ceremony/rotation policy, attest the verifier host, or
-prove how the artifact was built. Ephemeral fixture signatures are not a real
-review anchor or provenance statement and do not promote `WRD-REL-01`.
+and provisioned the review primary and signing key. It does not sign anything,
+establish reviewer authority, provide key-strength/curve or ceremony/rotation
+policy, attest the verifier host, or prove how the artifact was built.
+Ephemeral fixture signatures are not a real review anchor or provenance
+statement and do not promote `WRD-REL-01`.
 
 ## Web-Store-returned CRX3 comparison
 

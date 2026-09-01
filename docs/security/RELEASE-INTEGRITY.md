@@ -91,11 +91,12 @@ performed by this gate.
 ### Signed release-source precondition (C6 partial; fixture-only)
 
 `pnpm --filter @warden/extension release:verify-source-tag -- <tag>
-<expected-tag-object-sha> <expected-primary-fingerprint>` checks a
-caller-selected release source against the reviewed artifact manifest. An
-optional fourth argument selects a different reviewed manifest. All three
-identity arguments are independent inputs; none is learned from the tag or
-artifact candidate.
+<expected-tag-object-sha> <expected-primary-fingerprint>
+<expected-signing-fingerprint>` checks a caller-selected release source against
+the reviewed artifact manifest. An optional fifth argument selects a different
+reviewed manifest. All four identity arguments are independent inputs; none is
+learned from the tag or artifact candidate. When the primary key signs
+directly, the two fingerprint arguments are the same.
 
 The verifier accepts only an exact valid `refs/tags/<tag>` ref whose current
 object id equals the supplied full lowercase SHA-1 before and after signature
@@ -110,10 +111,14 @@ Signature verification fixes `gpg.format=openpgp`, fixes `/usr/bin/git` and
 --raw` to verify the expected object SHA rather than the ref. The status parser
 requires exactly one signature context, successful terminal result, and
 cryptographic `VALIDSIG`; it cross-checks `GOODSIG` against the signing
-fingerprint and requires `VALIDSIG`'s primary fingerprint to equal the complete
-independent fingerprint. Bad, expired, revoked, unavailable-key, failed,
-duplicate, or otherwise ambiguous results are refused. Unknown future status
-keywords are ignored as GnuPG's machine-interface contract requires.
+fingerprint, requires `VALIDSIG`'s signing fingerprint to equal the complete
+independently supplied signing-key fingerprint, and separately requires its
+primary fingerprint to equal the complete independently supplied primary-key
+fingerprint. A valid signature from an unexpected sibling signing subkey under
+the same primary therefore fails closed. Bad, expired, revoked, unavailable-
+key, failed, duplicate, or otherwise ambiguous results are refused. Unknown
+future status keywords are ignored as GnuPG's machine-interface contract
+requires.
 
 The parser does not treat bare cryptographic validity as sufficient. It
 requires the exact ten-field OpenPGP `VALIDSIG` record, zero reserved field,
@@ -140,8 +145,8 @@ The behavior follows Git's primary
 checked 2026-09-01 alongside the installed GnuPG 2.4.4 `DETAILS` contract.
 The explicitly selected, absolute caller-controlled `GNUPGHOME` must already
 contain the selected public key. This lane does not create a key or tag, select
-the production tag/object/fingerprint, authenticate the external anchor for
-the unsigned artifact JSON,
+the production tag/object/primary fingerprint/signing fingerprint, authenticate
+the external anchor for the unsigned artifact JSON,
 attest the Git or GnuPG executables, or supply a second independent builder.
 Its ephemeral test key and repository therefore do not promote `WRD-REL-01`.
 
@@ -149,10 +154,12 @@ Its ephemeral test key and repository therefore do not promote `WRD-REL-01`.
 
 `GNUPGHOME=/path/to/artifact-review-keyring pnpm --filter @warden/extension
 release:verify-artifact-signature -- <reviewed-artifact.json>
-<detached-signature> <expected-primary-fingerprint>` authenticates the exact
-artifact-manifest bytes before parsing them. The artifact path, signature path,
-complete primary OpenPGP fingerprint, and absolute verification keyring are all
-caller-controlled inputs; none is adopted from the candidate.
+<detached-signature> <expected-primary-fingerprint>
+<expected-signing-fingerprint>` authenticates the exact artifact-manifest bytes
+before parsing them. The artifact path, signature path, complete primary and
+signing OpenPGP fingerprints, and absolute verification keyring are all caller-
+controlled inputs; none is adopted from the candidate. When the primary key
+signs directly, the two fingerprints are the same.
 
 The CLI refuses non-regular/symlink inputs, caps the artifact at **8 MiB** and
 signature at **1 MiB**, reads each once, and rejects size drift. The verifier
@@ -162,11 +169,12 @@ directory and invokes absolute `/usr/bin/gpg` with `--no-options`, `--batch`,
 key-location list, `--status-fd=1`, and explicit detached-signature and data
 filenames. It requires exactly one `NEWSIG`, terminal `GOODSIG`, and
 cryptographic `VALIDSIG`, cross-checks signing identity, and binds the reported
-primary fingerprint to the full independent value. Bad, expired, revoked,
-missing-key, duplicate/multi-signature, malformed, trailing, wrong-artifact,
-or wrong-fingerprint results fail closed. Temporary files are removed on
-success and failure; GnuPG may still maintain state inside the explicitly
-selected caller keyring.
+signing and primary fingerprints to their separate full independent values. A
+cryptographically valid signature from any other signing subkey under the same
+primary fails closed. Bad, expired, revoked, missing-key, duplicate/multi-
+signature, malformed, trailing, wrong-artifact, or wrong-fingerprint results
+fail closed. Temporary files are removed on success and failure; GnuPG may
+still maintain state inside the explicitly selected caller keyring.
 The same shared allowlist requires public-key ID **1/19/22/27/28**, SHA-2 ID
 **8/9/10**, and exact binary-document signature class **00** before accepting
 the reviewed bytes.
@@ -181,8 +189,9 @@ checked 2026-09-01 against installed GnuPG 2.4.4.
 
 This is an executable review-anchor precondition, not a real review anchor or
 provenance claim. No production artifact was signed, no production review key
-or reviewer authority was selected, and no key ceremony, rotation/revocation
-workflow, host attestation, transparency log, or independent build exists.
+or signing subkey or reviewer authority was selected, and no key ceremony,
+strength/curve rule, rotation/revocation workflow, host attestation,
+transparency log, or independent build exists.
 Only ephemeral fixture keys and bytes have passed, so `WRD-REL-01` remains
 `unimplemented`.
 

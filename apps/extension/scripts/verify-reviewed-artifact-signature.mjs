@@ -26,8 +26,8 @@ async function readBoundedRegularFile(path, maximumBytes, label) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length !== 3) {
-    fail("usage: verify-reviewed-artifact-signature.mjs reviewed-artifact.json detached-signature expected-primary-fingerprint");
+  if (args.length !== 4) {
+    fail("usage: verify-reviewed-artifact-signature.mjs reviewed-artifact.json detached-signature expected-primary-fingerprint expected-signing-fingerprint");
   }
   const artifactPath = resolve(args[0]);
   const signaturePath = resolve(args[1]);
@@ -46,7 +46,8 @@ async function main() {
   const verified = await verifyReviewedArtifactSignature({
     artifactBytes,
     signatureBytes,
-    expectedSignerFingerprint: args[2],
+    expectedPrimaryFingerprint: args[2],
+    expectedSigningFingerprint: args[3],
   });
   const artifactManifest = parseArtifactManifest(artifactBytes);
   console.log(`verified reviewed artifact ${artifactPath}`);

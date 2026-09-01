@@ -16,13 +16,18 @@ function fail(message) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (![3, 4].includes(args.length)) {
-    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint [reviewed-artifact.json]");
+  if (![4, 5].includes(args.length)) {
+    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json]");
   }
-  const [tagName, expectedTagObject, expectedSignerFingerprint] = args;
+  const [
+    tagName,
+    expectedTagObject,
+    expectedPrimaryFingerprint,
+    expectedSigningFingerprint,
+  ] = args;
   let artifactManifestPath;
-  if (args[3]) {
-    artifactManifestPath = resolve(args[3]);
+  if (args[4]) {
+    artifactManifestPath = resolve(args[4]);
   } else {
     const sourceManifest = JSON.parse(await readFile(join(appDirectory, "manifest.json"), "utf8"));
     const version = sourceManifest.version;
@@ -39,7 +44,8 @@ async function main() {
     repositoryRoot,
     tagName,
     expectedTagObject,
-    expectedSignerFingerprint,
+    expectedPrimaryFingerprint,
+    expectedSigningFingerprint,
     artifactManifest,
   });
   console.log(`verified release tag ${result.tagRef}`);

@@ -72,7 +72,8 @@ function executeGpg(arguments_, environment) {
 export async function verifyReviewedArtifactSignature({
   artifactBytes,
   signatureBytes,
-  expectedSignerFingerprint,
+  expectedPrimaryFingerprint,
+  expectedSigningFingerprint,
   environment,
 }) {
   const artifact = requireBoundedBytes(
@@ -85,9 +86,13 @@ export async function verifyReviewedArtifactSignature({
     MAX_DETACHED_SIGNATURE_BYTES,
     "detached signature",
   );
-  const expectedPrimaryFingerprint = normalizeOpenPgpFingerprint(
-    expectedSignerFingerprint,
-    "expected artifact-review signer fingerprint",
+  const normalizedExpectedPrimaryFingerprint = normalizeOpenPgpFingerprint(
+    expectedPrimaryFingerprint,
+    "expected artifact-review primary fingerprint",
+  );
+  const normalizedExpectedSigningFingerprint = normalizeOpenPgpFingerprint(
+    expectedSigningFingerprint,
+    "expected artifact-review signing fingerprint",
   );
   const gnupgHome = await requireExplicitGnuPgHome(environment);
   const temporaryDirectory = await mkdtemp(
@@ -125,7 +130,8 @@ export async function verifyReviewedArtifactSignature({
     }
     const verified = parseSingleOpenPgpSignatureStatus(
       verification.stdout,
-      expectedPrimaryFingerprint,
+      normalizedExpectedPrimaryFingerprint,
+      normalizedExpectedSigningFingerprint,
     );
     if (verification.exitCode !== 0) {
       fail(`GnuPG exited ${verification.exitCode} despite parsed status`);
