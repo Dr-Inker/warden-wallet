@@ -379,7 +379,7 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
     )).toEqual([]);
   });
 
-  it("gives independent unzip a read-only descriptor after construction", async () => {
+  it("gives independent unzip a read-only descriptor on a sealed inode", async () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
     temporaryDirectories.push(directory);
     const { inputBytes, inputPaths } = await writePackagedInputs(directory);
@@ -389,16 +389,17 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
     await mkdir(probeDirectory, { recursive: true });
     await writeFile(probePath, `#!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 
 const inspectedPath = process.argv[3];
 const descriptor = /^\\/proc\\/(\\d+)\\/fd\\/(\\d+)$/.exec(inspectedPath);
 if (descriptor === null) {
   throw new Error("expected a procfs descriptor path");
 }
-const [inspectedBytes, descriptorInfo] = await Promise.all([
+const [inspectedBytes, descriptorInfo, inspectedStat] = await Promise.all([
   readFile(inspectedPath),
   readFile("/proc/" + descriptor[1] + "/fdinfo/" + descriptor[2], "utf8"),
+  stat(inspectedPath),
 ]);
 const flagsMatch = /^flags:\\s+([0-7]+)$/m.exec(descriptorInfo);
 if (flagsMatch === null) {
@@ -409,6 +410,7 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
   inspectedPath,
   sha256: createHash("sha256").update(inspectedBytes).digest("hex"),
   accessMode: flags & 0o3,
+  inodeMode: inspectedStat.mode & 0o777,
 }));
 `);
     await chmod(probePath, 0o755);
@@ -428,6 +430,7 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
     expect(observation.inspectedPath).toMatch(/^\/proc\/\d+\/fd\/\d+$/);
     expect(observation.sha256).toBe(sha256(inputBytes[0]));
     expect(observation.accessMode).toBe(0);
+    expect(observation.inodeMode).toBe(0o400);
     expect((await readdir(directory)).filter((name) =>
       name.startsWith("warden-release-unzip-"),
     )).toEqual([]);

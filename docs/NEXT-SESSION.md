@@ -1,47 +1,53 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C67 CLOSED; CONTINUE C6 AUDIT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C68 CONTRACTED; BEHAVIORAL RED NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** C67 is closed. Audit C6 for the next honest, bounded, executable
->   local hardening slice; write a C68 contract and behavioral RED before any
->   implementation. Do not broaden into executable provenance or production
->   trust, and do not imply cooperative-host checks defeat same-user/root races.
+> - **TASK:** execute the bounded C68 inode-sealing RED below, commit it cleanly,
+>   and only then implement the contract. Do not broaden into executable
+>   provenance or production trust, and do not imply that cooperative-host mode
+>   checks defeat root, an already-open hostile writer, or same-user races that
+>   occur before the seal.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C67 behavioral RED
->   `21213293cc184b80d8d397c102b01b3b2d85bf6a`; implementation/evidence
->   `5bb34f87d6e0fbafa53e1090fbc93fd67495a476`; evidence-ledger/full-gated SHA
->   `47d419dae0dda40ad6ca461ab7cd81dc3ba32308`.
-> - **READ:** this memo and the C67/C66/C65/C64/C63/C52/C51/C50/C36 entries;
->   C6 in the client-security plan; current verifier/tests; clean status.
-> - **WRITE (edit lease):** `docs/NEXT-SESSION.md` for the C68 contract, then
->   only the files that contract names. C67 source/tests/security docs are
->   implementation-complete.
+> - **BASE:** C67 close SHA
+>   `7298c69d444a919070b6d107818a92cf5e2d3a43`; evidence-ledger/full-gated SHA
+>   `47d419dae0dda40ad6ca461ab7cd81dc3ba32308`; implementation/evidence
+>   `5bb34f87d6e0fbafa53e1090fbc93fd67495a476`; behavioral RED
+>   `21213293cc184b80d8d397c102b01b3b2d85bf6a`.
+> - **READ:** this memo and the C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
+>   entries; C6 in the client-security plan; current verifier/tests; clean
+>   status.
+> - **WRITE (edit lease):** for RED,
+>   `apps/extension/test/verify-release-cli.test.mjs` and this ledger only. After
+>   RED is committed and measured, implementation may also edit
+>   `apps/extension/scripts/verify-release.mjs`, `apps/extension/README.md`, and
+>   `docs/security/RELEASE-INTEGRITY.md`.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
 >   empty production release registry, or the C1a production extension-id/
 >   permitted-origin owner decision. Do not fetch a key/package, push, tag,
->   sign production bytes, publish, weaken C36/C38–C67 policy, or invent store
+>   sign production bytes, publish, weaken C36/C38–C68 policy, or invent store
 >   provenance, freshness, reviewer, builder-independence, key-strength,
 >   publisher, or lifecycle policy.
-> - **ACCEPT:** preserve executable procfs `fdinfo` RED and measured `O_RDONLY`
->   parser descriptor; same-inode writer/reader handoff and cleanup on every
->   outcome; C66/C65/C64/C63 probes, **0700/0600** modes, exact post-parser
->   comparison, direct/pnpm **0/6/7**, optional unpacked tree, canonical checks,
->   unchanged output, 25-input recipe binding, and exact-SHA focused/extension/
->   full evidence. New work needs its own executable RED; provider stays fixed
->   unavailable.
+> - **ACCEPT:** prove the independent parser observes exact stable bytes through
+>   an `O_RDONLY` descriptor whose underlying inode is **0400**, after exclusive
+>   **0600** construction, sync, same-inode reader validation, and writer close.
+>   Verify the sealed mode and unchanged identity through the reader before
+>   unlink/exec. Preserve **0700** directory mode, C67/C66/C65/C64/C63 probes,
+>   exact post-parser comparison, cleanup on every outcome, direct/pnpm
+>   **0/6/7**, optional unpacked tree, canonical checks, unchanged output, exact
+>   25-input recipe binding, and provider fixed unavailable.
 > - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
 >   extension artifacts, ephemeral GnuPG/files/repos/launchers/CRX fixtures
 >   under `/tmp`, and git commits only; no network key/package retrieval,
 >   production signature/key/tag, deploy, upload, publishing, live service,
 >   external message, secret persistence, legal ruling, or real-account/funds
 >   mutation.
-> - **RETURN:** C67 RED/implementation/ledger/full/close SHAs plus any C68
->   contract/RED/implementation/evidence SHAs, clean/dirty state,
+> - **RETURN:** C67 close/full SHAs plus C68 contract/RED/implementation/evidence/
+>   full/close SHAs, clean/dirty state,
 >   exact commands and outcomes, stable-byte proof and temp-copy mode/cleanup,
 >   preserved grammar/order/output/scope, invariant and independent-review
 >   status, explicit synthetic/production and same-host/independent gaps, and
@@ -88,7 +94,8 @@
 >
 > **Stop state:** C67 is closed with executable RED, a clean implementation,
 > focused/release/extension-wide evidence, and the repository-wide FULL gate
-> recorded below.
+> recorded below. C68 is contracted below; its behavioral RED is not yet run or
+> committed.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -96,8 +103,31 @@
 > pins exact artifact bytes, the source-tag signature authenticates that exact
 > digest, and a safe command emits its canonical message, but production trust
 > and operator-controlled signing remain external.
-> C68 is not yet contracted. Audit before implementation; do not manufacture a
-> local proxy for the remaining external trust/owner obligations.
+> C68 is only cooperative-host least privilege. Do not manufacture a local proxy
+> for the remaining external trust/owner obligations.
+
+> ## 2026-09-01 C68 READ-ONLY INFO-ZIP INODE — C6 PARTIAL, HOST TRUST EXTERNAL
+>
+> Contract: keep C67's exclusive **0600** construction writer and independent
+> same-inode `O_RDONLY|O_NOFOLLOW` reader. After sync and reader identity/size
+> validation, close the only construction writer, change the inode through the
+> live reader to **0400**, and require a new reader `fstat` to retain regular-file
+> type, device, inode, and size while reporting exact mode **0400**. Only then
+> unlink the name and invoke Info-ZIP through the live procfs read-descriptor.
+> Keep C66's exact positional byte comparison after the parser and all cleanup.
+>
+> Behavioral RED: extend the executable fake-Info-ZIP observation with underlying
+> inode mode while retaining exact-byte and descriptor-access checks. At the C67
+> close SHA it must observe mode **0600** and fail an expectation of **0400**;
+> success text and cleanup are otherwise preserved. Commit that failing contract
+> before changing the verifier.
+>
+> This reduces accidental or malicious reopen-for-write authority for a normal
+> same-UID, non-root parser after the seal. It does not authenticate `unzip`,
+> revoke a writer opened before sealing, prevent a privileged process from
+> reopening or changing the inode, or defeat a hostile host racing the bounded
+> post-parser comparison. No invariant moves; the production trust, publisher,
+> reviewer, store-return, and independently hosted builder gaps remain.
 
 > ## 2026-09-01 C67 READ-ONLY INFO-ZIP DESCRIPTOR — C6 PARTIAL, EXECUTABLE/HOST TRUST EXTERNAL
 >
