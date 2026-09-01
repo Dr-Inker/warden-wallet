@@ -114,6 +114,97 @@
 > signature bytes, but source-tag signatures do not yet authenticate the exact
 > artifact digest and production trust remains external.
 
+> ## 2026-09-01 C59 SIGNED TAG ARTIFACT PIN — C6 PARTIAL, SIGNER AUTHORITY EXTERNAL
+>
+> Behavioral RED commit
+> `434d35b664601668040c5549a75cd2c416b2d138` selects the real-GnuPG
+> `release-fixture` tag whose valid free-form signed message contains no artifact
+> identity and expects the shared verifier to refuse it. The expected binding did
+> not exist: verification resolved with the complete tag, artifact, primary/
+> signing-fingerprint, packet, and time result. Implementation commit
+> `ccd6efeecfc426aedb18328b72aa15a1f17920c0` closes that gap.
+>
+> The annotated tag body now has one exact versioned grammar before its single
+> terminal OpenPGP armor: `warden.extension-release-tag.v1`, followed by
+> `artifact-manifest-sha256 <lowercase-sha256>`, followed by no other message
+> content. The digest must equal the exact **8 MiB**-bounded artifact buffer's C58
+> independent measurement. Missing/free-form, wrong, uppercase, duplicate,
+> prefixed/suffixed, second-armor, or post-armor body content fails closed. The
+> shared result returns both the measured and signed artifact identities only
+> after the incumbent exact tag-object and OpenPGP verification succeeds; the
+> CLI cross-checks both against its stable-read measurement and prints both.
+> The signed tag still targets the exact artifact source commit, so source and
+> artifact identities are authenticated by the same exact signed object.
+>
+> The real RED was captured from clean SHA
+> `434d35b664601668040c5549a75cd2c416b2d138` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs -t "requires the authenticated tag message to bind the exact artifact digest"
+> ```
+>
+> It exited **1** with one failed and 27 skipped tests in **575 ms**. The promise
+> resolved instead of rejecting, returning the fixture's independently measured
+> artifact SHA-256 plus exact tag object/source commit, full primary/signing
+> fingerprints, and OpenPGP creation/version/algorithm/class result after real
+> GnuPG verification. From clean implementation SHA
+> `ccd6efeecfc426aedb18328b72aa15a1f17920c0`, this exact focused/release
+> command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/scripts/release-source-tag.mjs && node --check apps/extension/scripts/verify-release-source-tag.mjs && pnpm --filter @warden/extension exec vitest run test/verify-release-source-tag-cli.test.mjs test/release-source-tag.test.mjs test/openpgp-signature-policy.test.mjs test/release-input-file.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension release:gate && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-source-cli-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-input-file-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The six focused files passed **58/58**. Real signed fixtures cover free-form,
+> wrong, uppercase, and duplicate artifact identities. A tag signed for a
+> different artifact at the same source still reaches the incumbent detached-
+> review mismatch, and an internally inconsistent tag signed for a second-
+> commit artifact while targeting the first commit still reaches the incumbent
+> target/source refusal. Direct raw-object tests cover prefix, suffix, and post-
+> armor body rejection. Existing moved/lightweight/nested tag,
+> bad signature, wrong key/subkey, algorithm/time/packet, exact-byte/digest,
+> report, review, store, stable-reader, and cleanup refusals remain. Typecheck and
+> the real release gate passed canonical packaging/verification, independent
+> Info-ZIP parsing, **8** payload files, **60** production/peer components, **4**
+> JavaScript bundles, **101** positive bundle inputs, **4** static inputs, and
+> the unchanged exact set of **23** release-recipe inputs.
+>
+> From the same clean implementation SHA, this exact extension-wide command
+> exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'warden\.extension-release-tag\.v1|artifact-manifest-sha256|expected-default-artifact-manifest-sha256|expected-artifact-manifest-sha256|expected-detached-signature-sha256|source tag signed|source tag verifier returned|artifact signature verifier returned|reviewed artifact manifest differs|detached signature differs|release-input-file|readBoundedRegularFile|O_NOFOLLOW|verify-release-source-tag|release-source-tag|verify-reviewed-artifact-signature|reviewed-artifact-signature|verify-store-package|store-package|expectedArtifactManifestSha256|signedArtifactManifestSha256|artifactManifestSha256|artifactReview|reviewedUploadArchive|storePackage|expectedStorePackageSha256|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed extension **573/573**, typecheck/build, emitted release-tooling
+> exclusion, selected temp cleanup, diff checks, and both clean-tree guards. At
+> that implementation SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `50f49fce3ffe9439ea5b25743f68f398c478d4370b0a702e31b0213c7a9effd9`,
+> `7a61baf735cbeff535df1468e8cedd2de7f7b7f0fb6887cf28d3d53ddffa4f81`,
+> `0d1fe029275d35832438769bc62da98af4312319f7c639a431fb82ea89e93637`,
+> `01e81e0e0ca1f7220a5da328000cada39e1c6f37a5124dabacd2c178754c096e`,
+> and `fb442f90ac58415b7ec6a48eb2468d74a68a14fb9400ede9db844710330896e0`.
+> The **4,740-byte**, 23-input recipe sidecar bound the **9,249-byte** composed
+> CLI at SHA-256
+> `bcf0ab8f2d3292986ee38d472285169a73c8c9f745bf72ea2a43a037ba7963d6`.
+> The shared verifier was **36,249 bytes** at SHA-256
+> `1fad494d0a6cf0722288e1c75018761c7137982b4edefb1d98ca96233486242f`;
+> its **50,924-byte** real-GnuPG test was
+> `ec092a7b1c3c993a6f27e8947a9c219d17a60392fb7009a86f0290c852b979f9`.
+> ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; no production tag, artifact, signature,
+> approved signing/review key, signer/reviewer authority, freshness/trusted-time
+> rule, key-strength/storage/lifecycle policy, off-host independent build, real
+> store return, publisher-control evidence, deployment, or legal adjudication
+> exists. Independent second-model review remains **UNVERIFIED**. The repository-
+> wide ledger-inclusive gate has not yet run for C59; no such claim is made.
+
 > ## 2026-09-01 C58 SHARED SOURCE ARTIFACT PIN — C6 PARTIAL, REVIEW AUTHORITY EXTERNAL
 >
 > Behavioral RED commit
