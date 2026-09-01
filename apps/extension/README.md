@@ -281,12 +281,16 @@ manifest using an independently reviewed expected extension id:
 
 ```sh
 pnpm --filter @warden/extension release:verify-store -- \
-  /path/to/store-returned.crx <expected-extension-id>
+  /path/to/store-returned.crx <expected-package-sha256> \
+  <expected-extension-id>
 ```
 
-Optional third and fourth arguments select a reviewed upload ZIP and artifact
-manifest outside the default local release directory. The verifier never learns
-the expected extension id from the candidate. It requires the `Cr24` magic,
+Optional fourth and fifth arguments select a reviewed upload ZIP and artifact
+manifest outside the default local release directory. The independently
+recorded package digest must be lowercase SHA-256; the CLI checks it against the
+one candidate buffer before CRX parsing and cross-checks the strict verifier's
+returned digest. The verifier never learns the expected extension id from the
+candidate. It requires the `Cr24` magic,
 version 3, a bounded little-endian header length, strict known protobuf fields,
 one developer proof matching the declared CRX id, the current Chrome Web Store
 publisher-key proof, and valid signatures from every included proof over the

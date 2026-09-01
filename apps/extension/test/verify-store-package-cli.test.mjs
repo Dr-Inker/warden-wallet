@@ -125,11 +125,26 @@ describe("standalone store-package CLI", () => {
     expect(wrongDigest).toMatch(/store package differs from the independently supplied SHA-256/);
     expect(wrongDigest).not.toMatch(/CRX3 magic/);
 
+    const uppercaseDigest = await rejectedOutput([
+      created.candidatePath,
+      sha256(created.candidateBytes).toUpperCase(),
+      ...commonArgs,
+    ]);
+    expect(uppercaseDigest).toMatch(/expected package SHA-256 must be a lowercase digest/);
+
     const exactDigest = await rejectedOutput([
       created.candidatePath,
       sha256(created.candidateBytes),
       ...commonArgs,
     ]);
     expect(exactDigest).toMatch(/CRX3 magic must be Cr24/);
+
+    const missingDigest = await rejectedOutput([
+      created.candidatePath,
+      "a".repeat(32),
+    ]);
+    expect(missingDigest).toMatch(
+      /candidate\.crx expected-package-sha256 expected-extension-id/,
+    );
   });
 });

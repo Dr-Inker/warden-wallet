@@ -1,4 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -30,22 +31,30 @@ async function main() {
     fail(`invalid source manifest version: ${String(version)}`);
   }
   const args = process.argv.slice(2);
-  if (![2, 4].includes(args.length)) {
-    fail("usage: verify-store-package.mjs candidate.crx expected-extension-id [reviewed-upload.zip reviewed-artifact.json]");
+  if (![3, 5].includes(args.length)) {
+    fail("usage: verify-store-package.mjs candidate.crx expected-package-sha256 expected-extension-id [reviewed-upload.zip reviewed-artifact.json]");
   }
   const candidatePath = resolve(args[0]);
-  const expectedExtensionId = args[1];
+  const expectedPackageSha256 = args[1];
+  if (!/^[0-9a-f]{64}$/.test(expectedPackageSha256)) {
+    fail("expected package SHA-256 must be a lowercase digest");
+  }
+  const expectedExtensionId = args[2];
   const reviewedArchivePath = resolve(
-    args[2] ?? join(releaseDirectory, `warden-extension-${version}.zip`),
+    args[3] ?? join(releaseDirectory, `warden-extension-${version}.zip`),
   );
   const artifactManifestPath = resolve(
-    args[3] ?? join(releaseDirectory, `warden-extension-${version}.artifact.json`),
+    args[4] ?? join(releaseDirectory, `warden-extension-${version}.artifact.json`),
   );
   const candidateStat = await stat(candidatePath);
   if (!candidateStat.isFile() || candidateStat.size <= 0 || candidateStat.size > MAX_CRX3_PACKAGE_BYTES) {
     fail(`candidate must be a nonempty regular file no larger than ${MAX_CRX3_PACKAGE_BYTES} bytes`);
   }
   const crxBytes = await readFile(candidatePath);
+  const actualPackageSha256 = createHash("sha256").update(crxBytes).digest("hex");
+  if (actualPackageSha256 !== expectedPackageSha256) {
+    fail("store package differs from the independently supplied SHA-256");
+  }
   const reviewedArchiveBytes = await readFile(reviewedArchivePath);
   const artifactManifest = parseArtifactManifest(await readFile(artifactManifestPath));
   const approved = verifyArtifactArchive({
@@ -53,6 +62,9 @@ async function main() {
     artifactManifest,
   });
   const verified = verifyStorePackage({ crxBytes, artifactManifest, expectedExtensionId });
+  if (verified.packageSha256 !== expectedPackageSha256) {
+    fail("store package verifier returned a different package digest");
+  }
 
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "warden-store-package-verify-"));
   try {

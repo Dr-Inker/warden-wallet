@@ -275,9 +275,12 @@ Only ephemeral fixture keys and bytes have passed, so `WRD-REL-01` remains
 ### Store-returned CRX3 verifier (C6 partial; fixture-only)
 
 `pnpm --filter @warden/extension release:verify-store -- <candidate.crx>
-<expected-extension-id>` accepts an offline CRX3 candidate plus an
-independently supplied expected extension id. It first verifies the reviewed
-canonical upload ZIP against its artifact manifest. It then requires `Cr24`,
+<expected-package-sha256> <expected-extension-id>` accepts an offline CRX3
+candidate plus independently supplied exact-package and extension identities.
+The package digest must be lowercase SHA-256 and is checked against the one
+candidate buffer before CRX parsing; the strict verifier's returned package
+digest is cross-checked afterward. It then verifies the reviewed canonical
+upload ZIP against its artifact manifest and requires `Cr24`,
 version 3, a bounded little-endian protobuf-header length, only the reviewed
 CRX3 fields, exactly one developer proof matching the signed 16-byte CRX id,
 exactly one current Chrome Web Store publisher proof, and valid signatures from
