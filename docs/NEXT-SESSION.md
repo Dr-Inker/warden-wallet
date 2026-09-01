@@ -1,5 +1,86 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C32 CLOSED; C33 NOT STARTED
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the next Warden implementation/review session.
+> - **TASK:** continue C6 with one bounded C33 contract: bind the source bytes
+>   and explicit build transformation for the four non-JavaScript payload files
+>   (`approval.css`, `approval.html`, `manifest.json`, `popup.html`). Begin with
+>   a fresh read-only map and real RED. Distinguish byte-copy from canonical JSON
+>   serialization, and do not claim icons or other static assets that the exact
+>   eight-file payload does not contain.
+> - **CWD:** `/opt/warden`.
+> - **BASE:** final C32 implementation/fix
+>   `cd7f31f3ce493b9b07e2a8d032f6e91c07097621`; ledger-inclusive, fully gated
+>   SHA `09619d1ec75c56eccd85e076a63ab1a7b6603f7b`. The documentation-only
+>   commit containing this memo is intentionally not described as gate green.
+> - **READ:** this memo and the C32/C31 entries immediately below;
+>   `apps/extension/scripts/build.mjs`;
+>   `apps/extension/scripts/bundle-input-evidence.mjs`;
+>   `apps/extension/scripts/release-artifact.mjs`;
+>   `apps/extension/scripts/package-release.mjs`;
+>   `apps/extension/scripts/verify-release.mjs`; their focused tests;
+>   `apps/extension/manifest.json`, HTML/CSS sources, README; and
+>   `docs/security/RELEASE-INTEGRITY.md`.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the smallest build/release evidence, focused-test, and
+>   documentation set required for exact non-JavaScript source provenance.
+> - **DO_NOT_TOUCH:** `.superpowers/**`,
+>   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
+>   publisher/account state, secrets, the empty production release registry,
+>   or the C1a production extension-id/permitted-origin owner decision. Do not
+>   convert source hashing into legal, independent-builder, or store-returned
+>   package assurance.
+> - **ACCEPT:** executable RED; canonical source/output byte lengths and hashes;
+>   exact byte-copy versus canonical-JSON transformation labels; exact four-file
+>   refusal on missing/extra records; source/output/ZIP/manifest attachment and
+>   tamper refusal; exact-SHA focused/release evidence; a committed/full-gated
+>   ledger; and explicit coverage limits. Keep the provider fixed unavailable.
+> - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
+>   extension artifacts, temporary test data, and git commits only; no deploy,
+>   upload, publishing, live service, external message, secret creation, legal
+>   ruling, or real-account/funds mutation.
+> - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
+>   and outcomes, per-file source/output/transform measurements, unchanged or
+>   promoted invariants, independent-review status, explicit coverage gaps, and
+>   remaining owner/counsel/external-state blockers.
+>
+> **C32 ledger-inclusive gate:** from a clean tree at
+> `09619d1ec75c56eccd85e076a63ab1a7b6603f7b`, this exact command exited **0**
+> and printed that same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && if rg -n 'release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|warden\.extension-artifact\.v3|warden\.extension-production-dependency-evidence\.v1|warden\.extension-js-bundle-input-evidence\.v1' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed action pins **2/2**, core **700/700**, extension **494/494**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
+> measured Argon2 benchmark, canonical ZIP/two-sidecar verification, independent
+> Info-ZIP parsing, emitted-bundle tooling exclusion, diff checks, and both
+> clean-tree guards. Release verification measured **8 files**, **60
+> production/peer components**, **4 JavaScript bundles**, and **101 positive
+> bundle inputs**. At this ledger SHA the 29,047-byte bundle sidecar SHA-256 was
+> `de7a8ca67c15290c8cdd09b4124bf6ce27cdefd96a10644c2f721cca04ede2bc`,
+> artifact-manifest SHA-256 was
+> `4fe511f6501959d879bc5d0ac3a196bf1c74b65b172cdea0471b4b767295f64e`,
+> dependency-sidecar SHA-256 was
+> `bc2930602b95dbae0d5c0d9f35bfddfcea15a0128a2c3bbac9736cfafe9ec93b`,
+> payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`,
+> and ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`.
+> Known Anchor test-middleman key mismatch, legacy macro-`cfg`, and Rust
+> unused-code warnings remained non-fatal. Independent second-model review is
+> still **UNVERIFIED**.
+>
+> **Stop state:** C32 is closed. C33 has no code, RED, edit lease, dependency
+> change, release-registry edit, deployment, publisher action, or legal
+> adjudication. The ignored local `apps/extension/release/` output may exist; it
+> is reproducible evidence, not a tracked or reviewed release candidate.
+
 > ## 2026-09-01 C32 DETERMINISTIC JAVASCRIPT-BUNDLE INPUT EVIDENCE — C6 PARTIAL, STATIC/LEGAL COVERAGE NOT CLAIMED
 >
 > Implementation commit
@@ -87,10 +168,12 @@
 > `npm:text-encoding-utf-8@1.0.2/lib/encoding.lib.js` to `background.js`.
 > That measurement strengthens the counsel question; it does not answer it.
 >
-> Independent second-model review remains **UNVERIFIED**. A ledger-inclusive
-> full repository gate is intentionally deferred until this record is
-> committed; a later pickup memo must cite its exact SHA before calling C32
-> fully closed.
+> Independent second-model review remains **UNVERIFIED**. The exact full
+> repository command in the clean-break memo immediately above later exited
+> **0** at ledger-inclusive SHA
+> `09619d1ec75c56eccd85e076a63ab1a7b6603f7b`; that memo records the executable
+> result without transferring its verdict to the later documentation-only
+> commit.
 >
 > **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
 > `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
