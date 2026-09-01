@@ -103,7 +103,7 @@ function artifactManifest(context, evidenceBytes) {
 }
 
 describe("release recipe repository input evidence", () => {
-  it("canonically records the exact seventeen reviewed non-payload inputs", async () => {
+  it("canonically records the exact nineteen reviewed non-payload inputs", async () => {
     const context = await fixture();
     const forward = await context.evidence();
     const reverse = await context.evidence([...RELEASE_RECIPE_INPUT_PATHS].reverse());
@@ -112,7 +112,7 @@ describe("release recipe repository input evidence", () => {
     expect(forward.schema).toBe(RELEASE_RECIPE_INPUT_EVIDENCE_SCHEMA);
     expect(forward.scope).toEqual({
       type: "extension-release-recipe-repository-inputs",
-      inputCoverage: "seventeen-reviewed-non-payload-files-only",
+      inputCoverage: "nineteen-reviewed-non-payload-files-only",
       executableCoverage: "not-asserted",
       runtimeEnvironmentCoverage: "not-asserted",
     });
@@ -139,7 +139,7 @@ describe("release recipe repository input evidence", () => {
       artifactManifest: manifest,
       archiveBytes: context.archiveBytes,
       repositoryRoot: context.repositoryRoot,
-    })).resolves.toEqual({ inputs: 17 });
+    })).resolves.toEqual({ inputs: 19 });
     await expect(verifyReleaseRecipeInputEvidenceAttachment({
       evidenceBytes: Buffer.concat([evidenceBytes, Buffer.from(" ")]),
       artifactManifest: manifest,
@@ -164,9 +164,9 @@ describe("release recipe repository input evidence", () => {
   it("fails closed on a missing, extra, or moved reviewed path", async () => {
     const context = await fixture();
     await expect(context.evidence(RELEASE_RECIPE_INPUT_PATHS.slice(1)))
-      .rejects.toThrow(/exactly the seventeen reviewed/);
+      .rejects.toThrow(/exactly the nineteen reviewed/);
     await expect(context.evidence([...RELEASE_RECIPE_INPUT_PATHS, "extra-release-config.json"]))
-      .rejects.toThrow(/exactly the seventeen reviewed/);
+      .rejects.toThrow(/exactly the nineteen reviewed/);
     await rename(
       join(context.repositoryRoot, ".node-version"),
       join(context.repositoryRoot, "moved-node-version"),

@@ -44,11 +44,12 @@ zero-byte counts, and each output's byte length and hash. The static sidecar
 records source/output byte lengths and hashes for `approval.css`,
 `approval.html`, `manifest.json`, and `popup.html`, distinguishing three exact
 byte copies from the manifest's JSON parse/two-space/newline serialization. The
-recipe sidecar records exact byte lengths and SHA-256 hashes for the 17 reviewed
+recipe sidecar records exact byte lengths and SHA-256 hashes for the 19 reviewed
 non-payload files that declare the install/release path: `.node-version`,
 `.npmrc`, both root/workspace pnpm configuration files, root/extension/core
-package manifests, the upload package/verification modules, and the CRX3
-store-package comparison modules. The verifier
+package manifests, the upload package/verification modules, the CRX3
+store-package comparison modules, and the signed release-source verifier and
+its CLI. The verifier
 independently asks `unzip -t` to parse the archive and then fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
@@ -86,6 +87,45 @@ review also remain UNVERIFIED. Immutable CI action syntax is now
 repository-gated as described above, but no off-host run or upstream-source
 attestation is claimed. No Web Store upload or publisher-account mutation is
 performed by this gate.
+
+### Signed release-source precondition (C6 partial; fixture-only)
+
+`pnpm --filter @warden/extension release:verify-source-tag -- <tag>
+<expected-tag-object-sha> <expected-primary-fingerprint>` checks a
+caller-selected release source against the reviewed artifact manifest. An
+optional fourth argument selects a different reviewed manifest. All three
+identity arguments are independent inputs; none is learned from the tag or
+artifact candidate.
+
+The verifier accepts only an exact valid `refs/tags/<tag>` ref whose current
+object id equals the supplied full lowercase SHA-1 before and after signature
+verification. This explicit tag-object anchor is what makes a force-moved tag
+detectable. The object must be an annotated tag, contain exactly one direct
+commit target and matching tag name, and target the artifact manifest's exact
+source commit. A lightweight tag, nested tag, moved ref, wrong commit, or
+structurally ambiguous tag object fails closed.
+
+Signature verification fixes `gpg.format=openpgp`, fixes `/usr/bin/git` and
+`/usr/bin/gpg`, suppresses system/global Git config, and asks `git verify-tag
+--raw` to verify the expected object SHA rather than the ref. The status parser
+requires exactly one signature context, successful terminal result, and
+cryptographic `VALIDSIG`; it cross-checks `GOODSIG` against the signing
+fingerprint and requires `VALIDSIG`'s primary fingerprint to equal the complete
+independent fingerprint. Bad, expired, revoked, unavailable-key, failed,
+duplicate, or otherwise ambiguous results are refused. Unknown future status
+keywords are ignored as GnuPG's machine-interface contract requires.
+
+The behavior follows Git's primary
+[`verify-tag`](https://git-scm.com/docs/git-verify-tag.html) and
+[`tag`](https://git-scm.com/docs/git-tag.html) documentation and GnuPG's
+[`--status-fd` unattended-use guidance](https://www.gnupg.org/documentation/manuals/gnupg/Unattended-Usage-of-GPG.html),
+checked 2026-09-01 alongside the installed GnuPG 2.4.4 `DETAILS` contract.
+The explicitly selected, absolute caller-controlled `GNUPGHOME` must already
+contain the selected public key. This lane does not create a key or tag, select
+the production tag/object/fingerprint, authenticate the external anchor for
+the unsigned artifact JSON,
+attest the Git or GnuPG executables, or supply a second independent builder.
+Its ephemeral test key and repository therefore do not promote `WRD-REL-01`.
 
 ### Store-returned CRX3 verifier (C6 partial; fixture-only)
 

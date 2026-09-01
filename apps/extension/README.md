@@ -40,7 +40,7 @@ under `apps/extension/release/`:
   lengths/hashes and distinguishes the three exact byte copies from
   `manifest.json`'s JSON parse/two-space/newline serialization; and
 - `warden-extension-<version>.recipe-inputs.json`, a canonical byte/hash map of
-  the exact 17 reviewed non-payload repository files that declare the install
+  the exact 19 reviewed non-payload repository files that declare the install
   and release recipe: root/workspace configuration, the extension/core package
   manifests, and every release module. It explicitly does not attest installed
   executables, runtime behavior, the OS, or the environment.
@@ -77,6 +77,42 @@ independent builders agree, publish anything, or replace publisher-account and
 review controls. Replacing the ZIP and all five unsigned, co-generated JSON
 files is not detected unless the reviewed manifest/hash is anchored somewhere
 the builder cannot rewrite.
+
+## Signed release-source precondition
+
+After an owner has independently recorded a release tag name, its annotated-tag
+object SHA, and the full primary OpenPGP fingerprint, bind those values to an
+already reviewed artifact manifest with:
+
+```sh
+GNUPGHOME=/path/to/release-verification-keyring \
+  pnpm --filter @warden/extension release:verify-source-tag -- \
+  <tag> <expected-tag-object-sha> <expected-primary-fingerprint>
+```
+
+An optional fourth argument selects an artifact manifest outside the default
+local release directory. The expected tag object is mandatory: a tag name and
+signer alone cannot reveal that an authorized signer force-moved the tag. The
+verifier resolves only the exact `refs/tags/<tag>` ref, requires it to equal the
+independent full object SHA both before and after verification, requires an
+annotated tag that points directly to the artifact's exact source commit, and
+rejects a lightweight or nested tag. It forces the OpenPGP backend and absolute
+Git/GPG executables, suppresses system/global Git configuration, and runs
+`git verify-tag --raw` against the expected object SHA rather than a mutable
+ref. Its machine-status parser requires exactly one `NEWSIG`, `GOODSIG`, and
+cryptographic `VALIDSIG`, binds the reported primary fingerprint to the full
+independent value, and rejects bad, expired, revoked, missing-key, or ambiguous
+signature results.
+
+This precondition follows Git's primary
+[`verify-tag`](https://git-scm.com/docs/git-verify-tag.html) and
+[`tag`](https://git-scm.com/docs/git-tag.html) contracts and GnuPG's
+[`--status-fd` unattended-use guidance](https://www.gnupg.org/documentation/manuals/gnupg/Unattended-Usage-of-GPG.html).
+The selected public key must already exist in the explicitly selected,
+absolute caller-controlled GnuPG home. The command does not create a key or
+tag, choose production identities, authenticate the unsigned artifact
+manifest's external review anchor, or prove an independent builder.
+Fixture-only temporary repositories and keys do not promote `WRD-REL-01`.
 
 ## Web-Store-returned CRX3 comparison
 
