@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -19,6 +19,7 @@ import {
   createCanonicalZip,
   serializeArtifactManifest,
 } from "../scripts/release-artifact.mjs";
+import { verifyReviewedArtifactSignature } from "../scripts/reviewed-artifact-signature.mjs";
 import {
   createLocalDualReleaseReport,
   releaseComparisonPaths,
@@ -78,7 +79,10 @@ function localDualReportBytes(
   })), "utf8");
 }
 
-function releaseArtifact(sourceGitCommit) {
+function releaseArtifact(
+  sourceGitCommit,
+  approvalCssBytes = Buffer.from("body { color: #123456; }\n"),
+) {
   const extensionManifest = {
     manifest_version: 3,
     name: "Warden signed-source fixture",
@@ -90,7 +94,7 @@ function releaseArtifact(sourceGitCommit) {
     },
   };
   const entries = [
-    { path: "approval.css", data: Buffer.from("body { color: #123456; }\n") },
+    { path: "approval.css", data: approvalCssBytes },
     { path: "approval.html", data: Buffer.from("<!doctype html><title>Approve</title>\n") },
     { path: "approval.js", data: Buffer.from("globalThis.approve = false;\n") },
     { path: "background.js", data: Buffer.from("globalThis.background = true;\n") },
@@ -165,6 +169,30 @@ async function signedTag(name, message, env, signingFingerprint = fixture.signin
     name,
   ], env);
   return (await git(["rev-parse", `refs/tags/${name}`])).stdout.trim();
+}
+
+async function detachedArtifactSignature(name, artifactBytes) {
+  const artifactPath = join(fixture.root, `${name}.artifact.json`);
+  const signaturePath = join(fixture.root, `${name}.artifact.json.sig`);
+  await writeFile(artifactPath, artifactBytes);
+  await command(GPG, [
+    "--no-options",
+    "--homedir",
+    fixture.gnupgHome,
+    "--batch",
+    "--yes",
+    "--pinentry-mode",
+    "loopback",
+    "--passphrase",
+    "",
+    "--local-user",
+    `${fixture.signingFingerprint}!`,
+    "--detach-sign",
+    "--output",
+    signaturePath,
+    artifactPath,
+  ], { env: fixture.environment });
+  return readFile(signaturePath);
 }
 
 beforeAll(async () => {
@@ -265,6 +293,15 @@ beforeAll(async () => {
     "fixture valid primary signing key",
     fixture.environment,
     fixture.fingerprint,
+  );
+  fixture.reviewedArtifact = releaseArtifact(fixture.firstCommit);
+  fixture.reviewedArtifactSignatureBytes = await detachedArtifactSignature(
+    "reviewed-release",
+    fixture.reviewedArtifact.artifactManifestBytes,
+  );
+  fixture.differentArtifact = releaseArtifact(
+    fixture.firstCommit,
+    Buffer.from("body { color: #654321; }\n"),
   );
   await writeFile(join(fixture.gnupgHome, "gpg.conf"), "digest-algo SHA224\n", {
     mode: 0o600,
@@ -445,6 +482,34 @@ describe("release source annotated-tag verification", () => {
         },
       },
     });
+  });
+
+  it("rejects a separately valid artifact review for different exact release outputs", async () => {
+    await expect(verifyReviewedArtifactSignature({
+      artifactBytes: fixture.reviewedArtifact.artifactManifestBytes,
+      signatureBytes: fixture.reviewedArtifactSignatureBytes,
+      expectedPrimaryFingerprint: fixture.fingerprint,
+      expectedSigningFingerprint: fixture.signingFingerprint,
+      environment: fixture.environment,
+    })).resolves.toMatchObject({
+      artifactSha256: sha256(fixture.reviewedArtifact.artifactManifestBytes),
+    });
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      fixture.differentArtifact.releaseFiles,
+    );
+    await expect(verify({
+      ...fixture.differentArtifact,
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+      artifactReviewSignatureBytes: fixture.reviewedArtifactSignatureBytes,
+      expectedArtifactReviewSignatureSha256: sha256(
+        fixture.reviewedArtifactSignatureBytes,
+      ),
+      expectedArtifactReviewPrimaryFingerprint: fixture.fingerprint,
+      expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
+    })).rejects.toThrow(/reviewed artifact|artifact review|signature/);
   });
 
   it("rejects a report whose fourteen records do not describe the selected artifact", async () => {
