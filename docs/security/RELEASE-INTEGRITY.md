@@ -115,6 +115,24 @@ independent fingerprint. Bad, expired, revoked, unavailable-key, failed,
 duplicate, or otherwise ambiguous results are refused. Unknown future status
 keywords are ignored as GnuPG's machine-interface contract requires.
 
+The parser does not treat bare cryptographic validity as sufficient. It
+requires the exact ten-field OpenPGP `VALIDSIG` record, zero reserved field,
+signature version **4 or 6**, canonical decimal algorithm octets,
+binary-document signature class **00**,
+public-key algorithm ID **1, 19, 22, 27, or 28**, and hash algorithm ID **8, 9,
+or 10**. These are respectively RSA, ECDSA, installed-GnuPG EdDSA compatibility,
+Ed25519, Ed448, and SHA-256/384/512. The current
+[IANA OpenPGP registries](https://www.iana.org/assignments/openpgp) and
+[RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html) define the identifiers
+and binary-document class. ID 22 is deliberately documented as a compatibility
+exception: RFC 9580 calls that encoding EdDSALegacy and deprecated, while the
+installed GnuPG 2.4.4 `ed25519` fixture emits 22. The result reports signature
+version, public-key algorithm, hash algorithm, and class. Algorithm IDs alone
+do not attest RSA size, ECC curve, key storage, ownership, or lifecycle.
+For the accompanying `GOODSIG` key ID, the matcher uses the low 64 fingerprint
+bits for v4 and high 64 bits for v6, or accepts the exact full fingerprint, as
+defined by the registry's key-ID rules.
+
 The behavior follows Git's primary
 [`verify-tag`](https://git-scm.com/docs/git-verify-tag.html) and
 [`tag`](https://git-scm.com/docs/git-tag.html) documentation and GnuPG's
@@ -149,6 +167,9 @@ missing-key, duplicate/multi-signature, malformed, trailing, wrong-artifact,
 or wrong-fingerprint results fail closed. Temporary files are removed on
 success and failure; GnuPG may still maintain state inside the explicitly
 selected caller keyring.
+The same shared allowlist requires public-key ID **1/19/22/27/28**, SHA-2 ID
+**8/9/10**, and exact binary-document signature class **00** before accepting
+the reviewed bytes.
 
 The contract follows GnuPG's primary
 [`--verify` documentation](https://gnupg.org/documentation/manuals/gnupg/Operational-GPG-Commands.html),

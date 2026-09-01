@@ -57,6 +57,10 @@ async function main() {
   console.log(`signature sha256 ${verified.signatureSha256}`);
   console.log(`OpenPGP signing fingerprint ${verified.signingFingerprint}`);
   console.log(`OpenPGP primary fingerprint ${verified.primaryFingerprint}`);
+  console.log(`OpenPGP signature version ${verified.signatureVersion}`);
+  console.log(`OpenPGP public-key algorithm ${verified.publicKeyAlgorithm}`);
+  console.log(`OpenPGP hash algorithm ${verified.hashAlgorithm}`);
+  console.log(`OpenPGP signature class ${verified.signatureClass}`);
   console.log(`artifact source commit ${artifactManifest.source.gitCommit}`);
   console.log(`artifact archive sha256 ${artifactManifest.archive.sha256}`);
 }

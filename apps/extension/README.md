@@ -104,6 +104,21 @@ cryptographic `VALIDSIG`, binds the reported primary fingerprint to the full
 independent value, and rejects bad, expired, revoked, missing-key, or ambiguous
 signature results.
 
+The shared OpenPGP policy also requires the exact ten-argument OpenPGP
+`VALIDSIG` shape, a zero reserved field, signature version **4 or 6**, canonical
+numeric octets, and binary-document signature class `00`. Its explicit public-key algorithm allowlist is
+RSA **1**, ECDSA **19**, installed-GnuPG EdDSA compatibility **22**, Ed25519
+**27**, and Ed448 **28**; its digest allowlist is SHA-256/384/512 **8/9/10**.
+ID 22 is an explicit compatibility exception because installed GnuPG 2.4.4
+emits it for `ed25519`, although the current OpenPGP registry labels that wire
+format EdDSALegacy and deprecated. The verifier reports the observed signature
+version, public-key algorithm, hash algorithm, and class. These IDs do not prove
+an RSA modulus size, ECDSA curve, hardware-backed key, signer ownership, or key
+lifecycle; those remain separate production policy.
+The `GOODSIG` identity comparison uses the low 64 fingerprint bits for v4 and
+the high 64 bits for v6, while accepting an exact full fingerprint in either
+case.
+
 This precondition follows Git's primary
 [`verify-tag`](https://git-scm.com/docs/git-verify-tag.html) and
 [`tag`](https://git-scm.com/docs/git-tag.html) contracts and GnuPG's
@@ -134,6 +149,8 @@ the signature and data filenames. It applies the same strict one-signature
 `NEWSIG`/`GOODSIG`/`VALIDSIG` and full-primary-fingerprint checks as the signed
 source lane, then parses the already authenticated artifact bytes under the
 canonical artifact schema. Temporary files are removed on success or failure.
+The same explicit public-key **1/19/22/27/28**, SHA-2 **8/9/10**, and binary-
+document class **00** policy applies before the artifact is accepted.
 
 This follows GnuPG's primary
 [`--verify` detached-signature contract](https://gnupg.org/documentation/manuals/gnupg/Operational-GPG-Commands.html),

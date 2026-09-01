@@ -7,6 +7,21 @@ const GPG_EXECUTABLE = "/usr/bin/gpg";
 const MAX_TAG_OBJECT_BYTES = 1024 * 1024;
 const FULL_SHA1_PATTERN = /^[0-9a-f]{40}$/;
 const FINGERPRINT_PATTERN = /^[0-9A-F]{40}(?:[0-9A-F]{24})?$/;
+export const OPENPGP_RELEASE_SIGNATURE_POLICY = Object.freeze({
+  signatureVersions: Object.freeze([4, 6]),
+  publicKeyAlgorithms: Object.freeze([1, 19, 22, 27, 28]),
+  hashAlgorithms: Object.freeze([8, 9, 10]),
+  signatureClass: "00",
+});
+const ALLOWED_PUBLIC_KEY_ALGORITHMS = new Set(
+  OPENPGP_RELEASE_SIGNATURE_POLICY.publicKeyAlgorithms,
+);
+const ALLOWED_HASH_ALGORITHMS = new Set(
+  OPENPGP_RELEASE_SIGNATURE_POLICY.hashAlgorithms,
+);
+const ALLOWED_SIGNATURE_VERSIONS = new Set(
+  OPENPGP_RELEASE_SIGNATURE_POLICY.signatureVersions,
+);
 const TERMINAL_SIGNATURE_STATUSES = new Set([
   "GOODSIG",
   "BADSIG",
@@ -57,6 +72,33 @@ function countStatus(statuses, keyword) {
   return statuses.filter((status) => status.keyword === keyword).length;
 }
 
+function parseCanonicalOpenPgpOctet(value, label) {
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]{0,2})$/.test(value)) {
+    openPgpFail(`${label} must be a canonical decimal octet`);
+  }
+  const parsed = Number(value);
+  if (parsed > 255) {
+    openPgpFail(`${label} must be a canonical decimal octet`);
+  }
+  return parsed;
+}
+
+function goodSignatureIdentityMatches(signingFingerprint, value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const identity = value.toUpperCase();
+  if (identity === signingFingerprint) {
+    return true;
+  }
+  if (!/^[0-9A-F]{16}$/.test(identity)) {
+    return false;
+  }
+  return signingFingerprint.length === 40
+    ? signingFingerprint.endsWith(identity)
+    : signingFingerprint.startsWith(identity);
+}
+
 export function parseSingleOpenPgpSignatureStatus(statusText, expectedSignerFingerprint) {
   if (typeof statusText !== "string") {
     openPgpFail("machine status must be text");
@@ -103,31 +145,62 @@ export function parseSingleOpenPgpSignatureStatus(statusText, expectedSignerFing
     openPgpFail("GnuPG status must contain exactly one cryptographic VALIDSIG result");
   }
   const validArguments = validSignatures[0].argumentsText.split(" ").filter(Boolean);
-  if (validArguments.length < 9) {
-    openPgpFail("GnuPG VALIDSIG status is truncated");
+  if (validArguments.length !== 10) {
+    openPgpFail("GnuPG OpenPGP VALIDSIG status must contain exactly ten arguments");
   }
   const signingFingerprint = normalizeOpenPgpFingerprint(
     validArguments[0],
     "VALIDSIG signing fingerprint",
   );
+  const signatureVersion = parseCanonicalOpenPgpOctet(
+    validArguments[4],
+    "VALIDSIG signature version",
+  );
+  if (!ALLOWED_SIGNATURE_VERSIONS.has(signatureVersion)) {
+    openPgpFail(`VALIDSIG signature version ${signatureVersion} is not allowed`);
+  }
+  if (validArguments[5] !== "0") {
+    openPgpFail("VALIDSIG reserved field must be zero");
+  }
+  const publicKeyAlgorithm = parseCanonicalOpenPgpOctet(
+    validArguments[6],
+    "VALIDSIG public-key algorithm",
+  );
+  if (!ALLOWED_PUBLIC_KEY_ALGORITHMS.has(publicKeyAlgorithm)) {
+    openPgpFail(`VALIDSIG public-key algorithm ${publicKeyAlgorithm} is not allowed`);
+  }
+  const hashAlgorithm = parseCanonicalOpenPgpOctet(
+    validArguments[7],
+    "VALIDSIG hash algorithm",
+  );
+  if (!ALLOWED_HASH_ALGORITHMS.has(hashAlgorithm)) {
+    openPgpFail(`VALIDSIG hash algorithm ${hashAlgorithm} is not allowed`);
+  }
+  const signatureClass = validArguments[8].toUpperCase();
+  if (!/^[0-9A-F]{2}$/.test(signatureClass)) {
+    openPgpFail("VALIDSIG signature class must be exactly one hexadecimal octet");
+  }
+  if (signatureClass !== OPENPGP_RELEASE_SIGNATURE_POLICY.signatureClass) {
+    openPgpFail(`VALIDSIG signature class ${signatureClass} is not allowed`);
+  }
   const primaryFingerprint = normalizeOpenPgpFingerprint(
-    validArguments[9] ?? signingFingerprint,
+    validArguments[9],
     "VALIDSIG primary fingerprint",
   );
   if (primaryFingerprint !== expectedPrimaryFingerprint) {
     openPgpFail("VALIDSIG primary fingerprint differs from the independently supplied signer");
   }
-  const goodSignatureIdentity = terminalStatuses[0].argumentsText.split(" ")[0]?.toUpperCase();
-  if (
-    typeof goodSignatureIdentity !== "string" ||
-    !/^[0-9A-F]{16,64}$/.test(goodSignatureIdentity) ||
-    !signingFingerprint.endsWith(goodSignatureIdentity)
-  ) {
+  const goodSignatureIdentity = terminalStatuses[0].argumentsText.split(" ")[0];
+  if (!goodSignatureIdentityMatches(signingFingerprint, goodSignatureIdentity)) {
     openPgpFail("GOODSIG identity differs from the VALIDSIG signing fingerprint");
   }
   return {
     signingFingerprint,
     primaryFingerprint,
+    signatureVersion,
+    publicKeyAlgorithm,
+    hashAlgorithm,
+    signatureClass,
   };
 }
 
@@ -379,5 +452,9 @@ export async function verifyReleaseSourceTag({
     sourceCommit: targetCommit,
     signingFingerprint: signature.signingFingerprint,
     primaryFingerprint: signature.primaryFingerprint,
+    signatureVersion: signature.signatureVersion,
+    publicKeyAlgorithm: signature.publicKeyAlgorithm,
+    hashAlgorithm: signature.hashAlgorithm,
+    signatureClass: signature.signatureClass,
   };
 }

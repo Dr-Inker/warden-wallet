@@ -109,6 +109,10 @@ beforeAll(async () => {
   fixture.artifactPath = join(fixture.root, "reviewed-artifact.json");
   const firstSignaturePath = join(fixture.root, "reviewed-artifact.json.sig");
   const secondSignaturePath = join(fixture.root, "reviewed-artifact.second.sig");
+  const unapprovedHashSignaturePath = join(
+    fixture.root,
+    "reviewed-artifact.unapproved-hash.sig",
+  );
   await writeFile(fixture.artifactPath, fixture.artifactBytes);
   for (const signaturePath of [firstSignaturePath, secondSignaturePath]) {
     await gpg([
@@ -129,6 +133,23 @@ beforeAll(async () => {
   fixture.signatureBytes = await readFile(firstSignaturePath);
   fixture.signaturePath = firstSignaturePath;
   fixture.secondSignatureBytes = await readFile(secondSignaturePath);
+  await gpg([
+    "--batch",
+    "--yes",
+    "--pinentry-mode",
+    "loopback",
+    "--passphrase",
+    "",
+    "--local-user",
+    fixture.fingerprint,
+    "--digest-algo",
+    "SHA224",
+    "--detach-sign",
+    "--output",
+    unapprovedHashSignaturePath,
+    fixture.artifactPath,
+  ]);
+  fixture.unapprovedHashSignatureBytes = await readFile(unapprovedHashSignaturePath);
   fixture.environment = { ...process.env, GNUPGHOME: fixture.gnupgHome };
   await writeFile(
     join(fixture.gnupgHome, "gpg.conf"),
@@ -162,6 +183,10 @@ describe("reviewed artifact detached-signature verification", () => {
       signatureSha256: sha256(fixture.signatureBytes),
       signingFingerprint: fixture.fingerprint,
       primaryFingerprint: fixture.fingerprint,
+      signatureVersion: 4,
+      publicKeyAlgorithm: 22,
+      hashAlgorithm: 10,
+      signatureClass: "00",
     });
   });
 
@@ -180,6 +205,9 @@ describe("reviewed artifact detached-signature verification", () => {
     expect(result.stdout).toContain(`artifact sha256 ${sha256(fixture.artifactBytes)}`);
     expect(result.stdout).toContain(`signature sha256 ${sha256(fixture.signatureBytes)}`);
     expect(result.stdout).toContain(`OpenPGP primary fingerprint ${fixture.fingerprint}`);
+    expect(result.stdout).toContain("OpenPGP public-key algorithm 22");
+    expect(result.stdout).toContain("OpenPGP hash algorithm 10");
+    expect(result.stdout).toContain("OpenPGP signature class 00");
     expect(result.stdout).toContain(`artifact source commit ${"a".repeat(40)}`);
   });
 
@@ -208,6 +236,12 @@ describe("reviewed artifact detached-signature verification", () => {
         fixture.secondSignatureBytes,
       ]),
     })).rejects.toThrow(/exactly one signature|VALIDSIG/);
+  });
+
+  it("rejects a cryptographically valid detached signature with an unapproved hash", async () => {
+    await expect(verify({
+      signatureBytes: fixture.unapprovedHashSignatureBytes,
+    })).rejects.toThrow(/hash algorithm 11 is not allowed/);
   });
 
   it("rejects a key absent from the explicitly selected verification home", async () => {

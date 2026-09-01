@@ -94,6 +94,15 @@ beforeAll(async () => {
     "fixture valid release",
     fixture.environment,
   );
+  await writeFile(join(fixture.gnupgHome, "gpg.conf"), "digest-algo SHA224\n", {
+    mode: 0o600,
+  });
+  fixture.unapprovedHashTagObject = await signedTag(
+    "unapproved-hash-fixture",
+    "fixture valid signature with an unapproved hash",
+    fixture.environment,
+  );
+  await rm(join(fixture.gnupgHome, "gpg.conf"));
   fixture.movedTagObject = await signedTag(
     "moved-fixture",
     "fixture before move",
@@ -187,6 +196,10 @@ describe("release source annotated-tag verification", () => {
       sourceCommit: fixture.firstCommit,
       signingFingerprint: fixture.fingerprint,
       primaryFingerprint: fixture.fingerprint,
+      signatureVersion: 4,
+      publicKeyAlgorithm: 22,
+      hashAlgorithm: 10,
+      signatureClass: "00",
     });
   });
 
@@ -215,6 +228,13 @@ describe("release source annotated-tag verification", () => {
     })).rejects.toThrow(/differs from the independently supplied signer/);
   });
 
+  it("rejects a cryptographically valid tag made with an unapproved hash", async () => {
+    await expect(verify({
+      tagName: "unapproved-hash-fixture",
+      expectedTagObject: fixture.unapprovedHashTagObject,
+    })).rejects.toThrow(/hash algorithm 11 is not allowed/);
+  });
+
   it("parses one VALIDSIG primary/subkey identity and rejects ambiguous status", () => {
     const primary = "A".repeat(40);
     const signing = `${"B".repeat(24)}${"C".repeat(16)}`;
@@ -229,6 +249,10 @@ describe("release source annotated-tag verification", () => {
     expect(parseSingleOpenPgpSignatureStatus(validStatus, primary)).toEqual({
       signingFingerprint: signing,
       primaryFingerprint: primary,
+      signatureVersion: 4,
+      publicKeyAlgorithm: 22,
+      hashAlgorithm: 8,
+      signatureClass: "00",
     });
     expect(() => parseSingleOpenPgpSignatureStatus(
       validStatus.replace("[GNUPG:] TRUST_UNDEFINED", "[GNUPG:] NEWSIG\n[GNUPG:] TRUST_UNDEFINED"),

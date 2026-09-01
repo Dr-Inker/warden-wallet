@@ -137,6 +137,10 @@ export async function verifyReviewedArtifactSignature({
       signatureSha256: sha256(signature),
       signingFingerprint: verified.signingFingerprint,
       primaryFingerprint: verified.primaryFingerprint,
+      signatureVersion: verified.signatureVersion,
+      publicKeyAlgorithm: verified.publicKeyAlgorithm,
+      hashAlgorithm: verified.hashAlgorithm,
+      signatureClass: verified.signatureClass,
     };
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });

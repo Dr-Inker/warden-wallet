@@ -47,6 +47,10 @@ async function main() {
   console.log(`artifact source commit ${result.sourceCommit}`);
   console.log(`OpenPGP signing fingerprint ${result.signingFingerprint}`);
   console.log(`OpenPGP primary fingerprint ${result.primaryFingerprint}`);
+  console.log(`OpenPGP signature version ${result.signatureVersion}`);
+  console.log(`OpenPGP public-key algorithm ${result.publicKeyAlgorithm}`);
+  console.log(`OpenPGP hash algorithm ${result.hashAlgorithm}`);
+  console.log(`OpenPGP signature class ${result.signatureClass}`);
   console.log(`reviewed artifact ${artifactManifestPath}`);
 }
 
