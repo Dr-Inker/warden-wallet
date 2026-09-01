@@ -1,14 +1,17 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C73 FULL-GATED; CLOSE COMMIT NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C74 STORE CHILD ENVIRONMENT CONTRACT NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** commit this docs-only C73 close memo. Do not claim store-child
->   environment, timeout, sandbox, or executable confinement.
+> - **TASK:** commit the C74 contract, add and commit its behavioral probe, run
+>   the exact RED, then implement and verify the smallest exact child-
+>   environment change. Do not claim timeout, sandbox, or executable
+>   confinement.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C73 behavioral RED SHA
+> - **BASE:** C73 close SHA
+>   `ff4100e17767cf4945468adfab32f92d1719f348`; behavioral RED SHA
 >   `e87845cc9affd7ffba0bf8d2ffa28aba4ca3c306`; implementation/evidence
 >   `8c4d020d7a4aead78aec9e88d077d6d892c6f6af`; contract SHA
 >   `77206bf96ac1c0f3a68bf24db93ebe47f3cee209`; evidence-ledger/full-gated SHA
@@ -42,29 +45,31 @@
 >   `47d419dae0dda40ad6ca461ab7cd81dc3ba32308`; implementation/evidence
 >   `5bb34f87d6e0fbafa53e1090fbc93fd67495a476`; behavioral RED
 >   `21213293cc184b80d8d397c102b01b3b2d85bf6a`.
-> - **READ:** this memo and the C73/C72/C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
+> - **READ:** this memo and the C74/C73/C72/C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** `docs/NEXT-SESSION.md` only for closeout. C73 source,
->   tests, README, and security docs are implementation-complete.
+> - **WRITE (edit lease):** `docs/NEXT-SESSION.md`,
+>   `apps/extension/scripts/verify-store-package.mjs`,
+>   `apps/extension/test/verify-store-package-infozip.test.mjs`,
+>   `apps/extension/README.md`, and the incumbent release-integrity prose only.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
 >   empty production release registry, or the C1a production extension-id/
 >   permitted-origin owner decision. Do not fetch a key/package, push, tag,
->   sign production bytes, publish, weaken C36/C38–C73 policy, or invent store
+>   sign production bytes, publish, weaken C36/C38–C74 policy, or invent store
 >   provenance, freshness, reviewer, builder-independence, key-strength,
 >   publisher, or lifecycle policy.
 > - **ACCEPT:** after the store-package verifier has authenticated and parsed a
->   CRX3 fixture, prove its independent parser observes an exact
->   `warden-store-package-verify-*` working directory beneath the selected
->   temporary root at mode **0700**, while preserving C72's exact embedded ZIP
->   digest, `O_RDONLY` descriptor, **0400** inode, refused pathname replacement,
->   exact post-parser comparison, and empty cleanup. The test may mock only the
->   already-covered upstream CRX3 cryptographic/parser result. Preserve C71's
->   bounded direct child, C70's exact
->   environment, C69's exact private **0700** `cwd`, C68's descriptor/inode
->   seal, and all C67/C66/C65/C64/C63 upload-verifier probes,
+>   CRX3 fixture, prove its independent parser receives exactly parent `PATH`
+>   (or `/usr/bin:/bin` if absent), `LANG=C`, and `LC_ALL=C`, without a parent
+>   marker or `TMPDIR`. Preserve C73's exact private **0700** `cwd`, C72's exact
+>   embedded ZIP digest, `O_RDONLY` descriptor, **0400** inode, refused pathname
+>   replacement, exact post-parser comparison, and empty cleanup. The test may
+>   mock only the already-covered upstream CRX3 cryptographic/parser result and
+>   production code must not add a test-only pass-through. Preserve C71's
+>   bounded direct child, C70's upload-parser environment, C69's upload-parser
+>   private **0700** `cwd`, C68's descriptor/inode seal, and all C67/C66/C65/C64/C63 upload-verifier probes,
 >   exclusive **0600** construction, identity/seal checks, exact post-parser
 >   comparison, cleanup on every outcome, direct/pnpm **0/6/7**, optional
 >   unpacked tree, canonical checks, unchanged output, exact 25-input recipe
@@ -75,7 +80,7 @@
 >   production signature/key/tag, deploy, upload, publishing, live service,
 >   external message, secret persistence, legal ruling, or real-account/funds
 >   mutation.
-> - **RETURN:** C72 close/full SHAs plus C73 contract/RED/implementation/evidence/
+> - **RETURN:** C73 close/full SHAs plus C74 contract/RED/implementation/evidence/
 >   full/close SHAs and any
 >   subsequent bounded-cycle SHAs, clean/dirty state,
 >   exact commands and outcomes, stable-byte proof and temp-copy mode/cleanup,
@@ -139,11 +144,12 @@
 > and exact single-contract, focused/release, extension-wide, and repository-
 > wide FULL evidence at close SHA
 > `d36ff2756743662621840bd033e36eaa9bfc422e`.
-> C73 has a committed contract, measured behavioral RED, clean implementation,
-> exact single-contract, focused/release, extension-wide, and repository-wide
-> FULL evidence at evidence-ledger/full-gated SHA
-> `19cfdccdb7657a5e5a94abab1c4554f92a2fbca8`. Only this docs-only close commit
-> remains.
+> C73 is closed with a committed contract, measured behavioral RED, clean
+> implementation, exact single-contract, focused/release, extension-wide, and
+> repository-wide FULL evidence at close SHA
+> `ff4100e17767cf4945468adfab32f92d1719f348` and evidence-ledger/full-gated SHA
+> `19cfdccdb7657a5e5a94abab1c4554f92a2fbca8`. C74 is contract-only until its
+> commit, behavioral RED, implementation, and executable evidence exist.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -151,8 +157,34 @@
 > pins exact artifact bytes, the source-tag signature authenticates that exact
 > digest, and a safe command emits its canonical message, but production trust
 > and operator-controlled signing remain external.
-> C68–C73 are only cooperative-host least privilege. Do not manufacture a local
+> C68–C74 are only cooperative-host least privilege. Do not manufacture a local
 > proxy for the remaining external trust/owner obligations.
+
+> ## 2026-09-01 C74 STORE-PACKAGE MINIMAL INFO-ZIP CHILD ENVIRONMENT — C6 PARTIAL
+>
+> Contract: invoke the standalone store-package verifier's Info-ZIP child with
+> an explicit environment containing exactly the parent verifier's `PATH` (or
+> `/usr/bin:/bin` when absent), `LANG=C`, and `LC_ALL=C`. Extend C73's successful
+> handoff probe to record only the child's environment keys, contracted values,
+> and boolean presence of an unrelated parent marker and `TMPDIR`; never persist
+> the marker value. It must still independently measure the exact embedded ZIP
+> digest, access-mode-zero descriptor, **0400** inode, refused pathname
+> replacement, exact private **0700** `cwd`, successful output, and empty
+> cleanup. Existing mutation refusal must remain green.
+>
+> The test may continue to mock only the already-covered upstream CRX3
+> cryptographic/parser result. Fixture paths may be embedded in the generated
+> executable; production code must not introduce a test-only environment pass-
+> through. The behavioral RED is valid only if all C73 predicates pass and the
+> environment predicates expose ambient inheritance.
+>
+> This limits direct ambient-environment disclosure to a cooperative parser. It
+> is not secret isolation or a sandbox: inherited `PATH` still selects the
+> executable, and a malicious same-UID executable, root, or the host can inspect
+> other state. C74 does not yet bound the store child runtime, attest executable
+> provenance, or normalize the release-build environment. No invariant or
+> production-trust status moves. Independent second-model review remains
+> **UNVERIFIED**.
 
 > ## 2026-09-01 C73 STORE-PACKAGE INFO-ZIP PRIVATE WORKING DIRECTORY — C6 PARTIAL
 >
