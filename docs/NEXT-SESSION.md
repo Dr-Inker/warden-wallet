@@ -103,6 +103,88 @@
 > mutation, while parent traversal, input provenance, and host trust remain
 > external.
 
+> ## 2026-09-01 C52 RELEASE-INPUT PARENT-SYMLINK REFUSAL — C6 PARTIAL, LINUX/HOST TRUST EXTERNAL
+>
+> Behavioral RED commit
+> `678b45d936a35ad4777756bb2a58be711f28ee10` creates an actual directory and
+> regular file, reaches that file through a symlinked parent directory, and
+> requires the shared release-input reader to refuse the path. C51 accepted the
+> input because `O_NOFOLLOW` protects only the final path component.
+> Implementation commit `254f635537c8612fba54468b23e870e68742e86d`
+> closes that parent-traversal ambiguity for all ten caller-selected release
+> inputs on the supported Linux release host.
+>
+> `release-input-file.mjs` now normalizes the caller's requested path with
+> `resolve()`, opens it with the incumbent `O_RDONLY | O_NOFOLLOW` flags, and
+> resolves the successfully opened descriptor through `/proc/self/fd/<fd>`.
+> The opened canonical path must equal the normalized requested path before the
+> read, after the read, and across both observations. Missing procfs identity,
+> parent-symlink traversal, rename/path replacement, or any mismatch is refused.
+> C51's same-handle bigint `dev`/`ino`/`size`/`mtimeNs`/`ctimeNs` comparison,
+> exact returned-length check, nonempty regular-file rule, caller-specific
+> pre-read ceiling, and `finally` close remain unchanged. No CLI caller or
+> canonical/digest/signature/report/CRX3 parser changed.
+>
+> The real RED was captured from clean SHA
+> `678b45d936a35ad4777756bb2a58be711f28ee10` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-input-file.test.mjs -t "rejects a symlink in a parent path component"
+> ```
+>
+> It exited **1** with one failed test in **17 ms** because the C51 reader
+> resolved successfully and `rejection` remained `undefined`. From clean
+> implementation SHA `254f635537c8612fba54468b23e870e68742e86d`, this exact
+> focused/release command exited **0** and printed the same SHA before and
+> after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/scripts/release-input-file.mjs && pnpm --filter @warden/extension exec vitest run test/release-input-file.test.mjs test/verify-store-package-cli.test.mjs test/verify-release-source-tag-cli.test.mjs test/release-recipe-input-evidence.test.mjs test/reviewed-artifact-signature.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension release:gate && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The six focused files passed **28/28**, typecheck passed, and the real upload
+> release gate passed canonical packaging/verification, independent Info-ZIP
+> parsing, **8** payload files, **60** production/peer components, **4**
+> JavaScript bundles, **101** positive bundle inputs, **4** static inputs, and
+> the unchanged exact set of **23** release-recipe inputs. From the same clean
+> implementation SHA, this exact extension-wide command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'release-input-file|readBoundedRegularFile|O_NOFOLLOW|verify-release-source-tag|release-source-tag|verify-reviewed-artifact-signature|reviewed-artifact-signature|verify-store-package|store-package|artifactReview|reviewedUploadArchive|storePackage|expectedStorePackageSha256|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed extension **565/565**, typecheck/build, emitted release-tooling
+> exclusion, selected temp cleanup, diff checks, and both clean-tree guards.
+> At the implementation SHA, the shared helper was **2,371 bytes** with
+> SHA-256
+> `21b21623c5cef31e27ea41c6d0251c6b5f310147d4bf0348ab7b264ce7993cd5`;
+> its direct test was **2,743 bytes** with SHA-256
+> `7290c9b9da044910e98cdf5ba7d650ea4a50be4689207c678c3f3e1d59ff1bf5`.
+> The **4,740-byte**, 23-input recipe sidecar bound that exact helper. The
+> generated artifact, bundle, recipe, dependency, and static sidecar SHA-256
+> values were respectively
+> `4b2e69fb2ca693d83443719b9c0c6acb53d844bf547fec1bbf4ac2af8ef8ed83`,
+> `e166ccc987e1b2265a790d3e428f7951cd60d26450a23d2c466fc08b6ecb5fde`,
+> `3d1e05a4828dd2e325e575bef21a06f977d48298048115a6e89578fff8951652`,
+> `b5af0268fb11e8a6933aecdb580b4f3e6f8cbfdf25e64224f3ca664f1f64473f`,
+> and `712d5a534d4663ed946361e449e35c2bc401f061a22759201d594e8f9947a7ff`.
+> ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> This is a Linux-local pathname-binding control, not independent provenance or
+> hostile-host protection. It depends on mounted, truthful procfs semantics;
+> privileged same-host code can still replace inputs before open, manipulate
+> the release process, or subvert the kernel/runtime. It does not authenticate
+> a store-returned package, production reviewer, builder, tag, key, signature,
+> account, or lifecycle decision. `WRD-REL-01`, `WRD-REL-02`, and `WRD-REL-03`
+> remain `unimplemented`; invariant statuses do not move. The provider remains
+> fixed unavailable and independent second-model review remains **UNVERIFIED**.
+> The ledger-inclusive full serial repo gate is intentionally pending until
+> this entry is committed.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C50 CLOSED; C51 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
