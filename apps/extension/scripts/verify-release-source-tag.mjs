@@ -1,9 +1,16 @@
-import { readFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { open, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseArtifactManifest } from "./release-artifact.mjs";
-import { verifyReleaseSourceTag } from "./release-source-tag.mjs";
+import {
+  MAX_ARTIFACT_MANIFEST_BYTES,
+  MAX_ARTIFACT_REVIEW_SIGNATURE_BYTES,
+  MAX_DUAL_RELEASE_REPORT_BYTES,
+  verifyReleaseSourceTag,
+} from "./release-source-tag.mjs";
+import { MAX_CRX3_PACKAGE_BYTES } from "./store-package.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appDirectory = resolve(scriptDirectory, "..");
@@ -12,6 +19,31 @@ const releaseDirectory = join(appDirectory, "release");
 
 function fail(message) {
   throw new Error(`extension release source tag verify: ${message}`);
+}
+
+async function readBoundedRegularFile(path, maximumBytes, label) {
+  let handle;
+  try {
+    handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch (error) {
+    fail(
+      `${label} could not be opened as a non-symlink regular file: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || before.size <= 0 || before.size > maximumBytes) {
+      fail(`${label} must be a nonempty regular file no larger than ${maximumBytes} bytes`);
+    }
+    const bytes = await handle.readFile();
+    const after = await handle.stat();
+    if (!after.isFile() || bytes.length !== before.size || after.size !== before.size) {
+      fail(`${label} changed size while it was being read`);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
 }
 
 async function main() {
@@ -39,14 +71,22 @@ async function main() {
       `warden-extension-${version}.artifact.json`,
     );
   }
-  const artifactManifestBytes = await readFile(artifactManifestPath);
+  const artifactManifestBytes = await readBoundedRegularFile(
+    artifactManifestPath,
+    MAX_ARTIFACT_MANIFEST_BYTES,
+    "reviewed artifact manifest",
+  );
   const artifactManifest = parseArtifactManifest(artifactManifestBytes);
   let dualReleaseReportPath;
   let dualReleaseReportBytes;
   let expectedDualReleaseReportSha256;
   if (args.length >= 7) {
     dualReleaseReportPath = resolve(args[5]);
-    dualReleaseReportBytes = await readFile(dualReleaseReportPath);
+    dualReleaseReportBytes = await readBoundedRegularFile(
+      dualReleaseReportPath,
+      MAX_DUAL_RELEASE_REPORT_BYTES,
+      "dual release report",
+    );
     expectedDualReleaseReportSha256 = args[6];
   }
   let artifactReviewSignaturePath;
@@ -56,7 +96,11 @@ async function main() {
   let expectedArtifactReviewSigningFingerprint;
   if (args.length >= 11) {
     artifactReviewSignaturePath = resolve(args[7]);
-    artifactReviewSignatureBytes = await readFile(artifactReviewSignaturePath);
+    artifactReviewSignatureBytes = await readBoundedRegularFile(
+      artifactReviewSignaturePath,
+      MAX_ARTIFACT_REVIEW_SIGNATURE_BYTES,
+      "artifact review signature",
+    );
     expectedArtifactReviewSignatureSha256 = args[8];
     expectedArtifactReviewPrimaryFingerprint = args[9];
     expectedArtifactReviewSigningFingerprint = args[10];
@@ -69,11 +113,19 @@ async function main() {
   let reviewedUploadArchiveBytes;
   if (args.length === 15) {
     storePackagePath = resolve(args[11]);
-    storePackageBytes = await readFile(storePackagePath);
+    storePackageBytes = await readBoundedRegularFile(
+      storePackagePath,
+      MAX_CRX3_PACKAGE_BYTES,
+      "store package",
+    );
     expectedStorePackageSha256 = args[12];
     expectedStoreExtensionId = args[13];
     reviewedUploadArchivePath = resolve(args[14]);
-    reviewedUploadArchiveBytes = await readFile(reviewedUploadArchivePath);
+    reviewedUploadArchiveBytes = await readBoundedRegularFile(
+      reviewedUploadArchivePath,
+      MAX_CRX3_PACKAGE_BYTES,
+      "reviewed upload archive",
+    );
   }
   const result = await verifyReleaseSourceTag({
     repositoryRoot,

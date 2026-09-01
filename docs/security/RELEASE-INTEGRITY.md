@@ -100,7 +100,12 @@ directly, the two fingerprint arguments are the same.
 
 When the explicit artifact path is followed by a local dual-report path and an
 independently recorded lowercase report SHA-256, the same command composes the
-two preconditions. It bounds the report to **1 MiB**, hashes and compares the
+two preconditions. Before parsing or invoking cryptographic tooling, the CLI
+opens every external candidate without following a final symlink, requires a
+nonempty regular file within its ceiling, reads through that one file handle,
+and refuses size drift across the read. Artifact manifests are bounded to **8
+MiB**, reports and detached signatures to **1 MiB** each, and CRX3/reviewed-
+upload inputs to **512 MiB** each. It hashes and compares the
 selected bytes before parsing them, requires the canonical reviewed local-
 report schema/scope, and requires exact equality among the signed tag target,
 artifact source commit, and report source commit. The report and artifact

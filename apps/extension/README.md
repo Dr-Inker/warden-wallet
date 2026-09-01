@@ -125,10 +125,13 @@ GNUPGHOME=/path/to/release-verification-keyring \
   /path/to/rehearsal.dual-local.json <expected-dual-report-sha256>
 ```
 
-The verifier reads the selected artifact bytes once, bounds them to **8 MiB**,
-and requires their canonical artifact schema. It bounds the report to **1
-MiB**, checks the supplied digest before parsing or deriving claims from the
-report, requires its canonical schema and reviewed scope, and requires the
+The CLI opens each external candidate without following a final symlink,
+requires a nonempty regular file within its ceiling, reads it through that one
+file handle, and refuses size drift across the read. The verifier bounds the
+selected artifact to **8 MiB** and requires its canonical artifact schema. It
+bounds the report to **1 MiB**, checks the supplied digest before parsing or
+deriving claims from the report, requires its canonical schema and reviewed
+scope, and requires the
 signed tag target, artifact source commit, and report source commit to be
 identical. The report and artifact extension versions must match. The report's
 artifact-manifest record must equal the exact selected manifest bytes; its ZIP,
@@ -185,6 +188,8 @@ GNUPGHOME=/path/to/release-verification-keyring \
 These four store arguments are atomic and require the exact report and review
 bindings above. The CLI reads the candidate and reviewed upload once, then
 checks the independently supplied CRX3 digest before parsing the candidate.
+Both files are bounded to **512 MiB** before their stable-handle reads; the
+review signature and report are each bounded to **1 MiB**.
 The reviewed upload must be the canonical ZIP declared by the authenticated
 artifact; the CRX3 envelope must pass the incumbent strict protobuf, developer-
 proof, Chrome Web Store publisher-proof, signature, embedded-ZIP, extension-id,

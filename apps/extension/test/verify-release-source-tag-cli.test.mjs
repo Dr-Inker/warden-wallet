@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,5 +52,29 @@ describe("release-source CLI external files", () => {
       /reviewed artifact manifest must be a nonempty regular file no larger than 8388608 bytes/,
     );
     expect(output).not.toMatch(/artifact manifest is not valid JSON/);
+
+    const emptyPath = join(directory, "empty.artifact.json");
+    await writeFile(emptyPath, Buffer.alloc(0));
+    const emptyOutput = await rejectedOutput([
+      "release-test",
+      "a".repeat(40),
+      "A".repeat(40),
+      "B".repeat(40),
+      emptyPath,
+    ]);
+    expect(emptyOutput).toMatch(/reviewed artifact manifest must be a nonempty regular file/);
+
+    const targetPath = join(directory, "target.artifact.json");
+    const symlinkPath = join(directory, "symlink.artifact.json");
+    await writeFile(targetPath, Buffer.from("{}\n"));
+    await symlink(targetPath, symlinkPath);
+    const symlinkOutput = await rejectedOutput([
+      "release-test",
+      "a".repeat(40),
+      "A".repeat(40),
+      "B".repeat(40),
+      symlinkPath,
+    ]);
+    expect(symlinkOutput).toMatch(/could not be opened as a non-symlink regular file/);
   });
 });
