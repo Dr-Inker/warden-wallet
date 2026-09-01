@@ -55,7 +55,7 @@ describe("same-host local dual extension release report", () => {
     expect(forward.schema).toBe(LOCAL_DUAL_RELEASE_SCHEMA);
     expect(forward.scope).toEqual({
       checkoutModel: "same-host-sequential-local-shared-object-clones",
-      dependencyStoreModel: "shared-pnpm-content-addressed-store",
+      dependencyStoreModel: "shared-readonly-pnpm-content-addressed-store",
       independentBuilderClaim: "not-asserted",
       signedTagClaim: "not-asserted",
     });

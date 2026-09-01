@@ -40,14 +40,14 @@ const PAYLOAD_PATHS = Object.freeze([
 
 const SCOPE = Object.freeze({
   checkoutModel: "same-host-sequential-local-shared-object-clones",
-  dependencyStoreModel: "shared-pnpm-content-addressed-store",
+  dependencyStoreModel: "shared-readonly-pnpm-content-addressed-store",
   independentBuilderClaim: "not-asserted",
   signedTagClaim: "not-asserted",
 });
 
 const COMMANDS = Object.freeze({
   materialize: "git clone --shared --no-checkout <repository> <temporary-checkout> && git checkout --detach <source-sha>",
-  install: "pnpm install --frozen-lockfile --offline",
+  install: "pnpm install --frozen-lockfile --offline --frozen-store",
   release: "pnpm --filter @warden/extension release:gate",
 });
 
@@ -372,7 +372,11 @@ async function materializeAndBuild({ temporaryRoot, id, sourceGitCommit, version
     if (initialStatus !== "") {
       fail(`${id} is not clean before install`);
     }
-    await run("pnpm", ["install", "--frozen-lockfile", "--offline"], checkout);
+    await run(
+      "pnpm",
+      ["install", "--frozen-lockfile", "--offline", "--frozen-store"],
+      checkout,
+    );
     await run("pnpm", ["--filter", "@warden/extension", "release:gate"], checkout);
     const { stdout: finalStatus } = await run(
       "git",
@@ -492,7 +496,7 @@ async function main() {
   console.log(`source ${sourceGitCommit}`);
   console.log(`compared files ${report.comparison.fileCount}`);
   console.log(`report sha256 ${sha256(reportBytes)}`);
-  console.log("scope same-host sequential clones with a shared pnpm store; independent builders not asserted");
+  console.log("scope same-host sequential clones with a shared read-only pnpm store; independent builders not asserted");
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

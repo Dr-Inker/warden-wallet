@@ -81,7 +81,7 @@ cannot rewrite.
 ## Same-host dual-checkout rehearsal
 
 From a clean committed tree, this command sequentially materializes two local
-shared-object Git clones under `/tmp`, runs an offline frozen-lockfile install
+shared-object Git clones under `/tmp`, runs an offline frozen-lockfile/frozen-store install
 and the full extension release gate in each, removes the first checkout before
 starting the second, and compares the six release files plus all eight unpacked
 payload files byte-for-byte:
@@ -96,7 +96,7 @@ observed Node/pnpm/esbuild versions, orchestrator source hash, exact commands,
 scope labels, and all 14 compared byte lengths/hashes. Missing, extra, moved,
 or changed output fails closed, and temporary checkouts are removed on success
 or failure. This is a deterministic-build rehearsal on one host with one pnpm
-content-addressed store and one toolchain. It is not evidence from two
+read-only content-addressed store and one toolchain. It is not evidence from two
 independent builders, a signed tag, a fresh off-host environment, or a Web Store
 release.
 

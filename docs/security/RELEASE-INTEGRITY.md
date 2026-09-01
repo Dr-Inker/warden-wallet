@@ -92,7 +92,8 @@ mutation is performed by this gate.
 `pnpm --filter @warden/extension release:dual-local` is an executable local
 determinism rehearsal. From one clean source SHA it creates two sequential local
 shared-object Git clones under a temporary directory. In each clone it runs
-`pnpm install --frozen-lockfile --offline` against the host's shared pnpm store,
+`pnpm install --frozen-lockfile --offline --frozen-store` against the host's
+shared read-only pnpm store,
 then runs the incumbent `release:gate`. The first checkout is removed before the
 second begins. The comparator requires the exact six release files and eight
 unpacked payload files, compares all 14 byte-for-byte, and writes a canonical
