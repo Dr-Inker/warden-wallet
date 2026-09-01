@@ -2,6 +2,28 @@
 
 **Status:** UNVERIFIED beyond the one dev row below — no tagged release exists yet.
 
+## Immutable CI action references (C6 partial)
+
+All 11 external `uses:` call sites in `.github/workflows/**` are pinned to full
+40-character upstream commits rather than mutable tags or branches. The
+standalone audit is:
+
+```sh
+node --test test/github-actions-pins.test.mjs
+```
+
+It recursively scans every workflow, fails if no workflow or no external action
+was measured, and rejects mutable Git refs, expressions, abbreviated or
+uppercase pseudo-SHAs, and Docker actions without a SHA-256 digest. It runs as
+the blocking workflow's first post-checkout command and at the start of
+`.claude/test-gate.sh`. The exact action/ref/commit map and upstream resolution
+method are recorded in `docs/TOOLCHAIN.md`.
+
+This is a repository policy gate, not an upstream-source audit or GitHub runner
+attestation. It has not yet run on GitHub at these pins. GitHub branch/workflow
+protection still has to ensure an unreviewed workflow cannot insert executable
+steps ahead of the audit; the repository test cannot enforce host-side policy.
+
 ## Extension upload artifacts (C6 partial)
 
 `pnpm --filter @warden/extension release:gate` now produces a deterministic
@@ -21,9 +43,11 @@ verifier accepts the canonical **upload ZIP** only. A package downloaded back
 from the Web Store is a CRX/store-repackaged object and remains UNVERIFIED; a
 future lane must remove only documented store-added signing/packaging and then
 compare the entire payload. Two genuinely independent clean builders, SBOM and
-license attachment, immutable CI action SHAs, publisher MFA/least privilege,
-and an external security review also remain UNVERIFIED. No Web Store upload or
-publisher-account mutation is performed by this gate.
+license attachment, publisher MFA/least privilege, and an external security
+review also remain UNVERIFIED. Immutable CI action syntax is now
+repository-gated as described above, but no off-host run or upstream-source
+attestation is claimed. No Web Store upload or publisher-account mutation is
+performed by this gate.
 
 This document is the addressable record `scripts/deploy-gate.sh` checks against
 (spec §17 item L7, plan Task 11 item 5): for every release SHA that is a

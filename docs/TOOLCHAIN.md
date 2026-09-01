@@ -22,8 +22,14 @@ verbatim output of the listed command, run in sequence per Step 4 of Task 1
   and esbuild `0.28.2` as exact inputs. The root `package.json`, `.node-version`,
   CI setup, and `apps/extension/scripts/package-release.mjs` agree on those
   pins; release packaging fails rather than accepting a compatible major or a
-  dirty tree. This is narrower than complete supply-chain immutability: the CI
-  workflow's third-party action references are still mutable major tags.
+  dirty tree.
+- C30 resolves every external `uses:` entry in `.github/workflows/**` to an
+  immutable full commit. `node --test test/github-actions-pins.test.mjs` scans
+  every workflow and fails on tags, branches, expressions, abbreviated SHAs,
+  uppercase pseudo-SHAs, or Docker images without a SHA-256 digest. The audit is
+  the first post-checkout step in the blocking job and also runs at the start of
+  `.claude/test-gate.sh`. It permits only repository-local `./...` actions
+  without an external pin.
 - `avm install latest` resolved to Anchor `1.1.2` and completed almost instantly
   (avm fetched a prebuilt release rather than compiling from source), so the
   controller's fallback pin (`avm install 0.31.1`) was not needed.
@@ -31,6 +37,27 @@ verbatim output of the listed command, run in sequence per Step 4 of Task 1
   the task context; the verbatim printed output above is authoritative.
 - All Step 4 commands were run one at a time (no concurrent cargo/avm
   invocations), several under `nice -n 10`, per host stability constraints.
+
+## GitHub Actions executable-source pins (C30 — 2026-09-01)
+
+These commits were resolved directly from the named upstream Git refs with
+`git ls-remote https://github.com/<owner>/<repo>.git <ref>` on 2026-09-01.
+The friendly ref remains only as a review comment in `ci.yml`; GitHub executes
+the commit in this table. A future upgrade must resolve and review a new commit,
+update every call site, and keep the pin audit green.
+
+| Action | Reviewed upstream ref | Executed commit |
+| --- | --- | --- |
+| `actions/checkout` | `refs/tags/v4` (`v4.4.0`) | `11d5960a326750d5838078e36cf38b85af677262` |
+| `dtolnay/rust-toolchain` | `refs/heads/stable` | `4360b52568e2003a75bf9bc1d59f33a8e3fc893c` |
+| `actions/cache` | `refs/tags/v4` (`v4.3.0`) | `0057852bfaa89a56745cba8c7296529d2fc39830` |
+| `actions/setup-node` | `refs/tags/v4` (`v4.4.0`) | `49933ea5288caeca8642d1e84afbd3f7d6820020` |
+| `pnpm/action-setup` | `refs/tags/v4` | `f40ffcd9367d9f12939873eb1018b921a783ffaa` |
+| `actions/upload-artifact` | `refs/tags/v4` (`v4.6.2`) | `ea165f8d65b6e75b540449e92b4886f43607fa02` |
+
+There are 11 call sites for these six actions. This pin set narrows repository
+workflow mutability; it does not attest the upstream commits, the GitHub-hosted
+runner image, or an actual off-host run of this workflow.
 
 ## Spike 2b crates (`spikes/02-webauthn/onchain`)
 

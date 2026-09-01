@@ -56,14 +56,19 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # full history: the review-ledger provenance tests (AT-SHA evidence,
           # remediation fix->gate ancestry) resolve historical commits; a depth-one
           # checkout would make them skip (WRDF-0084). Load-bearing in CI now.
 
+      # C6: run this before any other external action. The same test runs in
+      # .claude/test-gate.sh so a workflow edit is also rejected locally.
+      - name: Audit immutable GitHub Actions references
+        run: node --test test/github-actions-pins.test.mjs
+
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable resolved 2026-09-01
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy
@@ -75,7 +80,7 @@ jobs:
       # the expensive part — full Agave runtime + openssl-sys from source)
       # IS cached, since caching it cannot cause a stale-artifact problem.
       - name: Cache cargo registry + git + host build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -86,7 +91,7 @@ jobs:
             ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ env.SOLANA_CLI_VERSION }}-
 
       - name: Cache ~/.cargo/bin tools (cargo-deny, avm, anchor-cli)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/bin
@@ -120,17 +125,17 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Set up Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Set up pnpm ${{ env.PNPM_VERSION }}
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4 resolved 2026-09-01
         with:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.local/share/pnpm/store
           key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -224,7 +229,7 @@ jobs:
         run: sha256sum target/deploy-release/warden.so | tee target/deploy-release/warden.so.sha256
 
       - name: Upload PRODUCTION warden.so + sha256 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: warden-so-${{ github.sha }}
           path: |
@@ -246,19 +251,19 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # full history: the review-ledger provenance tests (AT-SHA evidence,
           # remediation fix->gate ancestry) resolve historical commits; a depth-one
           # checkout would make them skip (WRDF-0084). Load-bearing in CI now.
 
       - name: Set up Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Set up pnpm ${{ env.PNPM_VERSION }}
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4 resolved 2026-09-01
         with:
           version: ${{ env.PNPM_VERSION }}
 
