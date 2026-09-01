@@ -1,5 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -27,6 +28,35 @@ const MAX_UPLOAD_EVIDENCE_BYTES = 256 * 1024 * 1024;
 
 function fail(message) {
   throw new Error(`extension release verify: ${message}`);
+}
+
+async function verifyArchiveWithInfoZip(archiveBytes) {
+  let temporaryDirectory;
+  let validationError;
+  try {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "warden-release-unzip-"));
+    const temporaryArchivePath = join(temporaryDirectory, "archive.zip");
+    await writeFile(temporaryArchivePath, archiveBytes, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await execFile("unzip", ["-t", temporaryArchivePath], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  } catch (error) {
+    validationError = error;
+  }
+  if (temporaryDirectory !== undefined) {
+    try {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    } catch (error) {
+      fail(`independent unzip -t temporary archive cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (validationError !== undefined) {
+    fail(`independent unzip -t validation failed: ${validationError instanceof Error ? validationError.message : String(validationError)}`);
+  }
 }
 
 async function main() {
@@ -108,14 +138,7 @@ async function main() {
     archiveBytes,
     repositoryRoot,
   });
-  try {
-    await execFile("unzip", ["-t", archivePath], {
-      encoding: "utf8",
-      maxBuffer: 4 * 1024 * 1024,
-    });
-  } catch (error) {
-    fail(`independent unzip -t validation failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  await verifyArchiveWithInfoZip(archiveBytes);
   if (unpackedPath !== undefined) {
     const unpacked = await verifyCanonicalUnpacked({
       rootDirectory: unpackedPath,

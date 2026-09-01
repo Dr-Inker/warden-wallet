@@ -48,7 +48,9 @@ under `apps/extension/release/`:
 The verifier reparses the ZIP under a deliberately strict canonical grammar,
 compares every file and release-policy field, checks the normalized unpacked
 tree, verifies both directions of the ZIP/evidence/manifest binding, and runs
-`unzip -t` as an independent format reader. To compare another canonical
+`unzip -t` as an independent format reader over a private temporary copy of the
+same stable-read archive bytes; it removes that copy on success or failure and
+does not reopen the operator-supplied archive path. To compare another canonical
 upload ZIP and all four evidence sidecars against an already reviewed artifact
 manifest:
 

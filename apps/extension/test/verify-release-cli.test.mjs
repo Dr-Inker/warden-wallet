@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   symlink,
   truncate,
@@ -195,6 +196,7 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
   inspectedPath,
   sha256: createHash("sha256").update(inspectedBytes).digest("hex"),
 }));
+process.exitCode = Number(process.env.WARDEN_TEST_UNZIP_EXIT_CODE ?? "0");
 `);
     await chmod(probePath, 0o755);
 
@@ -204,6 +206,7 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
       env: {
         ...process.env,
         PATH: `${probeDirectory}:${process.env.PATH ?? ""}`,
+        TMPDIR: directory,
         WARDEN_TEST_REPLACEMENT_PATH: replacementPath,
         WARDEN_TEST_REQUESTED_ARCHIVE_PATH: inputPaths[0],
         WARDEN_TEST_OBSERVATION_PATH: observationPath,
@@ -214,6 +217,34 @@ await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
     expect(observation.inspectedPath).not.toBe(inputPaths[0]);
     expect(observation.sha256).toBe(sha256(inputBytes[0]));
     expect(observation.sha256).not.toBe(sha256(replacementBytes));
+    expect((await readdir(directory)).filter((name) =>
+      name.startsWith("warden-release-unzip-"),
+    )).toEqual([]);
+
+    await writeFile(inputPaths[0], inputBytes[0]);
+    await writeFile(replacementPath, replacementBytes);
+    let rejected;
+    try {
+      await execFile(process.execPath, [verifierPath, ...inputPaths], {
+        encoding: "utf8",
+        maxBuffer: 4 * 1024 * 1024,
+        env: {
+          ...process.env,
+          PATH: `${probeDirectory}:${process.env.PATH ?? ""}`,
+          TMPDIR: directory,
+          WARDEN_TEST_REPLACEMENT_PATH: replacementPath,
+          WARDEN_TEST_REQUESTED_ARCHIVE_PATH: inputPaths[0],
+          WARDEN_TEST_OBSERVATION_PATH: observationPath,
+          WARDEN_TEST_UNZIP_EXIT_CODE: "9",
+        },
+      });
+    } catch (error) {
+      rejected = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+    }
+    expect(rejected).toMatch(/independent unzip -t validation failed/);
+    expect((await readdir(directory)).filter((name) =>
+      name.startsWith("warden-release-unzip-"),
+    )).toEqual([]);
   });
 
   it("rejects a final-symlink archive before reading later inputs", async () => {

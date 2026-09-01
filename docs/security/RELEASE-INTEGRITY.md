@@ -51,7 +51,9 @@ package manifests, the upload package/verification modules, the CRX3
 store-package comparison modules, the signed release-source verifier, and the
 reviewed-artifact detached-signature verifier plus their CLIs, and the one
 shared public-release-CLI argument normalizer. The verifier
-independently asks `unzip -t` to parse the archive and then fail-closes on
+independently asks `unzip -t` to parse a private temporary copy of the same
+stable-read archive bytes, removes the copy on success or failure, and never
+reopens the operator-supplied archive path. It then fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
 payload-tree hash, whole-ZIP hash, sidecar-byte hash, source binding, archive
