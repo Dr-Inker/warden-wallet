@@ -184,7 +184,8 @@ describe("deterministic upload verifier CLI", () => {
     await mkdir(probeDirectory, { recursive: true });
     await writeFile(probePath, `#!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rename, stat, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 const inspectedPath = process.argv[3];
 await rename(
@@ -192,9 +193,15 @@ await rename(
   process.env.WARDEN_TEST_REQUESTED_ARCHIVE_PATH,
 );
 const inspectedBytes = await readFile(inspectedPath);
+const [archiveStat, directoryStat] = await Promise.all([
+  stat(inspectedPath),
+  stat(dirname(inspectedPath)),
+]);
 await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
   inspectedPath,
   sha256: createHash("sha256").update(inspectedBytes).digest("hex"),
+  archiveMode: archiveStat.mode & 0o777,
+  directoryMode: directoryStat.mode & 0o777,
 }));
 process.exitCode = Number(process.env.WARDEN_TEST_UNZIP_EXIT_CODE ?? "0");
 `);
@@ -217,6 +224,8 @@ process.exitCode = Number(process.env.WARDEN_TEST_UNZIP_EXIT_CODE ?? "0");
     expect(observation.inspectedPath).not.toBe(inputPaths[0]);
     expect(observation.sha256).toBe(sha256(inputBytes[0]));
     expect(observation.sha256).not.toBe(sha256(replacementBytes));
+    expect(observation.archiveMode).toBe(0o600);
+    expect(observation.directoryMode).toBe(0o700);
     expect((await readdir(directory)).filter((name) =>
       name.startsWith("warden-release-unzip-"),
     )).toEqual([]);
