@@ -80,6 +80,20 @@ function fail(message) {
   throw new Error(`extension release source tag: ${message}`);
 }
 
+export function formatReleaseTagMessage(artifactManifestSha256) {
+  if (
+    typeof artifactManifestSha256 !== "string" ||
+    !SHA256_PATTERN.test(artifactManifestSha256)
+  ) {
+    fail("artifact manifest SHA-256 must be a lowercase digest");
+  }
+  return [
+    RELEASE_TAG_MESSAGE_SCHEMA,
+    `artifact-manifest-sha256 ${artifactManifestSha256}`,
+    "",
+  ].join("\n");
+}
+
 function openPgpFail(message) {
   throw new Error(`OpenPGP verification: ${message}`);
 }
@@ -784,7 +798,8 @@ export function parseAnnotatedTagObject(
   ) {
     fail("annotated tag message must bind the exact artifact manifest SHA-256");
   }
-  const messageLines = body.slice(0, signatureOffset).split("\n");
+  const signedMessage = body.slice(0, signatureOffset);
+  const messageLines = signedMessage.split("\n");
   if (
     messageLines.length !== 3 ||
     messageLines[0] !== RELEASE_TAG_MESSAGE_SCHEMA ||
@@ -797,6 +812,9 @@ export function parseAnnotatedTagObject(
     "artifact-manifest-sha256 ".length,
   );
   if (!SHA256_PATTERN.test(signedArtifactManifestSha256)) {
+    fail("annotated tag message must bind the exact artifact manifest SHA-256");
+  }
+  if (signedMessage !== formatReleaseTagMessage(signedArtifactManifestSha256)) {
     fail("annotated tag message must bind the exact artifact manifest SHA-256");
   }
   if (signedArtifactManifestSha256 !== expectedArtifactManifestSha256) {

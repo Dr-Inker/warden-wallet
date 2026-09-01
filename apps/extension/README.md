@@ -40,7 +40,7 @@ under `apps/extension/release/`:
   lengths/hashes and distinguishes the three exact byte copies from
   `manifest.json`'s JSON parse/two-space/newline serialization; and
 - `warden-extension-<version>.recipe-inputs.json`, a canonical byte/hash map of
-  the exact 23 reviewed non-payload repository files that declare the install
+  the exact 24 reviewed non-payload repository files that declare the install
   and release recipe: root/workspace configuration, the extension/core package
   manifests, and every release module. It explicitly does not attest installed
   executables, runtime behavior, the OS, or the environment.
@@ -79,6 +79,20 @@ files is not detected unless the reviewed manifest/hash is anchored somewhere
 the builder cannot rewrite.
 
 ## Signed release-source precondition
+
+Generate the exact two-line message for a separately reviewed artifact without
+creating or signing a tag:
+
+```sh
+pnpm --filter @warden/extension release:source-tag-message -- \
+  <reviewed-artifact.json> <expected-artifact-manifest-sha256>
+```
+
+The command stable-reads at most **8 MiB**, verifies the independently recorded
+lowercase digest before canonical parsing, and writes only the C59 message plus
+one terminal newline to stdout. It does not invoke Git or GnuPG, access a key,
+or create, move, sign, or push a tag. The separately governed signing procedure
+may consume those exact stdout bytes; this helper is not signer authorization.
 
 After an owner has independently recorded a release tag name, its annotated-tag
 object SHA, and the full primary and signing-key OpenPGP fingerprints, bind

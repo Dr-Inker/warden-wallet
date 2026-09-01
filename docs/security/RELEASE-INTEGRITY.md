@@ -44,7 +44,7 @@ zero-byte counts, and each output's byte length and hash. The static sidecar
 records source/output byte lengths and hashes for `approval.css`,
 `approval.html`, `manifest.json`, and `popup.html`, distinguishing three exact
 byte copies from the manifest's JSON parse/two-space/newline serialization. The
-recipe sidecar records exact byte lengths and SHA-256 hashes for the 23 reviewed
+recipe sidecar records exact byte lengths and SHA-256 hashes for the 24 reviewed
 non-payload files that declare the install/release path: `.node-version`,
 `.npmrc`, both root/workspace pnpm configuration files, root/extension/core
 package manifests, the upload package/verification modules, the CRX3
@@ -89,6 +89,14 @@ attestation is claimed. No Web Store upload or publisher-account mutation is
 performed by this gate.
 
 ### Signed release-source precondition (C6 partial; fixture-only)
+
+`pnpm --filter @warden/extension release:source-tag-message --
+<reviewed-artifact.json> <expected-artifact-manifest-sha256>` is a local,
+read-only message generator. It stable-reads no more than **8 MiB**, checks the
+independently recorded lowercase digest before canonical artifact parsing, and
+prints exactly the C59 schema/digest message with one terminal newline. It never
+invokes Git/GnuPG, accesses a key, or creates, moves, signs, or pushes a tag.
+Signing authority and handling of its exact stdout remain external controls.
 
 `pnpm --filter @warden/extension release:verify-source-tag -- <tag>
 <expected-tag-object-sha> <expected-primary-fingerprint>
