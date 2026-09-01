@@ -44,7 +44,7 @@ zero-byte counts, and each output's byte length and hash. The static sidecar
 records source/output byte lengths and hashes for `approval.css`,
 `approval.html`, `manifest.json`, and `popup.html`, distinguishing three exact
 byte copies from the manifest's JSON parse/two-space/newline serialization. The
-recipe sidecar records exact byte lengths and SHA-256 hashes for the 22 reviewed
+recipe sidecar records exact byte lengths and SHA-256 hashes for the 23 reviewed
 non-payload files that declare the install/release path: `.node-version`,
 `.npmrc`, both root/workspace pnpm configuration files, root/extension/core
 package manifests, the upload package/verification modules, the CRX3

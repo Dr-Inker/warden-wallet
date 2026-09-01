@@ -1,7 +1,7 @@
-import { lstat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { parseArtifactManifest } from "./release-artifact.mjs";
+import { readBoundedRegularFile } from "./release-input-file.mjs";
 import {
   MAX_DETACHED_SIGNATURE_BYTES,
   MAX_REVIEWED_ARTIFACT_BYTES,
@@ -10,18 +10,6 @@ import {
 
 function fail(message) {
   throw new Error(`reviewed extension artifact signature verify: ${message}`);
-}
-
-async function readBoundedRegularFile(path, maximumBytes, label) {
-  const metadata = await lstat(path);
-  if (!metadata.isFile() || metadata.size <= 0 || metadata.size > maximumBytes) {
-    fail(`${label} must be a nonempty regular file no larger than ${maximumBytes} bytes`);
-  }
-  const bytes = await readFile(path);
-  if (bytes.length !== metadata.size) {
-    fail(`${label} changed while it was being read`);
-  }
-  return bytes;
 }
 
 async function main() {

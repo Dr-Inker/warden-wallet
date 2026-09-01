@@ -1,9 +1,9 @@
-import { constants as fsConstants } from "node:fs";
-import { open, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseArtifactManifest } from "./release-artifact.mjs";
+import { readBoundedRegularFile } from "./release-input-file.mjs";
 import {
   MAX_ARTIFACT_MANIFEST_BYTES,
   MAX_ARTIFACT_REVIEW_SIGNATURE_BYTES,
@@ -19,31 +19,6 @@ const releaseDirectory = join(appDirectory, "release");
 
 function fail(message) {
   throw new Error(`extension release source tag verify: ${message}`);
-}
-
-async function readBoundedRegularFile(path, maximumBytes, label) {
-  let handle;
-  try {
-    handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  } catch (error) {
-    fail(
-      `${label} could not be opened as a non-symlink regular file: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  try {
-    const before = await handle.stat();
-    if (!before.isFile() || before.size <= 0 || before.size > maximumBytes) {
-      fail(`${label} must be a nonempty regular file no larger than ${maximumBytes} bytes`);
-    }
-    const bytes = await handle.readFile();
-    const after = await handle.stat();
-    if (!after.isFile() || bytes.length !== before.size || after.size !== before.size) {
-      fail(`${label} changed size while it was being read`);
-    }
-    return bytes;
-  } finally {
-    await handle.close();
-  }
 }
 
 async function main() {
