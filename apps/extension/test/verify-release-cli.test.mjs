@@ -1,5 +1,15 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +27,10 @@ const execFile = promisify(execFileCallback);
 const verifierPath = fileURLToPath(
   new URL("../scripts/verify-release.mjs", import.meta.url),
 );
+const packagerPath = fileURLToPath(
+  new URL("../scripts/package-release.mjs", import.meta.url),
+);
+const releaseDirectory = fileURLToPath(new URL("../release/", import.meta.url));
 const temporaryDirectories = [];
 const INPUT_POLICIES = Object.freeze([
   Object.freeze({ label: "upload archive", maximumBytes: 512 * 1024 * 1024 }),
@@ -36,6 +50,10 @@ const FIXTURE_MANIFEST = Object.freeze({
     extension_pages: "script-src 'self'; object-src 'self';",
   },
 });
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
 
 function fixtureInputBytes() {
   const entries = [
@@ -129,6 +147,75 @@ afterEach(async () => {
 });
 
 describe("deterministic upload verifier CLI", () => {
+  it("keeps independent unzip on the stable archive bytes when the requested path is replaced", async () => {
+    await execFile(process.execPath, [packagerPath], {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
+    temporaryDirectories.push(directory);
+    const version = JSON.parse(
+      await readFile(new URL("../manifest.json", import.meta.url), "utf8"),
+    ).version;
+    const releaseBase = `warden-extension-${version}`;
+    const releaseNames = [
+      `${releaseBase}.zip`,
+      `${releaseBase}.artifact.json`,
+      `${releaseBase}.sbom.json`,
+      `${releaseBase}.bundle-inputs.json`,
+      `${releaseBase}.static-inputs.json`,
+      `${releaseBase}.recipe-inputs.json`,
+    ];
+    const inputPaths = releaseNames.map((name) => join(directory, name));
+    const inputBytes = await Promise.all(
+      releaseNames.map((name) => readFile(join(releaseDirectory, name))),
+    );
+    await Promise.all(
+      inputPaths.map((path, index) => writeFile(path, inputBytes[index])),
+    );
+
+    const replacementPath = join(directory, "replacement.zip");
+    const replacementBytes = Buffer.from("replacement bytes are not the reviewed archive\n");
+    await writeFile(replacementPath, replacementBytes);
+    const observationPath = join(directory, "unzip-observation.json");
+    const probeDirectory = join(directory, "probe-bin");
+    const probePath = join(probeDirectory, "unzip");
+    await mkdir(probeDirectory, { recursive: true });
+    await writeFile(probePath, `#!/usr/bin/env node
+import { createHash } from "node:crypto";
+import { readFile, rename, writeFile } from "node:fs/promises";
+
+const inspectedPath = process.argv[3];
+await rename(
+  process.env.WARDEN_TEST_REPLACEMENT_PATH,
+  process.env.WARDEN_TEST_REQUESTED_ARCHIVE_PATH,
+);
+const inspectedBytes = await readFile(inspectedPath);
+await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
+  inspectedPath,
+  sha256: createHash("sha256").update(inspectedBytes).digest("hex"),
+}));
+`);
+    await chmod(probePath, 0o755);
+
+    const result = await execFile(process.execPath, [verifierPath, ...inputPaths], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      env: {
+        ...process.env,
+        PATH: `${probeDirectory}:${process.env.PATH ?? ""}`,
+        WARDEN_TEST_REPLACEMENT_PATH: replacementPath,
+        WARDEN_TEST_REQUESTED_ARCHIVE_PATH: inputPaths[0],
+        WARDEN_TEST_OBSERVATION_PATH: observationPath,
+      },
+    });
+    expect(result.stdout).toContain("independent ZIP reader unzip -t passed");
+    const observation = JSON.parse(await readFile(observationPath, "utf8"));
+    expect(observation.inspectedPath).not.toBe(inputPaths[0]);
+    expect(observation.sha256).toBe(sha256(inputBytes[0]));
+    expect(observation.sha256).not.toBe(sha256(replacementBytes));
+  });
+
   it("rejects a final-symlink archive before reading later inputs", async () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
     temporaryDirectories.push(directory);
