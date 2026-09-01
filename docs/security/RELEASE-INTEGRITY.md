@@ -402,8 +402,11 @@ verifier's `PATH` (or `/usr/bin:/bin` when absent), `LANG=C`, and `LC_ALL=C`; it
 does not directly inherit `TMPDIR`, home-directory variables, credentials, or
 unrelated parent state. This remains cooperative-host least privilege:
 inherited `PATH` still selects the executable, a malicious same-UID process,
-root, or the host can inspect other state, and there is no runtime deadline,
-executable-provenance proof, sandbox, or same-UID/root defense.
+root, or the host can inspect other state, and there is no executable-
+provenance proof, sandbox, or same-UID/root defense. The direct child receives
+an archive-size-derived deadline of
+`min(120000, 5000 + ceil(bytes / 1048576) * 1000)` milliseconds with
+`killSignal: "SIGKILL"`; this is not process-group or descendant confinement.
 
 The format contract comes from Chromium's primary
 [`crx3.proto`](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx3.proto)

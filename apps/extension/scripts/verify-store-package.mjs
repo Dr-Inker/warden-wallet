@@ -24,11 +24,23 @@ const releaseDirectory = join(appDirectory, "release");
 const execFile = promisify(execFileCallback);
 const MAX_ARTIFACT_MANIFEST_BYTES = 8 * 1024 * 1024;
 const TEMPORARY_ARCHIVE_COMPARE_CHUNK_BYTES = 64 * 1024;
+const INFO_ZIP_TIMEOUT_BASE_MS = 5_000;
+const INFO_ZIP_TIMEOUT_PER_MIB_MS = 1_000;
+const INFO_ZIP_TIMEOUT_MAX_MS = 120_000;
+const MIB_BYTES = 1024 * 1024;
 const TEMPORARY_ARCHIVE_CHANGED_MESSAGE =
   "temporary embedded archive bytes changed during independent unzip -t validation";
 
 function fail(message) {
   throw new Error(`extension store package verify: ${message}`);
+}
+
+function infoZipTimeoutMs(archiveBytes) {
+  return Math.min(
+    INFO_ZIP_TIMEOUT_MAX_MS,
+    INFO_ZIP_TIMEOUT_BASE_MS +
+      Math.ceil(archiveBytes.length / MIB_BYTES) * INFO_ZIP_TIMEOUT_PER_MIB_MS,
+  );
 }
 
 async function assertTemporaryArchiveUnchanged(
@@ -125,7 +137,9 @@ export async function verifyEmbeddedArchiveWithInfoZip(archiveBytes) {
       cwd: temporaryDirectory,
       encoding: "utf8",
       env: infoZipEnvironment,
+      killSignal: "SIGKILL",
       maxBuffer: 4 * 1024 * 1024,
+      timeout: infoZipTimeoutMs(archiveBytes),
     });
     await assertTemporaryArchiveUnchanged(temporaryArchiveReadHandle, archiveBytes);
   } catch (error) {

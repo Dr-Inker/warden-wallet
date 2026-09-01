@@ -422,7 +422,9 @@ it does not directly inherit `TMPDIR`, home-directory variables, credentials,
 or unrelated parent state. This cooperative least-privilege boundary is not
 secret isolation or a sandbox: inherited `PATH` still selects the executable,
 and a malicious same-UID process, root, or the host can inspect other state.
-The child runtime is not yet bounded.
+The direct child receives an archive-size-derived deadline of
+`min(120000, 5000 + ceil(bytes / 1048576) * 1000)` milliseconds and is sent
+`SIGKILL` when it expires. This is not process-group or descendant confinement.
 
 The envelope follows Chromium's current primary sources: the
 [`crx3.proto` format](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx3.proto)
