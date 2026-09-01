@@ -508,6 +508,12 @@ function verify(options = {}) {
 }
 
 describe("release source annotated-tag verification", () => {
+  it("requires the authenticated tag message to bind the exact artifact digest", async () => {
+    await expect(verify()).rejects.toThrow(
+      /annotated tag message must bind the exact artifact manifest SHA-256/,
+    );
+  });
+
   it("requires exact artifact bytes and an independent digest in the shared verifier", async () => {
     await expect(verify({
       artifactManifestBytes: undefined,
