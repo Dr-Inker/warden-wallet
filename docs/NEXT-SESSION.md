@@ -1,15 +1,17 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C73 CONTRACT WRITTEN; BEHAVIORAL RED NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C73 BEHAVIORAL RED; IMPLEMENTATION NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** implement C73 test-first: prove the standalone store-package CLI's
->   independent parser runs with its exact private **0700** directory as `cwd`.
->   Commit the behavioral RED before source changes.
+> - **TASK:** implement C73 against the committed behavioral RED: run the
+>   standalone store-package CLI's independent parser with its exact private
+>   **0700** directory as `cwd` while preserving every C72 predicate.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C72 close SHA
+> - **BASE:** C73 behavioral RED SHA
+>   `e87845cc9affd7ffba0bf8d2ffa28aba4ca3c306`; contract SHA
+>   `77206bf96ac1c0f3a68bf24db93ebe47f3cee209`; C72 close SHA
 >   `d36ff2756743662621840bd033e36eaa9bfc422e`; evidence-ledger/full-gated SHA
 >   `bd717bdf19ef9986522e1180cd2c67b8dba96660`; implementation/evidence
 >   `a99054d5c5b51a30d564a3d2b6081769ba8d5a2e`; contract SHA
@@ -42,9 +44,9 @@
 > - **READ:** this memo and the C73/C72/C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** after this contract commit,
->   `apps/extension/test/verify-store-package-infozip.test.mjs` only for the
->   behavioral RED. Do not edit source before that RED is committed.
+> - **WRITE (edit lease):** `apps/extension/scripts/verify-store-package.mjs`,
+>   `apps/extension/README.md`, `docs/security/RELEASE-INTEGRITY.md`, and this
+>   ledger. The C73 test is implementation-complete.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -164,6 +166,22 @@
 > the host, escaped descendants, or absolute paths. C73 does not yet minimize the
 > store child environment or bound its runtime. No invariant or production-
 > release status moves.
+>
+> Contract commit `77206bf96ac1c0f3a68bf24db93ebe47f3cee209` precedes
+> behavioral RED commit `e87845cc9affd7ffba0bf8d2ffa28aba4ca3c306`.
+> From the clean RED SHA, this exact command exited **1**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/test/verify-store-package-infozip.test.mjs && pnpm --filter @warden/extension exec vitest run test/verify-store-package-infozip.test.mjs -t "keeps the independent parser on the verified embedded archive descriptor"
+> ```
+>
+> Vitest ran the selected test, skipped one, and failed at the two new `cwd`
+> predicates in **107 ms**. Every C72 predicate passed: exact descriptor digest,
+> access mode zero, inode mode **0400**, refused replacement, successful CLI
+> output, and empty cleanup. The child instead observed the inherited non-private
+> working directory at mode **0755**, so `workingDirectoryIsPrivate` was false
+> and the required mode **0700** was absent. This is the contracted behavioral
+> RED, not a harness or syntax failure.
 
 > ## 2026-09-01 C72 STORE-PACKAGE EMBEDDED-ZIP STABLE DESCRIPTOR — C6 PARTIAL
 >
