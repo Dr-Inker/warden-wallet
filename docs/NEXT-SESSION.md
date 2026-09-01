@@ -1,17 +1,18 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C68 CONTRACTED; BEHAVIORAL RED NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C68 RED COMMITTED; IMPLEMENT NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** execute the bounded C68 inode-sealing RED below, commit it cleanly,
->   and only then implement the contract. Do not broaden into executable
->   provenance or production trust, and do not imply that cooperative-host mode
->   checks defeat root, an already-open hostile writer, or same-user races that
->   occur before the seal.
+> - **TASK:** implement the bounded C68 inode-sealing contract against its clean
+>   behavioral RED, then run the exact single-contract and broader release
+>   evidence. Do not broaden into executable provenance or production trust, and
+>   do not imply that cooperative-host mode checks defeat root, an already-open
+>   hostile writer, or same-user races that occur before the seal.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C67 close SHA
+> - **BASE:** C68 behavioral RED
+>   `f0f751760b3910bafdc087948193a84bf1c36622`; C67 close SHA
 >   `7298c69d444a919070b6d107818a92cf5e2d3a43`; evidence-ledger/full-gated SHA
 >   `47d419dae0dda40ad6ca461ab7cd81dc3ba32308`; implementation/evidence
 >   `5bb34f87d6e0fbafa53e1090fbc93fd67495a476`; behavioral RED
@@ -19,11 +20,10 @@
 > - **READ:** this memo and the C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** for RED,
->   `apps/extension/test/verify-release-cli.test.mjs` and this ledger only. After
->   RED is committed and measured, implementation may also edit
+> - **WRITE (edit lease):**
 >   `apps/extension/scripts/verify-release.mjs`, `apps/extension/README.md`, and
->   `docs/security/RELEASE-INTEGRITY.md`.
+>   `docs/security/RELEASE-INTEGRITY.md`; update this ledger only for evidence.
+>   The committed behavioral test is the contract and should not be weakened.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -94,8 +94,8 @@
 >
 > **Stop state:** C67 is closed with executable RED, a clean implementation,
 > focused/release/extension-wide evidence, and the repository-wide FULL gate
-> recorded below. C68 is contracted below; its behavioral RED is not yet run or
-> committed.
+> recorded below. C68 has a committed, measured behavioral RED and no
+> implementation yet.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -116,11 +116,19 @@
 > unlink the name and invoke Info-ZIP through the live procfs read-descriptor.
 > Keep C66's exact positional byte comparison after the parser and all cleanup.
 >
-> Behavioral RED: extend the executable fake-Info-ZIP observation with underlying
-> inode mode while retaining exact-byte and descriptor-access checks. At the C67
-> close SHA it must observe mode **0600** and fail an expectation of **0400**;
-> success text and cleanup are otherwise preserved. Commit that failing contract
-> before changing the verifier.
+> Behavioral RED commit `f0f751760b3910bafdc087948193a84bf1c36622`
+> extends the executable fake-Info-ZIP observation with underlying inode mode
+> while retaining exact-byte and descriptor-access checks. From that clean SHA,
+> this exact command exited **1**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/verify-release-cli.test.mjs -t "gives independent unzip a read-only descriptor on a sealed inode"
+> ```
+>
+> Vitest ran one test, skipped ten, and failed in **1.33 s** solely because the
+> parser observed inode mode decimal **384** (**0600**) rather than decimal
+> **256** (**0400**). It still observed the exact stable archive digest through
+> an access-mode-zero (`O_RDONLY`) procfs descriptor, normal success, and cleanup.
 >
 > This reduces accidental or malicious reopen-for-write authority for a normal
 > same-UID, non-root parser after the seal. It does not authenticate `unzip`,
