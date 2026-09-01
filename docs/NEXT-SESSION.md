@@ -1,5 +1,107 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 C31 DETERMINISTIC EXTENSION PRODUCTION-DEPENDENCY EVIDENCE — C6 PARTIAL, NO LEGAL VERDICT
+>
+> Implementation commit
+> `327c7a85345b78e8ffd4e9e51a8c532402ef2d22` adds artifact-manifest schema
+> v2, the canonical
+> `warden.extension-production-dependency-evidence.v1` sidecar, strict
+> parser/verifier, package/verify integration, and tamper tests. Portability fix
+> `7ac2c629a364b9b8f2b175adf30341e7ac27352f` replaces child `pnpm list` and
+> `pnpm licenses` calls with a read-only traversal of the pnpm-installed
+> `package.json` production/peer graph after a same-SHA repeat exposed pnpm
+> 11's incidental write-open of its store SQLite WAL on this read-only host.
+> Final test commit `80709ecde93390ee7566ccef772b7840c7e7afe2` makes refusal of
+> extraneous license metadata executable as well as missing metadata. There
+> was no dependency/lockfile change, deployment, registry edit, Web Store or
+> publisher action, secret, legal ruling, or provider-route change.
+>
+> Real RED was captured before implementation:
+>
+> ```sh
+> pnpm --filter @warden/extension exec vitest run test/production-dependency-evidence.test.mjs
+> ```
+>
+> It exited **1** because the new
+> `scripts/production-dependency-evidence.mjs` contract did not exist. After
+> implementation, the focused command below exited **0** at final implementation
+> SHA `80709ecde93390ee7566ccef772b7840c7e7afe2`:
+>
+> ```sh
+> pnpm --filter @warden/extension exec vitest run test/production-dependency-evidence.test.mjs test/release-artifact.test.mjs
+> ```
+>
+> Both files passed **16/16** tests. The evidence tests prove canonical ordering
+> independent of report order and host paths; a read-only installed-tree walk
+> that includes production peers while excluding dev dependencies; missing
+> package license declarations preserved as `Unknown`; missing and extraneous
+> license metadata refusal; duplicate-key/noncanonical JSON refusal; sidecar
+> byte tamper refusal; archive tamper refusal; and the manifest's exact sidecar
+> byte-length/SHA-256 binding. Existing artifact tests remain **11/11**.
+>
+> From a clean tree at `80709ecde93390ee7566ccef772b7840c7e7afe2`, this
+> command was run twice and exited **0** both times:
+>
+> ```sh
+> pnpm --filter @warden/extension release:gate
+> ```
+>
+> Both runs produced exactly **60 components**: **58 registry** plus **2
+> workspace**, with a **14,737-byte** sidecar. Both runs produced sidecar
+> SHA-256
+> `1214c446fe93135f5a0f49e6270d76f9f0c4e2ba04917cdcbb9b4cc7ad29c084`,
+> artifact-manifest SHA-256
+> `65c5a0d623cd10bd0a405300890ea580857b4e9845c935de184202df71a5fb83`,
+> payload-tree SHA-256
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`,
+> and ZIP SHA-256
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`.
+> The source SHA is inside both JSON records. A repository scan found no
+> `/opt`, `/root`, `node_modules`, `devDependencies`, or
+> `unsavedDependencies` string in the sidecar. The observed declared-license
+> values are `0BSD`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`,
+> `LGPL-3.0-only`, `MIT`, `Unknown`, and first-party `null`.
+> `eyes@0.1.8` and `text-encoding-utf-8@1.0.2` have no usable string license
+> declaration in their installed `package.json` and remain `Unknown`; this is
+> evidence, not adjudication.
+>
+> The complete repository command below passed at implementation/fix SHA
+> `7ac2c629a364b9b8f2b175adf30341e7ac27352f`; it is not used to pretend the
+> later test-only commit was already full-gated:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && if rg -n 'release-artifact|package-release|verify-release|production-dependency-evidence|warden\.extension-artifact\.v2|warden\.extension-production-dependency-evidence\.v1' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The first/last SHA matched. The gate passed the action-pin audit **2/2**,
+> core **700/700**, extension **490/490**, UI tokens **11/11**,
+> transaction-budget **8/8**, WebAuthn **1/1**, real Chromium **15/15**, Rust
+> **681 passed / 0 failed / 1 ignored**, builds/typechecks, Argon2 benchmark,
+> canonical ZIP/sidecar verification, independent Info-ZIP parse, emitted-bundle
+> tooling exclusion, diff check, and clean-tree guard. Known Anchor
+> test-middleman key mismatch, legacy macro-`cfg`, and Rust unused-code warnings
+> remained non-fatal. A ledger-inclusive full gate is intentionally deferred
+> until this record is committed; a later pickup memo must cite its exact SHA
+> before calling C31 fully closed.
+>
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+> Production provider routing remains fixed unavailable. C31 changes release
+> evidence only.
+>
+> **Harsh residual:** `bundleCoverage` is deliberately `not-asserted`. This is
+> the installed production/peer closure, not proof that every component emitted
+> bytes into tree-shaken JavaScript or that no other source/static input shipped.
+> Declared licenses are not a vulnerability scan, legal opinion, notice bundle,
+> or permission to ship. `rpc-websockets` LGPL, both unknown declarations,
+> Jupiter-IDL, and Squads counsel items remain unresolved. The JSON records are
+> unsigned and co-generated; an attacker who can replace the ZIP and reviewed
+> anchor can replace them too. There is still no independent builder,
+> provenance signature, store-returned-package comparison, publisher-control
+> evidence, off-host run, external audit, deployment, or real-funds evidence.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C30 CLOSED; C31 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
