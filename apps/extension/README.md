@@ -416,8 +416,13 @@ a zero exit it compares the same handle positionally with every original byte,
 then closes the handle and removes the private directory on success or failure.
 This prevents pathname replacement and detects a completed parser-side rewrite;
 the same private `0700` directory is the store subprocess's exact `cwd`, which
-limits accidental relative-path effects. This does not yet minimize that
-subprocess's inherited environment or bound its runtime.
+limits accidental relative-path effects. The child receives exactly the
+verifier's `PATH` (or `/usr/bin:/bin` when absent), `LANG=C`, and `LC_ALL=C`, so
+it does not directly inherit `TMPDIR`, home-directory variables, credentials,
+or unrelated parent state. This cooperative least-privilege boundary is not
+secret isolation or a sandbox: inherited `PATH` still selects the executable,
+and a malicious same-UID process, root, or the host can inspect other state.
+The child runtime is not yet bounded.
 
 The envelope follows Chromium's current primary sources: the
 [`crx3.proto` format](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx3.proto)

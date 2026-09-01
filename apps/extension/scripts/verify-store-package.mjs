@@ -67,6 +67,11 @@ async function assertTemporaryArchiveUnchanged(
 }
 
 export async function verifyEmbeddedArchiveWithInfoZip(archiveBytes) {
+  const infoZipEnvironment = Object.freeze({
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    LANG: "C",
+    LC_ALL: "C",
+  });
   let temporaryDirectory;
   let temporaryArchiveReadHandle;
   let temporaryArchiveWriteHandle;
@@ -119,6 +124,7 @@ export async function verifyEmbeddedArchiveWithInfoZip(archiveBytes) {
     await execFile("unzip", ["-t", descriptorPath], {
       cwd: temporaryDirectory,
       encoding: "utf8",
+      env: infoZipEnvironment,
       maxBuffer: 4 * 1024 * 1024,
     });
     await assertTemporaryArchiveUnchanged(temporaryArchiveReadHandle, archiveBytes);

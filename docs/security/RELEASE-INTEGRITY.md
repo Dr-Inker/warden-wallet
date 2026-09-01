@@ -397,10 +397,13 @@ Setup, parser, comparison, and cleanup failures fail closed, and the handle and
 private directory are removed on every outcome. This prevents pathname
 replacement and detects a completed parser-side rewrite. The private **0700**
 directory is also the store subprocess's exact working directory, limiting
-accidental relative-path effects. This remains cooperative-host least
-privilege: the store subprocess still inherits the verifier environment and has
-no runtime deadline, executable-provenance proof, sandbox, or same-UID/root
-defense.
+accidental relative-path effects. The child environment contains exactly the
+verifier's `PATH` (or `/usr/bin:/bin` when absent), `LANG=C`, and `LC_ALL=C`; it
+does not directly inherit `TMPDIR`, home-directory variables, credentials, or
+unrelated parent state. This remains cooperative-host least privilege:
+inherited `PATH` still selects the executable, a malicious same-UID process,
+root, or the host can inspect other state, and there is no runtime deadline,
+executable-provenance proof, sandbox, or same-UID/root defense.
 
 The format contract comes from Chromium's primary
 [`crx3.proto`](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx3.proto)
