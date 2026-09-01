@@ -27,11 +27,12 @@ export const RELEASE_RECIPE_INPUT_PATHS = Object.freeze([
   "packages/core/package.json",
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
+  "scripts/local-dual-extension-release.mjs",
 ]);
 
 const SCOPE = Object.freeze({
   type: "extension-release-recipe-repository-inputs",
-  inputCoverage: "twenty-one-reviewed-non-payload-files-only",
+  inputCoverage: "twenty-two-reviewed-non-payload-files-only",
   executableCoverage: "not-asserted",
   runtimeEnvironmentCoverage: "not-asserted",
 });
@@ -87,7 +88,7 @@ function normalizeInputPaths(inputPaths) {
   }
   const normalized = [...inputPaths].sort(compareUtf8);
   if (JSON.stringify(normalized) !== JSON.stringify(RELEASE_RECIPE_INPUT_PATHS)) {
-    fail("input paths must contain exactly the twenty-one reviewed release recipe files");
+    fail("input paths must contain exactly the twenty-two reviewed release recipe files");
   }
   return normalized;
 }

@@ -98,6 +98,19 @@ reviewed manifest. All four identity arguments are independent inputs; none is
 learned from the tag or artifact candidate. When the primary key signs
 directly, the two fingerprint arguments are the same.
 
+When the explicit artifact path is followed by a local dual-report path and an
+independently recorded lowercase report SHA-256, the same command composes the
+two preconditions. It bounds the report to **1 MiB**, hashes and compares the
+selected bytes before parsing them, requires the canonical reviewed local-
+report schema/scope, and requires exact equality among the signed tag target,
+artifact source commit, and report source commit. The report and artifact
+extension versions must also
+match. Missing paired inputs, a wrong report digest, malformed/noncanonical
+report bytes, or either source/version mismatch fails closed. The report's own
+`signedTagClaim: not-asserted` and `independentBuilderClaim: not-asserted`
+labels remain truthful: subsequent composition is neither proof that the
+builders verified a tag nor evidence from independent builders.
+
 The verifier accepts only an exact valid `refs/tags/<tag>` ref whose current
 object id equals the supplied full lowercase SHA-1 before and after signature
 verification. This explicit tag-object anchor is what makes a force-moved tag
@@ -277,7 +290,9 @@ This rehearsal is deliberately labelled same-host and shared-store. It is not
 the C6 requirement for two isolated independent builders at one signed tag, and
 it does not exercise a clean remote package store, a distinct OS/runtime,
 separate toolchain executable bytes, an off-host trust domain, or a provenance
-signature. It cannot promote `WRD-REL-01` by itself.
+signature. An independently digested report can be composed with the signed-
+source verifier above, but that binds source identity rather than making either
+builder independent. It cannot promote `WRD-REL-01` by itself.
 
 This document is the addressable record `scripts/deploy-gate.sh` checks against
 (spec §17 item L7, plan Task 11 item 5): for every release SHA that is a

@@ -31,8 +31,8 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function localDualReportBytes(sourceGitCommit) {
-  const files = releaseComparisonPaths(FIXTURE_VERSION).map((path) => ({
+function localDualReportBytes(sourceGitCommit, extensionVersion = FIXTURE_VERSION) {
+  const files = releaseComparisonPaths(extensionVersion).map((path) => ({
     path,
     data: Buffer.from(`canonical signed-source fixture bytes for ${path}\n`),
   }));
@@ -44,7 +44,7 @@ function localDualReportBytes(sourceGitCommit) {
       bytes: 12345,
       sha256: "a".repeat(64),
     },
-    extensionVersion: FIXTURE_VERSION,
+    extensionVersion,
     firstFiles: files,
     secondFiles: [...files].reverse(),
   })), "utf8");
@@ -323,6 +323,75 @@ describe("release source annotated-tag verification", () => {
       dualReleaseReportBytes,
       expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
     })).rejects.toThrow(/dual release report source differs from the artifact source commit/);
+  });
+
+  it("binds the signed source to an independently digested canonical dual report", async () => {
+    const dualReleaseReportBytes = localDualReportBytes(fixture.firstCommit);
+    const expectedDualReleaseReportSha256 = sha256(dualReleaseReportBytes);
+    await expect(verify({
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256,
+    })).resolves.toMatchObject({
+      sourceCommit: fixture.firstCommit,
+      dualReleaseReport: {
+        sha256: expectedDualReleaseReportSha256,
+        sourceCommit: fixture.firstCommit,
+        extensionVersion: FIXTURE_VERSION,
+        comparisonFileCount: 14,
+        scope: {
+          checkoutModel: "same-host-sequential-local-shared-object-clones",
+          dependencyStoreModel: "shared-readonly-pnpm-content-addressed-store",
+          independentBuilderClaim: "not-asserted",
+          signedTagClaim: "not-asserted",
+        },
+      },
+    });
+  });
+
+  it("checks the independent report digest before parsing candidate bytes", async () => {
+    const dualReleaseReportBytes = Buffer.from("not canonical report JSON\n");
+    await expect(verify({
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: "0".repeat(64),
+    })).rejects.toThrow(/differs from the independently supplied SHA-256/);
+    await expect(verify({
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+    })).rejects.toThrow(/not valid JSON/);
+    await expect(verify({ dualReleaseReportBytes }))
+      .rejects.toThrow(/must be provided together/);
+    await expect(verify({ expectedDualReleaseReportSha256: "0".repeat(64) }))
+      .rejects.toThrow(/must be provided together/);
+  });
+
+  it("rejects a canonical dual report for a different extension version", async () => {
+    const dualReleaseReportBytes = localDualReportBytes(fixture.firstCommit, "9.8.7");
+    await expect(verify({
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+    })).rejects.toThrow(/extension version differs/);
+  });
+
+  it("retains key, subkey, and signature refusal after binding the report", async () => {
+    const dualReleaseReportBytes = localDualReportBytes(fixture.firstCommit);
+    const reportOptions = {
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+    };
+    await expect(verify({
+      ...reportOptions,
+      environment: { GNUPGHOME: fixture.emptyGnuPgHome },
+    })).rejects.toThrow(/ERRSIG|NO_PUBKEY|signature/);
+    await expect(verify({
+      ...reportOptions,
+      tagName: "sibling-signing-fixture",
+      expectedTagObject: fixture.siblingTagObject,
+    })).rejects.toThrow(/signing fingerprint differs from the independently supplied signing key/);
+    await expect(verify({
+      ...reportOptions,
+      tagName: "bad-signature-fixture",
+      expectedTagObject: fixture.badTagObject,
+    })).rejects.toThrow(/BADSIG|signature/);
   });
 
   it("rejects a lightweight tag, moved tag, or wrong artifact commit", async () => {

@@ -1,7 +1,10 @@
 import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+
+import { parseLocalDualReleaseReport } from "../../../scripts/local-dual-extension-release.mjs";
 
 const GIT_EXECUTABLE = "/usr/bin/git";
 const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
@@ -21,8 +24,10 @@ export const GIT_GPG_LAUNCHER_TEXT = [
   "",
 ].join("\n");
 const MAX_TAG_OBJECT_BYTES = 1024 * 1024;
+const MAX_DUAL_RELEASE_REPORT_BYTES = 1024 * 1024;
 const MAX_OPENPGP_TIME_VALUE = 0xffff_ffff;
 const FULL_SHA1_PATTERN = /^[0-9a-f]{40}$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const FINGERPRINT_PATTERN = /^[0-9A-F]{40}(?:[0-9A-F]{24})?$/;
 export const OPENPGP_RELEASE_SIGNATURE_POLICY = Object.freeze({
   signatureVersions: Object.freeze([4, 6]),
@@ -83,6 +88,63 @@ function assertFullSha1(value, label) {
   if (typeof value !== "string" || !FULL_SHA1_PATTERN.test(value)) {
     fail(`${label} must be a full lowercase 40-character Git object SHA`);
   }
+}
+
+function verifyExpectedDualReleaseReport({
+  dualReleaseReportBytes,
+  expectedDualReleaseReportSha256,
+  artifactManifest,
+}) {
+  const reportSupplied = dualReleaseReportBytes !== undefined;
+  const digestSupplied = expectedDualReleaseReportSha256 !== undefined;
+  if (reportSupplied !== digestSupplied) {
+    fail("dual release report bytes and independently supplied SHA-256 must be provided together");
+  }
+  if (!reportSupplied) {
+    return null;
+  }
+  if (!(dualReleaseReportBytes instanceof Uint8Array)) {
+    fail("dual release report must be byte data");
+  }
+  const reportBytes = Buffer.from(dualReleaseReportBytes);
+  if (
+    reportBytes.length === 0 ||
+    reportBytes.length > MAX_DUAL_RELEASE_REPORT_BYTES
+  ) {
+    fail(
+      `dual release report must be between 1 and ${MAX_DUAL_RELEASE_REPORT_BYTES} bytes`,
+    );
+  }
+  if (
+    typeof expectedDualReleaseReportSha256 !== "string" ||
+    !SHA256_PATTERN.test(expectedDualReleaseReportSha256)
+  ) {
+    fail("expected dual release report SHA-256 must be a lowercase digest");
+  }
+  const actualSha256 = createHash("sha256").update(reportBytes).digest("hex");
+  if (actualSha256 !== expectedDualReleaseReportSha256) {
+    fail("dual release report differs from the independently supplied SHA-256");
+  }
+
+  const report = parseLocalDualReleaseReport(reportBytes);
+  const artifactCommit = artifactManifest?.source?.gitCommit;
+  if (report.source.gitCommit !== artifactCommit) {
+    fail("dual release report source differs from the artifact source commit");
+  }
+  const artifactVersion = artifactManifest?.extension?.version;
+  if (
+    typeof artifactVersion !== "string" ||
+    report.source.extensionVersion !== artifactVersion
+  ) {
+    fail("dual release report extension version differs from the artifact extension version");
+  }
+  return {
+    sha256: actualSha256,
+    sourceCommit: report.source.gitCommit,
+    extensionVersion: report.source.extensionVersion,
+    comparisonFileCount: report.comparison.fileCount,
+    scope: { ...report.scope },
+  };
 }
 
 function countStatus(statuses, keyword) {
@@ -498,6 +560,8 @@ export async function verifyReleaseSourceTag({
   expectedPrimaryFingerprint,
   expectedSigningFingerprint,
   artifactManifest,
+  dualReleaseReportBytes,
+  expectedDualReleaseReportSha256,
   environment,
 }) {
   if (typeof repositoryRoot !== "string" || repositoryRoot.length === 0) {
@@ -523,6 +587,11 @@ export async function verifyReleaseSourceTag({
   );
   const artifactCommit = artifactManifest?.source?.gitCommit;
   assertFullSha1(artifactCommit, "artifact source commit");
+  const dualReleaseReport = verifyExpectedDualReleaseReport({
+    dualReleaseReportBytes,
+    expectedDualReleaseReportSha256,
+    artifactManifest,
+  });
   const gnupgHome = await requireExplicitGnuPgHome(environment);
   const gitOptions = {
     repositoryRoot,
@@ -604,7 +673,7 @@ export async function verifyReleaseSourceTag({
   if (final.objectSha !== expectedTagObject) {
     fail("selected tag ref moved during signature verification");
   }
-  return {
+  const result = {
     tagName,
     tagRef: initial.ref,
     tagObject: expectedTagObject,
@@ -619,4 +688,8 @@ export async function verifyReleaseSourceTag({
     hashAlgorithm: signature.hashAlgorithm,
     signatureClass: signature.signatureClass,
   };
+  if (dualReleaseReport !== null) {
+    result.dualReleaseReport = dualReleaseReport;
+  }
+  return result;
 }

@@ -16,8 +16,8 @@ function fail(message) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (![4, 5].includes(args.length)) {
-    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json]");
+  if (![4, 5, 7].includes(args.length)) {
+    fail("usage: verify-release-source-tag.mjs tag expected-tag-object expected-primary-fingerprint expected-signing-fingerprint [reviewed-artifact.json [dual-local-report.json expected-dual-report-sha256]]");
   }
   const [
     tagName,
@@ -40,6 +40,14 @@ async function main() {
     );
   }
   const artifactManifest = parseArtifactManifest(await readFile(artifactManifestPath));
+  let dualReleaseReportPath;
+  let dualReleaseReportBytes;
+  let expectedDualReleaseReportSha256;
+  if (args.length === 7) {
+    dualReleaseReportPath = resolve(args[5]);
+    dualReleaseReportBytes = await readFile(dualReleaseReportPath);
+    expectedDualReleaseReportSha256 = args[6];
+  }
   const result = await verifyReleaseSourceTag({
     repositoryRoot,
     tagName,
@@ -47,6 +55,8 @@ async function main() {
     expectedPrimaryFingerprint,
     expectedSigningFingerprint,
     artifactManifest,
+    dualReleaseReportBytes,
+    expectedDualReleaseReportSha256,
   });
   console.log(`verified release tag ${result.tagRef}`);
   console.log(`tag object ${result.tagObject}`);
@@ -63,6 +73,14 @@ async function main() {
   console.log(`OpenPGP hash algorithm ${result.hashAlgorithm}`);
   console.log(`OpenPGP signature class ${result.signatureClass}`);
   console.log(`reviewed artifact ${artifactManifestPath}`);
+  if (result.dualReleaseReport) {
+    console.log(`verified local dual report ${dualReleaseReportPath}`);
+    console.log(`dual report sha256 ${result.dualReleaseReport.sha256}`);
+    console.log(`dual report source commit ${result.dualReleaseReport.sourceCommit}`);
+    console.log(`dual report extension version ${result.dualReleaseReport.extensionVersion}`);
+    console.log(`dual report compared files ${result.dualReleaseReport.comparisonFileCount}`);
+    console.log("dual report scope same-host sequential shared-store; independent builders not asserted");
+  }
 }
 
 await main();

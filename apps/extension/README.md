@@ -113,6 +113,27 @@ rejects bad, expired, revoked, missing-key, unexpected sibling-subkey, or
 ambiguous signature results. When the primary key signs directly, the two
 expected fingerprints are identical.
 
+To compose this precondition with an already generated canonical local dual-
+build report, supply the explicit artifact path followed by the report path and
+an independently recorded lowercase report SHA-256:
+
+```sh
+GNUPGHOME=/path/to/release-verification-keyring \
+  pnpm --filter @warden/extension release:verify-source-tag -- \
+  <tag> <expected-tag-object-sha> <expected-primary-fingerprint> \
+  <expected-signing-fingerprint> /path/to/reviewed.artifact.json \
+  /path/to/rehearsal.dual-local.json <expected-dual-report-sha256>
+```
+
+The verifier bounds the report to **1 MiB**, checks the supplied digest before
+parsing or deriving claims from the report, requires its canonical schema and
+reviewed scope, and requires the signed tag target, artifact source commit, and
+report source commit to be
+identical. It also requires the report and artifact extension versions to
+match. This composes two local evidence lanes; the report continues to say
+`signedTagClaim: not-asserted` about its own generation and
+`independentBuilderClaim: not-asserted` about its same-host builders.
+
 The shared OpenPGP policy also requires the exact ten-argument OpenPGP
 `VALIDSIG` shape, a zero reserved field, signature version **4 or 6**, canonical
 numeric octets, and binary-document signature class `00`. The creation date
@@ -246,7 +267,9 @@ or changed output fails closed, and temporary checkouts are removed on success
 or failure. This is a deterministic-build rehearsal on one host with one pnpm
 read-only content-addressed store and one toolchain. It is not evidence from two
 independent builders, a signed tag, a fresh off-host environment, or a Web Store
-release.
+release. The signed-source command above can subsequently bind an independently
+digested copy of this report to the same signed source SHA without changing
+those scope limits.
 
 ## Manifest permissions
 
