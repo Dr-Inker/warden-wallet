@@ -1,17 +1,19 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C70 CONTRACT; BEHAVIORAL RED NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C70 RED MEASURED; IMPLEMENTATION NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** add and commit the C70 behavioral RED proving the Info-ZIP child
->   directly inherits an unrelated marker today, implement the exact three-key
->   child environment contracted below, and run the bounded evidence ladder.
->   Do not broaden environment minimization into sandboxing or production trust.
+> - **TASK:** implement the exact C70 three-key child environment against the
+>   committed behavioral RED, refactor older generated probes away from test-only
+>   environment inheritance, and run the bounded evidence ladder. Do not broaden
+>   environment minimization into sandboxing or production trust.
 > - **CWD:** `/opt/warden`.
 > - **BASE:** C69 close SHA
->   `4f43e19a525c1788476986a9e05374d1c346136f`; evidence-ledger/full-gated SHA
+>   `4f43e19a525c1788476986a9e05374d1c346136f`; C70 contract SHA
+>   `86279a256335c466f6e1cdd37f4bf29d650f41b3`; behavioral RED
+>   `0fad7e841c1a691232ee437537f3c509cfbd2237`; C69 evidence-ledger/full-gated SHA
 >   `c500cb88815d5a20e18f06b37918b994a9d57799`; C69 implementation/evidence
 >   `a206228cacd95197bbd677af6309f1a130db2f2a`; behavioral RED
 >   `8c1828de1de1cdc7369f1131c3fc47636ed15b0c`; C68 close SHA
@@ -27,9 +29,8 @@
 > - **READ:** this memo and the C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** before the committed RED, only
->   `apps/extension/test/verify-release-cli.test.mjs`; after that measured RED,
->   only `apps/extension/scripts/verify-release.mjs`, that test, extension README,
+> - **WRITE (edit lease):** only `apps/extension/scripts/verify-release.mjs`,
+>   `apps/extension/test/verify-release-cli.test.mjs`, extension README,
 >   `docs/security/RELEASE-INTEGRITY.md`, and this ledger.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
@@ -105,8 +106,8 @@
 > repository-wide FULL gates recorded below. C69 is closed with a committed,
 > measured behavioral RED, clean implementation, exact single-contract,
 > focused/release, extension-wide, and repository-wide FULL evidence at close
-> SHA `4f43e19a525c1788476986a9e05374d1c346136f`. C70 is contract-only; no C70
-> test or source change exists yet.
+> SHA `4f43e19a525c1788476986a9e05374d1c346136f`. C70 has a committed contract
+> and measured behavioral RED; production source remains unchanged.
 > There is still no real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
@@ -127,6 +128,21 @@
 > bytes through an access-mode-zero descriptor on the **0400** inode. Existing
 > hostile probes may embed their fixture paths in their generated scripts, but
 > production code must not introduce a test-only environment pass-through.
+>
+> Contract commit `86279a256335c466f6e1cdd37f4bf29d650f41b3` precedes
+> behavioral RED commit `0fad7e841c1a691232ee437537f3c509cfbd2237`.
+> From that clean RED SHA, this exact command exited **1**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/verify-release-cli.test.mjs -t "gives independent unzip only the contracted child environment"
+> ```
+>
+> Vitest ran one test, skipped eleven, and failed in **1.36 s** solely at the
+> first environment-minimization predicate: the child directly inherited the
+> unrelated `WARDEN_TEST_UNZIP_SECRET_MARKER`. Before that predicate, the probe
+> observed the exact stable archive digest, access mode zero, inode mode **0400**,
+> exact private `warden-release-unzip-*` working directory at **0700**, parser
+> success, and cleanup. No secret value was logged or persisted.
 >
 > This reduces direct ambient-environment disclosure to a cooperative Info-ZIP
 > process and its ordinary diagnostics. It is not secret isolation or a sandbox:
