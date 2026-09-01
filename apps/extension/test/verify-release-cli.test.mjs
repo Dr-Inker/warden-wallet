@@ -517,6 +517,66 @@ await writeFile(${JSON.stringify(observationPath)}, JSON.stringify({
     )).toEqual([]);
   });
 
+  it("kills a stalled independent unzip direct child within its archive deadline", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
+    temporaryDirectories.push(directory);
+    const { inputPaths } = await writePackagedInputs(directory);
+    const startMarkerPath = join(directory, "timeout-probe-started");
+    const completionMarkerPath = join(directory, "timeout-probe-completed");
+    const probeDirectory = join(directory, "timeout-probe-bin");
+    const probePath = join(probeDirectory, "unzip");
+    await mkdir(probeDirectory, { recursive: true });
+    await writeFile(probePath, `#!/usr/bin/env node
+import { writeFile } from "node:fs/promises";
+
+await writeFile(${JSON.stringify(startMarkerPath)}, "started\\n");
+await new Promise((resolve) => setTimeout(resolve, 12_000));
+await writeFile(${JSON.stringify(completionMarkerPath)}, "completed\\n");
+`);
+    await chmod(probePath, 0o755);
+
+    let output;
+    const startedAt = performance.now();
+    try {
+      const result = await execFile(process.execPath, [verifierPath, ...inputPaths], {
+        encoding: "utf8",
+        maxBuffer: 4 * 1024 * 1024,
+        env: {
+          ...process.env,
+          PATH: `${probeDirectory}:${process.env.PATH ?? ""}`,
+          TMPDIR: directory,
+        },
+      });
+      output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+    } catch (error) {
+      output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+    }
+    const elapsedMs = performance.now() - startedAt;
+    expect(await readFile(startMarkerPath, "utf8")).toBe("started\n");
+    let completionMarkerPresent = true;
+    try {
+      await readFile(completionMarkerPath);
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+      completionMarkerPresent = false;
+    }
+    expect({
+      failedClosed: /independent unzip -t validation failed/.test(output),
+      completionMarkerPresent,
+      completedBeforeTenSeconds: elapsedMs < 10_000,
+      privateDirectories: (await readdir(directory)).filter((name) =>
+        name.startsWith("warden-release-unzip-"),
+      ),
+    }).toEqual({
+      failedClosed: true,
+      completionMarkerPresent: false,
+      completedBeforeTenSeconds: true,
+      privateDirectories: [],
+    });
+  });
+
   it("rejects a final-symlink archive before reading later inputs", async () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
     temporaryDirectories.push(directory);
