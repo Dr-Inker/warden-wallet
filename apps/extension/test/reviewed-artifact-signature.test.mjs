@@ -273,6 +273,7 @@ describe("reviewed artifact detached-signature verification", () => {
       fixture.artifactPath,
       fixture.signaturePath,
       sha256(fixture.artifactBytes),
+      sha256(fixture.signatureBytes),
       fixture.fingerprint,
       fixture.signingFingerprint,
     ], {
@@ -301,6 +302,7 @@ describe("reviewed artifact detached-signature verification", () => {
       fixture.artifactPath,
       fixture.signaturePath,
       "0".repeat(64),
+      sha256(fixture.signatureBytes),
       fixture.fingerprint,
       fixture.signingFingerprint,
     ], {});
@@ -313,6 +315,7 @@ describe("reviewed artifact detached-signature verification", () => {
       fixture.artifactPath,
       fixture.signaturePath,
       sha256(fixture.artifactBytes).toUpperCase(),
+      sha256(fixture.signatureBytes),
       fixture.fingerprint,
       fixture.signingFingerprint,
     ]);

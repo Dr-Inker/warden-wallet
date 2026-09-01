@@ -15,14 +15,18 @@ function fail(message) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length !== 5) {
-    fail("usage: verify-reviewed-artifact-signature.mjs reviewed-artifact.json detached-signature expected-artifact-manifest-sha256 expected-primary-fingerprint expected-signing-fingerprint");
+  if (args.length !== 6) {
+    fail("usage: verify-reviewed-artifact-signature.mjs reviewed-artifact.json detached-signature expected-artifact-manifest-sha256 expected-detached-signature-sha256 expected-primary-fingerprint expected-signing-fingerprint");
   }
   const artifactPath = resolve(args[0]);
   const signaturePath = resolve(args[1]);
   const expectedArtifactSha256 = args[2];
   if (!/^[0-9a-f]{64}$/.test(expectedArtifactSha256)) {
     fail("expected artifact manifest SHA-256 must be a lowercase digest");
+  }
+  const expectedSignatureSha256 = args[3];
+  if (!/^[0-9a-f]{64}$/.test(expectedSignatureSha256)) {
+    fail("expected detached-signature SHA-256 must be a lowercase digest");
   }
   const [artifactBytes, signatureBytes] = await Promise.all([
     readBoundedRegularFile(
@@ -40,14 +44,21 @@ async function main() {
   if (artifactSha256 !== expectedArtifactSha256) {
     fail("reviewed artifact manifest differs from the independently supplied SHA-256");
   }
+  const signatureSha256 = createHash("sha256").update(signatureBytes).digest("hex");
+  if (signatureSha256 !== expectedSignatureSha256) {
+    fail("detached signature differs from the independently supplied SHA-256");
+  }
   const verified = await verifyReviewedArtifactSignature({
     artifactBytes,
     signatureBytes,
-    expectedPrimaryFingerprint: args[3],
-    expectedSigningFingerprint: args[4],
+    expectedPrimaryFingerprint: args[4],
+    expectedSigningFingerprint: args[5],
   });
   if (verified.artifactSha256 !== expectedArtifactSha256) {
     fail("artifact signature verifier returned a different artifact digest");
+  }
+  if (verified.signatureSha256 !== expectedSignatureSha256) {
+    fail("artifact signature verifier returned a different detached-signature digest");
   }
   const artifactManifest = parseArtifactManifest(artifactBytes);
   console.log(`verified reviewed artifact ${artifactPath}`);

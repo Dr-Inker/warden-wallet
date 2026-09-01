@@ -250,18 +250,20 @@ bytes with an owner-approved review key, verify that detached signature with:
 GNUPGHOME=/path/to/artifact-review-keyring \
   pnpm --filter @warden/extension release:verify-artifact-signature -- \
   /path/to/reviewed.artifact.json /path/to/reviewed.artifact.json.sig \
-  <expected-artifact-manifest-sha256> <expected-primary-fingerprint> \
+  <expected-artifact-manifest-sha256> \
+  <expected-detached-signature-sha256> <expected-primary-fingerprint> \
   <expected-signing-fingerprint>
 ```
 
-All five inputs are explicit. The independently recorded artifact digest must
-be lowercase SHA-256. The command rejects symlinks, bounds the artifact
-manifest to 8 MiB and detached signature to 1 MiB, and checks the digest against
-the one stable artifact buffer before GnuPG or canonical parsing. It copies the
-exact bytes to a private temporary directory and invokes absolute `/usr/bin/gpg`
-with no options file, no prompts, no automatic key import/retrieval, and both
-the signature and data filenames. It cross-checks the verifier's returned
-artifact digest and applies the same strict one-signature
+All six inputs are explicit. The independently recorded artifact and signature
+digests must be lowercase SHA-256. The command rejects symlinks, bounds the
+artifact manifest to 8 MiB and detached signature to 1 MiB, and checks both
+digests against their one stable buffers before GnuPG or canonical parsing. It
+copies the exact bytes to a private temporary directory and invokes absolute
+`/usr/bin/gpg` with no options file, no prompts, no automatic key import or
+retrieval, and both the signature and data filenames. It cross-checks the
+verifier's returned artifact and signature digests and applies the same strict
+one-signature
 `NEWSIG`/`GOODSIG`/`VALIDSIG` and full-primary-fingerprint checks as the signed
 source lane, plus exact independently supplied signing-fingerprint equality;
 an unexpected sibling subkey under the same primary fails closed. It then
@@ -279,9 +281,10 @@ This follows GnuPG's primary
 and documented
 [`--no-auto-key-retrieve` behavior](https://gnupg.org/documentation/manuals/gnupg/GPG-Configuration-Options.html).
 The command authenticates bytes only after the owner has independently chosen
-and provisioned the expected artifact digest plus review primary and signing
-key. It does not sign anything, establish who approved or recorded the digest,
-establish reviewer authority, provide key-strength/curve or ceremony/rotation
+and provisioned the expected artifact/signature digests plus review primary and
+signing key. It does not sign anything, establish who approved or recorded the
+digests, establish reviewer authority, provide key-strength/curve or ceremony/
+rotation
 policy, attest the verifier host, or prove how the artifact was built.
 Ephemeral fixture signatures are not a real review anchor or provenance
 statement and do not promote `WRD-REL-01`.
