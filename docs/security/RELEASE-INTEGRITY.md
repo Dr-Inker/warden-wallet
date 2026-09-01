@@ -103,10 +103,11 @@ independently recorded lowercase report SHA-256, the same command composes the
 two preconditions. Before parsing or invoking cryptographic tooling, the CLI
 opens every external candidate without following a final symlink, requires a
 nonempty regular file within its ceiling, reads through that one file handle,
-and refuses device, inode, size, nanosecond modification/change-time, or
-returned-buffer-length drift across the read. Artifact manifests are bounded
-to **8 MiB**, reports and detached signatures to **1 MiB** each, and CRX3/reviewed-
-upload inputs to **512 MiB** each. It hashes and compares the
+requires its canonical Linux procfs target to equal the normalized requested
+path before and after reading, and refuses device, inode, size, nanosecond
+modification/change-time, or returned-buffer-length drift across the read.
+Artifact manifests are bounded to **8 MiB**, reports and detached signatures
+to **1 MiB** each, and CRX3/reviewed-upload inputs to **512 MiB** each. It hashes and compares the
 selected bytes before parsing them, requires the canonical reviewed local-
 report schema/scope, and requires exact equality among the signed tag target,
 artifact source commit, and report source commit. The report and artifact

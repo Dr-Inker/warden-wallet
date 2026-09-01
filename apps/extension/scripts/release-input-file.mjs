@@ -1,8 +1,19 @@
 import { constants as fsConstants } from "node:fs";
-import { open } from "node:fs/promises";
+import { open, realpath } from "node:fs/promises";
+import { resolve } from "node:path";
 
 function fail(message) {
   throw new Error(`extension release input file: ${message}`);
+}
+
+async function canonicalOpenedPath(handle, label) {
+  try {
+    return await realpath(`/proc/self/fd/${handle.fd}`);
+  } catch (error) {
+    fail(
+      `${label} opened path could not be resolved through procfs: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export async function readBoundedRegularFile(path, maximumBytes, label) {
@@ -15,6 +26,7 @@ export async function readBoundedRegularFile(path, maximumBytes, label) {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes <= 0) {
     fail(`${label} maximum byte count must be a positive safe integer`);
   }
+  const requestedPath = resolve(path);
 
   let handle;
   try {
@@ -25,6 +37,10 @@ export async function readBoundedRegularFile(path, maximumBytes, label) {
     );
   }
   try {
+    const openedPathBefore = await canonicalOpenedPath(handle, label);
+    if (openedPathBefore !== requestedPath) {
+      fail(`${label} opened path differs from the normalized requested path`);
+    }
     const before = await handle.stat({ bigint: true });
     if (
       !before.isFile() ||
@@ -35,7 +51,10 @@ export async function readBoundedRegularFile(path, maximumBytes, label) {
     }
     const bytes = await handle.readFile();
     const after = await handle.stat({ bigint: true });
+    const openedPathAfter = await canonicalOpenedPath(handle, label);
     if (
+      openedPathAfter !== requestedPath ||
+      openedPathAfter !== openedPathBefore ||
       !after.isFile() ||
       before.dev !== after.dev ||
       before.ino !== after.ino ||
