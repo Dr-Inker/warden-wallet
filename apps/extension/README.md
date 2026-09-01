@@ -100,12 +100,18 @@ annotated tag that points directly to the artifact's exact source commit, and
 rejects a lightweight or nested tag. It forces the OpenPGP backend and absolute
 Git/GPG executables, suppresses system/global Git configuration, and runs
 `git verify-tag --raw` against the expected object SHA rather than a mutable
-ref. Its machine-status parser requires exactly one `NEWSIG`, `GOODSIG`, and
-cryptographic `VALIDSIG`, binds the reported primary fingerprint to the full
-independent primary value and the reported signing fingerprint to its separate
-full independent signing-key value, and rejects bad, expired, revoked, missing-
-key, unexpected sibling-subkey, or ambiguous signature results. When the
-primary key signs directly, the two expected fingerprints are identical.
+ref. Git's GPG child is an exact launcher in a private mode-0700 temporary
+directory. Before forwarding Git's arguments to `/usr/bin/gpg`, it forces
+`--no-options`, the canonical `GNUPGHOME`, `--batch`, `--no-tty`, no automatic
+key import or retrieval, and a cleared automatic key-location list. Mutable
+`gpg.conf` content in the selected keyring is therefore ignored; the launcher
+is removed after success or failure. Its machine-status parser requires exactly
+one `NEWSIG`, `GOODSIG`, and cryptographic `VALIDSIG`, binds the reported
+primary fingerprint to the full independent primary value and the reported
+signing fingerprint to its separate full independent signing-key value, and
+rejects bad, expired, revoked, missing-key, unexpected sibling-subkey, or
+ambiguous signature results. When the primary key signs directly, the two
+expected fingerprints are identical.
 
 The shared OpenPGP policy also requires the exact ten-argument OpenPGP
 `VALIDSIG` shape, a zero reserved field, signature version **4 or 6**, canonical
@@ -128,8 +134,9 @@ This precondition follows Git's primary
 [`--status-fd` unattended-use guidance](https://www.gnupg.org/documentation/manuals/gnupg/Unattended-Usage-of-GPG.html).
 The selected public key must already exist in the explicitly selected,
 absolute caller-controlled GnuPG home. The command does not create a key or
-tag, choose production identities, authenticate the unsigned artifact
-manifest's external review anchor, or prove an independent builder.
+tag, retrieve a missing key, choose production identities, authenticate the
+unsigned artifact manifest's external review anchor, attest the Git/GPG/shell/
+OS bytes, or prove an independent builder.
 Fixture-only temporary repositories and keys do not promote `WRD-REL-01`.
 
 ## Reviewed artifact detached-signature precondition

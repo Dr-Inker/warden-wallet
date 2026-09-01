@@ -108,8 +108,15 @@ structurally ambiguous tag object fails closed.
 
 Signature verification fixes `gpg.format=openpgp`, fixes `/usr/bin/git` and
 `/usr/bin/gpg`, suppresses system/global Git config, and asks `git verify-tag
---raw` to verify the expected object SHA rather than the ref. The status parser
-requires exactly one signature context, successful terminal result, and
+--raw` to verify the expected object SHA rather than the ref. Git reaches GnuPG
+through an exact launcher written inside a private mode-0700 temporary
+directory. The launcher forwards Git's arguments only after fixed
+`--no-options`, canonical `--homedir`, `--batch`, `--no-tty`,
+`--no-auto-key-import`, `--no-auto-key-retrieve`, and `--auto-key-locate clear`
+arguments. Thus mutable `gpg.conf` content in the selected keyring cannot change
+verification or activate a missing-key path. The launcher directory is removed
+after successful and failed verification. The status parser requires exactly
+one signature context, successful terminal result, and
 cryptographic `VALIDSIG`; it cross-checks `GOODSIG` against the signing
 fingerprint, requires `VALIDSIG`'s signing fingerprint to equal the complete
 independently supplied signing-key fingerprint, and separately requires its
@@ -147,7 +154,8 @@ The explicitly selected, absolute caller-controlled `GNUPGHOME` must already
 contain the selected public key. This lane does not create a key or tag, select
 the production tag/object/primary fingerprint/signing fingerprint, authenticate
 the external anchor for the unsigned artifact JSON,
-attest the Git or GnuPG executables, or supply a second independent builder.
+attest the Git, GnuPG, shell, OS, or runtime bytes, or supply a second
+independent builder.
 Its ephemeral test key and repository therefore do not promote `WRD-REL-01`.
 
 ### Reviewed artifact detached signature (C6 partial; fixture-only)

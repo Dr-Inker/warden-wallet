@@ -1,9 +1,25 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { realpath, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { chmod, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 
 const GIT_EXECUTABLE = "/usr/bin/git";
-const GPG_EXECUTABLE = "/usr/bin/gpg";
+const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
+export const GIT_GPG_LAUNCHER_MODE = 0o700;
+export const GIT_GPG_LAUNCHER_TEXT = [
+  "#!/bin/sh",
+  "set -eu",
+  "exec /usr/bin/gpg \\",
+  "  --no-options \\",
+  "  --homedir \"$GNUPGHOME\" \\",
+  "  --batch \\",
+  "  --no-tty \\",
+  "  --no-auto-key-import \\",
+  "  --no-auto-key-retrieve \\",
+  "  --auto-key-locate clear \\",
+  "  \"$@\"",
+  "",
+].join("\n");
 const MAX_TAG_OBJECT_BYTES = 1024 * 1024;
 const FULL_SHA1_PATTERN = /^[0-9a-f]{40}$/;
 const FINGERPRINT_PATTERN = /^[0-9A-F]{40}(?:[0-9A-F]{24})?$/;
@@ -264,6 +280,35 @@ function verificationEnvironment(gnupgHome) {
   return sanitized;
 }
 
+async function createPrivateGitGpgLauncher() {
+  const directory = await mkdtemp(join(tmpdir(), GPG_LAUNCHER_PREFIX));
+  const path = join(directory, "gpg");
+  try {
+    await chmod(directory, GIT_GPG_LAUNCHER_MODE);
+    await writeFile(path, GIT_GPG_LAUNCHER_TEXT, {
+      flag: "wx",
+      mode: GIT_GPG_LAUNCHER_MODE,
+    });
+    await chmod(path, GIT_GPG_LAUNCHER_MODE);
+    const [directoryMetadata, launcherMetadata] = await Promise.all([
+      stat(directory),
+      stat(path),
+    ]);
+    if (
+      !directoryMetadata.isDirectory() ||
+      (directoryMetadata.mode & 0o777) !== GIT_GPG_LAUNCHER_MODE ||
+      !launcherMetadata.isFile() ||
+      (launcherMetadata.mode & 0o777) !== GIT_GPG_LAUNCHER_MODE
+    ) {
+      fail("private GnuPG launcher permissions differ from mode 0700");
+    }
+    return { directory, path };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 export async function requireExplicitGnuPgHome(environment) {
   const gnupgHome = (environment ?? process.env).GNUPGHOME;
   if (
@@ -436,20 +481,26 @@ export async function verifyReleaseSourceTag({
     fail("annotated tag target differs from the artifact source commit");
   }
 
-  const verification = await executeGit(
-    [
-      "-c",
-      "gpg.format=openpgp",
-      "-c",
-      `gpg.program=${GPG_EXECUTABLE}`,
-      "-c",
-      `gpg.openpgp.program=${GPG_EXECUTABLE}`,
-      "verify-tag",
-      "--raw",
-      expectedTagObject,
-    ],
-    { ...gitOptions, allowFailure: true },
-  );
+  const launcher = await createPrivateGitGpgLauncher();
+  let verification;
+  try {
+    verification = await executeGit(
+      [
+        "-c",
+        "gpg.format=openpgp",
+        "-c",
+        `gpg.program=${launcher.path}`,
+        "-c",
+        `gpg.openpgp.program=${launcher.path}`,
+        "verify-tag",
+        "--raw",
+        expectedTagObject,
+      ],
+      { ...gitOptions, allowFailure: true },
+    );
+  } finally {
+    await rm(launcher.directory, { recursive: true, force: true });
+  }
   if (verification.stdout !== "") {
     fail("git verify-tag --raw unexpectedly emitted stdout");
   }

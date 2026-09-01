@@ -1,12 +1,14 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  GIT_GPG_LAUNCHER_MODE,
+  GIT_GPG_LAUNCHER_TEXT,
   parseAnnotatedTagObject,
   parseSingleOpenPgpSignatureStatus,
   verifyReleaseSourceTag,
@@ -15,6 +17,7 @@ import {
 const execFile = promisify(execFileCallback);
 const GIT = "/usr/bin/git";
 const GPG = "/usr/bin/gpg";
+const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
 const fixture = {};
 
 async function command(file, arguments_, { cwd, env = process.env } = {}) {
@@ -49,8 +52,10 @@ beforeAll(async () => {
   fixture.root = await mkdtemp(join(tmpdir(), "warden-release-source-tag-test-"));
   fixture.repository = join(fixture.root, "repository");
   fixture.gnupgHome = join(fixture.root, "gnupg");
+  fixture.emptyGnuPgHome = join(fixture.root, "empty-gnupg");
   await mkdir(fixture.repository, { mode: 0o700 });
   await mkdir(fixture.gnupgHome, { mode: 0o700 });
+  await mkdir(fixture.emptyGnuPgHome, { mode: 0o700 });
   fixture.environment = { ...process.env, GNUPGHOME: fixture.gnupgHome };
 
   await command(GPG, [
@@ -223,6 +228,12 @@ afterAll(async () => {
   }
 });
 
+afterEach(async () => {
+  const leakedLaunchers = (await readdir(tmpdir()))
+    .filter((name) => name.startsWith(GPG_LAUNCHER_PREFIX));
+  expect(leakedLaunchers).toEqual([]);
+});
+
 function verify(options = {}) {
   return verifyReleaseSourceTag({
     repositoryRoot: fixture.repository,
@@ -237,6 +248,24 @@ function verify(options = {}) {
 }
 
 describe("release source annotated-tag verification", () => {
+  it("pins the private offline GnuPG launcher contract", () => {
+    expect(GIT_GPG_LAUNCHER_MODE).toBe(0o700);
+    expect(GIT_GPG_LAUNCHER_TEXT).toBe([
+      "#!/bin/sh",
+      "set -eu",
+      "exec /usr/bin/gpg \\",
+      "  --no-options \\",
+      "  --homedir \"$GNUPGHOME\" \\",
+      "  --batch \\",
+      "  --no-tty \\",
+      "  --no-auto-key-import \\",
+      "  --no-auto-key-retrieve \\",
+      "  --auto-key-locate clear \\",
+      "  \"$@\"",
+      "",
+    ].join("\n"));
+  });
+
   it("binds an exact annotated tag object plus primary and signing fingerprints", async () => {
     await expect(verify()).resolves.toEqual({
       tagName: "release-fixture",
@@ -290,6 +319,9 @@ describe("release source annotated-tag verification", () => {
     await expect(verify({
       expectedPrimaryFingerprint: "not-a-fingerprint",
     })).rejects.toThrow(/expected primary fingerprint must be a 40- or 64-character/);
+    await expect(verify({
+      environment: { GNUPGHOME: fixture.emptyGnuPgHome },
+    })).rejects.toThrow(/ERRSIG|NO_PUBKEY|signature/);
   });
 
   it("refuses an unexpected sibling subkey and accepts only the independently selected key", async () => {
