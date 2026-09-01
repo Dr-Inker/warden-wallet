@@ -1,5 +1,107 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C46 CLOSED; C47 NOT STARTED
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the next Warden implementation/review session.
+> - **TASK:** continue C6 with one bounded C47 contract: bind C46's exact
+>   store-returned CRX3 candidate bytes to an independently recorded lowercase
+>   SHA-256 checked before CRX parsing. Begin with a fresh read-only map and a
+>   real RED using two separately valid CRX3 byte strings for the same exact
+>   artifact, extension id, developer key, and publisher key. Preserve C46's
+>   exact manifest/upload/report/review composition, independently supplied
+>   extension id, official production publisher-key requirement, strict CRX3
+>   parsing, and honest synthetic/offline scope. Do not fetch or claim a real
+>   Web Store package.
+> - **CWD:** `/opt/warden`.
+> - **BASE:** C46 behavioral RED
+>   `405fe49584f525be87df2525b541c891b6344508`; implementation
+>   `72fd45fd52914da31d8787bfc9723f6489dbfd6e`; ledger-inclusive, fully gated
+>   SHA `25730ce27a76250f316e2e95fb2d33c123debcf6`. The documentation-only commit
+>   containing this memo is intentionally not described as gate green.
+> - **READ:** this memo and the C46/C45/C36 entries; C6 in the client-security
+>   plan; C46's signed-source/store composition and tests; the incumbent CRX3
+>   verifier/fixtures/CLI; exact-byte digest-before-parse patterns for the dual
+>   report and detached review signature; release-recipe evidence/tests;
+>   `apps/extension/README.md`; and `docs/security/RELEASE-INTEGRITY.md`.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the smallest independent CRX-digest input boundary, caller
+>   plumbing, same-artifact/different-CRX RED and digest-order refusals, recipe
+>   binding if the reviewed file set changes, and scoped docs.
+> - **DO_NOT_TOUCH:** `.superpowers/**`,
+>   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
+>   publisher/account state, production tags/keys/trust stores, secrets, the
+>   empty production release registry, or the C1a production extension-id/
+>   permitted-origin owner decision. Do not fetch a store package/key, push,
+>   tag, sign production bytes, publish, weaken C36/C39–C46 policy, or invent
+>   store provenance, freshness, reviewer, builder-independence, key-strength,
+>   publisher, or lifecycle policy.
+> - **ACCEPT:** executable RED proving two distinct, separately valid synthetic
+>   CRX3 files for the same artifact/id/keys are interchangeable today despite
+>   an independently supplied expected hash; atomic exact candidate bytes plus
+>   lowercase SHA-256; digest mismatch refused before candidate parsing; C46's
+>   cross-artifact/upload/id refusals and C36's strict envelope/payload refusals
+>   remain; exact-SHA focused/release evidence; committed/full-gated ledger; and
+>   explicit synthetic-CRX versus real-store and same-host versus independent
+>   limits. Keep the provider fixed unavailable.
+> - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
+>   extension artifacts, ephemeral keys/files/repos/launchers/CRX fixtures under
+>   `/tmp`, and git commits only; no network key/package retrieval, production
+>   signature/key/tag, deploy, upload, publishing, live service, external
+>   message, secret persistence, legal ruling, or real-account/funds mutation.
+> - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
+>   and outcomes, exact artifact/upload/report/signature/CRX relationships and
+>   digests, preserved scope, unchanged or promoted invariants, independent-
+>   review status, explicit synthetic/production and same-host/independent gaps,
+>   and remaining owner/counsel/external-state blockers.
+>
+> **C46 ledger-inclusive gate:** from a clean tree at
+> `25730ce27a76250f316e2e95fb2d33c123debcf6`, this exact command exited **0**
+> and printed that same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|reviewedUploadArchive|storePackage|expectedStoreExtensionId|dualReleaseReport|expectedDualReleaseReportSha256|artifactManifestSha256|boundReleaseFileCount|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed action pins **2/2**, core **700/700**, extension **558/558**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
+> measured Argon2 benchmark, canonical ZIP/five-sidecar verification with
+> **22** recipe inputs, independent Info-ZIP parsing, the real sequential
+> two-clean-checkout rehearsal, emitted release-tooling exclusion, all seven
+> temp-directory cleanup checks, diff checks, and both clean-tree guards. The
+> Argon2 elapsed p50/p95 were **942.6/974.0 ms**, host-task delay p50/p95 were
+> **62.7/68.0 ms**, and password-buffer wiping was true. The final rehearsal
+> compared **14** files and produced a **3,810-byte** canonical report with
+> SHA-256
+> `1ed9181aa30cbf78d2100b81cc8e2ed21125619db1ea6f1e9987132bd26b3a96`.
+> At this ledger SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `3cbd7355237a46686a0473fb930b177512859749970fa3e3df303aab708faf00`,
+> `a74389e8dd866ba8a4bbb0dd0acd6d90b2ec251acbaa41a85af1167baee899da`,
+> `86ee75eab4561c3b44ea31959492bea5f16d9bd79e54b20560044188f7595701`,
+> `0d38f4a9d8f9bd6f49e6f46c374f0358a9892ba8fd7bab708f663beb42274b02`,
+> and `77414c1c015570f10e508b3101974c61fe5ddce76a81eb742a88224db1f2104b`;
+> the recipe sidecar was **4,553 bytes** and named 22 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> No dual-release, store-verifier, GPG-launcher, OpenPGP-policy, signed-source,
+> or reviewed-artifact fixture/verifier temporary directory remained. Known
+> Anchor test-middleman key mismatch, legacy macro-`cfg`, and Rust unused-code
+> warnings remained non-fatal. Independent second-model review is still
+> **UNVERIFIED**.
+>
+> **Stop state:** C46 is closed. C47 has no code, RED, edit lease, dependency
+> change, independent exact-CRX digest, real store-returned package, production
+> reviewer/tag/key/signature, release-registry edit, Web Store account/action,
+> deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; C46 composes a caller-supplied offline
+> CRX3 with one authenticated local artifact/upload but reports rather than
+> independently anchors the exact CRX3 package digest.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C45 CLOSED; C46 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
