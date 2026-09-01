@@ -1,5 +1,78 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C31 CLOSED; C32 NOT STARTED
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the next Warden implementation/review session.
+> - **TASK:** continue C6 with one bounded C32 contract: measure and bind the
+>   exact source inputs that esbuild reports as contributing bytes to each of
+>   the four emitted JavaScript bundles. Start with a fresh read-only map and a
+>   real RED. Keep the claim narrower than the full extension artifact: esbuild
+>   metafiles do not cover copied HTML, CSS, `manifest.json`, icons, legal
+>   disposition, publisher control, or the store-returned package.
+> - **CWD:** `/opt/warden`.
+> - **BASE:** final C31 implementation/test commit
+>   `80709ecde93390ee7566ccef772b7840c7e7afe2`; ledger-inclusive, fully gated
+>   SHA `ad9b6a386276b56ff8c49e1ad39c28f72e4c2b32`. The documentation-only
+>   commit containing this memo is intentionally not described as gate green.
+> - **READ:** this memo and the C31 entry immediately below;
+>   `apps/extension/scripts/build.mjs`;
+>   `apps/extension/scripts/production-dependency-evidence.mjs`;
+>   `apps/extension/scripts/release-artifact.mjs`;
+>   `apps/extension/scripts/package-release.mjs`;
+>   `apps/extension/scripts/verify-release.mjs`; their focused tests;
+>   `apps/extension/package.json`; `docs/security/RELEASE-INTEGRITY.md`; and C6
+>   in the client-security plan.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the smallest build/release script, focused-test, and documentation
+>   set required for deterministic JavaScript-bundle input evidence.
+> - **DO_NOT_TOUCH:** `.superpowers/**`,
+>   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
+>   publisher/account state, secrets, the empty production release registry,
+>   or the C1a production extension-id/permitted-origin owner decision. Do not
+>   infer whole-artifact or legal coverage from esbuild's JavaScript metafiles.
+> - **ACCEPT:** executable RED; deterministic, canonical per-output source-input
+>   evidence derived from esbuild's own metafiles; exact binding to the reviewed
+>   upload artifact and source SHA; missing/extra/tamper refusal; exact-SHA
+>   focused and release evidence; a committed/full-gated ledger; and explicit
+>   coverage limits. Keep the provider fixed unavailable.
+> - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
+>   extension artifacts, temporary test data, and git commits only; no deploy,
+>   upload, publishing, live service, external message, secret creation, legal
+>   ruling, or real-account/funds mutation.
+> - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
+>   and outcomes, per-bundle input/byte/hash measurements, unchanged or promoted
+>   invariants, independent-review status, explicit coverage gaps, and remaining
+>   owner/counsel/external-state blockers.
+>
+> **C31 ledger-inclusive gate:** from a clean tree at
+> `ad9b6a386276b56ff8c49e1ad39c28f72e4c2b32`, this exact command exited **0**
+> and printed that same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && if rg -n 'release-artifact|package-release|verify-release|production-dependency-evidence|warden\.extension-artifact\.v2|warden\.extension-production-dependency-evidence\.v1' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed action pins **2/2**, core **700/700**, extension **490/490**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
+> Argon2 benchmark, canonical ZIP/sidecar verification, independent Info-ZIP
+> parsing, emitted-bundle tooling exclusion, diff checks, and both clean-tree
+> guards. Release verification measured **8 files**, **60 production/peer
+> components**, payload-tree SHA-256
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`,
+> and ZIP SHA-256
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`.
+> Known Anchor test-middleman key mismatch, legacy macro-`cfg`, and Rust
+> unused-code warnings remained non-fatal. Independent second-model review is
+> still **UNVERIFIED**.
+>
+> **Stop state:** C31 is closed. C32 has no code, RED, edit lease, dependency
+> change, release-registry edit, deployment, publisher action, or legal
+> adjudication. The ignored local `apps/extension/release/` output may exist; it
+> is reproducible evidence, not a tracked or reviewed release candidate.
+
 > ## 2026-09-01 C31 DETERMINISTIC EXTENSION PRODUCTION-DEPENDENCY EVIDENCE — C6 PARTIAL, NO LEGAL VERDICT
 >
 > Implementation commit
@@ -80,9 +153,11 @@
 > canonical ZIP/sidecar verification, independent Info-ZIP parse, emitted-bundle
 > tooling exclusion, diff check, and clean-tree guard. Known Anchor
 > test-middleman key mismatch, legacy macro-`cfg`, and Rust unused-code warnings
-> remained non-fatal. A ledger-inclusive full gate is intentionally deferred
-> until this record is committed; a later pickup memo must cite its exact SHA
-> before calling C31 fully closed.
+> remained non-fatal. The exact command above later exited **0** at
+> ledger-inclusive SHA `ad9b6a386276b56ff8c49e1ad39c28f72e4c2b32`, with
+> the same test counts and artifact hashes; the clean-break memo immediately
+> above records that run without transferring its verdict to the later
+> documentation-only commit.
 >
 > Independent second-model review remains **UNVERIFIED**.
 >
