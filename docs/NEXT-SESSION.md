@@ -98,6 +98,115 @@
 > synthetic signature-policy precondition and does not establish key strength,
 > authority, lifecycle, independent build provenance, or publisher control.
 
+> ## 2026-09-01 C40 EXACT OPENPGP SIGNING KEY — C6 PARTIAL, SELECTION IS EXTERNAL
+>
+> Implementation commit
+> `71473342394b4fcdfeb6fc29402a2962298c4432` closes the same-primary sibling-
+> subkey acceptance gap in both OpenPGP consumers. The shared status parser now
+> requires two separate canonical full fingerprints: the independently supplied
+> expected primary key and the independently supplied expected signing key.
+> `VALIDSIG`'s first field must exactly equal the latter and its tenth field must
+> exactly equal the former; the existing `GOODSIG` cross-check and all C39
+> version/algorithm/hash/class rules remain. Both verifier APIs and CLIs now
+> require both values. Direct primary-key signing remains expressible by
+> supplying the same full fingerprint twice. There was no dependency/lockfile
+> or payload-byte change, production signature/key/subkey/trust-store action,
+> deployment, Web Store/publisher action, provider-route change, legal ruling,
+> secret persistence, or real-account/funds mutation.
+> Test-only follow-up commit
+> `5ecf156c155a5491dfc00aee8410835f6fc52655` adds explicit malformed expected-
+> primary-fingerprint refusals to each real consumer suite; it changes no
+> production source, dependency, payload, or documentation contract.
+>
+> Real RED was captured from clean SHA
+> `f813cc74769fa6f26da3c16be715211c131d631f` before implementation:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --input-type=module -e 'import { parseSingleOpenPgpSignatureStatus } from "./apps/extension/scripts/release-source-tag.mjs"; const primary = "A".repeat(40); const signing = "B".repeat(40); const unexpected = "C".repeat(40); const status = `[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG ${"B".repeat(16)} Warden%20fixture\n[GNUPG:] VALIDSIG ${signing} 2026-09-01 1788220800 0 4 0 22 8 00 ${primary}\n`; let refused = false; try { parseSingleOpenPgpSignatureStatus(status, primary, unexpected); } catch { refused = true; } if (!refused) throw new Error("RED: unexpected signing fingerprint was accepted");'
+> ```
+>
+> It exited **1** with `RED: unexpected signing fingerprint was accepted`,
+> proving the old parser ignored the third, independently supplied signing-key
+> identity. At clean implementation SHA
+> `71473342394b4fcdfeb6fc29402a2962298c4432`, this exact command exited **0**
+> and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/openpgp-signature-policy.test.mjs test/release-source-tag.test.mjs test/reviewed-artifact-signature.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && pnpm --filter @warden/extension release:gate && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The focused files passed **38/38** tests, typecheck/build passed, and the real
+> upload release gate measured **8** payload files, **60** production/peer
+> components, **4** JavaScript bundles, **101** positive bundle inputs, **4**
+> static inputs, and **21** release-recipe inputs. Independent Info-ZIP parsing,
+> emitted-tooling exclusion, all four focused temp cleanup checks, diff checks,
+> and both clean-tree guards passed.
+>
+> Each real consumer fixture now creates one ephemeral Ed25519 signing primary
+> plus two distinct Ed25519 signing subkeys. Its accepted release tag or
+> detached artifact signature is forced to the first subkey. A cryptographically
+> valid signature forced to the sibling subkey under the same primary fails
+> against the first fingerprint and passes only when the caller independently
+> supplies that exact sibling fingerprint. A signature forced to the primary
+> passes only when the primary is also supplied as the expected signing key.
+> Primary/subkey substitution, wrong full values, 16-character key IDs, malformed
+> values, and transcript ambiguity fail closed. The artifact CLI runs over the
+> same canonical bytes and reports both exact identities. All ephemeral keys,
+> signatures, repositories, and candidate files remain under `/tmp` and are
+> removed.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **540/540**, typecheck/build passed, release
+> verification tooling remained absent from `dist`, no fixture/verifier temp
+> directory remained, and diff/clean-tree guards passed.
+>
+> The shared parser was **15,719 bytes** with SHA-256
+> `20c4b3ec785d98e5de49a90c2eb9d40f1f9e920793a8328acadcea45c892d199`;
+> the reviewed-artifact core, source CLI, and artifact CLI were respectively
+> **4,610**, **2,459**, and **2,722 bytes**, with SHA-256 values
+> `bba470b247d8d4f9e7ff90f3d11dc57bdf47219ff3da771353b2c5b6adc77875`,
+> `de52957d91a4c300c63e402aedbadabc83ac40b17dde51790fb2da3017025a58`,
+> and `039ee573d2dbb81117ba5f3502fc1f2b512579b0488e32f124c3b87e4d9a7f63`.
+> The policy, source, and artifact tests were **9,882**, **14,006**, and
+> **13,616 bytes**, with SHA-256 values
+> `523ac1f46cf7279ea1f4c8b94969d6a192f4d9ec7a98836a5e132ccd564df26f`,
+> `f23d4158d4c973221c705b6cb7e6da732c3a98f6d20c4e646085fbbbd57fa700`,
+> and `76cd52145db347cbea9ac18cce8d0a3a701402aceabb58c8ed1a9838b7fa8ba3`.
+> At the implementation SHA, the generated artifact, bundle, recipe,
+> dependency, and static sidecar SHA-256 values were respectively
+> `512a93535ed0d2462294ed30278d4e61f906f4fff5819cf35f746d859178ad78`,
+> `6667381f6e22835bdfbdf8611a2ab5984a762802e0e00cb00cb5c2e87b6edf6a`,
+> `a0758dab6f67c73bd2b4acabdca9419b3e0f18d401e2c1fd9ae5ab161e918799`,
+> `e897c746678d2f528f5d8944c1a54dfd3baf0fdfe458a515b4cd45b866fe2797`,
+> and `15788ce763c31a5fafaaa2b2e8ea0f7dc58b61b75cd7ede26bd379d41c66e8bc`;
+> the recipe sidecar remained **4,372 bytes** and named 21 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** two independently supplied strings do not establish that
+> an owner selected them independently or correctly. This slice does not
+> constrain RSA modulus length or ECC curve, validate key certification or
+> lifecycle beyond GnuPG's signature result, attest GnuPG/keyring/executable/
+> OS/runtime bytes, establish reviewer/tagger authority, select a production
+> primary or signing subkey, govern ceremony/rotation/revocation, validate a
+> transparency log, prove an independent builder, compare a real store return,
+> establish publisher control, make a legal ruling, deploy, or exercise real
+> funds. The ledger-inclusive full repository/release/rehearsal gate is still
+> pending at this entry.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C38 CLOSED; C39 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
