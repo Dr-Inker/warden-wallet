@@ -104,6 +104,102 @@
 > lane, while the older standalone store-verification entry point still merely
 > reports its candidate digest.
 
+> ## 2026-09-01 C48 STANDALONE EXACT STORE DIGEST — C6 PARTIAL, RETURN PROVENANCE EXTERNAL
+>
+> Behavioral RED commit
+> `0b85a166f5720456284f374773e536b4f8af288e` adds a subprocess-level test for
+> the incumbent `release:verify-store` command. It supplies a malformed CRX3
+> candidate, an independently selected wrong lowercase SHA-256, an expected
+> extension id, and valid reviewed upload/artifact paths. The expected digest
+> rejection failed because the old two/four-argument command had no digest
+> input and returned its old usage error. Implementation commit
+> `ab10ff68a464c678e223b7ec5b690659d304b474` makes the exact digest mandatory
+> in the standalone three/five-argument interface.
+>
+> The CLI validates the independent digest as lowercase SHA-256, stats and reads
+> one bounded candidate file, hashes that exact buffer, and refuses a mismatch
+> before reading reviewed outputs or parsing CRX3. It passes the same buffer to
+> C36's strict verifier and requires that verifier's returned package digest to
+> equal the independent input. Optional explicit reviewed upload/artifact paths
+> are now the fourth and fifth arguments. The composed C47 command remains a
+> separate fifteen-argument source/report/review/store lane and is unchanged.
+>
+> The real RED was captured from clean SHA
+> `0b85a166f5720456284f374773e536b4f8af288e` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/verify-store-package-cli.test.mjs
+> ```
+>
+> It exited **1** with one failed test because the received error was the old
+> `candidate.crx expected-extension-id` usage contract rather than the required
+> independent-digest rejection. At clean implementation SHA
+> `ab10ff68a464c678e223b7ec5b690659d304b474`, this exact focused command exited
+> **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/verify-store-package-cli.test.mjs test/store-package.test.mjs test/release-source-tag.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && pnpm --filter @warden/extension release:gate && if rg -n 'verify-store-package|store-package|expectedPackageSha256|expectedStorePackageSha256|release-source-tag|artifactReview|reviewedUploadArchive|storePackage|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The five focused files passed **53/53** tests, typecheck/build passed, and the
+> real upload release gate measured **8** payload files, **60** production/peer
+> components, **4** JavaScript bundles, **101** positive bundle inputs, **4**
+> static inputs, and **22** release-recipe inputs. Independent Info-ZIP parsing,
+> emitted-tooling exclusion, selected temp-directory cleanup checks, diff
+> checks, and both clean-tree guards passed. The command-level test also proves
+> that uppercase input is refused, the old no-digest invocation is refused, a
+> wrong digest stops before `Cr24` parsing, and the exact digest lets the same
+> malformed bytes reach the strict `CRX3 magic must be Cr24` refusal.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'verify-store-package|store-package|expectedPackageSha256|expectedStorePackageSha256|release-source-tag|artifactReview|reviewedUploadArchive|storePackage|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **561/561**, typecheck/build passed, release
+> verification/composition tooling remained absent from `dist`, no selected
+> fixture/launcher/rehearsal temp directory remained, and diff/clean-tree guards
+> passed.
+>
+> The standalone CLI and its command-level test were respectively **4,733** and
+> **4,608 bytes**, with SHA-256 values
+> `400fcf431c988bea090b39e2ba4e538c602f372572daa4e650d4e961e959a61c`
+> and
+> `1a1020c72f00ad8c3afa04794ea66e4fb2d6e4f66ab1d067a715d3efcfaa2f68`.
+> At the implementation SHA, the generated artifact, bundle, recipe,
+> dependency, and static sidecar SHA-256 values were respectively
+> `0743bda3cf9de74f583780f7c93a2f25031fa6b3176e985773922e9430746b93`,
+> `9b1ad641a0c7b6d8fcb6d3af0a3b15b87af375f8a70fa4f2c910ab49994a5382`,
+> `abe0c94250e25b5c8507654400bfd37877747cc39f18b5b28aaf64d38c2536ed`,
+> `aad4979642e96fb1699c9e126d6c093e96ce27888d4c87196b13a982801561cd`,
+> and `4adcd8bb00041bd5121f1f035a3c096f74da87087900c97c3d3a2221ef1705e8`;
+> the recipe sidecar remained **4,553 bytes** and named 22 inputs. The changed
+> CLI was already in that exact recipe set, so no reviewed path was added.
+> ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> There was no dependency/lockfile, recipe-file-set, or payload-byte change.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** C48 authenticates an exact caller-selected CRX byte string
+> at both local store-verification entry points but cannot establish that the
+> independent digest or candidate came from the Web Store. There is still no
+> real store return, owner-approved production extension id, publisher-control
+> evidence, production artifact/tag/review key/signature, freshness/trusted-time
+> policy, key/storage/lifecycle policy, transparency log, off-host independent
+> build, host/toolchain attestation, external audit, deployment, or legal
+> disposition. The builders remain same-host/shared-store and explicitly
+> non-independent. The repository-wide ledger-inclusive gate is intentionally
+> pending until this entry is committed; the implementation-SHA focused/full-
+> extension evidence above must not be relabeled as that gate.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C46 CLOSED; C47 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
