@@ -114,18 +114,49 @@ afterEach(async () => {
 describe("standalone store-package CLI", () => {
   it("requires an independent exact artifact-manifest digest before CRX handling", async () => {
     const created = await fixture();
-    const output = await rejectedOutput([
+    const commonArgs = [
       created.candidatePath,
       sha256(created.candidateBytes),
       "a".repeat(32),
+    ];
+    const wrongDigest = await rejectedOutput([
+      ...commonArgs,
       "0".repeat(64),
       created.reviewedArchivePath,
       created.artifactManifestPath,
     ]);
-    expect(output).toMatch(
+    expect(wrongDigest).toMatch(
       /reviewed artifact manifest differs from the independently supplied SHA-256/,
     );
-    expect(output).not.toMatch(/CRX3 magic/);
+    expect(wrongDigest).not.toMatch(/CRX3 magic/);
+
+    const uppercaseDigest = await rejectedOutput([
+      ...commonArgs,
+      sha256(created.artifactManifestBytes).toUpperCase(),
+      created.reviewedArchivePath,
+      created.artifactManifestPath,
+    ]);
+    expect(uppercaseDigest).toMatch(
+      /expected artifact manifest SHA-256 must be a lowercase digest/,
+    );
+    expect(uppercaseDigest).not.toMatch(/CRX3 magic/);
+
+    const exactDigest = await rejectedOutput([
+      ...commonArgs,
+      sha256(created.artifactManifestBytes),
+      created.reviewedArchivePath,
+      created.artifactManifestPath,
+    ]);
+    expect(exactDigest).toMatch(/CRX3 magic must be Cr24/);
+
+    const missingDigest = await rejectedOutput([
+      created.candidatePath,
+      sha256(created.candidateBytes),
+      "a".repeat(32),
+    ]);
+    expect(missingDigest).toMatch(
+      /expected-artifact-manifest-sha256/,
+    );
   });
 
   it("rejects a final candidate symlink before digest or CRX handling", async () => {
@@ -137,6 +168,7 @@ describe("standalone store-package CLI", () => {
       candidateSymlinkPath,
       sha256(created.candidateBytes),
       "a".repeat(32),
+      sha256(created.artifactManifestBytes),
       created.reviewedArchivePath,
       created.artifactManifestPath,
     ]);
@@ -148,6 +180,7 @@ describe("standalone store-package CLI", () => {
     const created = await fixture();
     const commonArgs = [
       "a".repeat(32),
+      sha256(created.artifactManifestBytes),
       created.reviewedArchivePath,
       created.artifactManifestPath,
     ];

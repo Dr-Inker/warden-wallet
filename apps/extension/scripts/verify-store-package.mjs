@@ -33,8 +33,8 @@ async function main() {
     fail(`invalid source manifest version: ${String(version)}`);
   }
   const args = process.argv.slice(2);
-  if (![3, 5].includes(args.length)) {
-    fail("usage: verify-store-package.mjs candidate.crx expected-package-sha256 expected-extension-id [reviewed-upload.zip reviewed-artifact.json]");
+  if (![4, 6].includes(args.length)) {
+    fail("usage: verify-store-package.mjs candidate.crx expected-package-sha256 expected-extension-id expected-artifact-manifest-sha256 [reviewed-upload.zip reviewed-artifact.json]");
   }
   const candidatePath = resolve(args[0]);
   const expectedPackageSha256 = args[1];
@@ -42,11 +42,15 @@ async function main() {
     fail("expected package SHA-256 must be a lowercase digest");
   }
   const expectedExtensionId = args[2];
+  const expectedArtifactManifestSha256 = args[3];
+  if (!/^[0-9a-f]{64}$/.test(expectedArtifactManifestSha256)) {
+    fail("expected artifact manifest SHA-256 must be a lowercase digest");
+  }
   const reviewedArchivePath = resolve(
-    args[3] ?? join(releaseDirectory, `warden-extension-${version}.zip`),
+    args[4] ?? join(releaseDirectory, `warden-extension-${version}.zip`),
   );
   const artifactManifestPath = resolve(
-    args[4] ?? join(releaseDirectory, `warden-extension-${version}.artifact.json`),
+    args[5] ?? join(releaseDirectory, `warden-extension-${version}.artifact.json`),
   );
   const crxBytes = await readBoundedRegularFile(
     candidatePath,
@@ -67,6 +71,12 @@ async function main() {
     MAX_ARTIFACT_MANIFEST_BYTES,
     "reviewed artifact manifest",
   );
+  const artifactManifestSha256 = createHash("sha256")
+    .update(artifactManifestBytes)
+    .digest("hex");
+  if (artifactManifestSha256 !== expectedArtifactManifestSha256) {
+    fail("reviewed artifact manifest differs from the independently supplied SHA-256");
+  }
   const artifactManifest = parseArtifactManifest(artifactManifestBytes);
   const approved = verifyArtifactArchive({
     archiveBytes: reviewedArchiveBytes,
@@ -99,6 +109,7 @@ async function main() {
   console.log(`verified store package ${candidatePath}`);
   console.log(`against reviewed upload ${reviewedArchivePath}`);
   console.log(`against artifact manifest ${artifactManifestPath}`);
+  console.log(`artifact manifest sha256 ${artifactManifestSha256}`);
   console.log(`source ${artifactManifest.source.gitCommit}`);
   console.log(`CRX3 package bytes ${verified.packageBytes}`);
   console.log(`CRX3 package sha256 ${verified.packageSha256}`);

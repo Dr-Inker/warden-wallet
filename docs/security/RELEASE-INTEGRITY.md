@@ -282,12 +282,15 @@ Only ephemeral fixture keys and bytes have passed, so `WRD-REL-01` remains
 ### Store-returned CRX3 verifier (C6 partial; fixture-only)
 
 `pnpm --filter @warden/extension release:verify-store -- <candidate.crx>
-<expected-package-sha256> <expected-extension-id>` accepts an offline CRX3
-candidate plus independently supplied exact-package and extension identities.
-The package digest must be lowercase SHA-256 and is checked against the one
-candidate buffer before CRX parsing; the strict verifier's returned package
-digest is cross-checked afterward. It then verifies the reviewed canonical
-upload ZIP against its artifact manifest and requires `Cr24`,
+<expected-package-sha256> <expected-extension-id>
+<expected-artifact-manifest-sha256>` accepts an offline CRX3 candidate plus
+independently supplied exact-package, extension, and reviewed-artifact
+identities. Both digests must be lowercase SHA-256. The package digest is
+checked against the one candidate buffer; the artifact digest is checked
+against the one bounded stable artifact buffer before canonical or CRX parsing;
+and the strict verifier's returned package digest is cross-checked afterward.
+It then verifies the reviewed canonical upload ZIP against that artifact
+manifest and requires `Cr24`,
 version 3, a bounded little-endian protobuf-header length, only the reviewed
 CRX3 fields, exactly one developer proof matching the signed 16-byte CRX id,
 exactly one current Chrome Web Store publisher proof, and valid signatures from
@@ -317,10 +320,11 @@ observed 2026-09-01 as page-reported blobs
 
 This is still fixture/parser/comparator evidence. No real Web Store package is
 present; the tool does not download one, prove its acquisition route, interpret
-the optional `verified_contents` field, authenticate the adjacent artifact
-manifest, choose the unresolved production extension id, or mutate publisher
-state. `WRD-REL-02` remains `unimplemented` until a real returned package and
-independently anchored review inputs pass at an exact release SHA.
+the optional `verified_contents` field, establish who independently approved or
+recorded the artifact digest, choose the unresolved production extension id, or
+mutate publisher state. `WRD-REL-02` remains `unimplemented` until a real
+returned package and independently anchored review inputs pass at an exact
+release SHA.
 
 ### Same-host dual-checkout rehearsal (C6 partial)
 

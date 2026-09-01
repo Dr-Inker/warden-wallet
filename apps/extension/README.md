@@ -290,15 +290,17 @@ manifest using an independently reviewed expected extension id:
 ```sh
 pnpm --filter @warden/extension release:verify-store -- \
   /path/to/store-returned.crx <expected-package-sha256> \
-  <expected-extension-id>
+  <expected-extension-id> <expected-artifact-manifest-sha256>
 ```
 
-Optional fourth and fifth arguments select a reviewed upload ZIP and artifact
-manifest outside the default local release directory. The independently
-recorded package digest must be lowercase SHA-256; the CLI checks it against the
-one candidate buffer before CRX parsing and cross-checks the strict verifier's
-returned digest. The verifier never learns the expected extension id from the
-candidate. It requires the `Cr24` magic,
+Optional fifth and sixth arguments select a reviewed upload ZIP and artifact
+manifest outside the default local release directory. Both independently
+recorded digests must be lowercase SHA-256. The CLI checks the package digest
+against the one candidate buffer, checks the artifact digest against the one
+bounded stable artifact buffer before canonical parsing, and reports both
+accepted values; it also cross-checks the strict verifier's returned package
+digest. The verifier never learns the expected extension id from the candidate.
+It requires the `Cr24` magic,
 version 3, a bounded little-endian header length, strict known protobuf fields,
 one developer proof matching the declared CRX id, the current Chrome Web Store
 publisher-key proof, and valid signatures from every included proof over the
@@ -317,11 +319,11 @@ observed 2026-09-01 as page-reported blobs
 `b38dd5a77467eabca61f0d1fee461b2a6822df44` and
 `522a740a4f51363b54a35b808fc2ff8680aeeaea`. This local verifier does not
 download a package, establish that a file actually came from the Web Store,
-interpret the optional `verified_contents` payload, authenticate the reviewed
-artifact manifest, or resolve the production extension-id owner decision. The
-fixture tests therefore do not promote `WRD-REL-02`; a real returned package,
-owner-approved expected id, independently anchored artifact, and exact-SHA gate
-are still required.
+interpret the optional `verified_contents` payload, establish who independently
+recorded or approved the reviewed artifact digest, or resolve the production
+extension-id owner decision. The fixture tests therefore do not promote
+`WRD-REL-02`; a real returned package, owner-approved expected id, independently
+anchored artifact digest, and exact-SHA gate are still required.
 
 ## Same-host dual-checkout rehearsal
 
