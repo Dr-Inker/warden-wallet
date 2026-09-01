@@ -329,6 +329,42 @@ describe("reviewed artifact detached-signature verification", () => {
     expect(missingDigest).toMatch(/expected-artifact-manifest-sha256/);
   });
 
+  it("requires an independent exact detached-signature digest before invoking GnuPG", async () => {
+    const wrongDigest = await rejectedCli([
+      fixture.artifactPath,
+      fixture.signaturePath,
+      sha256(fixture.artifactBytes),
+      "0".repeat(64),
+      fixture.fingerprint,
+      fixture.signingFingerprint,
+    ], {});
+    expect(wrongDigest).toMatch(
+      /detached signature differs from the independently supplied SHA-256/,
+    );
+    expect(wrongDigest).not.toMatch(/GNUPGHOME/);
+
+    const uppercaseDigest = await rejectedCli([
+      fixture.artifactPath,
+      fixture.signaturePath,
+      sha256(fixture.artifactBytes),
+      sha256(fixture.signatureBytes).toUpperCase(),
+      fixture.fingerprint,
+      fixture.signingFingerprint,
+    ]);
+    expect(uppercaseDigest).toMatch(
+      /expected detached-signature SHA-256 must be a lowercase digest/,
+    );
+
+    const missingDigest = await rejectedCli([
+      fixture.artifactPath,
+      fixture.signaturePath,
+      sha256(fixture.artifactBytes),
+      fixture.fingerprint,
+      fixture.signingFingerprint,
+    ]);
+    expect(missingDigest).toMatch(/expected-detached-signature-sha256/);
+  });
+
   it("rejects a one-byte artifact change or independently supplied wrong identity", async () => {
     const changedArtifact = Buffer.from(fixture.artifactBytes);
     changedArtifact[0] ^= 1;
