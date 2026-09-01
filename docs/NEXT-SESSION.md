@@ -105,6 +105,111 @@
 > time validation is not freshness policy, and the local dual rehearsal is not
 > independent build provenance.
 
+> ## 2026-09-01 C43 SIGNED-SOURCE / DUAL-REPORT BINDING — C6 PARTIAL, BUILDERS STILL LOCAL
+>
+> Behavioral RED commit
+> `0cb1d61846d830c1ae6b93c250db9387a89b0ff4` supplies the incumbent verifier
+> with a real valid signed annotated tag targeting fixture commit A plus a
+> separately valid canonical local dual-build report naming fixture commit B
+> and that report's independently computed SHA-256. The verifier ignored both
+> report arguments and resolved successfully. Implementation commit
+> `e47bd5e21e7acb2821da6b55a25c4d8509bf3239` makes the optional report bytes
+> and expected digest an all-or-nothing pair, bounds the report to **1 MiB**,
+> validates a canonical lowercase expected SHA-256, hashes and compares the
+> exact bytes before parsing them, then reuses the incumbent canonical report
+> parser. It requires exact report/artifact extension-version equality and
+> exact report/artifact source-commit equality; the C39–C42 signed-source path
+> independently requires that same artifact source to equal the verified tag
+> target. The result and CLI report the accepted digest, source, version,
+> fourteen-file count, and scope. The report's reviewed
+> `signedTagClaim: not-asserted`, `independentBuilderClaim: not-asserted`, same-
+> host sequential checkout, and shared-store labels remain unchanged.
+>
+> The real RED was captured from clean SHA
+> `0cb1d61846d830c1ae6b93c250db9387a89b0ff4` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs -t "rejects a separately valid dual report for a different source commit"
+> ```
+>
+> It exited **1** because the promise resolved with the valid tag for commit A
+> instead of rejecting the valid report for commit B. At clean implementation
+> SHA `e47bd5e21e7acb2821da6b55a25c4d8509bf3239`, this exact command exited
+> **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs test/local-dual-release.test.mjs test/openpgp-signature-policy.test.mjs test/reviewed-artifact-signature.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && pnpm --filter @warden/extension release:gate && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|local-dual-extension-release|dualReleaseReport|expectedDualReleaseReportSha256|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The six focused files passed **51/51** tests, typecheck/build passed, and the
+> real upload release gate measured **8** payload files, **60** production/peer
+> components, **4** JavaScript bundles, **101** positive bundle inputs, **4**
+> static inputs, and **22** release-recipe inputs. Independent Info-ZIP parsing,
+> emitted-tooling exclusion, all six selected temp-directory cleanup checks,
+> diff checks, and both clean-tree guards passed. The newly reviewed twenty-
+> second recipe input is `scripts/local-dual-extension-release.mjs`, whose
+> canonical report parser now executes in the signed-source composition lane.
+>
+> Independently specified cases accept a real signed tag, exact independently
+> digested report, matching source/version, and the hard-coded same-host scope.
+> They reject a separately canonical report for another commit or version,
+> wrong digest before malformed candidate bytes are parsed, malformed report
+> with its correct digest, and either half of an incomplete report/digest pair.
+> With a valid bound report present, an empty keyring, unexpected sibling
+> signing subkey, and bad signature still fail closed. The existing lightweight,
+> moved-tag, wrong-primary, wrong-signing-key, unapproved-algorithm, ambiguous-
+> status, and time-structure refusals remain intact. The tests compute expected
+> digests independently and hard-code expected scope/source relationships.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|local-dual-extension-release|dualReleaseReport|expectedDualReleaseReportSha256|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **549/549**, typecheck/build passed, release
+> verification/composition tooling remained absent from `dist`, no selected
+> fixture/launcher/rehearsal temp directory remained, and diff/clean-tree guards
+> passed.
+>
+> The signed-source module, CLI, local dual orchestrator/parser, signed-source
+> test, and recipe-evidence module were respectively **22,976**, **3,701**,
+> **18,003**, **20,550**, and **9,550 bytes**, with SHA-256 values
+> `76c375e3994ac4a588e51539e3872010b027e26eaed7b7a8bb6be794e70429a9`,
+> `b14822ba7a4a49eb4820df313dc931943859d3cd876d5a3303e899b41fc8a7e4`,
+> `16e0cfc5ffd095d846fc5615e267e59bad8c8d0e6e100ba993ef34e7e3fda86d`,
+> `c14462fdcf8073554664195371de7397861665c3b4ba356521a37f72ffd50133`,
+> and `6c1bfc6ed518c731ef586213276f3a0f996bf17498baab2d6a17b4caa384a237`.
+> At the implementation SHA, the generated artifact, bundle, recipe,
+> dependency, and static sidecar SHA-256 values were respectively
+> `ae5a21d474a707bd55fa116daf1a3f8489f08b864a8d541bcf3870a6d8ce6f47`,
+> `d84af64c3885626d9cd548100dbe8f4fd1a0e8951d7db8e375a65af7d2ef3dfa`,
+> `32d3cd4fa398a20c3bb8a76699f4b519bd208af1affc0b29c17630d28d3bfe76`,
+> `5e1f60295b24b90264696a7975f4391f219266624553d64281c6b052721278d3`,
+> and `806108933f199bbff8871e64636841fbf36c0b391fa27e8711c9740f4f9178a8`;
+> the recipe sidecar was **4,553 bytes** and named 22 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> There was no dependency/lockfile or payload-byte change.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** an expected report digest is only as independent as the
+> owner's recording channel, and this composition authenticates source identity
+> rather than the builder host. It does not make the same-host sequential clones
+> independent, prove the report was generated honestly, attest Git/GnuPG/Node/
+> pnpm/esbuild/shell/OS/clock bytes, authenticate a production artifact-review
+> anchor, choose a real tag/key/subkey or freshness policy, validate a
+> transparency log, compare a real store return, establish publisher control,
+> make a legal ruling, deploy, or exercise real funds. The ledger-inclusive full
+> repository/release/rehearsal gate is still pending at this entry.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C41 CLOSED; C42 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
