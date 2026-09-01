@@ -395,10 +395,12 @@ unlinks the name, and passes only `/proc/<pid>/fd/<fd>` to Info-ZIP. After a
 zero exit it positionally compares the same handle with every original byte.
 Setup, parser, comparison, and cleanup failures fail closed, and the handle and
 private directory are removed on every outcome. This prevents pathname
-replacement and detects a completed parser-side rewrite. It remains
-cooperative-host least privilege: the store subprocess still inherits the
-verifier environment and working directory and has no runtime deadline,
-executable-provenance proof, sandbox, or same-UID/root defense.
+replacement and detects a completed parser-side rewrite. The private **0700**
+directory is also the store subprocess's exact working directory, limiting
+accidental relative-path effects. This remains cooperative-host least
+privilege: the store subprocess still inherits the verifier environment and has
+no runtime deadline, executable-provenance proof, sandbox, or same-UID/root
+defense.
 
 The format contract comes from Chromium's primary
 [`crx3.proto`](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx3.proto)

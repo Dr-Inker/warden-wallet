@@ -415,8 +415,9 @@ at `0400`, unlinks the name, and passes `/proc/<pid>/fd/<fd>` to Info-ZIP. After
 a zero exit it compares the same handle positionally with every original byte,
 then closes the handle and removes the private directory on success or failure.
 This prevents pathname replacement and detects a completed parser-side rewrite;
-it does not yet minimize that store subprocess's inherited environment, set its
-private directory as `cwd`, or bound its runtime.
+the same private `0700` directory is the store subprocess's exact `cwd`, which
+limits accidental relative-path effects. This does not yet minimize that
+subprocess's inherited environment or bound its runtime.
 
 The envelope follows Chromium's current primary sources: the
 [`crx3.proto` format](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/crx_file/crx3.proto)
