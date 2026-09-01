@@ -176,6 +176,17 @@ commit target and matching tag name, and target the artifact manifest's exact
 source commit. A lightweight tag, nested tag, moved ref, wrong commit, or
 structurally ambiguous tag object fails closed.
 
+The authenticated tag body has one canonical versioned message grammar before
+its single terminal OpenPGP armor block: the exact first line is
+`warden.extension-release-tag.v1` and the exact second line is
+`artifact-manifest-sha256 <lowercase-sha256>`. No prefix, suffix, duplicate
+field, additional message line, uppercase digest, second armor block, or body
+after the armor is accepted. The signed digest must equal the independently
+supplied and measured artifact-manifest digest. The shared verifier reports
+both identities and the CLI cross-checks both before reporting success. Thus a
+signature over the right source commit but a free-form message or a different
+artifact no longer composes with that artifact.
+
 Signature verification fixes `gpg.format=openpgp`, fixes `/usr/bin/git` and
 `/usr/bin/gpg`, suppresses system/global Git config, and asks `git verify-tag
 --raw` to verify the expected object SHA rather than the ref. Git reaches GnuPG

@@ -99,7 +99,15 @@ a tag name and signer alone cannot reveal that an authorized signer force-moved
 the tag. The verifier resolves only the exact `refs/tags/<tag>` ref, requires it
 to equal the independent full object SHA both before and after verification,
 requires an annotated tag that points directly to the artifact's exact source
-commit, and rejects a lightweight or nested tag. It forces the OpenPGP backend and absolute
+commit, and rejects a lightweight or nested tag. The signed tag message is not
+free-form: before the OpenPGP armor it must be exactly
+`warden.extension-release-tag.v1`, then
+`artifact-manifest-sha256 <lowercase-sha256>`, with no other message lines. That
+signed digest must equal the independently supplied and measured exact artifact
+digest, and success reports both values. Missing, wrong, uppercase, duplicated,
+prefixed, suffixed, or noncanonical message content fails closed. The verifier
+also requires one complete terminal OpenPGP armor block with no trailing tag
+body. It forces the OpenPGP backend and absolute
 Git/GPG executables, suppresses system/global Git configuration, and runs
 `git verify-tag --raw` against the expected object SHA rather than a mutable
 ref. Git's GPG child is an exact launcher in a private mode-0700 temporary

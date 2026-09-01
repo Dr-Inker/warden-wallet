@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   GIT_GPG_LAUNCHER_MODE,
   GIT_GPG_LAUNCHER_TEXT,
+  RELEASE_TAG_MESSAGE_SCHEMA,
   parseAnnotatedTagObject,
   parseSingleOpenPgpSignatureStatus,
   verifyReleaseSourceTag,
@@ -31,6 +32,7 @@ const execFile = promisify(execFileCallback);
 const GIT = "/usr/bin/git";
 const GPG = "/usr/bin/gpg";
 const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
+const EXPECTED_RELEASE_TAG_MESSAGE_SCHEMA = "warden.extension-release-tag.v1";
 const FIXTURE_VERSION = "1.2.3";
 const fixture = {};
 const storeDeveloperKeys = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -65,6 +67,13 @@ const ARTIFACT_ATTACHMENTS = Object.freeze({
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function releaseTagMessage(artifactManifestSha256) {
+  return [
+    EXPECTED_RELEASE_TAG_MESSAGE_SCHEMA,
+    `artifact-manifest-sha256 ${artifactManifestSha256}`,
+  ].join("\n");
 }
 
 function protobufVarint(value) {
@@ -236,8 +245,14 @@ async function git(arguments_, env = process.env) {
   return command(GIT, arguments_, { cwd: fixture.repository, env });
 }
 
-async function signedTag(name, message, env, signingFingerprint = fixture.signingFingerprint) {
-  await git([
+async function signedTag(
+  name,
+  message,
+  env,
+  signingFingerprint = fixture.signingFingerprint,
+  targetCommit,
+) {
+  const arguments_ = [
     "-c",
     `gpg.program=${GPG}`,
     "tag",
@@ -247,7 +262,11 @@ async function signedTag(name, message, env, signingFingerprint = fixture.signin
     "-m",
     message,
     name,
-  ], env);
+  ];
+  if (targetCommit !== undefined) {
+    arguments_.push(targetCommit);
+  }
+  await git(arguments_, env);
   return (await git(["rev-parse", `refs/tags/${name}`])).stdout.trim();
 }
 
@@ -361,57 +380,88 @@ beforeAll(async () => {
   await git(["add", "payload.txt"]);
   await git(["commit", "--quiet", "-m", "first release fixture"]);
   fixture.firstCommit = (await git(["rev-parse", "HEAD"])).stdout.trim();
+  fixture.reviewedArtifact = releaseArtifact(fixture.firstCommit);
+  fixture.differentArtifact = releaseArtifact(
+    fixture.firstCommit,
+    Buffer.from("body { color: #654321; }\n"),
+  );
+  const reviewedArtifactSha256 = sha256(
+    fixture.reviewedArtifact.artifactManifestBytes,
+  );
+  const differentArtifactSha256 = sha256(
+    fixture.differentArtifact.artifactManifestBytes,
+  );
   fixture.releaseTagObject = await signedTag(
     "release-fixture",
-    "fixture valid release",
+    releaseTagMessage(reviewedArtifactSha256),
     fixture.environment,
   );
   fixture.siblingTagObject = await signedTag(
     "sibling-signing-fixture",
-    "fixture valid sibling signing subkey",
+    releaseTagMessage(reviewedArtifactSha256),
     fixture.environment,
     fixture.siblingSigningFingerprint,
   );
   fixture.primaryTagObject = await signedTag(
     "primary-signing-fixture",
-    "fixture valid primary signing key",
+    releaseTagMessage(reviewedArtifactSha256),
     fixture.environment,
     fixture.fingerprint,
   );
-  fixture.reviewedArtifact = releaseArtifact(fixture.firstCommit);
+  fixture.differentArtifactTagObject = await signedTag(
+    "different-artifact-fixture",
+    releaseTagMessage(differentArtifactSha256),
+    fixture.environment,
+  );
+  fixture.unboundArtifactTagObject = await signedTag(
+    "unbound-artifact-fixture",
+    "fixture valid but artifact-unbound release",
+    fixture.environment,
+  );
+  fixture.wrongArtifactDigestTagObject = await signedTag(
+    "wrong-artifact-digest-fixture",
+    releaseTagMessage("0".repeat(64)),
+    fixture.environment,
+  );
+  fixture.uppercaseArtifactDigestTagObject = await signedTag(
+    "uppercase-artifact-digest-fixture",
+    releaseTagMessage(reviewedArtifactSha256.toUpperCase()),
+    fixture.environment,
+  );
+  fixture.duplicateArtifactDigestTagObject = await signedTag(
+    "duplicate-artifact-digest-fixture",
+    `${releaseTagMessage(reviewedArtifactSha256)}\nartifact-manifest-sha256 ${reviewedArtifactSha256}`,
+    fixture.environment,
+  );
   fixture.reviewedArtifactSignature = await detachedArtifactSignature(
     "reviewed-release",
     fixture.reviewedArtifact.artifactManifestBytes,
   );
   fixture.reviewedArtifactSignatureBytes =
     fixture.reviewedArtifactSignature.signatureBytes;
-  fixture.differentArtifact = releaseArtifact(
-    fixture.firstCommit,
-    Buffer.from("body { color: #654321; }\n"),
-  );
   await writeFile(join(fixture.gnupgHome, "gpg.conf"), "digest-algo SHA224\n", {
     mode: 0o600,
   });
   fixture.unapprovedHashTagObject = await signedTag(
     "unapproved-hash-fixture",
-    "fixture valid signature with an unapproved hash",
+    releaseTagMessage(reviewedArtifactSha256),
     fixture.environment,
   );
   await rm(join(fixture.gnupgHome, "gpg.conf"));
   fixture.movedTagObject = await signedTag(
     "moved-fixture",
-    "fixture before move",
+    releaseTagMessage(reviewedArtifactSha256),
     fixture.environment,
   );
   const originalBadObject = await signedTag(
     "bad-signature-fixture",
-    "fixture before tamper",
+    releaseTagMessage(reviewedArtifactSha256),
     fixture.environment,
   );
   const originalBadBytes = (await git(["cat-file", "tag", originalBadObject])).stdout;
   const tamperedBytes = originalBadBytes.replace(
-    "fixture before tamper",
-    "fixture after tamper!",
+    "tagger Warden release fixture",
+    "tagger Xarden release fixture",
   );
   if (tamperedBytes === originalBadBytes) {
     throw new Error("failed to mutate the ephemeral signed tag bytes");
@@ -436,6 +486,14 @@ beforeAll(async () => {
   await git(["add", "payload.txt"]);
   await git(["commit", "--quiet", "-m", "second release fixture"]);
   fixture.secondCommit = (await git(["rev-parse", "HEAD"])).stdout.trim();
+  fixture.secondArtifact = releaseArtifact(fixture.secondCommit);
+  fixture.wrongArtifactCommitTagObject = await signedTag(
+    "wrong-artifact-commit-fixture",
+    releaseTagMessage(sha256(fixture.secondArtifact.artifactManifestBytes)),
+    fixture.environment,
+    fixture.signingFingerprint,
+    fixture.firstCommit,
+  );
   await git([
     "-c",
     `gpg.program=${GPG}`,
@@ -509,9 +567,29 @@ function verify(options = {}) {
 
 describe("release source annotated-tag verification", () => {
   it("requires the authenticated tag message to bind the exact artifact digest", async () => {
-    await expect(verify()).rejects.toThrow(
+    await expect(verify({
+      tagName: "unbound-artifact-fixture",
+      expectedTagObject: fixture.unboundArtifactTagObject,
+    })).rejects.toThrow(
       /annotated tag message must bind the exact artifact manifest SHA-256/,
     );
+  });
+
+  it("rejects wrong, uppercase, or duplicated signed artifact identities", async () => {
+    await expect(verify({
+      tagName: "wrong-artifact-digest-fixture",
+      expectedTagObject: fixture.wrongArtifactDigestTagObject,
+    })).rejects.toThrow(
+      /annotated tag message artifact manifest SHA-256 differs from the exact artifact/,
+    );
+    for (const [tagName, expectedTagObject] of [
+      ["uppercase-artifact-digest-fixture", fixture.uppercaseArtifactDigestTagObject],
+      ["duplicate-artifact-digest-fixture", fixture.duplicateArtifactDigestTagObject],
+    ]) {
+      await expect(verify({ tagName, expectedTagObject })).rejects.toThrow(
+        /annotated tag message must bind the exact artifact manifest SHA-256/,
+      );
+    }
   });
 
   it("requires exact artifact bytes and an independent digest in the shared verifier", async () => {
@@ -568,6 +646,9 @@ describe("release source annotated-tag verification", () => {
       tagObject: fixture.releaseTagObject,
       sourceCommit: fixture.firstCommit,
       artifactManifestSha256: sha256(
+        fixture.reviewedArtifact.artifactManifestBytes,
+      ),
+      signedArtifactManifestSha256: sha256(
         fixture.reviewedArtifact.artifactManifestBytes,
       ),
       signingFingerprint: fixture.signingFingerprint,
@@ -639,6 +720,8 @@ describe("release source annotated-tag verification", () => {
       fixture.differentArtifact.releaseFiles,
     );
     await expect(verify({
+      tagName: "different-artifact-fixture",
+      expectedTagObject: fixture.differentArtifactTagObject,
       ...fixture.differentArtifact,
       dualReleaseReportBytes,
       expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
@@ -1064,7 +1147,9 @@ describe("release source annotated-tag verification", () => {
       expectedTagObject: fixture.movedTagObject,
     })).rejects.toThrow(/moved or differs/);
     await expect(verify({
-      ...releaseArtifact(fixture.secondCommit),
+      tagName: "wrong-artifact-commit-fixture",
+      expectedTagObject: fixture.wrongArtifactCommitTagObject,
+      ...fixture.secondArtifact,
     })).rejects.toThrow(/differs from the artifact source commit/);
   });
 
@@ -1197,22 +1282,48 @@ describe("release source annotated-tag verification", () => {
 
   it("rejects structurally ambiguous or nested annotated tag objects", () => {
     const commit = "a".repeat(40);
+    const artifactManifestSha256 = "b".repeat(64);
     const headers = [
       `object ${commit}`,
       "type commit",
       "tag release-fixture",
       "tagger Fixture <fixture@example.invalid> 1788220800 +0000",
     ];
-    expect(parseAnnotatedTagObject(`${headers.join("\n")}\n\nmessage\n`, "release-fixture"))
-      .toEqual({ targetCommit: commit });
-    expect(() => parseAnnotatedTagObject(
-      `${headers[0]}\nobject ${"b".repeat(40)}\n${headers.slice(1).join("\n")}\n\nmessage\n`,
+    const body = `${releaseTagMessage(artifactManifestSha256)}\n-----BEGIN PGP SIGNATURE-----\n-----END PGP SIGNATURE-----\n`;
+    expect(parseAnnotatedTagObject(
+      `${headers.join("\n")}\n\n${body}`,
       "release-fixture",
+      artifactManifestSha256,
+    )).toEqual({
+      targetCommit: commit,
+      signedArtifactManifestSha256: artifactManifestSha256,
+    });
+    expect(RELEASE_TAG_MESSAGE_SCHEMA).toBe(EXPECTED_RELEASE_TAG_MESSAGE_SCHEMA);
+    expect(() => parseAnnotatedTagObject(
+      `${headers[0]}\nobject ${"b".repeat(40)}\n${headers.slice(1).join("\n")}\n\n${body}`,
+      "release-fixture",
+      artifactManifestSha256,
     )).toThrow(/duplicate object headers/);
     expect(() => parseAnnotatedTagObject(
-      `${headers.join("\n").replace("type commit", "type tag")}\n\nmessage\n`,
+      `${headers.join("\n").replace("type commit", "type tag")}\n\n${body}`,
       "release-fixture",
+      artifactManifestSha256,
     )).toThrow(/point directly to a commit/);
+    for (const message of [
+      `prefix\n${releaseTagMessage(artifactManifestSha256)}`,
+      `${releaseTagMessage(artifactManifestSha256)}\nsuffix`,
+    ]) {
+      expect(() => parseAnnotatedTagObject(
+        `${headers.join("\n")}\n\n${message}\n-----BEGIN PGP SIGNATURE-----\n-----END PGP SIGNATURE-----\n`,
+        "release-fixture",
+        artifactManifestSha256,
+      )).toThrow(/annotated tag message must bind the exact artifact manifest SHA-256/);
+    }
+    expect(() => parseAnnotatedTagObject(
+      `${headers.join("\n")}\n\n${body}suffix\n`,
+      "release-fixture",
+      artifactManifestSha256,
+    )).toThrow(/annotated tag message must bind the exact artifact manifest SHA-256/);
   });
 
   it("rejects invalid or revision-like tag inputs before verification", async () => {

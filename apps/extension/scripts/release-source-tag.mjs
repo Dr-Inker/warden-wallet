@@ -14,6 +14,9 @@ import { verifyStorePackage } from "./store-package.mjs";
 
 const GIT_EXECUTABLE = "/usr/bin/git";
 const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
+export const RELEASE_TAG_MESSAGE_SCHEMA = "warden.extension-release-tag.v1";
+const OPENPGP_SIGNATURE_BEGIN = "-----BEGIN PGP SIGNATURE-----\n";
+const OPENPGP_SIGNATURE_END = "-----END PGP SIGNATURE-----\n";
 export const GIT_GPG_LAUNCHER_MODE = 0o700;
 export const GIT_GPG_LAUNCHER_TEXT = [
   "#!/bin/sh",
@@ -728,7 +731,11 @@ async function requireGitSuccess(arguments_, options, label) {
   }
 }
 
-export function parseAnnotatedTagObject(tagObjectText, expectedTagName) {
+export function parseAnnotatedTagObject(
+  tagObjectText,
+  expectedTagName,
+  expectedArtifactManifestSha256,
+) {
   const headerEnd = tagObjectText.indexOf("\n\n");
   if (headerEnd === -1) {
     fail("annotated tag object has no message boundary");
@@ -766,7 +773,36 @@ export function parseAnnotatedTagObject(tagObjectText, expectedTagName) {
   if (parsed.get("tagger").length === 0) {
     fail("annotated tag object has an empty tagger");
   }
-  return { targetCommit };
+  const body = tagObjectText.slice(headerEnd + 2);
+  const signatureOffset = body.indexOf(OPENPGP_SIGNATURE_BEGIN);
+  if (
+    signatureOffset <= 0 ||
+    body.indexOf(OPENPGP_SIGNATURE_BEGIN, signatureOffset + 1) !== -1 ||
+    !body.endsWith(OPENPGP_SIGNATURE_END) ||
+    body.indexOf(OPENPGP_SIGNATURE_END) !==
+      body.length - OPENPGP_SIGNATURE_END.length
+  ) {
+    fail("annotated tag message must bind the exact artifact manifest SHA-256");
+  }
+  const messageLines = body.slice(0, signatureOffset).split("\n");
+  if (
+    messageLines.length !== 3 ||
+    messageLines[0] !== RELEASE_TAG_MESSAGE_SCHEMA ||
+    messageLines[2] !== "" ||
+    !messageLines[1].startsWith("artifact-manifest-sha256 ")
+  ) {
+    fail("annotated tag message must bind the exact artifact manifest SHA-256");
+  }
+  const signedArtifactManifestSha256 = messageLines[1].slice(
+    "artifact-manifest-sha256 ".length,
+  );
+  if (!SHA256_PATTERN.test(signedArtifactManifestSha256)) {
+    fail("annotated tag message must bind the exact artifact manifest SHA-256");
+  }
+  if (signedArtifactManifestSha256 !== expectedArtifactManifestSha256) {
+    fail("annotated tag message artifact manifest SHA-256 differs from the exact artifact");
+  }
+  return { targetCommit, signedArtifactManifestSha256 };
 }
 
 async function resolveExactTagRef(tagName, options) {
@@ -941,7 +977,11 @@ export async function verifyReleaseSourceTag({
   if (object.stderr !== "" || Buffer.byteLength(object.stdout) !== parsedSize) {
     fail("annotated tag object bytes differ from Git's declared object size");
   }
-  const { targetCommit } = parseAnnotatedTagObject(object.stdout, tagName);
+  const { targetCommit, signedArtifactManifestSha256 } = parseAnnotatedTagObject(
+    object.stdout,
+    tagName,
+    artifactManifestSha256,
+  );
   if (targetCommit !== artifactCommit) {
     fail("annotated tag target differs from the artifact source commit");
   }
@@ -988,6 +1028,7 @@ export async function verifyReleaseSourceTag({
     tagObject: expectedTagObject,
     sourceCommit: targetCommit,
     artifactManifestSha256,
+    signedArtifactManifestSha256,
     signingFingerprint: signature.signingFingerprint,
     primaryFingerprint: signature.primaryFingerprint,
     signatureCreationDate: signature.signatureCreationDate,

@@ -140,6 +140,9 @@ async function main() {
   if (result.artifactManifestSha256 !== artifactManifestSha256) {
     fail("source tag verifier returned a different artifact manifest digest");
   }
+  if (result.signedArtifactManifestSha256 !== artifactManifestSha256) {
+    fail("source tag signed a different artifact manifest digest");
+  }
   console.log(`verified release tag ${result.tagRef}`);
   console.log(`tag object ${result.tagObject}`);
   console.log(`artifact source commit ${result.sourceCommit}`);
@@ -156,6 +159,7 @@ async function main() {
   console.log(`OpenPGP signature class ${result.signatureClass}`);
   console.log(`reviewed artifact ${artifactManifestPath}`);
   console.log(`reviewed artifact manifest sha256 ${result.artifactManifestSha256}`);
+  console.log(`signed artifact manifest sha256 ${result.signedArtifactManifestSha256}`);
   if (result.dualReleaseReport) {
     console.log(`verified local dual report ${dualReleaseReportPath}`);
     console.log(`dual report sha256 ${result.dualReleaseReport.sha256}`);
