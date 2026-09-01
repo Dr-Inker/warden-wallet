@@ -59,6 +59,20 @@ node apps/extension/scripts/verify-release.mjs \
   /path/to/candidate.static-inputs.json /path/to/candidate.recipe-inputs.json
 ```
 
+The package-exposed equivalent accepts pnpm's one literal leading separator:
+
+```sh
+pnpm --filter @warden/extension release:verify -- \
+  /path/to/candidate.zip /path/to/reviewed.artifact.json \
+  /path/to/candidate.sbom.json /path/to/candidate.bundle-inputs.json \
+  /path/to/candidate.static-inputs.json /path/to/candidate.recipe-inputs.json
+```
+
+Both forms preserve the verifier's exact zero-, six-, or seven-argument
+grammar; the seventh argument remains the optional unpacked directory. The
+shared release-CLI normalizer removes exactly one leading `--`. A doubled,
+interior, or trailing separator remains an ordinary positional argument.
+
 Chrome's current Web Store contract requires an upload ZIP with
 `manifest.json` at its root; see [Prepare your extension](https://developer.chrome.com/docs/webstore/prepare)
 and [Publish in the Chrome Web Store](https://developer.chrome.com/docs/webstore/publish).
@@ -94,10 +108,10 @@ one terminal newline to stdout. It does not invoke Git or GnuPG, access a key,
 or create, move, sign, or push a tag. The separately governed signing procedure
 may consume those exact stdout bytes; this helper is not signer authorization.
 
-The four public release commands in this section accept either direct Node
-arguments or pnpm's one literal leading `--` separator. Their shared normalizer
-removes exactly one leading separator; a doubled, interior, or trailing `--`
-remains a positional argument and cannot bypass each command's exact arity.
+The four signed-source/store public release commands in this section accept
+either direct Node arguments or pnpm's one literal leading `--` separator.
+They use the same shared normalizer and strict positional-argument rule as the
+upload verifier above.
 
 After an owner has independently recorded a release tag name, its annotated-tag
 object SHA, and the full primary and signing-key OpenPGP fingerprints, bind

@@ -11,6 +11,7 @@ import {
   verifyArtifactArchive,
   verifyCanonicalUnpacked,
 } from "./release-artifact.mjs";
+import { normalizeReleaseCliArguments } from "./release-cli-arguments.mjs";
 import { verifyReleaseRecipeInputEvidenceAttachment } from "./release-recipe-input-evidence.mjs";
 import { verifyStaticInputEvidenceAttachment } from "./static-input-evidence.mjs";
 
@@ -37,7 +38,7 @@ async function main() {
   const defaultBundleInputEvidence = join(releaseDirectory, `warden-extension-${version}.bundle-inputs.json`);
   const defaultStaticInputEvidence = join(releaseDirectory, `warden-extension-${version}.static-inputs.json`);
   const defaultReleaseRecipeInputEvidence = join(releaseDirectory, `warden-extension-${version}.recipe-inputs.json`);
-  const args = process.argv.slice(2);
+  const args = normalizeReleaseCliArguments(process.argv.slice(2));
   if (![0, 6, 7].includes(args.length)) {
     fail("usage: verify-release.mjs [candidate.zip artifact.json dependency-evidence.json bundle-input-evidence.json static-input-evidence.json recipe-input-evidence.json [unpacked-directory]]");
   }

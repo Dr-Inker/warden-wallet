@@ -89,6 +89,12 @@ repository-gated as described above, but no off-host run or upstream-source
 attestation is claimed. No Web Store upload or publisher-account mutation is
 performed by this gate.
 
+The deterministic upload verifier accepts either direct Node arguments or
+pnpm's one literal leading `--` before its exact zero-, six-, or seven-argument
+grammar. The seventh semantic argument is still the optional unpacked
+directory. The shared release-CLI normalizer removes exactly one leading
+separator; doubled, interior, and trailing separators remain positional input.
+
 ### Signed release-source precondition (C6 partial; fixture-only)
 
 `pnpm --filter @warden/extension release:source-tag-message --
