@@ -1,5 +1,114 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 C32 DETERMINISTIC JAVASCRIPT-BUNDLE INPUT EVIDENCE — C6 PARTIAL, STATIC/LEGAL COVERAGE NOT CLAIMED
+>
+> Implementation commit
+> `9622445bc3cbd280a07dbb9a87e249c31bd79777` adds canonical
+> `warden.extension-js-bundle-input-evidence.v1`, artifact-manifest schema v3,
+> strict generation/parsing/attachment verification, build-metafile plumbing,
+> package/verify integration, focused tamper tests, and scoped documentation.
+> The first clean release run correctly caught an integration typo after the
+> focused unit lane passed; fix commit
+> `cd7f31f3ce493b9b07e2a8d032f6e91c07097621` adds an explicit build-output
+> shape guard and passes the returned metafiles under the correct name. The
+> failed SHA is not called green. There was no dependency/lockfile change,
+> deployment, registry edit, Web Store or publisher action, secret, legal
+> ruling, provider-route change, or real-account/funds mutation.
+>
+> Real RED was captured before implementation:
+>
+> ```sh
+> pnpm --filter @warden/extension exec vitest run test/bundle-input-evidence.test.mjs
+> ```
+>
+> It exited **1** because the focused contract did not exist. At clean final
+> implementation SHA `cd7f31f3ce493b9b07e2a8d032f6e91c07097621`, this
+> exact command exited **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/bundle-input-evidence.test.mjs test/production-dependency-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension release:gate && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The three focused files passed **20/20** tests, then package/verify passed for
+> the canonical ZIP, dependency sidecar, new bundle-input sidecar, canonical
+> unpacked tree, and independent `unzip -t` reader. Tests prove canonical
+> ordering independent of metafile/result order and host paths; repository,
+> registry, and explicit esbuild-virtual identities; installed source byte/hash
+> capture; positive `bytesInOutput` selection with zero-byte counts retained;
+> exact four-output refusal on missing/extra results; source-byte mismatch
+> refusal; sidecar/manifest/archive/output binding; byte tamper refusal; and
+> duplicate-key/noncanonical JSON refusal. The incumbent dependency/artifact
+> tests remain **5/5** and **11/11**.
+>
+> From the same clean SHA, this exact command also exited **0** and printed the
+> same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|warden\.extension-artifact\.v3|warden\.extension-js-bundle-input-evidence\.v1' apps/extension/dist; then exit 1; fi && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **494/494**, typecheck/build passed, release
+> tooling remained absent from `dist`, and diff/clean-tree guards passed.
+>
+> `pnpm --filter @warden/extension release:gate` was then rerun at the same
+> clean SHA and exited **0** again. Both successful runs produced exactly **4
+> JavaScript bundles** and **101 positive-byte input records** in a
+> **29,047-byte** sidecar with SHA-256
+> `428bd4345b02f6204ada887f40ea3ec26b12293663dbbe7b3c7c188bc20360ca`.
+> The artifact-manifest SHA-256 was
+> `7d04a562ce62a4f1210f32fe18e8c7e6d4f4139109f47283cfbcf345e40d40aa`,
+> dependency-sidecar SHA-256 was
+> `9e22737156ea826aa98d394c4a6a56bc313382e9dacef20753db787fe05c0cbe`,
+> payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`,
+> and ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`.
+> A scan found no `/opt/`, `/root/`, `node_modules`, `devDependencies`, or
+> `unsavedDependencies` string in the new sidecar.
+>
+> Per-output measurements are executable data, not prose grading:
+>
+> - `approval.js`: **23,735 bytes**, **2** repository inputs, **23,649**
+>   attributed / **86** unattributed bytes, SHA-256
+>   `2bc104b2a9415e711698380b242f8f2e2f0743efcbb975a3260f28a5e254d3cd`.
+> - `background.js`: **877,698 bytes**, **94** positive inputs (**58 registry,
+>   35 repository, 1 esbuild virtual**) plus **2 zero-byte** inputs,
+>   **868,442** attributed / **9,256** unattributed bytes, SHA-256
+>   `46e9a6e034c5edfda643823e293489e293e2860ddc9813e61b2b319636e22f01`.
+> - `content.js`: **8,269 bytes**, **3** repository inputs, **8,156** attributed
+>   / **113** unattributed bytes, SHA-256
+>   `6f3f0a595abaa108124f67d0845affafb3afdf94f5538117eeaf54a6e87777a3`.
+> - `popup.js`: **3,229 bytes**, **2** repository inputs, **3,149** attributed /
+>   **80** unattributed bytes, SHA-256
+>   `0cccd2fded426f383ed497d316191b129c57189bf220a7c12aa9b64b2451274c`.
+>
+> The evidence specifically records positive contributions from
+> `npm:rpc-websockets@9.3.9/dist/index.browser.mjs` and
+> `npm:text-encoding-utf-8@1.0.2/lib/encoding.lib.js` to `background.js`.
+> That measurement strengthens the counsel question; it does not answer it.
+>
+> Independent second-model review remains **UNVERIFIED**. A ledger-inclusive
+> full repository gate is intentionally deferred until this record is
+> committed; a later pickup memo must cite its exact SHA before calling C32
+> fully closed.
+>
+> **No invariant status changes.** `WRD-EXT-01`, `WRD-APR-01`,
+> `WRD-APR-02`, `WRD-APR-03`, and `WRD-TXI-01` remain `unimplemented`.
+> Production provider routing remains fixed unavailable. C32 changes release
+> evidence only.
+>
+> **Harsh residual:** the sidecar covers only esbuild's positive
+> `bytesInOutput` records for four JavaScript outputs. That number is esbuild's
+> estimate, not a partition of final bytes; the explicitly measured
+> unattributed bytes remain. Copied HTML, CSS, `manifest.json`, icons, build
+> configuration/tool/environment inputs, and zero-byte/tree-shaken source
+> content are not source-hashed by this record. It does not automatically
+> reconcile the 60-component production closure to file inputs or decide LGPL,
+> unknown-license, Jupiter-IDL, or Squads counsel items. All JSON is unsigned
+> and co-generated; there is still no independent builder, provenance signature,
+> store-returned-package comparison, publisher-control evidence, off-host run,
+> external audit, deployment, or real-funds evidence.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C31 CLOSED; C32 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
