@@ -104,6 +104,109 @@
 > but does not authenticate the artifact manifest unless the separate detached-
 > review lane is run against those same bytes.
 
+> ## 2026-09-01 C45 SAME-BYTE ARTIFACT-REVIEW COMPOSITION — C6 PARTIAL, REVIEW AUTHORITY EXTERNAL
+>
+> Behavioral RED commit
+> `83edf3afffb4794a92414fca483856d43497bcb9` creates a real detached
+> Ed25519 signature over canonical artifact A, proves that incumbent verifier
+> accepts it, then gives the incumbent signed-tag/fourteen-output verifier a
+> different canonical artifact B with the same source/version and an exact
+> matching dual report. Both independent lanes succeeded and the expected
+> rejection resolved. Implementation commit
+> `939609b0fd5205fd9fb6524748fd12218ebc4ef1` makes the four review inputs
+> atomic: exact signature bytes, an independently supplied lowercase signature
+> SHA-256, exact review primary fingerprint, and exact review signing
+> fingerprint. They are allowed only with the C44 exact artifact/report mode.
+> The signature is bounded to **1 MiB** and its digest is checked before GnuPG
+> interprets it. The one artifact buffer read by the CLI is then passed to the
+> detached verifier and C44 binder; their returned artifact digests must match.
+>
+> The real RED was captured from clean SHA
+> `83edf3afffb4794a92414fca483856d43497bcb9` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs -t "rejects a separately valid artifact review for different exact release outputs"
+> ```
+>
+> It exited **1** because the promise resolved with valid signed-source and
+> fourteen-output results for artifact B even though the independently proven
+> detached review signature authenticated artifact A. At clean implementation
+> SHA `939609b0fd5205fd9fb6524748fd12218ebc4ef1`, this exact command exited
+> **0** and printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/release-source-tag.test.mjs test/reviewed-artifact-signature.test.mjs test/openpgp-signature-policy.test.mjs test/local-dual-release.test.mjs test/release-recipe-input-evidence.test.mjs test/release-artifact.test.mjs && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && pnpm --filter @warden/extension release:gate && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|dualReleaseReport|expectedDualReleaseReportSha256|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The six focused files passed **57/57** tests, typecheck/build passed, and the
+> real upload release gate measured **8** payload files, **60** production/peer
+> components, **4** JavaScript bundles, **101** positive bundle inputs, **4**
+> static inputs, and **22** release-recipe inputs. Independent Info-ZIP parsing,
+> emitted-tooling exclusion, all six selected temp-directory cleanup checks,
+> diff checks, and both clean-tree guards passed. The initially attempted
+> release gate on the dirty implementation tree correctly refused to package;
+> it is not counted as green. No reviewed recipe path was added because the
+> changed source/CLI were already in C44's exact 22-file recipe set.
+>
+> The positive composition uses one real canonical artifact manifest, its real
+> detached signature, a real signed annotated tag, and a complete canonical
+> fourteen-record report. It returns equal artifact-review and report-bound
+> manifest SHA-256 values plus both exact key identities. The independent
+> mismatch case signs a canonical manifest whose `approval.css` output differs
+> from the separately valid report-bound manifest and now fails cryptographic
+> verification. A wrong independent signature digest fails before candidate
+> parsing; the same malformed bytes with their actual digest reach GnuPG and
+> fail there; missing review fields and review inputs without the exact report
+> pair fail closed. C39–C44 key/subkey, algorithm, time, tag, report, canonical-
+> artifact, and fourteen-record refusals remain executable.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|dualReleaseReport|expectedDualReleaseReportSha256|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **555/555**, typecheck/build passed, release
+> verification/composition tooling remained absent from `dist`, no selected
+> fixture/launcher/rehearsal temp directory remained, and diff/clean-tree guards
+> passed.
+>
+> The signed-source module, CLI, and signed-source test were respectively
+> **29,235**, **5,691**, and **32,904 bytes**, with SHA-256 values
+> `d4b7ba64f74f25117786faa0d2df117ff73e8781033aac8aaa8bebcd6b7b86b8`,
+> `722c621aaf2092aa3c46f53ca9ab8d2c5e08a1bdd0c620c1e6fa9c7ceeafe13e`,
+> and `e5561d8fb6a467b615d47a7d62f77ac318740306cfc98e32db6db7492a925440`.
+> At the implementation SHA, the generated artifact, bundle, recipe,
+> dependency, and static sidecar SHA-256 values were respectively
+> `0752b128670da8bc1b531d4143acfe2ccc9981efae8871ce32660a1065d11def`,
+> `682cb4abccca2fed01643fb58fd3afa78bc3e534971e7e8b494d79e702fdea1c`,
+> `ecb0eb5e230022ead7a5707fdcb05e1ac5318b8ba96fb06988edf09dc798724e`,
+> `7dd9d7d8612dcb327014cf13ad69a00a585335c419370310b1a3aa53226f448e`,
+> and `cc207ee4cd8285a2f6ae25a5a0686805d6996049156d957255980bf04fbf100c`;
+> the recipe sidecar remained **4,553 bytes** and named 22 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> There was no dependency/lockfile, recipe-file-set, or payload-byte change.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** this composition removes a local split-artifact/TOCTOU
+> class; it does not choose or prove reviewer authority, signer independence,
+> signature freshness, trusted present time, key strength/storage/lifecycle,
+> or honest report generation. The selected keyring and installed Git/GPG/OS/
+> runtime remain unattested. The builders remain same-host/shared-store and
+> explicitly non-independent. There is no production artifact/tag/review key or
+> signature, transparency log, independent/off-host build, publisher-control
+> evidence, real store return, external audit, deployment, legal disposition,
+> or real-funds evidence. The ledger-inclusive full repository/release/rehearsal
+> gate is still pending at this entry.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C43 CLOSED; C44 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
