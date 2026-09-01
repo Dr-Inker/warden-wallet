@@ -1,16 +1,18 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C71 CLOSED; NEXT BOUNDED AUDIT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C72 CONTRACT WRITTEN; BEHAVIORAL RED NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** audit the verifier boundary after closed C71 and begin another
->   bounded cycle only if it has a locally executable RED and a material claim
->   narrower than sandboxing or production trust. Do not manufacture local
->   proxies for the remaining external obligations.
+> - **TASK:** implement C72 test-first: prove the standalone store-package CLI's
+>   independent parser receives the exact already-verified embedded ZIP through
+>   an unlinked read-only descriptor, cannot be redirected by replacing its
+>   temporary name, and leaves no private directory. Commit the behavioral RED
+>   before source changes.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C71 evidence-ledger/full-gated SHA
+> - **BASE:** C71 close SHA
+>   `6fd9b34fbf4dd294b71bbe7bbd7cfce7402b3a80`; evidence-ledger/full-gated SHA
 >   `7facbd975fb46649c3950c9ae47fa3fe7ddd573f`; implementation/evidence
 >   `a539e21e66c35b392f921d6c2c8f08d7d6108b28`; contract SHA
 >   `b4f6789dee83bd6411f38777fd40a9efaa71a7f1`; initial fixture
@@ -34,29 +36,30 @@
 >   `47d419dae0dda40ad6ca461ab7cd81dc3ba32308`; implementation/evidence
 >   `5bb34f87d6e0fbafa53e1090fbc93fd67495a476`; behavioral RED
 >   `21213293cc184b80d8d397c102b01b3b2d85bf6a`.
-> - **READ:** this memo and the C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
+> - **READ:** this memo and the C72/C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** none until the next bounded contract is written and
->   committed. C71 source, tests, README, security docs, evidence ledger, and
->   closeout are complete.
+> - **WRITE (edit lease):** after this contract commit,
+>   `apps/extension/test/verify-store-package-infozip.test.mjs` only for the
+>   behavioral RED. Do not edit source before that RED is committed.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
 >   empty production release registry, or the C1a production extension-id/
 >   permitted-origin owner decision. Do not fetch a key/package, push, tag,
->   sign production bytes, publish, weaken C36/C38–C71 policy, or invent store
+>   sign production bytes, publish, weaken C36/C38–C72 policy, or invent store
 >   provenance, freshness, reviewer, builder-independence, key-strength,
 >   publisher, or lifecycle policy.
-> - **ACCEPT:** prove a parser that naturally completes only after 12 seconds is
->   killed as the direct child before **10 seconds** for the sub-MiB fixture,
->   cannot write its completion marker, fails verification, and leaves no private
->   directory. Preserve C70's proof that the independent parser child receives
->   exactly inherited
->   `PATH` plus fixed `LANG=C` and `LC_ALL=C`, and does not directly inherit an
->   unrelated parent marker or `TMPDIR`. Preserve C69's exact private **0700**
->   `cwd`, C68's `O_RDONLY` descriptor and **0400** inode after unlink, and all
->   C67/C66/C65/C64/C63 probes,
+> - **ACCEPT:** after the store-package verifier has authenticated and parsed a
+>   CRX3 fixture, prove its independent parser receives the exact embedded ZIP
+>   digest through `/proc/<pid>/fd/<fd>`, observes an `O_RDONLY` descriptor on a
+>   **0400** inode, cannot replace a pathname to redirect parsing, and leaves no
+>   `warden-store-package-verify-*` directory. The test may mock only the
+>   already-covered upstream CRX3 cryptographic/parser result so the downstream
+>   handoff is reachable with synthetic keys; expected bytes and metadata must
+>   be independent fixtures. Preserve C71's bounded direct child, C70's exact
+>   environment, C69's exact private **0700** `cwd`, C68's descriptor/inode
+>   seal, and all C67/C66/C65/C64/C63 upload-verifier probes,
 >   exclusive **0600** construction, identity/seal checks, exact post-parser
 >   comparison, cleanup on every outcome, direct/pnpm **0/6/7**, optional
 >   unpacked tree, canonical checks, unchanged output, exact 25-input recipe
@@ -67,7 +70,8 @@
 >   production signature/key/tag, deploy, upload, publishing, live service,
 >   external message, secret persistence, legal ruling, or real-account/funds
 >   mutation.
-> - **RETURN:** C71 contract/RED/implementation/evidence/full/close SHAs and any
+> - **RETURN:** C71 close/full SHAs plus C72 contract/RED/implementation/evidence/
+>   full/close SHAs and any
 >   subsequent bounded-cycle SHAs, clean/dirty state,
 >   exact commands and outcomes, stable-byte proof and temp-copy mode/cleanup,
 >   preserved grammar/order/output/scope, invariant and independent-review
@@ -135,6 +139,37 @@
 > and operator-controlled signing remain external.
 > C68–C71 are only cooperative-host least privilege. Do not manufacture a local
 > proxy for the remaining external trust/owner obligations.
+
+> ## 2026-09-01 C72 STORE-PACKAGE EMBEDDED-ZIP STABLE DESCRIPTOR — C6 PARTIAL
+>
+> Contract: harden the standalone store-package CLI's independent Info-ZIP
+> handoff. After the existing CRX3 signature/structure verification has returned
+> the embedded archive bytes, construct a private temporary copy with an
+> exclusive **0600** writer, sync it, open and identity-check a same-inode
+> `O_RDONLY` handle, close the writer, seal and verify the inode at **0400**,
+> unlink its name, and pass only `/proc/<verifier-pid>/fd/<read-fd>` to
+> `unzip -t`. After a zero exit, positionally compare the same open handle with
+> the original embedded bytes before cleanup. Any setup, parser, comparison, or
+> cleanup error fails closed; no private directory may remain.
+>
+> The behavioral probe must reach this downstream handoff with independent
+> fixture bytes. Because the production CLI correctly fixes the official Web
+> Store publisher public key and its private key is unavailable, the probe may
+> mock only the already-covered upstream `verifyStorePackage` result. It must not
+> derive the expected archive digest, descriptor shape, access mode, inode mode,
+> replacement outcome, or cleanup result from production code. The fake
+> `unzip` attempts to rename an unrelated replacement over its received target,
+> records the bytes and descriptor metadata it actually sees, and exits zero.
+> Current code is RED if it accepts the replacement through its named temporary
+> path; C72 is green only when the replacement is refused, the exact original
+> digest is observed through the read-only sealed descriptor, CLI verification
+> succeeds, and cleanup is empty.
+>
+> This is a synthetic downstream-handoff test, not a real publisher signature,
+> returned Web Store package, executable-provenance claim, sandbox, same-UID or
+> root defense, process-group/descendant confinement, or production trust. C72
+> does not yet narrow the store CLI's inherited environment, working directory,
+> or unbounded parser runtime. No invariant or production-release status moves.
 
 > ## 2026-09-01 C71 BOUNDED INFO-ZIP DIRECT CHILD — C6 PARTIAL, HOST TRUST EXTERNAL
 >
