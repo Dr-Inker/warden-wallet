@@ -1,17 +1,18 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C72 CONTRACT WRITTEN; BEHAVIORAL RED NEXT
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C72 BEHAVIORAL RED; IMPLEMENTATION NEXT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** implement C72 test-first: prove the standalone store-package CLI's
->   independent parser receives the exact already-verified embedded ZIP through
->   an unlinked read-only descriptor, cannot be redirected by replacing its
->   temporary name, and leaves no private directory. Commit the behavioral RED
->   before source changes.
+> - **TASK:** implement C72 against the committed behavioral RED: make the
+>   standalone store-package CLI's independent parser receive the exact already-
+>   verified embedded ZIP through an unlinked read-only descriptor, reject
+>   post-parser byte mutation, and leave no private directory.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C71 close SHA
+> - **BASE:** C72 behavioral RED SHA
+>   `b20e3dd77932327394003c57970c0476be47c3bb`; contract SHA
+>   `ba854a8ed5aed6bf99c52fb5d0ee03a89bb9cec9`; C71 close SHA
 >   `6fd9b34fbf4dd294b71bbe7bbd7cfce7402b3a80`; evidence-ledger/full-gated SHA
 >   `7facbd975fb46649c3950c9ae47fa3fe7ddd573f`; implementation/evidence
 >   `a539e21e66c35b392f921d6c2c8f08d7d6108b28`; contract SHA
@@ -39,9 +40,9 @@
 > - **READ:** this memo and the C72/C71/C70/C69/C68/C67/C66/C65/C64/C63/C52/C51/C50/C36
 >   entries; C6 in the client-security plan; current verifier/tests; clean
 >   status.
-> - **WRITE (edit lease):** after this contract commit,
->   `apps/extension/test/verify-store-package-infozip.test.mjs` only for the
->   behavioral RED. Do not edit source before that RED is committed.
+> - **WRITE (edit lease):** `apps/extension/scripts/verify-store-package.mjs`,
+>   `apps/extension/README.md`, `docs/security/RELEASE-INTEGRITY.md`, and this
+>   ledger. The C72 test is implementation-complete.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
@@ -164,6 +165,24 @@
 > path; C72 is green only when the replacement is refused, the exact original
 > digest is observed through the read-only sealed descriptor, CLI verification
 > succeeds, and cleanup is empty.
+>
+> Contract commit `ba854a8ed5aed6bf99c52fb5d0ee03a89bb9cec9` precedes
+> behavioral RED commit `b20e3dd77932327394003c57970c0476be47c3bb`.
+> From the clean RED SHA, this exact command exited **1**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/test/verify-store-package-infozip.test.mjs && pnpm --filter @warden/extension exec vitest run test/verify-store-package-infozip.test.mjs
+> ```
+>
+> Vitest ran one test and failed at the complete handoff oracle in **93 ms**.
+> The CLI reported success and cleaned its private directory, but the fake
+> parser received a named `embedded.zip`, successfully replaced it, observed
+> inode mode **0644** with no descriptor access mode, and hashed the replacement
+> as
+> `a8d37f567c75955aae75e88a3268fc995dd9928cb0c96d66b853e0fbec44da55`
+> instead of the independently expected embedded ZIP digest
+> `a13bc0e7b079d6523d2be54888cb85844c6b6261e6e6abfc176365fd6ca36be3`.
+> This is the contracted behavioral RED, not a harness or syntax failure.
 >
 > This is a synthetic downstream-handoff test, not a real publisher signature,
 > returned Web Store package, executable-provenance claim, sandbox, same-UID or
