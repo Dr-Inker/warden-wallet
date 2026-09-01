@@ -1,5 +1,93 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C36 CLOSED; C37 NOT STARTED
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the next Warden implementation/review session.
+> - **TASK:** continue C6 with one bounded C37 contract: add an executable,
+>   fail-closed release-source precondition that proves a caller-selected
+>   annotated Git tag resolves to the exact artifact source commit and has a
+>   valid signature from an independently supplied, full signer fingerprint.
+>   Begin with a fresh read-only map and real RED. Parse machine-readable
+>   verifier status, reject lightweight/moved/multi-signature/ambiguous tags,
+>   and never learn the expected tag or signer from the candidate. Use only
+>   ephemeral keys/repos in tests; do not create or sign a tag in this repo.
+> - **CWD:** `/opt/warden`.
+> - **BASE:** C36 implementation
+>   `d573443506b6e517caad26941a1874119db3a06c`; ledger-inclusive, fully gated
+>   SHA `347904c0a036535771d9e435e0ca1e18cb3bac7c`. The documentation-only commit
+>   containing this memo is intentionally not described as gate green.
+> - **READ:** this memo and the C36/C35 entries immediately below; C6 in the
+>   client-security plan; `apps/extension/package.json`; artifact/package,
+>   release-recipe, dual-release, and CRX3 verification modules/tests;
+>   `docs/security/RELEASE-INTEGRITY.md`; `docs/TOOLCHAIN.md`; and official Git
+>   tag-signature/status documentation for the installed verifier.
+> - **WRITE (edit lease):** none is currently claimed. After the read-only map,
+>   lease only the smallest tag/source/signature verifier, focused parser and
+>   ephemeral-repository integration tests, package command, release-recipe
+>   binding, and scoped documentation required by the measured contract.
+> - **DO_NOT_TOUCH:** `.superpowers/**`,
+>   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
+>   publisher/account state, production tags/keys/trust stores, secrets, the
+>   empty production release registry, or the C1a production
+>   extension-id/permitted-origin owner decision. Do not sign, tag, push, fetch,
+>   publish, or choose a production signer/tag convention.
+> - **ACCEPT:** executable RED; exact annotated-tag object and peeled commit;
+>   exact artifact-source equality; full independently supplied signer
+>   fingerprint; cryptographic verifier success with strict machine-status
+>   parsing; lightweight/moved/wrong-commit/wrong-key/bad-signature/duplicate or
+>   ambiguous-status refusal; temp-key/repo cleanup; exact-SHA focused/release
+>   evidence; a committed/full-gated ledger; and explicit synthetic-versus-real
+>   tag limits. Keep the provider fixed unavailable.
+> - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
+>   extension artifacts, ephemeral signing keys and repositories under `/tmp`,
+>   and git commits only; no production tag/key, deploy, upload, publishing,
+>   live service, external message, secret persistence, legal ruling, or
+>   real-account/funds mutation.
+> - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
+>   and outcomes, tag object/commit/fingerprint accepted or rejected, temp-key
+>   cleanup result, unchanged or promoted invariants, independent-review status,
+>   explicit synthetic/production gaps, and remaining owner/counsel/external-
+>   state blockers.
+>
+> **C36 ledger-inclusive gate:** from a clean tree at
+> `347904c0a036535771d9e435e0ca1e18cb3bac7c`, this exact command exited **0**
+> and printed that same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-store-package-verify-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> It passed action pins **2/2**, core **700/700**, extension **517/517**, UI
+> tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
+> **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
+> measured Argon2 benchmark, canonical ZIP/five-sidecar verification with
+> **17** recipe inputs, independent Info-ZIP parsing, the real sequential
+> two-clean-checkout rehearsal, emitted release-tooling exclusion, temp cleanup,
+> diff checks, and both clean-tree guards. The final rehearsal compared **14**
+> files and produced a **3,810-byte** canonical report with SHA-256
+> `0884c43ccb49140e273b2692e65d53e51bf9fb53a90cea3965cfa2d64f1be5d7`.
+> At this ledger SHA the artifact, bundle, recipe, dependency, and static
+> sidecar SHA-256 values were respectively
+> `210ddd0fe752dd5bbf2c0d46af293a3fb12bb32bb61da80555b85d30ba28c839`,
+> `213ed9b323ae034e2facb05597ac054b7808ed34da2e54e6d1fb6d1cce1c41c3`,
+> `2ca639842b010df0cf853364cc17ba4cf096f49171920584e0686acb605dd480`,
+> `c2588576afd4dcba237c9523c7dc435f3fee6df25f2aaee4bd61e9714bc6b2dd`,
+> and `228e5b0815891417c16d8226694afb98d10da2b7dbd273fe40fb24d32eb43441`;
+> the recipe sidecar remained **3,597 bytes** and named 17 inputs. ZIP SHA-256
+> remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`.
+> No dual-release or store-verifier temporary directory remained. Known Anchor
+> test-middleman key mismatch, legacy macro-`cfg`, and Rust unused-code warnings
+> remained non-fatal. Independent second-model review is still **UNVERIFIED**.
+>
+> **Stop state:** C36 is closed. C37 has no code, RED, edit lease, dependency
+> change, production tag/key, release-registry edit, Web Store package,
+> deployment, publisher action, or legal adjudication. `WRD-REL-01`,
+> `WRD-REL-02`, and `WRD-REL-03` remain `unimplemented`; C36 is deliberately
+> fixture/parser/comparator evidence only.
+
 > ## 2026-09-01 C36 STORE-RETURNED CRX3 PAYLOAD VERIFIER — C6 PARTIAL, REAL WEB STORE PACKAGE NOT CLAIMED
 >
 > Implementation commit
@@ -103,10 +191,10 @@
 > recorded. Production provider routing remains fixed unavailable. C36 adds a
 > fixture-proved parser/comparator only.
 >
-> Independent second-model review remains **UNVERIFIED**. A ledger-inclusive
-> full repository, upload release, and dual-rehearsal gate is intentionally
-> deferred until this record is committed; a later pickup memo must cite its
-> exact SHA before calling C36 fully closed.
+> Independent second-model review remains **UNVERIFIED**. The ledger-inclusive
+> full repository, upload release, and dual-rehearsal gate passed at
+> `347904c0a036535771d9e435e0ca1e18cb3bac7c` under the exact command and
+> measurements in the clean-break pickup memo immediately above; C36 is closed.
 >
 > **Harsh residual:** no real Chrome Web Store-returned CRX exists in scope, so
 > the production CLI and pinned Google publisher proof have not run end-to-end.
