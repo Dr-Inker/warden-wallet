@@ -1,50 +1,48 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C59 CLOSED; C60 NOT STARTED
+> ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C60 CLOSED; C61 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** the next Warden implementation/review session.
-> - **TASK:** continue C6 with one bounded C60 contract: add a safe, read-only
->   canonical release-tag-message generator so an operator does not hand-format
->   C59's authenticated artifact identity. Begin with an executable RED for the
->   absent formatter/CLI. Accept only an exact artifact-manifest path plus an
->   independently recorded lowercase SHA-256, use the incumbent stable bounded
->   reader and canonical artifact parser, refuse every byte/digest mismatch, and
->   emit exactly C59's two-line versioned message with one terminal newline.
->   The command must never create, move, sign, or push a tag and must not access a
->   production key. Preserve every C36/C39–C59 verifier and grammar rule.
+> - **TASK:** continue C6 with one bounded C61 contract: make the documented pnpm
+>   `--` argument separator work consistently across all four public release
+>   CLIs. Begin with an executable RED showing a documented verifier invocation
+>   is rejected as the wrong arity because pnpm forwards a literal leading
+>   separator. Add one strict shared normalizer which removes exactly one leading
+>   `--` and nothing else; use it in tag-message, source-tag, artifact-signature,
+>   and store-package commands. Preserve every positional grammar, validation
+>   order, ceiling, and C36/C38–C60 security refusal.
 > - **CWD:** `/opt/warden`.
-> - **BASE:** C59 behavioral RED
->   `434d35b664601668040c5549a75cd2c416b2d138`; implementation
->   `ccd6efeecfc426aedb18328b72aa15a1f17920c0`; ledger-inclusive, fully gated
->   SHA `94df8bcd13589b077918a04d69eb4dd0997fa389`. The documentation-only
+> - **BASE:** C60 behavioral RED
+>   `b12539e8f95fc2aa4f57db8b3f338e35987c0061`; final implementation
+>   `0c80c96b15ed34a51b9a706fe51543f0ba1d4250`; ledger-inclusive, fully gated
+>   SHA `401c66de0b3cb56b642c4f353ffde14dd32ef780`. The documentation-only
 >   commit containing this memo is intentionally not described as gate green.
-> - **READ:** this memo and the C59/C58/C50/C34 entries; C6 in the client-
->   security plan; `release-source-tag.mjs`, `verify-release-source-tag.mjs`,
->   the stable release-input reader, artifact parser, recipe evidence, package
->   scripts, release docs, CLI tests, and temp cleanup.
+> - **READ:** this memo and the C60/C59/C50 entries; C6 in the client-security
+>   plan; all four package-exposed release CLIs, `package.json`, their usage
+>   docs/tests, stable reader, recipe evidence, and temp cleanup.
 > - **WRITE (edit lease):** none is currently claimed. After the read-only map,
->   lease only the pure canonical tag-message formatter, one read-only CLI, its
->   focused tests/package hook, scoped docs/ledger, and recipe-bound evidence
->   strictly changed by that command.
+>   lease only one shared release-CLI argument normalizer, the four public CLI
+>   entry points, their focused tests/docs, scoped ledger, and recipe-bound
+>   evidence strictly changed by that helper.
 > - **DO_NOT_TOUCH:** `.superpowers/**`,
 >   `/root/.codex/session-graphs/**`, live `/var/www/**`, deployment/Web Store
 >   publisher/account state, production tags/keys/trust stores, secrets, the
 >   empty production release registry, or the C1a production extension-id/
 >   permitted-origin owner decision. Do not fetch a key/package, push, tag,
->   sign production bytes, publish, weaken C36/C39–C59 policy, or invent store
+>   sign production bytes, publish, weaken C36/C38–C60 policy, or invent store
 >   provenance, freshness, reviewer, builder-independence, key-strength,
 >   publisher, or lifecycle policy.
-> - **ACCEPT:** executable RED for the absent generator; a two-argument, local,
->   read-only CLI which stable-reads at most **8 MiB**, requires a canonical
->   artifact manifest and its independent lowercase SHA-256, emits only the
->   exact C59 schema/digest message plus one terminal newline, and refuses wrong,
->   uppercase, malformed, empty, oversized, symlink/non-regular, replaced, or
->   mutating input; no Git/GnuPG/tag/key mutation; incumbent **5/6/8/12/16**
->   verifier grammar and every earlier refusal remain; exact-SHA focused/release
->   evidence; committed/full-gated ledger; explicit synthetic/production and
->   same-host/independent limits; provider fixed unavailable.
+> - **ACCEPT:** executable RED showing a documented pnpm `--` invocation fails
+>   at arity today; one reviewed helper strips exactly one leading separator;
+>   direct Node and pnpm-separated forms reach the same first semantic check for
+>   all four commands; missing, doubled, interior, or trailing separators cannot
+>   bypass exact **2**, **5/6/8/12/16**, **4/6**, or **3/6** arity; every digest,
+>   canonical-input, stable-reader, Git/GnuPG, CRX, tag-message, report/review/
+>   store, and cleanup refusal remains; the helper is recipe-bound; exact-SHA
+>   focused/release evidence; committed/full-gated ledger; provider fixed
+>   unavailable.
 > - **SIDE_EFFECTS:** local `/opt/warden` source/tests/docs, ignored generated
 >   extension artifacts, ephemeral GnuPG/files/repos/launchers/CRX fixtures
 >   under `/tmp`, and git commits only; no network key/package retrieval,
@@ -52,41 +50,41 @@
 >   external message, secret persistence, legal ruling, or real-account/funds
 >   mutation.
 > - **RETURN:** RED/implementation/ledger SHAs, clean/dirty state, exact commands
->   and outcomes, emitted bytes and independently supplied/measured artifact
->   digest, all grammar tiers and ceilings, preserved scope, invariant and
+>   and outcomes, direct/pnpm argument equivalence and all grammar tiers/
+>   ceilings, preserved scope, invariant and
 >   independent-review status, explicit synthetic/production and same-host/
 >   independent gaps, and remaining owner/counsel/external-state blockers.
 >
-> **C59 ledger-inclusive gate:** from a clean tree at
-> `94df8bcd13589b077918a04d69eb4dd0997fa389`, this exact command exited **0**
+> **C60 ledger-inclusive gate:** from a clean tree at
+> `401c66de0b3cb56b642c4f353ffde14dd32ef780`, this exact command exited **0**
 > and printed that same SHA before and after:
 >
 > ```sh
-> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'warden\.extension-release-tag\.v1|artifact-manifest-sha256|expected-default-artifact-manifest-sha256|expected-artifact-manifest-sha256|expected-detached-signature-sha256|source tag signed|source tag verifier returned|artifact signature verifier returned|artifact manifest sha256|reviewed artifact manifest differs|detached signature differs|release-input-file|readBoundedRegularFile|O_NOFOLLOW|openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|expectedArtifactManifestSha256|signedArtifactManifestSha256|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|reviewedUploadArchive|storePackage|expectedPackageSha256|expectedStorePackageSha256|expectedStoreExtensionId|dualReleaseReport|expectedDualReleaseReportSha256|artifactManifestSha256|boundReleaseFileCount|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && env npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:gate && env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension release:dual-local && if rg -n 'release-source-tag-message|print-release-source-tag-message|formatReleaseTagMessage|warden\.extension-release-tag\.v1|artifact-manifest-sha256|expected-default-artifact-manifest-sha256|expected-artifact-manifest-sha256|expected-detached-signature-sha256|source tag signed|source tag verifier returned|artifact signature verifier returned|artifact manifest sha256|reviewed artifact manifest differs|detached signature differs|release-input-file|readBoundedRegularFile|O_NOFOLLOW|openpgp-signature-policy|reviewed-artifact-signature|verify-reviewed-artifact-signature|release-source-tag|verify-release-source-tag|store-package|verify-store-package|local-dual-extension-release|release-artifact|package-release|verify-release|production-dependency-evidence|bundle-input-evidence|static-input-evidence|release-recipe-input-evidence|expectedArtifactManifestSha256|signedArtifactManifestSha256|artifactReviewSignature|expectedArtifactReviewSignature|artifactReview|reviewedUploadArchive|storePackage|expectedPackageSha256|expectedStorePackageSha256|expectedStoreExtensionId|dualReleaseReport|expectedDualReleaseReportSha256|artifactManifestSha256|boundReleaseFileCount|OFFICIAL_CHROME_WEB_STORE_PUBLISHER_KEY_SHA256|warden\.extension-local-dual-release-rehearsal\.v1|warden\.extension-artifact\.v5|warden\.extension-release-recipe-input-evidence\.v1|OpenPGP verification|OPENPGP_RELEASE_SIGNATURE_POLICY|GIT_GPG_LAUNCHER|signatureCreationDate|signatureExpirationTimestamp' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-extension-dual-release-*' -o -name 'warden-release-tag-message-cli-test-*' -o -name 'warden-release-input-file-test-*' -o -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
 > ```
 >
-> It passed action pins **2/2**, core **700/700**, extension **573/573**, UI
+> It passed action pins **2/2**, core **700/700**, extension **577/577**, UI
 > tokens **11/11**, transaction-budget **8/8**, WebAuthn **1/1**, real Chromium
 > **15/15**, Rust **681 passed / 0 failed / 1 ignored**, builds/typechecks, the
 > measured Argon2 benchmark, canonical ZIP/five-sidecar verification with
-> **23** recipe inputs, independent Info-ZIP parsing, the real sequential two-
-> clean-checkout rehearsal, emitted release-tooling exclusion, all ten selected
+> **24** recipe inputs, independent Info-ZIP parsing, the real sequential two-
+> clean-checkout rehearsal, emitted release-tooling exclusion, all eleven selected
 > temp-directory cleanup checks, diff checks, and both clean-tree guards. The
-> Argon2 elapsed p50/p95 were **965.6/1085 ms**, host-task delay p50/p95 were
-> **62/64.3 ms**, and password-buffer wiping was true. The final rehearsal
+> Argon2 elapsed p50/p95 were **947.6/971.5 ms**, host-task delay p50/p95 were
+> **62.5/68.6 ms**, and password-buffer wiping was true. The final rehearsal
 > compared **14** files and produced a **3,810-byte** canonical report with
 > SHA-256
-> `c098928589d470c456ac0887359065e3645aac8ab51b2fc84d16d13be93389df`.
+> `7447973556a3a96fecf772b238f005330281d9785e0f5d984e8f3dad72a55cdb`.
 > At this ledger SHA the artifact, bundle, recipe, dependency, and static
 > sidecar SHA-256 values were respectively
-> `40f4299f36935434c675601a7d8c9b348b99d32e175046295dbaa1de0f9837ea`,
-> `cb66664e9778563ae4527baa37495036878535f526bfd5dad12e7e2e056341ce`,
-> `562323371e61c8625f9a387c26db897fa62ba3f1bf5f81cfaec44794a78e1122`,
-> `99a074408dba5df66a6a28d3c9025ea2c7202c1effb20bfa7ec00ac786331f45`,
-> and `6286483b876417cb0826dd5e5ced084dbd73dfbfbe8be15e41b2381aecbce059`;
-> the recipe sidecar was **4,740 bytes**, named 23 inputs, and bound the
-> composed source-tag CLI as **9,249 bytes** with SHA-256
-> `bcf0ab8f2d3292986ee38d472285169a73c8c9f745bf72ea2a43a037ba7963d6`.
+> `cc554caf8807944b82cf125fc0c102d46954c02dd61ecc827419ca10007a5f30`,
+> `54eb78b3eb88c3e49c115b9ad2ac3c5b98093fdb1d9b382a3906325a6131831f`,
+> `8636635c4ce153cc35ad44713be72628dca7c26c38217e9e9802393adfc51238`,
+> `49e381c50e125602ad9aaddd5b406c5e272c4902d80a2d86df7988e3af7aa146`,
+> and `f1a966ef298b9298d020893dcba1a2a0d973a7461aa8ef7141c0c9c5bd31d93f`;
+> the recipe sidecar was **4,938 bytes**, named 24 inputs, and bound the
+> **1,444-byte** tag-message printer at SHA-256
+> `efe3b06c06c1154b0c3abb7c370409a520d0ee19b52838e2b45c844572d2f5a9`.
 > ZIP SHA-256 remained
 > `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
 > and payload-tree SHA-256 remained
@@ -96,14 +94,14 @@
 > unused-code warnings remained non-fatal. Independent second-model review
 > remains **UNVERIFIED**.
 >
-> **Stop state:** C59 is closed. C60 has no code, RED, edit lease, canonical
-> read-only tag-message generator, real store-returned package,
+> **Stop state:** C60 is closed. C61 has no code, RED, edit lease, shared
+> release-CLI argument normalizer, real store-returned package,
 > production reviewer/tag/key/signature, release-registry edit, Web Store account/action,
 > deployment, or legal adjudication. `WRD-REL-01`, `WRD-REL-02`, and
 > `WRD-REL-03` remain `unimplemented`; every composed CLI/shared-verifier tier
-> now pins exact artifact bytes, and the source-tag signature authenticates that
-> exact digest, but production trust and operator-controlled signing remain
-> external.
+> pins exact artifact bytes, the source-tag signature authenticates that exact
+> digest, and a safe command emits its canonical message, but production trust
+> and operator-controlled signing remain external.
 
 > ## 2026-09-01 C60 CANONICAL RELEASE-TAG MESSAGE GENERATOR — C6 PARTIAL, SIGNING AUTHORITY EXTERNAL
 >
@@ -192,8 +190,8 @@
 > signer/reviewer/key authority, off-host independent build, real store return,
 > publisher control, deployment, or legal adjudication exists. Provider routing
 > remains fixed unavailable. Independent second-model review remains
-> **UNVERIFIED**. The repository-wide ledger-inclusive gate has not yet run for
-> C60; no such claim is made.
+> **UNVERIFIED**. The repository-wide ledger-inclusive gate passed at the exact
+> C60 ledger SHA and command recorded in the pickup memo above.
 
 > ## 2026-09-01 C59 SIGNED TAG ARTIFACT PIN — C6 PARTIAL, SIGNER AUTHORITY EXTERNAL
 >
