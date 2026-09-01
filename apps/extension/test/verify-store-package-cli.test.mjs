@@ -75,12 +75,14 @@ async function fixture() {
     staticInputEvidence: attachment("static-inputs"),
     releaseRecipeInputEvidence: attachment("recipe-inputs"),
   });
+  const artifactManifestBytes = serializeArtifactManifest(artifactManifest);
   await Promise.all([
     writeFile(candidatePath, candidateBytes),
     writeFile(reviewedArchivePath, archiveBytes),
-    writeFile(artifactManifestPath, serializeArtifactManifest(artifactManifest)),
+    writeFile(artifactManifestPath, artifactManifestBytes),
   ]);
   return {
+    artifactManifestBytes,
     artifactManifestPath,
     candidateBytes,
     candidatePath,
@@ -110,6 +112,22 @@ afterEach(async () => {
 });
 
 describe("standalone store-package CLI", () => {
+  it("requires an independent exact artifact-manifest digest before CRX handling", async () => {
+    const created = await fixture();
+    const output = await rejectedOutput([
+      created.candidatePath,
+      sha256(created.candidateBytes),
+      "a".repeat(32),
+      "0".repeat(64),
+      created.reviewedArchivePath,
+      created.artifactManifestPath,
+    ]);
+    expect(output).toMatch(
+      /reviewed artifact manifest differs from the independently supplied SHA-256/,
+    );
+    expect(output).not.toMatch(/CRX3 magic/);
+  });
+
   it("rejects a final candidate symlink before digest or CRX handling", async () => {
     const created = await fixture();
     const candidateSymlinkPath = join(created.directory, "candidate-link.crx");
