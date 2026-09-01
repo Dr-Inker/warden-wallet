@@ -1,5 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { mkdtemp, open, readFile, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,27 +33,51 @@ function fail(message) {
 
 async function verifyArchiveWithInfoZip(archiveBytes) {
   let temporaryDirectory;
+  let temporaryArchiveHandle;
   let validationError;
   try {
     temporaryDirectory = await mkdtemp(join(tmpdir(), "warden-release-unzip-"));
     const temporaryArchivePath = join(temporaryDirectory, "archive.zip");
-    await writeFile(temporaryArchivePath, archiveBytes, {
-      flag: "wx",
-      mode: 0o600,
-    });
-    await execFile("unzip", ["-t", temporaryArchivePath], {
+    temporaryArchiveHandle = await open(
+      temporaryArchivePath,
+      fsConstants.O_CREAT |
+        fsConstants.O_EXCL |
+        fsConstants.O_RDWR |
+        fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    await temporaryArchiveHandle.writeFile(archiveBytes);
+    const written = await temporaryArchiveHandle.stat({ bigint: true });
+    if (!written.isFile() || written.size !== BigInt(archiveBytes.length)) {
+      throw new Error("temporary archive byte count differs from the stable archive");
+    }
+    await temporaryArchiveHandle.sync();
+    await unlink(temporaryArchivePath);
+    const descriptorPath = `/proc/${process.pid}/fd/${temporaryArchiveHandle.fd}`;
+    await execFile("unzip", ["-t", descriptorPath], {
       encoding: "utf8",
       maxBuffer: 4 * 1024 * 1024,
     });
   } catch (error) {
     validationError = error;
   }
+  let cleanupError;
+  if (temporaryArchiveHandle !== undefined) {
+    try {
+      await temporaryArchiveHandle.close();
+    } catch (error) {
+      cleanupError = error;
+    }
+  }
   if (temporaryDirectory !== undefined) {
     try {
       await rm(temporaryDirectory, { recursive: true, force: true });
     } catch (error) {
-      fail(`independent unzip -t temporary archive cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      cleanupError ??= error;
     }
+  }
+  if (cleanupError !== undefined) {
+    fail(`independent unzip -t temporary archive cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
   }
   if (validationError !== undefined) {
     fail(`independent unzip -t validation failed: ${validationError instanceof Error ? validationError.message : String(validationError)}`);

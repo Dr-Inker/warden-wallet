@@ -189,8 +189,8 @@ describe("deterministic upload verifier CLI", () => {
     await mkdir(probeDirectory, { recursive: true });
     await writeFile(probePath, `#!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { readFile, rename, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const inspectedPath = process.argv[3];
 await rename(
@@ -198,9 +198,15 @@ await rename(
   process.env.WARDEN_TEST_REQUESTED_ARCHIVE_PATH,
 );
 const inspectedBytes = await readFile(inspectedPath);
+const temporaryDirectories = (await readdir(process.env.TMPDIR)).filter((name) =>
+  name.startsWith("warden-release-unzip-"),
+);
+if (temporaryDirectories.length !== 1) {
+  throw new Error("expected exactly one private unzip directory");
+}
 const [archiveStat, directoryStat] = await Promise.all([
   stat(inspectedPath),
-  stat(dirname(inspectedPath)),
+  stat(join(process.env.TMPDIR, temporaryDirectories[0])),
 ]);
 await writeFile(process.env.WARDEN_TEST_OBSERVATION_PATH, JSON.stringify({
   inspectedPath,

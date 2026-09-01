@@ -52,8 +52,10 @@ store-package comparison modules, the signed release-source verifier, and the
 reviewed-artifact detached-signature verifier plus their CLIs, and the one
 shared public-release-CLI argument normalizer. The verifier
 independently asks `unzip -t` to parse a private temporary copy of the same
-stable-read archive bytes, removes the copy on success or failure, and never
-reopens the operator-supplied archive path. It then fail-closes on
+stable-read archive bytes. It keeps that file open, removes its filesystem name,
+passes only the live procfs descriptor path to Info-ZIP, and closes/removes the
+descriptor and directory on success or failure; it never reopens the operator-
+supplied archive path. It then fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
 payload-tree hash, whole-ZIP hash, sidecar-byte hash, source binding, archive
