@@ -244,6 +244,9 @@ describe("reviewed artifact detached-signature verification", () => {
       signatureSha256: sha256(fixture.signatureBytes),
       signingFingerprint: fixture.signingFingerprint,
       primaryFingerprint: fixture.fingerprint,
+      signatureCreationDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      signatureTimestamp: expect.any(Number),
+      signatureExpirationTimestamp: null,
       signatureVersion: 4,
       publicKeyAlgorithm: 22,
       hashAlgorithm: 10,
@@ -270,6 +273,9 @@ describe("reviewed artifact detached-signature verification", () => {
       `OpenPGP signing fingerprint ${fixture.signingFingerprint}`,
     );
     expect(result.stdout).toContain(`OpenPGP primary fingerprint ${fixture.fingerprint}`);
+    expect(result.stdout).toMatch(/OpenPGP signature creation date \d{4}-\d{2}-\d{2}/);
+    expect(result.stdout).toMatch(/OpenPGP signature timestamp \d+/);
+    expect(result.stdout).toContain("OpenPGP signature expiration never");
     expect(result.stdout).toContain("OpenPGP public-key algorithm 22");
     expect(result.stdout).toContain("OpenPGP hash algorithm 10");
     expect(result.stdout).toContain("OpenPGP signature class 00");

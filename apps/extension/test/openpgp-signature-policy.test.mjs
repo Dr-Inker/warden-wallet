@@ -32,6 +32,9 @@ function statusLine({
   primary = "A".repeat(40),
   signing = DEFAULT_SIGNING_FINGERPRINT,
   goodSignatureIdentity = "C".repeat(16),
+  signatureCreationDate = "2026-09-01",
+  signatureTimestamp = "1788220800",
+  signatureExpirationTimestamp = "0",
   signatureVersion = "4",
   reserved = "0",
   publicKeyAlgorithm = "22",
@@ -46,9 +49,9 @@ function statusLine({
     [
       "[GNUPG:] VALIDSIG",
       signing,
-      "2026-09-01",
-      "1788220800",
-      "0",
+      signatureCreationDate,
+      signatureTimestamp,
+      signatureExpirationTimestamp,
       signatureVersion,
       reserved,
       publicKeyAlgorithm,
@@ -152,6 +155,84 @@ describe("shared OpenPGP release signature policy", () => {
     expect(Object.isFrozen(OPENPGP_RELEASE_SIGNATURE_POLICY.signatureVersions)).toBe(true);
     expect(Object.isFrozen(OPENPGP_RELEASE_SIGNATURE_POLICY.publicKeyAlgorithms)).toBe(true);
     expect(Object.isFrozen(OPENPGP_RELEASE_SIGNATURE_POLICY.hashAlgorithms)).toBe(true);
+  });
+
+  it("normalizes documented decimal and basic ISO timestamps within the unsigned four-octet range", () => {
+    const primary = "A".repeat(40);
+    expect(parseStatus(statusLine({ primary }), primary)).toMatchObject({
+      signatureCreationDate: "2026-09-01",
+      signatureTimestamp: 1_788_220_800,
+      signatureExpirationTimestamp: null,
+    });
+    expect(parseStatus(statusLine({
+      primary,
+      signatureCreationDate: "1970-01-01",
+      signatureTimestamp: "0",
+    }), primary)).toMatchObject({
+      signatureCreationDate: "1970-01-01",
+      signatureTimestamp: 0,
+      signatureExpirationTimestamp: null,
+    });
+    expect(parseStatus(statusLine({
+      primary,
+      signatureCreationDate: "2106-02-07",
+      signatureTimestamp: "4294967295",
+    }), primary)).toMatchObject({
+      signatureCreationDate: "2106-02-07",
+      signatureTimestamp: 4_294_967_295,
+      signatureExpirationTimestamp: null,
+    });
+    expect(parseStatus(statusLine({
+      primary,
+      signatureTimestamp: "20260901T000000",
+      signatureExpirationTimestamp: "20260901T000001",
+    }), primary)).toMatchObject({
+      signatureCreationDate: "2026-09-01",
+      signatureTimestamp: 1_788_220_800,
+      signatureExpirationTimestamp: 1_788_220_801,
+    });
+  });
+
+  it("rejects malformed, out-of-range, inconsistent, or non-increasing time fields", () => {
+    const primary = "A".repeat(40);
+    for (const signatureCreationDate of ["2026-9-01", "2026-02-30", "20260901"]) {
+      expect(() => parseStatus(statusLine({ primary, signatureCreationDate }), primary))
+        .toThrow(/creation date/);
+    }
+    for (const signatureTimestamp of [
+      "01",
+      "-1",
+      "4294967296",
+      "20260901T00000",
+      "20260230T000000",
+      "21060207T062816",
+    ]) {
+      expect(() => parseStatus(statusLine({ primary, signatureTimestamp }), primary))
+        .toThrow(/creation timestamp/);
+    }
+    expect(() => parseStatus(statusLine({
+      primary,
+      signatureCreationDate: "2026-09-02",
+    }), primary)).toThrow(/date differs from.*timestamp/);
+    for (const signatureExpirationTimestamp of [
+      "01788220801",
+      "-1",
+      "4294967296",
+      "20260901T00000",
+      "20260230T000000",
+      "21060207T062816",
+    ]) {
+      expect(() => parseStatus(statusLine({
+        primary,
+        signatureExpirationTimestamp,
+      }), primary)).toThrow(/expiration timestamp/);
+    }
+    for (const signatureExpirationTimestamp of ["1788220799", "1788220800"]) {
+      expect(() => parseStatus(statusLine({
+        primary,
+        signatureExpirationTimestamp,
+      }), primary)).toThrow(/expiration timestamp must be after/);
+    }
   });
 
   it("accepts every explicitly approved public-key and SHA-2 algorithm id", () => {
