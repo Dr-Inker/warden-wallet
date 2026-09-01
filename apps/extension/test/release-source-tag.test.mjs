@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ import {
   serializeArtifactManifest,
 } from "../scripts/release-artifact.mjs";
 import { verifyReviewedArtifactSignature } from "../scripts/reviewed-artifact-signature.mjs";
+import { verifyStorePackage } from "../scripts/store-package.mjs";
 import {
   createLocalDualReleaseReport,
   releaseComparisonPaths,
@@ -32,6 +33,16 @@ const GPG = "/usr/bin/gpg";
 const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
 const FIXTURE_VERSION = "1.2.3";
 const fixture = {};
+const storeDeveloperKeys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const storePublisherKeys = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+const storeDeveloperPublicKey = storeDeveloperKeys.publicKey.export({
+  format: "der",
+  type: "spki",
+});
+const storePublisherPublicKey = storePublisherKeys.publicKey.export({
+  format: "der",
+  type: "spki",
+});
 
 const ARTIFACT_ATTACHMENTS = Object.freeze({
   dependencyEvidence: {
@@ -55,6 +66,69 @@ const ARTIFACT_ATTACHMENTS = Object.freeze({
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
+
+function protobufVarint(value) {
+  const bytes = [];
+  let remaining = BigInt(value);
+  do {
+    let byte = Number(remaining & 0x7fn);
+    remaining >>= 7n;
+    if (remaining !== 0n) {
+      byte |= 0x80;
+    }
+    bytes.push(byte);
+  } while (remaining !== 0n);
+  return Buffer.from(bytes);
+}
+
+function protobufBytes(fieldNumber, bytes) {
+  return Buffer.concat([
+    protobufVarint(fieldNumber * 8 + 2),
+    protobufVarint(bytes.length),
+    bytes,
+  ]);
+}
+
+function crxProofBytes(publicKey, signature) {
+  return Buffer.concat([
+    protobufBytes(1, publicKey),
+    protobufBytes(2, signature),
+  ]);
+}
+
+function storeCrxBytes(archiveBytes) {
+  const crxId = Buffer.from(sha256(storeDeveloperPublicKey), "hex").subarray(0, 16);
+  const signedData = protobufBytes(1, crxId);
+  const signedDataLength = Buffer.alloc(4);
+  signedDataLength.writeUInt32LE(signedData.length, 0);
+  const signedBytes = Buffer.concat([
+    Buffer.from("CRX3 SignedData\0", "utf8"),
+    signedDataLength,
+    signedData,
+    archiveBytes,
+  ]);
+  const header = Buffer.concat([
+    protobufBytes(2, crxProofBytes(
+      storeDeveloperPublicKey,
+      sign("sha256", signedBytes, storeDeveloperKeys.privateKey),
+    )),
+    protobufBytes(3, crxProofBytes(
+      storePublisherPublicKey,
+      sign("sha256", signedBytes, storePublisherKeys.privateKey),
+    )),
+    protobufBytes(10000, signedData),
+  ]);
+  const fixed = Buffer.alloc(12);
+  fixed.write("Cr24", 0, "ascii");
+  fixed.writeUInt32LE(3, 4);
+  fixed.writeUInt32LE(header.length, 8);
+  return Buffer.concat([fixed, header, archiveBytes]);
+}
+
+const expectedStoreExtensionId = [
+  ...Buffer.from(sha256(storeDeveloperPublicKey), "hex").subarray(0, 16),
+].map((byte) => String.fromCharCode(97 + (byte >>> 4), 97 + (byte & 0x0f))).join("");
+const storePublisherKeySha256 = sha256(storePublisherPublicKey);
 
 function localDualReportBytes(
   sourceGitCommit,
@@ -120,6 +194,8 @@ function releaseArtifact(
     "utf8",
   );
   return {
+    entries,
+    archiveBytes,
     artifactManifest,
     artifactManifestBytes,
     releaseFiles: [
@@ -550,6 +626,39 @@ describe("release source annotated-tag verification", () => {
         boundReleaseFileCount: 14,
       },
     });
+  });
+
+  it("rejects a separately valid store package for different exact reviewed outputs", async () => {
+    const differentCrxBytes = storeCrxBytes(fixture.differentArtifact.archiveBytes);
+    expect(verifyStorePackage({
+      crxBytes: differentCrxBytes,
+      artifactManifest: fixture.differentArtifact.artifactManifest,
+      expectedExtensionId: expectedStoreExtensionId,
+      requiredPublisherKeySha256: storePublisherKeySha256,
+    })).toMatchObject({
+      extensionId: expectedStoreExtensionId,
+      treeSha256: fixture.differentArtifact.artifactManifest.payload.treeSha256,
+    });
+    const dualReleaseReportBytes = localDualReportBytes(
+      fixture.firstCommit,
+      FIXTURE_VERSION,
+      fixture.reviewedArtifact.releaseFiles,
+    );
+    await expect(verify({
+      ...fixture.reviewedArtifact,
+      dualReleaseReportBytes,
+      expectedDualReleaseReportSha256: sha256(dualReleaseReportBytes),
+      artifactReviewSignatureBytes: fixture.reviewedArtifactSignatureBytes,
+      expectedArtifactReviewSignatureSha256: sha256(
+        fixture.reviewedArtifactSignatureBytes,
+      ),
+      expectedArtifactReviewPrimaryFingerprint: fixture.fingerprint,
+      expectedArtifactReviewSigningFingerprint: fixture.signingFingerprint,
+      reviewedUploadArchiveBytes: fixture.differentArtifact.archiveBytes,
+      storePackageBytes: differentCrxBytes,
+      expectedStoreExtensionId,
+      requiredStorePublisherKeySha256: storePublisherKeySha256,
+    })).rejects.toThrow(/store|reviewed upload|archive|payload/);
   });
 
   it("checks the independent review-signature digest before candidate use", async () => {
