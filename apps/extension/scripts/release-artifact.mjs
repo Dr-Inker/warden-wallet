@@ -13,9 +13,10 @@ import { dirname, join, posix } from "node:path";
 
 import { JS_BUNDLE_INPUT_EVIDENCE_SCHEMA } from "./bundle-input-evidence.mjs";
 import { PRODUCTION_DEPENDENCY_EVIDENCE_SCHEMA } from "./production-dependency-evidence.mjs";
+import { RELEASE_RECIPE_INPUT_EVIDENCE_SCHEMA } from "./release-recipe-input-evidence.mjs";
 import { STATIC_INPUT_EVIDENCE_SCHEMA } from "./static-input-evidence.mjs";
 
-export const ARTIFACT_SCHEMA = "warden.extension-artifact.v4";
+export const ARTIFACT_SCHEMA = "warden.extension-artifact.v5";
 export const CANONICAL_TIMESTAMP = "1980-01-01T00:00:00.000Z";
 
 const CANONICAL_DATE = new Date(CANONICAL_TIMESTAMP);
@@ -576,7 +577,7 @@ function assertHash(value, label) {
 function assertArtifactManifestShape(artifactManifest) {
   assertExactKeys(
     artifactManifest,
-    ["schema", "source", "toolchain", "extension", "payload", "archive", "dependencyEvidence", "bundleInputEvidence", "staticInputEvidence"],
+    ["schema", "source", "toolchain", "extension", "payload", "archive", "dependencyEvidence", "bundleInputEvidence", "staticInputEvidence", "releaseRecipeInputEvidence"],
     "artifact manifest",
   );
   if (artifactManifest.schema !== ARTIFACT_SCHEMA) {
@@ -700,6 +701,25 @@ function assertArtifactManifestShape(artifactManifest) {
     artifactManifest.staticInputEvidence.sha256,
     "artifact static input evidence sha256",
   );
+  assertExactKeys(
+    artifactManifest.releaseRecipeInputEvidence,
+    ["file", "schema", "bytes", "sha256"],
+    "artifact release recipe input evidence",
+  );
+  if (
+    typeof artifactManifest.releaseRecipeInputEvidence.file !== "string" ||
+    !/^[A-Za-z0-9._-]+\.recipe-inputs\.json$/.test(artifactManifest.releaseRecipeInputEvidence.file) ||
+    artifactManifest.releaseRecipeInputEvidence.schema !== RELEASE_RECIPE_INPUT_EVIDENCE_SCHEMA ||
+    !Number.isSafeInteger(artifactManifest.releaseRecipeInputEvidence.bytes) ||
+    artifactManifest.releaseRecipeInputEvidence.bytes <= 0 ||
+    artifactManifest.releaseRecipeInputEvidence.bytes > MAX_ENTRY_BYTES
+  ) {
+    fail("artifact release recipe input evidence metadata is invalid");
+  }
+  assertHash(
+    artifactManifest.releaseRecipeInputEvidence.sha256,
+    "artifact release recipe input evidence sha256",
+  );
 }
 
 export function createArtifactManifest({
@@ -711,6 +731,7 @@ export function createArtifactManifest({
   dependencyEvidence,
   bundleInputEvidence,
   staticInputEvidence,
+  releaseRecipeInputEvidence,
 }) {
   const canonical = canonicalizeEntries(entries).map(({ path, data }) => ({ path, data }));
   const parsedArchive = parseCanonicalZip(archiveBytes);
@@ -744,6 +765,14 @@ export function createArtifactManifest({
     staticInputEvidence.bytes.length === 0
   ) {
     fail("static input evidence attachment must provide a file name and non-empty bytes");
+  }
+  if (
+    !isPlainObject(releaseRecipeInputEvidence) ||
+    typeof releaseRecipeInputEvidence.file !== "string" ||
+    !(releaseRecipeInputEvidence.bytes instanceof Uint8Array) ||
+    releaseRecipeInputEvidence.bytes.length === 0
+  ) {
+    fail("release recipe input evidence attachment must provide a file name and non-empty bytes");
   }
   const artifactManifest = {
     schema: ARTIFACT_SCHEMA,
@@ -785,6 +814,12 @@ export function createArtifactManifest({
       schema: STATIC_INPUT_EVIDENCE_SCHEMA,
       bytes: staticInputEvidence.bytes.length,
       sha256: sha256(staticInputEvidence.bytes),
+    },
+    releaseRecipeInputEvidence: {
+      file: releaseRecipeInputEvidence.file,
+      schema: RELEASE_RECIPE_INPUT_EVIDENCE_SCHEMA,
+      bytes: releaseRecipeInputEvidence.bytes.length,
+      sha256: sha256(releaseRecipeInputEvidence.bytes),
     },
   };
   assertArtifactManifestShape(artifactManifest);

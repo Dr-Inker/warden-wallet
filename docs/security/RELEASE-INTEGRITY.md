@@ -30,25 +30,32 @@ steps ahead of the audit; the repository test cannot enforce host-side policy.
 unpacked payload, canonical Chrome Web Store upload ZIP, adjacent artifact
 manifest, canonical `*.sbom.json` production-dependency evidence sidecar, and
 canonical `*.bundle-inputs.json` JavaScript-bundle input sidecar, and canonical
-`*.static-inputs.json` non-JavaScript source/output sidecar
+`*.static-inputs.json` non-JavaScript source/output sidecar, and canonical
+`*.recipe-inputs.json` release-recipe repository-input sidecar
 from a clean commit under the exact JavaScript toolchain pins in
 `docs/TOOLCHAIN.md`. A read-only walk records the pnpm-installed `package.json`
 production closure and package-declared license strings without host paths or
 dev dependencies. It binds the clean source and ZIP hash; artifact-manifest
-schema v4 in turn binds each sidecar's exact byte length and SHA-256. The bundle
+schema v5 in turn binds each sidecar's exact byte length and SHA-256. The bundle
 sidecar records every positive `bytesInOutput` input esbuild reports for the
 four emitted JavaScript files, canonical repository/npm identities, actual
 non-virtual input byte lengths and hashes, explicit esbuild virtual inputs and
 zero-byte counts, and each output's byte length and hash. The static sidecar
 records source/output byte lengths and hashes for `approval.css`,
 `approval.html`, `manifest.json`, and `popup.html`, distinguishing three exact
-byte copies from the manifest's JSON parse/two-space/newline serialization. The verifier
+byte copies from the manifest's JSON parse/two-space/newline serialization. The
+recipe sidecar records exact byte lengths and SHA-256 hashes for the 15 reviewed
+non-payload files that declare the install/release path: `.node-version`,
+`.npmrc`, both root/workspace pnpm configuration files, root/extension/core
+package manifests, and all eight release modules including the evidence module
+itself. The verifier
 independently asks `unzip -t` to parse the archive and then fail-closes on
 archive metadata,
 path-set, file-mode, file-size, file-hash, manifest permission, CSP, update URL,
 payload-tree hash, whole-ZIP hash, sidecar-byte hash, source binding, archive
 binding, dependency graph shape, JavaScript bundle/input shape, static
-source/output mapping, or canonical JSON drift. Generated outputs are ignored;
+source/output mapping, recipe input path/byte/hash drift against the current
+checkout, or canonical JSON drift. Generated outputs are ignored;
 this document does not pretend an ordinary development build is a release row.
 
 The dependency evidence scope deliberately retains
@@ -58,8 +65,10 @@ crosswalk is claimed. The separate bundle record is deliberately scoped to the
 four emitted JavaScript files and esbuild's positive `bytesInOutput`
 attribution, which is an estimate rather than a byte partition. The separate
 static record covers the exact four non-JavaScript files in today's eight-file
-payload; it does not claim absent icons or other assets. None of these records
-covers build-tool/configuration/environment inputs. `declaredLicense` values
+payload; it does not claim absent icons or other assets. The recipe record
+covers repository source/configuration bytes only; it does not attest installed
+Node/pnpm/esbuild executable bytes, package-manager behavior, environment
+variables, OS/runtime behavior, or which code actually executed. `declaredLicense` values
 are package metadata, not a legal conclusion; `Unknown` remains unknown. No
 attachment is a vulnerability scan, provenance signature, independent build
 comparison, or toolchain attestation.

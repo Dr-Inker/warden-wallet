@@ -57,6 +57,11 @@ const STATIC_INPUT_EVIDENCE = Object.freeze({
   bytes: Buffer.from("canonical static input evidence fixture\n"),
 });
 
+const RELEASE_RECIPE_INPUT_EVIDENCE = Object.freeze({
+  file: "warden-extension-1.2.3.recipe-inputs.json",
+  bytes: Buffer.from("canonical release recipe input evidence fixture\n"),
+});
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
@@ -92,6 +97,7 @@ function baselineArtifact(entries = payloadEntries()) {
     dependencyEvidence: DEPENDENCY_EVIDENCE,
     bundleInputEvidence: BUNDLE_INPUT_EVIDENCE,
     staticInputEvidence: STATIC_INPUT_EVIDENCE,
+    releaseRecipeInputEvidence: RELEASE_RECIPE_INPUT_EVIDENCE,
   });
   return { archiveBytes, artifactManifest };
 }
@@ -233,6 +239,7 @@ describe("reviewed artifact manifest and fail-closed verifier", () => {
       dependencyEvidence: DEPENDENCY_EVIDENCE,
       bundleInputEvidence: BUNDLE_INPUT_EVIDENCE,
       staticInputEvidence: STATIC_INPUT_EVIDENCE,
+      releaseRecipeInputEvidence: RELEASE_RECIPE_INPUT_EVIDENCE,
     })).toThrow(/canonical two-space JSON/);
   });
 

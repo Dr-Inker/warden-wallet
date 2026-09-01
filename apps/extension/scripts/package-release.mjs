@@ -41,6 +41,12 @@ import {
   verifyCanonicalUnpacked,
 } from "./release-artifact.mjs";
 import {
+  RELEASE_RECIPE_INPUT_PATHS,
+  createReleaseRecipeInputEvidence,
+  serializeReleaseRecipeInputEvidence,
+  verifyReleaseRecipeInputEvidenceAttachment,
+} from "./release-recipe-input-evidence.mjs";
+import {
   createStaticInputEvidence,
   serializeStaticInputEvidence,
   verifyStaticInputEvidenceAttachment,
@@ -255,6 +261,7 @@ async function main() {
   const dependencyEvidenceFileName = `warden-extension-${version}.sbom.json`;
   const bundleInputEvidenceFileName = `warden-extension-${version}.bundle-inputs.json`;
   const staticInputEvidenceFileName = `warden-extension-${version}.static-inputs.json`;
+  const releaseRecipeInputEvidenceFileName = `warden-extension-${version}.recipe-inputs.json`;
   const archiveBytes = createCanonicalZip(entries);
   const bundleInputEvidence = await createJavaScriptBundleInputEvidence({
     buildResults: buildOutput.bundleResults,
@@ -307,6 +314,17 @@ async function main() {
     serializeProductionDependencyEvidence(dependencyEvidence),
     "utf8",
   );
+  const releaseRecipeInputEvidence = await createReleaseRecipeInputEvidence({
+    repositoryRoot,
+    inputPaths: RELEASE_RECIPE_INPUT_PATHS,
+    source: releaseEnvironment.source,
+    archiveFileName,
+    archiveBytes,
+  });
+  const releaseRecipeInputEvidenceBytes = Buffer.from(
+    serializeReleaseRecipeInputEvidence(releaseRecipeInputEvidence),
+    "utf8",
+  );
   const artifactManifest = createArtifactManifest({
     entries,
     archiveBytes,
@@ -323,6 +341,10 @@ async function main() {
     staticInputEvidence: {
       file: staticInputEvidenceFileName,
       bytes: staticInputEvidenceBytes,
+    },
+    releaseRecipeInputEvidence: {
+      file: releaseRecipeInputEvidenceFileName,
+      bytes: releaseRecipeInputEvidenceBytes,
     },
   });
   verifyArtifactArchive({ archiveBytes, artifactManifest });
@@ -341,6 +363,12 @@ async function main() {
     artifactManifest,
     archiveBytes,
   });
+  await verifyReleaseRecipeInputEvidenceAttachment({
+    evidenceBytes: releaseRecipeInputEvidenceBytes,
+    artifactManifest,
+    archiveBytes,
+    repositoryRoot,
+  });
 
   await ensureReleaseDirectory();
   const stagingDirectory = await mkdtemp(join(releaseDirectory, ".staging-"));
@@ -350,6 +378,10 @@ async function main() {
   const stagedDependencyEvidence = join(stagingDirectory, dependencyEvidenceFileName);
   const stagedBundleInputEvidence = join(stagingDirectory, bundleInputEvidenceFileName);
   const stagedStaticInputEvidence = join(stagingDirectory, staticInputEvidenceFileName);
+  const stagedReleaseRecipeInputEvidence = join(
+    stagingDirectory,
+    releaseRecipeInputEvidenceFileName,
+  );
   try {
     await stageCanonicalUnpacked(entries, stagedUnpacked);
     await writeCanonicalFile(stagedArchive, archiveBytes);
@@ -360,6 +392,7 @@ async function main() {
     await writeCanonicalFile(stagedDependencyEvidence, dependencyEvidenceBytes);
     await writeCanonicalFile(stagedBundleInputEvidence, bundleInputEvidenceBytes);
     await writeCanonicalFile(stagedStaticInputEvidence, staticInputEvidenceBytes);
+    await writeCanonicalFile(stagedReleaseRecipeInputEvidence, releaseRecipeInputEvidenceBytes);
     await verifyCanonicalUnpacked({
       rootDirectory: stagedUnpacked,
       artifactManifest,
@@ -371,18 +404,24 @@ async function main() {
     const dependencyEvidenceTarget = join(releaseDirectory, dependencyEvidenceFileName);
     const bundleInputEvidenceTarget = join(releaseDirectory, bundleInputEvidenceFileName);
     const staticInputEvidenceTarget = join(releaseDirectory, staticInputEvidenceFileName);
+    const releaseRecipeInputEvidenceTarget = join(
+      releaseDirectory,
+      releaseRecipeInputEvidenceFileName,
+    );
     await removeGeneratedTarget(unpackedTarget, "directory");
     await removeGeneratedTarget(archiveTarget, "file");
     await removeGeneratedTarget(artifactManifestTarget, "file");
     await removeGeneratedTarget(dependencyEvidenceTarget, "file");
     await removeGeneratedTarget(bundleInputEvidenceTarget, "file");
     await removeGeneratedTarget(staticInputEvidenceTarget, "file");
+    await removeGeneratedTarget(releaseRecipeInputEvidenceTarget, "file");
     await rename(stagedUnpacked, unpackedTarget);
     await rename(stagedArchive, archiveTarget);
     await rename(stagedArtifactManifest, artifactManifestTarget);
     await rename(stagedDependencyEvidence, dependencyEvidenceTarget);
     await rename(stagedBundleInputEvidence, bundleInputEvidenceTarget);
     await rename(stagedStaticInputEvidence, staticInputEvidenceTarget);
+    await rename(stagedReleaseRecipeInputEvidence, releaseRecipeInputEvidenceTarget);
   } finally {
     await rm(stagingDirectory, { recursive: true, force: true });
   }
@@ -401,17 +440,23 @@ async function main() {
     repositoryRoot,
     join(releaseDirectory, staticInputEvidenceFileName),
   );
+  const relativeReleaseRecipeInputEvidence = relative(
+    repositoryRoot,
+    join(releaseDirectory, releaseRecipeInputEvidenceFileName),
+  );
   console.log(`packaged ${relativeArchive}`);
   console.log(`attestation ${relativeManifest}`);
   console.log(`dependency evidence ${relativeDependencyEvidence}`);
   console.log(`bundle input evidence ${relativeBundleInputEvidence}`);
   console.log(`static input evidence ${relativeStaticInputEvidence}`);
+  console.log(`release recipe input evidence ${relativeReleaseRecipeInputEvidence}`);
   console.log(`source ${artifactManifest.source.gitCommit}`);
   console.log(`payload tree sha256 ${artifactManifest.payload.treeSha256}`);
   console.log(`archive sha256 ${artifactManifest.archive.sha256}`);
   console.log(`production dependency components ${dependencyEvidence.components.length}`);
   console.log(`JavaScript bundle inputs ${bundleInputEvidence.bundles.reduce((total, bundle) => total + bundle.inputCount, 0)}`);
   console.log(`static input files ${staticInputEvidence.files.length}`);
+  console.log(`release recipe input files ${releaseRecipeInputEvidence.inputs.length}`);
 }
 
 await main();

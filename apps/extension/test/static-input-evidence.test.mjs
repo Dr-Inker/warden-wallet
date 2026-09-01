@@ -158,6 +158,10 @@ describe("static payload source evidence", () => {
         file: "warden-extension-1.2.3.static-inputs.json",
         bytes: evidenceBytes,
       },
+      releaseRecipeInputEvidence: {
+        file: "warden-extension-1.2.3.recipe-inputs.json",
+        bytes: Buffer.from("canonical release recipe input evidence fixture\n"),
+      },
     });
     expect(artifactManifest.staticInputEvidence.sha256).toBe(sha256(evidenceBytes));
     expect(verifyStaticInputEvidenceAttachment({

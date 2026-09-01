@@ -11,10 +11,12 @@ import {
   verifyArtifactArchive,
   verifyCanonicalUnpacked,
 } from "./release-artifact.mjs";
+import { verifyReleaseRecipeInputEvidenceAttachment } from "./release-recipe-input-evidence.mjs";
 import { verifyStaticInputEvidenceAttachment } from "./static-input-evidence.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appDirectory = resolve(scriptDirectory, "..");
+const repositoryRoot = resolve(appDirectory, "../..");
 const releaseDirectory = join(appDirectory, "release");
 const execFile = promisify(execFileCallback);
 
@@ -34,24 +36,27 @@ async function main() {
   const defaultDependencyEvidence = join(releaseDirectory, `warden-extension-${version}.sbom.json`);
   const defaultBundleInputEvidence = join(releaseDirectory, `warden-extension-${version}.bundle-inputs.json`);
   const defaultStaticInputEvidence = join(releaseDirectory, `warden-extension-${version}.static-inputs.json`);
+  const defaultReleaseRecipeInputEvidence = join(releaseDirectory, `warden-extension-${version}.recipe-inputs.json`);
   const args = process.argv.slice(2);
-  if (![0, 5, 6].includes(args.length)) {
-    fail("usage: verify-release.mjs [candidate.zip artifact.json dependency-evidence.json bundle-input-evidence.json static-input-evidence.json [unpacked-directory]]");
+  if (![0, 6, 7].includes(args.length)) {
+    fail("usage: verify-release.mjs [candidate.zip artifact.json dependency-evidence.json bundle-input-evidence.json static-input-evidence.json recipe-input-evidence.json [unpacked-directory]]");
   }
   const archivePath = resolve(args[0] ?? defaultArchive);
   const artifactManifestPath = resolve(args[1] ?? defaultArtifactManifest);
   const dependencyEvidencePath = resolve(args[2] ?? defaultDependencyEvidence);
   const bundleInputEvidencePath = resolve(args[3] ?? defaultBundleInputEvidence);
   const staticInputEvidencePath = resolve(args[4] ?? defaultStaticInputEvidence);
-  const unpackedPath = args[5] === undefined
+  const releaseRecipeInputEvidencePath = resolve(args[5] ?? defaultReleaseRecipeInputEvidence);
+  const unpackedPath = args[6] === undefined
     ? (args.length === 0 ? join(releaseDirectory, "unpacked") : undefined)
-    : resolve(args[5]);
+    : resolve(args[6]);
 
   const archiveBytes = await readFile(archivePath);
   const artifactManifest = parseArtifactManifest(await readFile(artifactManifestPath));
   const dependencyEvidenceBytes = await readFile(dependencyEvidencePath);
   const bundleInputEvidenceBytes = await readFile(bundleInputEvidencePath);
   const staticInputEvidenceBytes = await readFile(staticInputEvidencePath);
+  const releaseRecipeInputEvidenceBytes = await readFile(releaseRecipeInputEvidencePath);
   const verified = verifyArtifactArchive({ archiveBytes, artifactManifest });
   const dependencyEvidence = verifyProductionDependencyEvidenceAttachment({
     evidenceBytes: dependencyEvidenceBytes,
@@ -67,6 +72,12 @@ async function main() {
     evidenceBytes: staticInputEvidenceBytes,
     artifactManifest,
     archiveBytes,
+  });
+  const releaseRecipeInputEvidence = await verifyReleaseRecipeInputEvidenceAttachment({
+    evidenceBytes: releaseRecipeInputEvidenceBytes,
+    artifactManifest,
+    archiveBytes,
+    repositoryRoot,
   });
   try {
     await execFile("unzip", ["-t", archivePath], {
@@ -95,6 +106,7 @@ async function main() {
   console.log(`dependency evidence ${dependencyEvidencePath}`);
   console.log(`bundle input evidence ${bundleInputEvidencePath}`);
   console.log(`static input evidence ${staticInputEvidencePath}`);
+  console.log(`release recipe input evidence ${releaseRecipeInputEvidencePath}`);
   console.log(`source ${artifactManifest.source.gitCommit}`);
   console.log(`files ${verified.files}`);
   console.log(`payload tree sha256 ${verified.treeSha256}`);
@@ -103,6 +115,7 @@ async function main() {
   console.log(`JavaScript bundles ${bundleInputEvidence.bundles}`);
   console.log(`JavaScript bundle inputs ${bundleInputEvidence.inputs}`);
   console.log(`static input files ${staticInputEvidence.files}`);
+  console.log(`release recipe input files ${releaseRecipeInputEvidence.inputs}`);
   console.log("independent ZIP reader unzip -t passed");
   console.log(unpackedPath === undefined ? "unpacked tree not requested" : `unpacked ${unpackedPath}`);
 }
