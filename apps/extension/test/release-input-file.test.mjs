@@ -27,6 +27,38 @@ afterEach(async () => {
 });
 
 describe("stable bounded release input files", () => {
+  it("rejects empty, directory, final-symlink, and oversized candidates", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "warden-release-input-file-test-"));
+    temporaryDirectories.push(directory);
+    const emptyPath = join(directory, "empty.bin");
+    const directoryPath = join(directory, "candidate-directory");
+    const targetPath = join(directory, "target.bin");
+    const symlinkPath = join(directory, "candidate-link.bin");
+    const oversizedPath = join(directory, "oversized.bin");
+    await Promise.all([
+      writeFile(emptyPath, Buffer.alloc(0)),
+      mkdir(directoryPath),
+      writeFile(targetPath, "target bytes\n"),
+      writeFile(oversizedPath, "x"),
+    ]);
+    await Promise.all([
+      symlink(targetPath, symlinkPath),
+      truncate(oversizedPath, 1025),
+    ]);
+
+    const cases = [
+      { path: emptyPath, pattern: /must be a nonempty regular file/ },
+      { path: directoryPath, pattern: /must be a nonempty regular file/ },
+      { path: symlinkPath, pattern: /could not be opened as a non-symlink regular file/ },
+      { path: oversizedPath, pattern: /no larger than 1024 bytes/ },
+    ];
+    for (const candidate of cases) {
+      await expect(
+        readBoundedRegularFile(candidate.path, 1024, "invalid candidate"),
+      ).rejects.toThrow(candidate.pattern);
+    }
+  });
+
   it("rejects a symlink in a parent path component", async () => {
     const directory = await mkdtemp(join(tmpdir(), "warden-release-input-file-test-"));
     temporaryDirectories.push(directory);

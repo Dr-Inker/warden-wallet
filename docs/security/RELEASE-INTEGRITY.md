@@ -94,6 +94,13 @@ pnpm's one literal leading `--` before its exact zero-, six-, or seven-argument
 grammar. The seventh semantic argument is still the optional unpacked
 directory. The shared release-CLI normalizer removes exactly one leading
 separator; doubled, interior, and trailing separators remain positional input.
+Its six file candidates use the shared stable release-input reader before
+parsing: the upload ZIP is capped at **512 MiB**, the artifact manifest at
+**8 MiB**, and each dependency, bundle-input, static-input, and recipe-input
+sidecar at **256 MiB**. The reader refuses empty/non-regular, final- or parent-
+symlinked, oversized, path-replaced, or metadata-changing input. The optional
+unpacked directory remains a directory-tree verification input, not a bounded
+file input.
 
 ### Signed release-source precondition (C6 partial; fixture-only)
 

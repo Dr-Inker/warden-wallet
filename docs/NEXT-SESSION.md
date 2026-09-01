@@ -8,8 +8,9 @@
 > - **TASK:** continue C6 with one bounded C63 contract: make the deterministic
 >   upload verifier use C50–C52's shared stable, bounded, non-final-symlink
 >   reader for its archive, artifact manifest, and four evidence sidecars.
->   Begin with executable RED proving a final-symlink archive reaches parsing
->   today instead of the shared reader refusal. Preserve the exact **0/6/7**
+>   Begin with executable RED proving a final-symlink archive is followed and
+>   execution reaches a later input today instead of the shared reader refusal.
+>   Preserve the exact **0/6/7**
 >   grammar, C62 separator rule, default release-directory behavior, read and
 >   verification order, optional unpacked-directory semantics, canonical
 >   archive/five-sidecar checks, and independent Info-ZIP check. Do not apply

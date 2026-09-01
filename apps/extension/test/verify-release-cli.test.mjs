@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,11 +7,94 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  createArtifactManifest,
+  createCanonicalZip,
+  serializeArtifactManifest,
+} from "../scripts/release-artifact.mjs";
+
 const execFile = promisify(execFileCallback);
 const verifierPath = fileURLToPath(
   new URL("../scripts/verify-release.mjs", import.meta.url),
 );
 const temporaryDirectories = [];
+const INPUT_POLICIES = Object.freeze([
+  Object.freeze({ label: "upload archive", maximumBytes: 512 * 1024 * 1024 }),
+  Object.freeze({ label: "artifact manifest", maximumBytes: 8 * 1024 * 1024 }),
+  Object.freeze({ label: "dependency evidence", maximumBytes: 256 * 1024 * 1024 }),
+  Object.freeze({ label: "bundle input evidence", maximumBytes: 256 * 1024 * 1024 }),
+  Object.freeze({ label: "static input evidence", maximumBytes: 256 * 1024 * 1024 }),
+  Object.freeze({ label: "release recipe input evidence", maximumBytes: 256 * 1024 * 1024 }),
+]);
+const FIXTURE_MANIFEST = Object.freeze({
+  manifest_version: 3,
+  name: "Warden release verifier CLI fixture",
+  version: "1.2.3",
+  permissions: ["storage"],
+  background: { service_worker: "background.js", type: "module" },
+  content_security_policy: {
+    extension_pages: "script-src 'self'; object-src 'self';",
+  },
+});
+
+function fixtureInputBytes() {
+  const entries = [
+    {
+      path: "manifest.json",
+      data: Buffer.from(`${JSON.stringify(FIXTURE_MANIFEST, null, 2)}\n`),
+    },
+  ];
+  const archiveBytes = createCanonicalZip(entries);
+  const evidenceBytes = INPUT_POLICIES.slice(2).map((_, index) =>
+    Buffer.from(`evidence fixture ${index}\n`),
+  );
+  const artifactManifest = createArtifactManifest({
+    entries,
+    archiveBytes,
+    artifactFileName: "warden-extension-1.2.3.zip",
+    source: {
+      gitCommit: "a".repeat(40),
+      lockfileSha256: "b".repeat(64),
+    },
+    toolchain: {
+      node: "22.23.2",
+      pnpm: "11.12.0",
+      esbuild: "0.28.2",
+    },
+    dependencyEvidence: {
+      file: "warden-extension-1.2.3.sbom.json",
+      bytes: evidenceBytes[0],
+    },
+    bundleInputEvidence: {
+      file: "warden-extension-1.2.3.bundle-inputs.json",
+      bytes: evidenceBytes[1],
+    },
+    staticInputEvidence: {
+      file: "warden-extension-1.2.3.static-inputs.json",
+      bytes: evidenceBytes[2],
+    },
+    releaseRecipeInputEvidence: {
+      file: "warden-extension-1.2.3.recipe-inputs.json",
+      bytes: evidenceBytes[3],
+    },
+  });
+  return [
+    archiveBytes,
+    Buffer.from(serializeArtifactManifest(artifactManifest)),
+    ...evidenceBytes,
+  ];
+}
+
+async function writeFixtureInputs(directory) {
+  const inputPaths = INPUT_POLICIES.map((_, index) =>
+    join(directory, `input-${index}.bin`),
+  );
+  const inputBytes = fixtureInputBytes();
+  await Promise.all(
+    inputPaths.map((inputPath, index) => writeFile(inputPath, inputBytes[index])),
+  );
+  return { inputBytes, inputPaths };
+}
 
 async function rejectedOutput(args) {
   try {
@@ -68,6 +151,37 @@ describe("deterministic upload verifier CLI", () => {
       /upload archive could not be opened as a non-symlink regular file/,
     );
     expect(output).not.toContain(artifactPath);
+  });
+
+  it("routes every file candidate through the shared final-symlink refusal", async () => {
+    for (const [selectedIndex, policy] of INPUT_POLICIES.entries()) {
+      const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
+      temporaryDirectories.push(directory);
+      const { inputBytes, inputPaths } = await writeFixtureInputs(directory);
+      const targetPath = join(directory, `target-${selectedIndex}.bin`);
+      await writeFile(targetPath, inputBytes[selectedIndex]);
+      await rm(inputPaths[selectedIndex]);
+      await symlink(targetPath, inputPaths[selectedIndex]);
+
+      const output = await rejectedOutput(inputPaths);
+      expect(output).toContain(
+        `${policy.label} could not be opened as a non-symlink regular file`,
+      );
+    }
+  });
+
+  it("enforces the explicit pre-read ceiling for every file candidate", async () => {
+    for (const [selectedIndex, policy] of INPUT_POLICIES.entries()) {
+      const directory = await mkdtemp(join(tmpdir(), "warden-release-verify-cli-test-"));
+      temporaryDirectories.push(directory);
+      const { inputPaths } = await writeFixtureInputs(directory);
+      await truncate(inputPaths[selectedIndex], policy.maximumBytes + 1);
+
+      const output = await rejectedOutput(inputPaths);
+      expect(output).toContain(
+        `${policy.label} must be a nonempty regular file no larger than ${policy.maximumBytes} bytes`,
+      );
+    }
   });
 
   it("accepts the documented pnpm argument separator before reading the candidate", async () => {

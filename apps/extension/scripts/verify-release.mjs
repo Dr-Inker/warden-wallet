@@ -12,6 +12,7 @@ import {
   verifyCanonicalUnpacked,
 } from "./release-artifact.mjs";
 import { normalizeReleaseCliArguments } from "./release-cli-arguments.mjs";
+import { readBoundedRegularFile } from "./release-input-file.mjs";
 import { verifyReleaseRecipeInputEvidenceAttachment } from "./release-recipe-input-evidence.mjs";
 import { verifyStaticInputEvidenceAttachment } from "./static-input-evidence.mjs";
 
@@ -20,6 +21,9 @@ const appDirectory = resolve(scriptDirectory, "..");
 const repositoryRoot = resolve(appDirectory, "../..");
 const releaseDirectory = join(appDirectory, "release");
 const execFile = promisify(execFileCallback);
+const MAX_UPLOAD_ARCHIVE_BYTES = 512 * 1024 * 1024;
+const MAX_UPLOAD_ARTIFACT_MANIFEST_BYTES = 8 * 1024 * 1024;
+const MAX_UPLOAD_EVIDENCE_BYTES = 256 * 1024 * 1024;
 
 function fail(message) {
   throw new Error(`extension release verify: ${message}`);
@@ -52,12 +56,36 @@ async function main() {
     ? (args.length === 0 ? join(releaseDirectory, "unpacked") : undefined)
     : resolve(args[6]);
 
-  const archiveBytes = await readFile(archivePath);
-  const artifactManifest = parseArtifactManifest(await readFile(artifactManifestPath));
-  const dependencyEvidenceBytes = await readFile(dependencyEvidencePath);
-  const bundleInputEvidenceBytes = await readFile(bundleInputEvidencePath);
-  const staticInputEvidenceBytes = await readFile(staticInputEvidencePath);
-  const releaseRecipeInputEvidenceBytes = await readFile(releaseRecipeInputEvidencePath);
+  const archiveBytes = await readBoundedRegularFile(
+    archivePath,
+    MAX_UPLOAD_ARCHIVE_BYTES,
+    "upload archive",
+  );
+  const artifactManifest = parseArtifactManifest(await readBoundedRegularFile(
+    artifactManifestPath,
+    MAX_UPLOAD_ARTIFACT_MANIFEST_BYTES,
+    "artifact manifest",
+  ));
+  const dependencyEvidenceBytes = await readBoundedRegularFile(
+    dependencyEvidencePath,
+    MAX_UPLOAD_EVIDENCE_BYTES,
+    "dependency evidence",
+  );
+  const bundleInputEvidenceBytes = await readBoundedRegularFile(
+    bundleInputEvidencePath,
+    MAX_UPLOAD_EVIDENCE_BYTES,
+    "bundle input evidence",
+  );
+  const staticInputEvidenceBytes = await readBoundedRegularFile(
+    staticInputEvidencePath,
+    MAX_UPLOAD_EVIDENCE_BYTES,
+    "static input evidence",
+  );
+  const releaseRecipeInputEvidenceBytes = await readBoundedRegularFile(
+    releaseRecipeInputEvidencePath,
+    MAX_UPLOAD_EVIDENCE_BYTES,
+    "release recipe input evidence",
+  );
   const verified = verifyArtifactArchive({ archiveBytes, artifactManifest });
   const dependencyEvidence = verifyProductionDependencyEvidenceAttachment({
     evidenceBytes: dependencyEvidenceBytes,

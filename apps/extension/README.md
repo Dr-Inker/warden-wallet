@@ -73,6 +73,14 @@ grammar; the seventh argument remains the optional unpacked directory. The
 shared release-CLI normalizer removes exactly one leading `--`. A doubled,
 interior, or trailing separator remains an ordinary positional argument.
 
+Before parsing, the verifier stable-reads each of the six file candidates
+through one `O_NOFOLLOW` handle, checks the opened procfs path, requires a
+nonempty regular file with stable identity/size/timestamps, and applies a
+**512 MiB** archive ceiling, an **8 MiB** artifact-manifest ceiling, and a
+**256 MiB** ceiling to each of the four evidence sidecars. The optional seventh
+argument is a directory and remains under the canonical unpacked-tree checks;
+it is not passed to the file reader.
+
 Chrome's current Web Store contract requires an upload ZIP with
 `manifest.json` at its root; see [Prepare your extension](https://developer.chrome.com/docs/webstore/prepare)
 and [Publish in the Chrome Web Store](https://developer.chrome.com/docs/webstore/publish).
