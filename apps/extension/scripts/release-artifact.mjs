@@ -11,9 +11,10 @@ import {
 } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 
+import { JS_BUNDLE_INPUT_EVIDENCE_SCHEMA } from "./bundle-input-evidence.mjs";
 import { PRODUCTION_DEPENDENCY_EVIDENCE_SCHEMA } from "./production-dependency-evidence.mjs";
 
-export const ARTIFACT_SCHEMA = "warden.extension-artifact.v2";
+export const ARTIFACT_SCHEMA = "warden.extension-artifact.v3";
 export const CANONICAL_TIMESTAMP = "1980-01-01T00:00:00.000Z";
 
 const CANONICAL_DATE = new Date(CANONICAL_TIMESTAMP);
@@ -574,7 +575,7 @@ function assertHash(value, label) {
 function assertArtifactManifestShape(artifactManifest) {
   assertExactKeys(
     artifactManifest,
-    ["schema", "source", "toolchain", "extension", "payload", "archive", "dependencyEvidence"],
+    ["schema", "source", "toolchain", "extension", "payload", "archive", "dependencyEvidence", "bundleInputEvidence"],
     "artifact manifest",
   );
   if (artifactManifest.schema !== ARTIFACT_SCHEMA) {
@@ -660,6 +661,25 @@ function assertArtifactManifestShape(artifactManifest) {
     artifactManifest.dependencyEvidence.sha256,
     "artifact dependency evidence sha256",
   );
+  assertExactKeys(
+    artifactManifest.bundleInputEvidence,
+    ["file", "schema", "bytes", "sha256"],
+    "artifact bundle input evidence",
+  );
+  if (
+    typeof artifactManifest.bundleInputEvidence.file !== "string" ||
+    !/^[A-Za-z0-9._-]+\.bundle-inputs\.json$/.test(artifactManifest.bundleInputEvidence.file) ||
+    artifactManifest.bundleInputEvidence.schema !== JS_BUNDLE_INPUT_EVIDENCE_SCHEMA ||
+    !Number.isSafeInteger(artifactManifest.bundleInputEvidence.bytes) ||
+    artifactManifest.bundleInputEvidence.bytes <= 0 ||
+    artifactManifest.bundleInputEvidence.bytes > MAX_ENTRY_BYTES
+  ) {
+    fail("artifact bundle input evidence metadata is invalid");
+  }
+  assertHash(
+    artifactManifest.bundleInputEvidence.sha256,
+    "artifact bundle input evidence sha256",
+  );
 }
 
 export function createArtifactManifest({
@@ -669,6 +689,7 @@ export function createArtifactManifest({
   source,
   toolchain,
   dependencyEvidence,
+  bundleInputEvidence,
 }) {
   const canonical = canonicalizeEntries(entries).map(({ path, data }) => ({ path, data }));
   const parsedArchive = parseCanonicalZip(archiveBytes);
@@ -686,6 +707,14 @@ export function createArtifactManifest({
     dependencyEvidence.bytes.length === 0
   ) {
     fail("dependency evidence attachment must provide a file name and non-empty bytes");
+  }
+  if (
+    !isPlainObject(bundleInputEvidence) ||
+    typeof bundleInputEvidence.file !== "string" ||
+    !(bundleInputEvidence.bytes instanceof Uint8Array) ||
+    bundleInputEvidence.bytes.length === 0
+  ) {
+    fail("bundle input evidence attachment must provide a file name and non-empty bytes");
   }
   const artifactManifest = {
     schema: ARTIFACT_SCHEMA,
@@ -715,6 +744,12 @@ export function createArtifactManifest({
       schema: PRODUCTION_DEPENDENCY_EVIDENCE_SCHEMA,
       bytes: dependencyEvidence.bytes.length,
       sha256: sha256(dependencyEvidence.bytes),
+    },
+    bundleInputEvidence: {
+      file: bundleInputEvidence.file,
+      schema: JS_BUNDLE_INPUT_EVIDENCE_SCHEMA,
+      bytes: bundleInputEvidence.bytes.length,
+      sha256: sha256(bundleInputEvidence.bytes),
     },
   };
   assertArtifactManifestShape(artifactManifest);

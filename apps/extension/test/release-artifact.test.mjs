@@ -47,6 +47,11 @@ const DEPENDENCY_EVIDENCE = Object.freeze({
   bytes: Buffer.from("canonical dependency evidence fixture\n"),
 });
 
+const BUNDLE_INPUT_EVIDENCE = Object.freeze({
+  file: "warden-extension-1.2.3.bundle-inputs.json",
+  bytes: Buffer.from("canonical bundle input evidence fixture\n"),
+});
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
@@ -80,6 +85,7 @@ function baselineArtifact(entries = payloadEntries()) {
     source: RELEASE_SOURCE,
     toolchain: RELEASE_TOOLCHAIN,
     dependencyEvidence: DEPENDENCY_EVIDENCE,
+    bundleInputEvidence: BUNDLE_INPUT_EVIDENCE,
   });
   return { archiveBytes, artifactManifest };
 }
@@ -219,6 +225,7 @@ describe("reviewed artifact manifest and fail-closed verifier", () => {
       source: RELEASE_SOURCE,
       toolchain: RELEASE_TOOLCHAIN,
       dependencyEvidence: DEPENDENCY_EVIDENCE,
+      bundleInputEvidence: BUNDLE_INPUT_EVIDENCE,
     })).toThrow(/canonical two-space JSON/);
   });
 

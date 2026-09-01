@@ -107,9 +107,10 @@ license posture.
 - `rpc-websockets` (LGPL-3.0-only) and `text-encoding-utf-8` (unknown
   license) remain unresolved. The extension release gate now preserves both
   package-declared values in its deterministic `*.sbom.json` production-closure
-  attachment, but explicitly does not claim exact emitted-bundle coverage or a
-  legal disposition. Re-evaluate with esbuild input evidence and counsel before
-  SHIP; see the table above.
+  attachment. Its separate `*.bundle-inputs.json` attachment now records exact
+  positive-byte esbuild input files for the four JavaScript outputs, but does
+  not make an automatic package/license crosswalk or legal disposition.
+  Re-evaluate the machine evidence with counsel before SHIP; see the table above.
 - This file is **generated, not hand-curated** — regenerate it (rerun both
   commands, re-paste) on every `Cargo.lock`/`pnpm-lock.yaml` change that
   Task 11's or a successor's review cares about; it will silently go stale

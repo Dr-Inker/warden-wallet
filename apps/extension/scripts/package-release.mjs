@@ -18,6 +18,12 @@ import { promisify } from "node:util";
 
 import { version as esbuildVersion } from "esbuild";
 
+import { buildExtension } from "./build.mjs";
+import {
+  createJavaScriptBundleInputEvidence,
+  serializeJavaScriptBundleInputEvidence,
+  verifyJavaScriptBundleInputEvidenceAttachment,
+} from "./bundle-input-evidence.mjs";
 import {
   collectInstalledProductionDependencyReports,
   createProductionDependencyEvidence,
@@ -39,7 +45,6 @@ const execFile = promisify(execFileCallback);
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appDirectory = resolve(scriptDirectory, "..");
 const repositoryRoot = resolve(appDirectory, "../..");
-const buildScript = join(scriptDirectory, "build.mjs");
 const distributionDirectory = join(appDirectory, "dist");
 const releaseDirectory = join(appDirectory, "release");
 const canonicalDate = new Date(CANONICAL_TIMESTAMP);
@@ -223,13 +228,7 @@ async function writeCanonicalFile(path, bytes) {
 
 async function main() {
   const releaseEnvironment = await assertReleaseEnvironment();
-  const buildResult = await run(process.execPath, [buildScript], appDirectory);
-  if (buildResult.stdout !== "") {
-    process.stdout.write(buildResult.stdout);
-  }
-  if (buildResult.stderr !== "") {
-    process.stderr.write(buildResult.stderr);
-  }
+  const { bundleResults } = await buildExtension();
   const { stdout: postBuildStatus } = await run("git", ["status", "--porcelain=v1", "--untracked-files=all"]);
   if (postBuildStatus !== "") {
     fail(`build changed the source tree:\n${postBuildStatus.trimEnd()}`);
@@ -246,7 +245,21 @@ async function main() {
   const archiveFileName = `warden-extension-${version}.zip`;
   const artifactManifestFileName = `warden-extension-${version}.artifact.json`;
   const dependencyEvidenceFileName = `warden-extension-${version}.sbom.json`;
+  const bundleInputEvidenceFileName = `warden-extension-${version}.bundle-inputs.json`;
   const archiveBytes = createCanonicalZip(entries);
+  const bundleInputEvidence = await createJavaScriptBundleInputEvidence({
+    buildResults,
+    entries,
+    appDirectory,
+    repositoryRoot,
+    source: releaseEnvironment.source,
+    archiveFileName,
+    archiveBytes,
+  });
+  const bundleInputEvidenceBytes = Buffer.from(
+    serializeJavaScriptBundleInputEvidence(bundleInputEvidence),
+    "utf8",
+  );
   const { dependencyReport, licenseReport } =
     await collectInstalledProductionDependencyReports({
       rootDirectory: appDirectory,
@@ -281,10 +294,19 @@ async function main() {
       file: dependencyEvidenceFileName,
       bytes: dependencyEvidenceBytes,
     },
+    bundleInputEvidence: {
+      file: bundleInputEvidenceFileName,
+      bytes: bundleInputEvidenceBytes,
+    },
   });
   verifyArtifactArchive({ archiveBytes, artifactManifest });
   verifyProductionDependencyEvidenceAttachment({
     evidenceBytes: dependencyEvidenceBytes,
+    artifactManifest,
+    archiveBytes,
+  });
+  verifyJavaScriptBundleInputEvidenceAttachment({
+    evidenceBytes: bundleInputEvidenceBytes,
     artifactManifest,
     archiveBytes,
   });
@@ -295,6 +317,7 @@ async function main() {
   const stagedArchive = join(stagingDirectory, archiveFileName);
   const stagedArtifactManifest = join(stagingDirectory, artifactManifestFileName);
   const stagedDependencyEvidence = join(stagingDirectory, dependencyEvidenceFileName);
+  const stagedBundleInputEvidence = join(stagingDirectory, bundleInputEvidenceFileName);
   try {
     await stageCanonicalUnpacked(entries, stagedUnpacked);
     await writeCanonicalFile(stagedArchive, archiveBytes);
@@ -303,6 +326,7 @@ async function main() {
       Buffer.from(serializeArtifactManifest(artifactManifest), "utf8"),
     );
     await writeCanonicalFile(stagedDependencyEvidence, dependencyEvidenceBytes);
+    await writeCanonicalFile(stagedBundleInputEvidence, bundleInputEvidenceBytes);
     await verifyCanonicalUnpacked({
       rootDirectory: stagedUnpacked,
       artifactManifest,
@@ -312,14 +336,17 @@ async function main() {
     const archiveTarget = join(releaseDirectory, archiveFileName);
     const artifactManifestTarget = join(releaseDirectory, artifactManifestFileName);
     const dependencyEvidenceTarget = join(releaseDirectory, dependencyEvidenceFileName);
+    const bundleInputEvidenceTarget = join(releaseDirectory, bundleInputEvidenceFileName);
     await removeGeneratedTarget(unpackedTarget, "directory");
     await removeGeneratedTarget(archiveTarget, "file");
     await removeGeneratedTarget(artifactManifestTarget, "file");
     await removeGeneratedTarget(dependencyEvidenceTarget, "file");
+    await removeGeneratedTarget(bundleInputEvidenceTarget, "file");
     await rename(stagedUnpacked, unpackedTarget);
     await rename(stagedArchive, archiveTarget);
     await rename(stagedArtifactManifest, artifactManifestTarget);
     await rename(stagedDependencyEvidence, dependencyEvidenceTarget);
+    await rename(stagedBundleInputEvidence, bundleInputEvidenceTarget);
   } finally {
     await rm(stagingDirectory, { recursive: true, force: true });
   }
@@ -330,13 +357,19 @@ async function main() {
     repositoryRoot,
     join(releaseDirectory, dependencyEvidenceFileName),
   );
+  const relativeBundleInputEvidence = relative(
+    repositoryRoot,
+    join(releaseDirectory, bundleInputEvidenceFileName),
+  );
   console.log(`packaged ${relativeArchive}`);
   console.log(`attestation ${relativeManifest}`);
   console.log(`dependency evidence ${relativeDependencyEvidence}`);
+  console.log(`bundle input evidence ${relativeBundleInputEvidence}`);
   console.log(`source ${artifactManifest.source.gitCommit}`);
   console.log(`payload tree sha256 ${artifactManifest.payload.treeSha256}`);
   console.log(`archive sha256 ${artifactManifest.archive.sha256}`);
   console.log(`production dependency components ${dependencyEvidence.components.length}`);
+  console.log(`JavaScript bundle inputs ${bundleInputEvidence.bundles.reduce((total, bundle) => total + bundle.inputCount, 0)}`);
 }
 
 await main();

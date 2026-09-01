@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { verifyJavaScriptBundleInputEvidenceAttachment } from "./bundle-input-evidence.mjs";
 import { verifyProductionDependencyEvidenceAttachment } from "./production-dependency-evidence.mjs";
 import {
   parseArtifactManifest,
@@ -30,23 +31,31 @@ async function main() {
   const defaultArchive = join(releaseDirectory, `warden-extension-${version}.zip`);
   const defaultArtifactManifest = join(releaseDirectory, `warden-extension-${version}.artifact.json`);
   const defaultDependencyEvidence = join(releaseDirectory, `warden-extension-${version}.sbom.json`);
+  const defaultBundleInputEvidence = join(releaseDirectory, `warden-extension-${version}.bundle-inputs.json`);
   const args = process.argv.slice(2);
-  if (![0, 3, 4].includes(args.length)) {
-    fail("usage: verify-release.mjs [candidate.zip artifact.json dependency-evidence.json [unpacked-directory]]");
+  if (![0, 4, 5].includes(args.length)) {
+    fail("usage: verify-release.mjs [candidate.zip artifact.json dependency-evidence.json bundle-input-evidence.json [unpacked-directory]]");
   }
   const archivePath = resolve(args[0] ?? defaultArchive);
   const artifactManifestPath = resolve(args[1] ?? defaultArtifactManifest);
   const dependencyEvidencePath = resolve(args[2] ?? defaultDependencyEvidence);
-  const unpackedPath = args[3] === undefined
+  const bundleInputEvidencePath = resolve(args[3] ?? defaultBundleInputEvidence);
+  const unpackedPath = args[4] === undefined
     ? (args.length === 0 ? join(releaseDirectory, "unpacked") : undefined)
-    : resolve(args[3]);
+    : resolve(args[4]);
 
   const archiveBytes = await readFile(archivePath);
   const artifactManifest = parseArtifactManifest(await readFile(artifactManifestPath));
   const dependencyEvidenceBytes = await readFile(dependencyEvidencePath);
+  const bundleInputEvidenceBytes = await readFile(bundleInputEvidencePath);
   const verified = verifyArtifactArchive({ archiveBytes, artifactManifest });
   const dependencyEvidence = verifyProductionDependencyEvidenceAttachment({
     evidenceBytes: dependencyEvidenceBytes,
+    artifactManifest,
+    archiveBytes,
+  });
+  const bundleInputEvidence = verifyJavaScriptBundleInputEvidenceAttachment({
+    evidenceBytes: bundleInputEvidenceBytes,
     artifactManifest,
     archiveBytes,
   });
@@ -75,11 +84,14 @@ async function main() {
   console.log(`verified ${archivePath}`);
   console.log(`against ${artifactManifestPath}`);
   console.log(`dependency evidence ${dependencyEvidencePath}`);
+  console.log(`bundle input evidence ${bundleInputEvidencePath}`);
   console.log(`source ${artifactManifest.source.gitCommit}`);
   console.log(`files ${verified.files}`);
   console.log(`payload tree sha256 ${verified.treeSha256}`);
   console.log(`archive sha256 ${verified.archiveSha256}`);
   console.log(`production dependency components ${dependencyEvidence.components}`);
+  console.log(`JavaScript bundles ${bundleInputEvidence.bundles}`);
+  console.log(`JavaScript bundle inputs ${bundleInputEvidence.inputs}`);
   console.log("independent ZIP reader unzip -t passed");
   console.log(unpackedPath === undefined ? "unpacked tree not requested" : `unpacked ${unpackedPath}`);
 }

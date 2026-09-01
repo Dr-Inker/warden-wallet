@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { build } from "esbuild";
 
@@ -8,6 +8,7 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appDirectory = resolve(scriptDirectory, "..");
 const outputDirectory = join(appDirectory, "dist");
 
+export async function buildExtension() {
 if (resolve(outputDirectory) !== resolve(appDirectory, "dist")) {
   throw new Error("refusing to clean an unexpected extension output directory");
 }
@@ -20,6 +21,7 @@ const sharedBuildOptions = {
   sourcemap: false,
   legalComments: "none",
   metafile: true,
+  absWorkingDir: appDirectory,
 };
 
 const backgroundResult = await build({
@@ -58,7 +60,7 @@ const approvalResult = await build({
 // release registry tree-shaken until a later milestone opens them with
 // executable contracts.
 const backgroundInputs = new Set(
-  Object.keys(backgroundResult.metafile.inputs).map((input) => resolve(input)),
+  Object.keys(backgroundResult.metafile.inputs).map((input) => resolve(appDirectory, input)),
 );
 const requiredBackgroundInputs = [
   join(appDirectory, "src/background/approval-port.ts"),
@@ -111,7 +113,7 @@ const allowedContentInputs = [
   join(appDirectory, "src/provider-protocol.ts"),
 ].map((input) => resolve(input)).sort();
 const contentInputs = Object.keys(contentResult.metafile.inputs)
-  .map((input) => resolve(input))
+  .map((input) => resolve(appDirectory, input))
   .sort();
 const forbiddenContentInputs = [
   join(appDirectory, "src/content/provider-content-transport.ts"),
@@ -138,7 +140,7 @@ const allowedPopupInputs = [
   join(appDirectory, "src/popup-protocol.ts"),
 ].map((input) => resolve(input)).sort();
 const popupInputs = Object.keys(popupResult.metafile.inputs)
-  .map((input) => resolve(input))
+  .map((input) => resolve(appDirectory, input))
   .sort();
 if (
   popupInputs.length !== allowedPopupInputs.length ||
@@ -155,7 +157,7 @@ const allowedApprovalInputs = [
   join(appDirectory, "src/approval-protocol.ts"),
 ].map((input) => resolve(input)).sort();
 const approvalInputs = Object.keys(approvalResult.metafile.inputs)
-  .map((input) => resolve(input))
+  .map((input) => resolve(appDirectory, input))
   .sort();
 if (
   approvalInputs.length !== allowedApprovalInputs.length ||
@@ -212,4 +214,21 @@ if (
   contentScripts[0].js[0] !== "content.js"
 ) {
   throw new Error("extension manifest does not name the emitted content script");
+}
+
+return {
+  bundleResults: [
+    { outputFile: "background.js", metafile: backgroundResult.metafile },
+    { outputFile: "content.js", metafile: contentResult.metafile },
+    { outputFile: "popup.js", metafile: popupResult.metafile },
+    { outputFile: "approval.js", metafile: approvalResult.metafile },
+  ],
+};
+}
+
+if (
+  process.argv[1] !== undefined &&
+  pathToFileURL(resolve(process.argv[1])).href === import.meta.url
+) {
+  await buildExtension();
 }
