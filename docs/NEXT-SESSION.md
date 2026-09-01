@@ -100,6 +100,112 @@
 > `WRD-REL-03` remain `unimplemented`; the composed CLI has stable pre-read
 > bounds, while the two standalone CLIs retain older path-reader implementations.
 
+> ## 2026-09-01 C50 SHARED STABLE RELEASE-INPUT READER — C6 PARTIAL, INPUT PROVENANCE EXTERNAL
+>
+> Behavioral RED commit
+> `3806a27bca0d20db0a570d60c8dcb04a99b85445` invokes the production
+> standalone store-package CLI through a final symlink to a CRX candidate whose
+> independently supplied SHA-256 is exact. The expected no-symlink refusal
+> failed because the CLI followed the link and reached `CRX3 magic must be
+> Cr24`. Implementation commit
+> `b885573d48078b1ef49044d6b0977daf062af041` closes that path boundary and
+> consolidates all three release-verification CLIs on one reviewed helper.
+>
+> `apps/extension/scripts/release-input-file.mjs` opens caller-selected input
+> paths with Linux `O_NOFOLLOW`, requires a nonempty regular file within the
+> caller's exact byte ceiling before allocating it, reads and re-stats the same
+> open handle, rejects any size disagreement among the pre-read stat, returned
+> buffer, and post-read stat, and closes every successfully opened handle in a
+> `finally` block. The composed CLI uses it for the **8 MiB** reviewed artifact
+> manifest, **1 MiB** dual-release report, **1 MiB** artifact-review signature,
+> **512 MiB** CRX3 package, and **512 MiB** reviewed upload ZIP. The standalone
+> detached-review CLI uses it for the **8 MiB** artifact manifest and **1 MiB**
+> detached signature. The standalone store CLI uses it for the **512 MiB** CRX3
+> package, **512 MiB** reviewed upload ZIP, and **8 MiB** artifact manifest.
+> Exact returned buffers still flow into C36/C39–C49's parsers, independent
+> package-digest comparison, canonical/digest checks, GnuPG lane, and strict
+> store verifier. Internal source and extracted-payload reads remain unchanged.
+>
+> The real RED was captured from clean SHA
+> `3806a27bca0d20db0a570d60c8dcb04a99b85445` with this exact command:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension exec vitest run test/verify-store-package-cli.test.mjs -t "rejects a final candidate symlink"
+> ```
+>
+> It exited **1** with one failed test because the symlinked candidate reached
+> the CRX3 magic parser instead of the expected stable-file boundary refusal.
+> From clean implementation SHA
+> `b885573d48078b1ef49044d6b0977daf062af041`, this exact focused/release
+> command exited **0**:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && node --check apps/extension/scripts/release-input-file.mjs && node --check apps/extension/scripts/verify-release-source-tag.mjs && node --check apps/extension/scripts/verify-reviewed-artifact-signature.mjs && node --check apps/extension/scripts/verify-store-package.mjs && pnpm --filter @warden/extension exec vitest run test/verify-store-package-cli.test.mjs test/verify-release-source-tag-cli.test.mjs test/release-recipe-input-evidence.test.mjs test/reviewed-artifact-signature.test.mjs && pnpm --filter @warden/extension release:gate
+> ```
+>
+> All four scripts parsed, the four focused files passed **15/15**, and the real
+> upload release gate passed canonical package/verification, independent
+> Info-ZIP parsing, **8** payload files, **60** production/peer components, **4**
+> JavaScript bundles, **101** positive bundle inputs, **4** static inputs, and
+> **23** release-recipe inputs. The helper is now itself an exact recipe input;
+> the active schema scope/count language, tests, and release docs moved
+> atomically from 22 to 23 without changing schema identity v1.
+>
+> From the same clean implementation SHA, this exact command exited **0** and
+> printed the same SHA before and after:
+>
+> ```sh
+> git rev-parse HEAD && test -z "$(git status --porcelain)" && pnpm --filter @warden/extension test && pnpm --filter @warden/extension typecheck && pnpm --filter @warden/extension build && if rg -n 'release-input-file|readBoundedRegularFile|O_NOFOLLOW|verify-release-source-tag|release-source-tag|verify-reviewed-artifact-signature|reviewed-artifact-signature|verify-store-package|store-package|artifactReview|reviewedUploadArchive|storePackage|expectedStorePackageSha256|dualReleaseReport|OpenPGP verification|GIT_GPG_LAUNCHER' apps/extension/dist; then exit 1; fi && test -z "$(find /tmp -maxdepth 1 -type d \( -name 'warden-release-source-cli-test-*' -o -name 'warden-store-package-cli-test-*' -o -name 'warden-store-package-verify-*' -o -name 'warden-release-source-gpg-launcher-*' -o -name 'warden-openpgp-signature-policy-test-*' -o -name 'warden-release-source-tag-test-*' -o -name 'warden-reviewed-artifact-signature-*' -o -name 'warden-reviewed-artifact-signature-test-*' \) -print -quit)" && git diff --check && git diff --exit-code && test -z "$(git status --porcelain)" && git rev-parse HEAD
+> ```
+>
+> The full extension suite passed **563/563**, typecheck/build passed, release
+> verification/composition tooling remained absent from `dist`, no selected
+> CLI/fixture/launcher/verifier temporary directory remained, and diff/clean-
+> tree guards passed.
+>
+> At the implementation SHA, the shared helper, composed CLI, standalone review
+> CLI, standalone store CLI, and store CLI test were respectively **1,394**,
+> **7,995**, **2,569**, **4,882**, and **5,243 bytes**, with SHA-256 values
+> `ee1ddcf7f9105bcf2e025cb8f826371831dcb1ccf128341a3aa758e2de75c6d2`,
+> `486c63834de7ababe743bca67d54c6412d4d826bdbeb023a4d683bbce46f3ccc`,
+> `5a0c75d5d4c32e0a3ad96d4be35263e992a04b8f59b0721d91c93a18ffb74102`,
+> `5d0b04a1f46f50b896c339320a1dd047beda06bbb830f6c2ef3464e51d504793`,
+> and `b67927a46d47cbf59b7ec6db413346927ed05b0204319ee5493ab254076444f0`.
+> The generated artifact, bundle, recipe, dependency, and static sidecar
+> SHA-256 values were respectively
+> `b71efba1a4cf895d84332106619679ac5672a33db59809f68a78222c48370521`,
+> `c1b1bd90636e01daf32fff839dcd86136576e9c1c19aad4757dcfc1ba0f1ab6b`,
+> `7160c72817de0f9a97a40fe5cbc2531e50c6f664b4589b1bd5ff85a26d85bbc5`,
+> `8c23267d6f212a3ddc9c41b066ecf776adacbd7474df27cfe633506d33345ca1`,
+> and `d8e0ff08f2ab3ef150cbcf65e22166ab693ba40f7e9fbb3d29f1dafe58381ef1`.
+> The recipe sidecar was **4,740 bytes**, named 23 inputs, and bound the helper
+> with its exact **1,394-byte** length and
+> `ee1ddcf7f9105bcf2e025cb8f826371831dcb1ccf128341a3aa758e2de75c6d2`
+> digest. ZIP SHA-256 remained
+> `ce1b3a4792cd28def0b336d99a990bda3141c26f0b625b206163d505aca2c844`
+> and payload-tree SHA-256 remained
+> `f0e7ef2c6f3d1133b5e40557a014a656ccd1fe0cb7590632973b8e33a447a879`.
+> There was no dependency, lockfile, or payload-byte change.
+>
+> **No invariant status changes.** `WRD-REL-01`, `WRD-REL-02`, and
+> `WRD-REL-03` remain `unimplemented`; the existing client invariants remain as
+> recorded and production provider routing remains fixed unavailable.
+> Independent second-model review remains **UNVERIFIED**.
+>
+> **Harsh residual:** C50 makes the final path component non-following and all
+> ten caller-selected reads bounded through one stable handle; it neither
+> authenticates input provenance nor makes parent-directory resolution or the
+> host trusted. It does not detect same-length in-place mutation except where
+> incumbent canonical/digest/signature checks reject the resulting bytes.
+> There is still no real store return, owner-approved production extension id,
+> publisher-control evidence, production artifact/tag/review key/signature,
+> freshness/trusted-time policy, key/storage/lifecycle policy, transparency log,
+> off-host independent build, host/toolchain attestation, external audit,
+> deployment, or legal disposition. Builders remain same-host/shared-store and
+> explicitly non-independent. The repository-wide ledger-inclusive gate is
+> intentionally pending until this entry is committed; implementation-SHA
+> focused/full-extension evidence above must not be relabeled as that gate.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C48 CLOSED; C49 NOT STARTED
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
