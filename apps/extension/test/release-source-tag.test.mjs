@@ -493,6 +493,15 @@ function verify(options = {}) {
 }
 
 describe("release source annotated-tag verification", () => {
+  it("requires exact artifact bytes and an independent digest in the shared verifier", async () => {
+    await expect(verify({
+      artifactManifestBytes: undefined,
+      expectedArtifactManifestSha256: undefined,
+    })).rejects.toThrow(
+      /exact artifact manifest bytes and independently supplied SHA-256 are required/,
+    );
+  });
+
   it("pins the private offline GnuPG launcher contract", () => {
     expect(GIT_GPG_LAUNCHER_MODE).toBe(0o700);
     expect(GIT_GPG_LAUNCHER_TEXT).toBe([
