@@ -9,10 +9,12 @@
 >   internally cross-check the three `VALIDSIG` time fields shared by the
 >   signed-source and reviewed-artifact verifiers, and report the accepted
 >   values without inventing a freshness window. Begin with a fresh read-only
->   map and real RED. Require a real canonical UTC calendar date, canonical
->   unsigned OpenPGP timestamp values within the wire-format range, agreement
->   between the calendar date and signature-creation timestamp, and an absent/
->   zero expiration or an expiration strictly after creation. Preserve C39's
+>   map and real RED. Require a real canonical UTC calendar date; normalize both
+>   documented GnuPG timestamp encodings; constrain creation to an unsigned
+>   four-octet OpenPGP time; require agreement between its UTC date and the
+>   calendar field; and require an absent/zero expiration or a later absolute
+>   expiration whose lifetime delta fits the unsigned four-octet signature-
+>   expiration interval. Preserve C39's
 >   version/algorithm/hash/class rules, C40's exact primary and signing-key
 >   fingerprints, C41's offline fixed launcher, and Git's annotated-tag
 >   semantics. Do not choose acceptable signature age, clock skew, key expiry,
@@ -55,8 +57,8 @@
 >   deploy, upload, publishing, live service, external message, secret
 >   persistence, legal ruling, or real-account/funds mutation.
 > - **RETURN:** implementation/ledger SHAs, clean/dirty state, exact commands
->   and outcomes, accepted time grammar/range/cross-checks, real fixture values,
->   unchanged or promoted invariants, independent-review status, explicit
+>   and outcomes, accepted time encodings/ranges/cross-checks, real fixture
+>   values, unchanged or promoted invariants, independent-review status, explicit
 >   structural-time/freshness and synthetic/production gaps, and remaining
 >   owner/counsel/external-state blockers.
 >

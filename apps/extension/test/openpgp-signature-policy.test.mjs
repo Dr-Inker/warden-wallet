@@ -191,6 +191,13 @@ describe("shared OpenPGP release signature policy", () => {
       signatureTimestamp: 1_788_220_800,
       signatureExpirationTimestamp: 1_788_220_801,
     });
+    expect(parseStatus(statusLine({
+      primary,
+      signatureExpirationTimestamp: "6083188095",
+    }), primary)).toMatchObject({
+      signatureTimestamp: 1_788_220_800,
+      signatureExpirationTimestamp: 6_083_188_095,
+    });
   });
 
   it("rejects malformed, out-of-range, inconsistent, or non-increasing time fields", () => {
@@ -217,7 +224,7 @@ describe("shared OpenPGP release signature policy", () => {
     for (const signatureExpirationTimestamp of [
       "01788220801",
       "-1",
-      "4294967296",
+      "6083188096",
       "20260901T00000",
       "20260230T000000",
       "21060207T062816",
