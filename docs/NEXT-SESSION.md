@@ -1,5 +1,16 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-02 POINTER — CODEX PICKUP MEMO SUPERSEDES THIS FILE FOR THE NEXT SESSION
+>
+> The Fable-5 audit (`docs/security/FABLE-AUDIT-2026-09-02.md`) and its remediation
+> (P-1, K-1, E-1, E-4, A-1, A-2, X-1, X-2; ledger close `f63262b`) are DONE on `phase1b`.
+> The next session is a **Codex review session**, not an implementation session: read
+> **`docs/CODEX-HANDOVER-2026-09-02.md`** first and follow it literally — it carries the exact
+> BASE, the owed review rounds R0–R8 with pre-cut commit ranges, per-round mechanics, ledger
+> rules, OWNER decisions (record, do not take), and every footgun that bit the previous session.
+> The 2026-09-01 memo below is still true for C75 and the external owner work; it is not
+> superseded on those points.
+
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C75 CLOSED; EXTERNAL OWNER WORK REMAINS
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`

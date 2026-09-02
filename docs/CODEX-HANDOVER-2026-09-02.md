@@ -12,9 +12,10 @@
 >   (3) do NOT take any of the §5 owner decisions — record them, ask, stop.
 > - **CWD:** `/opt/warden` (branch `phase1b`, the only working branch; `main` is stale and is not
 >   the integration target).
-> - **BASE:** `LEDGER_CLOSE_SHA` = the ledger close commit of the Fable session (this memo's
->   parent). Everything in §2 is reachable from it. Fable audit report:
->   `docs/security/FABLE-AUDIT-2026-09-02.md`.
+> - **BASE:** `f63262be9e6b51e58269e9eefd64d0fabd4b6c3b` (`f63262b`) = the ledger close commit
+>   of the Fable session; it also carries v1 of this memo (the commit after it carries the
+>   finished memo + the R0 result, see §3.6). Everything in §2 is reachable from it. Fable audit
+>   report: `docs/security/FABLE-AUDIT-2026-09-02.md`.
 > - **READ:** this memo top to bottom; `docs/security/FABLE-AUDIT-2026-09-02.md` §2 (findings
 >   table) and §4 (recommended order); `docs/security/INVARIANTS.md` rows WRD-EXEC-13/14,
 >   WRD-EXT-03..06, WRD-REL-04/05 — their `notes` are the honest LIMITS text and name every
@@ -50,7 +51,7 @@ A Fable 5 audit ran on 2026-09-02 (`docs/security/FABLE-AUDIT-2026-09-02.md`; 31
 same session then executed the audit's recommended remediation order. The product fixes are in
 (§2). What is NOT done — and is yours — is the assurance debt the audit rated **High (process)**:
 
-- **R-1:** the review ledger stops at 2026-08-23. Between `77a8273` and `LEDGER_CLOSE_SHA` there
+- **R-1:** the review ledger stops at 2026-08-23. Between `77a8273` and `f63262b` there
   are ~350 first-parent commits (~29k product-code lines across `packages/core`, `apps/extension`,
   `programs`) with exactly ONE recorded Codex round (P-1 round 1, 3 findings). The C1–C75 client
   cycles of 2026-08-30 → 2026-09-01 (keyring, MV3 boundary, provider pipeline, approval, release
@@ -67,9 +68,10 @@ same suspicion as the C-cycles.
 
 ## 2. Exact state at BASE
 
-Branch `phase1b`, clean tree. Commits since the audit report landed (`06aac9d`), oldest first —
-every one made with `git -c core.hooksPath=/dev/null commit` (pre-commit gate bypassed; the FULL
-gate was run separately, see §2.3):
+Branch `phase1b`, clean tree. Commits since the audit report landed (`06aac9d`), oldest first.
+Every commit from `3766e24` through `e8365a7` was made with `git -c core.hooksPath=/dev/null
+commit` (pre-commit gate bypassed; the FULL gate was run separately, see §2.3). `f63262b` and the
+commits after it were made WITH the hook (gate ran and passed in-hook):
 
 | SHA | What | Audit ID | Ledger |
 |---|---|---|---|
@@ -90,7 +92,7 @@ gate was run separately, see §2.3):
 | `69a6282` | extension: X-1 capability-bound terminal settlement (MessagePort handshake) + X-2 per-origin caps (`provider-origin-capacity.ts`) | X-1/X-2 | WRD-EXT-05/06 |
 | `243f469` | X-1 handshake made claim-then-grant (real-Chromium lane refuted the push direction: 7/15 browser tests failed) | X-1 | WRD-EXT-05 |
 | `e8365a7` | WRD-EXT-05/06 rows + THREATMODEL row | — | — |
-| `LEDGER_CLOSE_SHA` | scorecard flip WRDF-0109..0111 (`remediation_verified: true` with gate evidence), WRD-EXEC-14 note records the un-recordable round 2, evidence SHAs repointed from worktree commits to their phase1b cherry-picks (§7.6) | — | — |
+| `f63262b` | scorecard flip WRDF-0109..0111 (`remediation_verified: true` with gate evidence), WRD-EXEC-14 note records the un-recordable round 2, evidence SHAs repointed from worktree commits to their phase1b cherry-picks (§7.6) | — | — |
 
 Ledger totals at BASE: 97 invariants — 64 `test-covered`, 32 `unimplemented`, 1 `llm-asserted`.
 Scorecard: 236 rows, WRDF-0001..0111. REVIEW-RUNS: last recorded round is thread
@@ -137,9 +139,11 @@ The FULL gate (`bash .claude/test-gate.sh`) at `e8365a7` — see the scorecard r
 WRDF-0109..0111 `remediation_gate_cmd` for the exact counts; the first run of it failed ONLY in
 the L9 supply-chain lane on an HTTP 401 while `cargo deny` fetched the RustSec advisory DB (§7.9),
 every product lane green; the DB was refreshed and the full gate re-run green. Product-lane counts
-at that SHA: `@warden/core` 700, `@warden/extension` 700 vitest + 15 Playwright, Rust
-`cargo test --workspace --features test-jup` all green, clippy `-D arithmetic_side_effects`
-clean.
+at that SHA (green run finished 2026-09-02 10:14 UTC, log kept by the session as
+`gate-full3.log`): `@warden/core` 700/700, `@warden/extension` 700/700 vitest + 15/15 Playwright,
+Rust `cargo test --workspace --features test-jup` **692 passed / 0 failed**, clippy
+`-D clippy::arithmetic_side_effects` clean, L9 supply-chain gate PASS. Nothing in `f63262b` or
+later touches product code, so that evidence stands for BASE.
 
 ## 3. The review rounds you owe — in this order
 
@@ -148,7 +152,7 @@ All rounds: `scripts/review.sh <base> <head> --kind task-diff`, clean tree, HEAD
 `--model`/`--effort`. Every round seeds the whole invariant ledger; silence on a seeded invariant
 fails validation, so a "no findings" artefact must still rule on every row.
 
-The range `77a8273..LEDGER_CLOSE_SHA` is far too large for one prompt (Codex runs `git diff`
+The range `77a8273..f63262b` is far too large for one prompt (Codex runs `git diff`
 itself inside a read-only sandbox). It is pre-cut below at natural cycle boundaries with the
 product-code line count so you can judge context. If a chunk still blows context or the content
 filter, split it at a `feat(...)`/`fix(...)` commit boundary and record BOTH halves; never drop a
@@ -156,7 +160,7 @@ sub-range silently.
 
 | # | base..head | commits | product +/- | What it is | Why it matters |
 |---|---|---|---|---|---|
-| R0 | `06aac9d..LEDGER_CLOSE_SHA` | ~19 | +2.7k / −0.1k | THE FABLE SESSION'S OWN FIXES (§2 table). Includes `2ddf781`+`14ee34b` = **discharges the owed P-1 round 2** if it records. | Unreviewed security fixes in program + extension + release tooling; author-only eyes. Do this FIRST. |
+| R0 | `06aac9d..f63262b` (or `..HEAD`, §3.6) | ~19 | +2.7k / −0.1k | THE FABLE SESSION'S OWN FIXES (§2 table). Includes `2ddf781`+`14ee34b` = **discharges the owed P-1 round 2** if it records. **Attempted twice by the Fable session, content-filter-refused both times — §3.6 has the split plan.** | Unreviewed security fixes in program + extension + release tooling; author-only eyes. Do this FIRST. |
 | R1 | `77a8273..d5a8117` | 38 | +6.4k / −0.1k | C1–C6: keyring dual-KEK envelope + persistent record (`packages/core/src/keyring/`), MV3 session boundary, sender classification, zero-privilege provider ports, lazy page bridge, persistent keyring record ownership, session↔record binding, keyring activation authentication, Argon2 async unlock | Trust-boundary code; WRD-KEY-01..04, WRD-EXT-01..03 |
 | R2 | `d5a8117..54bc05d` | 19 | +8.9k / −0.03k | C7–C10: approval record substrate (IndexedDB), worker-startup cleanup, strict Solana tx envelope parse, session message prepare/finalize/order, memo intent decode, pinned authority snapshots, blockhash RPC binding, committed session releases (`packages/core/src/session-*`) | The signing path; WRD-APR-*, WRD-SIG-01 (still `unimplemented` on purpose) |
 | R3 | `54bc05d..9c6f1c0` | 15 | +4.5k / −0.16k | C11: approval review surface + lifetime, approval window lifecycle, provider leases bound to approval prep, keyring identity bound to committed release, approvals bound to keyring revocation | Approval→signing binding |
@@ -174,18 +178,25 @@ Full SHAs: `77a82735834a18d24202af77dd196df2e3155d42`, `d5a8117fec0ac8ae0e268213
 
 ### 3.1 Per-round mechanics (do not improvise)
 
-1. `git status --porcelain` must be empty; `git rev-parse HEAD` must equal `<head>`. For R1–R6 that
-   means `git checkout <head>` in a DETACHED state, run the round, then `git checkout phase1b`.
-   The append step writes to the ledgers in the working tree — on a detached HEAD those writes
-   land on the detached checkout. So: after the round, `git stash` is NOT the tool; instead copy
-   the two appended lines out (`tail -1 docs/security/REVIEW-RUNS.jsonl`, the new
-   `REVIEW-SCORECARD.jsonl` rows) → `git checkout -- docs/security` → `git checkout phase1b` →
-   re-append them by re-running `node scripts/append-review-run.mjs <artefact> --expect <expect>
-   --kind task-diff` on `phase1b` (it refuses replays by artefact sha256, so do NOT paste lines by
-   hand; if it refuses because the row already exists, you already have it). Simpler alternative
-   that avoids all of this: review R1–R6 in one sitting using `--dry-run` on the detached head to
-   assemble the prompt, then run the real round from `phase1b` HEAD ONLY for R0 — no: the script
-   refuses a head that is not HEAD. Use the detached-checkout procedure.
+1. `git status --porcelain` must be empty and `git rev-parse HEAD` must equal `<head>`
+   (`scripts/review.sh:121-130` dies otherwise, because the model reads files from the worktree).
+   R0 and R8-as-HEAD need nothing special. For R1–R6 the head is an OLD commit, so:
+   - `git checkout <head>` (detached). The seed list is computed from THAT commit's
+     `invariants.jsonl` — fewer rows than today; that is correct and reproducible, do not "fix" it.
+   - run `scripts/review.sh <base> <head> --kind task-diff`. On success it appends one row to
+     `REVIEW-RUNS.jsonl` and the finding rows to `REVIEW-SCORECARD.jsonl` IN THE DETACHED
+     WORKTREE (the tree is now dirty there). The artefact files under `.superpowers/reviews/` are
+     untracked and survive the checkout — they are what you carry over.
+   - note the printed `--thread`/round id (`<head12>-<UTC stamp>`), then
+     `git checkout -- docs/security && git checkout phase1b`.
+   - re-append on `phase1b` with the SAME identity the wrapper used:
+     `node scripts/append-review-run.mjs .superpowers/reviews/<round>.json --expect
+     .superpowers/reviews/<round>.expect.json --kind task-diff --model gpt-5.6-sol@max --thread
+     <round> --effort max --scorecard docs/security/REVIEW-SCORECARD.jsonl`. It re-validates
+     against the expect file and refuses a replay by artefact sha256, so never paste ledger lines
+     by hand. The scorecard's `finding_id` numbering continues from the current phase1b ledger.
+   - Never leave a detached checkout behind; `git status` + `git branch --show-current` must say
+     `phase1b` before you touch anything else.
 2. Artefacts land in `.superpowers/reviews/<thread>.json` (+ `.raw.json`, `.expect.json`,
    `.prompt.txt`). They are the evidence base; never edit them.
 3. Validation is independent of the model's self-report (`--validate <f.json> --expect <f>`).
@@ -224,13 +235,46 @@ Only these, each written into the relevant invariant's `notes` and into §9:
 
 Drain-proving regressions (`programs/warden/tests/execute.rs` `fable_p1_*`,
 `codex_wrdf0109_*`, `codex_wrdf0110_*`) have tripped the OpenAI cyber content filter repeatedly.
-Protocol: retry once; if blocked again, try a SMALLER range that excludes the test file
-(review the fix and the test in separate rounds — the fix range `programs/warden/src` alone
-usually passes); if still blocked, fall back to `scripts/review-grok.sh <base> <head>` and
+Protocol: retry once (~5 min later); if blocked again, try a SMALLER commit range —
+`scripts/review.sh` has NO path filter, only `<base> <head>`, and the fix commits carry their
+drain tests in the same commit (`2ddf781` = 9 files incl. `tests/execute.rs` +233), so the
+smallest honest split is per commit (`06aac9d..2ddf781`, `2ddf781..14ee34b`, `14ee34b..f63262b`);
+if still blocked, fall back to `scripts/review-grok.sh <base> <head>` and
 label the round as the Grok fallback in the ledger note (calibration caveat: Grok is materially
 shallower; it does not discharge the Codex debt, it only records that a review happened). A
 persistent block on ledger-only scaffolding ranges is a convergence signal, not a bug to fight
 (`docs/security/CODEX-CONTENT-FILTER-MEMO-2026-08-23.md`).
+
+### 3.6 R0 was attempted by the Fable session — NOT RECORDED (you still owe it)
+
+Two attempts of `scripts/review.sh 06aac9dfd711eead2ee8dbc00204ee0600710bf1 f63262b --kind
+task-diff` from a clean tree at `f63262b`, both seeded 69 invariants, both refused by the
+OpenAI cyber content filter with exactly this stderr line (twice per run):
+
+```
+ERROR: This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber
+```
+
+- attempt 1: thread `f63262be9e6b-20260902T101600Z`, 195,639 tokens consumed before the refusal, `exit=1`;
+- attempt 2 (the §3.5 protocol retry, 5 min later): thread `f63262be9e6b-20260902T102106Z`, 136,472 tokens, `exit=1`.
+
+Only the `.expect.json` files exist for those two threads under `.superpowers/reviews/` — there is
+NO findings artefact and NO ledger row. Nothing was appended; `REVIEW-RUNS.jsonl`'s last row is
+still P-1 round 1. Consequences for you:
+
+1. R0's head is `f63262b`, which is no longer `phase1b` HEAD (the finished memo commit sits on
+   top). Either run R0 as `06aac9d..<current HEAD>` — the extra commits are this memo,
+   `NEXT-SESSION.md`, `CLAUDE.md`, zero product code, so the review content is identical — or use
+   the §3.1 detached-checkout procedure with `<head>=f63262b`. Prefer the former: it needs no
+   re-append.
+2. That range now has FOUR content-filter refusals against it in total (two on the P-1 round-2
+   sub-range `2ddf781`/`14ee34b`, two on R0). Go straight to the §3.5 per-commit split; the
+   commits most likely to trip the filter are `3766e24`, `2ddf781`, `14ee34b` (drain-proving
+   tests). The extension/release commits (`27039aa`, `a4c134e`, `583f9ec`, `699beec`,
+   `215663f`, `69a6282`, `243f469`) have never been sent and have no drain tests — review them
+   as their own sub-range first so at least that part of R0 records.
+3. If every split is refused, record the Grok fallback per §3.5 and write the refusal into
+   WRD-EXEC-13/14 `notes` and §9. Do not describe R0 as reviewed anywhere.
 
 ## 4. Ledger rules (the validator enforces these; learn them before you touch the files)
 
@@ -349,7 +393,7 @@ fix looks like" so you do not re-derive it:
    EOF
    ```
    Empty output = clean. (At BASE it is clean; WRD-EXT-03, WRD-KEY-04 and WRD-REL-04 were
-   repointed from `602b200`/`03cf34b` to `27039aa`/`a4c134e` in `LEDGER_CLOSE_SHA`.)
+   repointed from `602b200`/`03cf34b` to `27039aa`/`a4c134e` in `f63262b`.)
 7. **Cherry-pick syntax**: `git -c core.hooksPath=/dev/null cherry-pick <sha>` — the `-c` goes
    before the subcommand.
 8. **Disk is at ~96 %** (`df -h /`). `target/` and Playwright profiles are the big movers; do not
