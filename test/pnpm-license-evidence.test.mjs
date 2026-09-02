@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { promisify } from "node:util";
 
+import { assertPnpmLicenseEvidenceMatches } from "../scripts/pnpm-license-evidence.mjs";
+
 const execFile = promisify(execFileCallback);
 
 test("WRDF-0135 covers every declared direct package in committed license evidence", async () => {
@@ -54,4 +56,19 @@ test("WRDF-0135 covers every declared direct package in committed license eviden
   );
   const missing = [...declared].filter((name) => !evidenced.has(name)).sort();
   assert.deepEqual(missing, [], `direct packages missing from license evidence: ${missing.join(", ")}`);
+});
+
+test("WRDF-0137 rejects license evidence whose versions differ from a fresh normalized inventory", async () => {
+  const fresh = JSON.parse(
+    await readFile("docs/security/third-party/pnpm-licenses.json", "utf8"),
+  );
+  const stale = structuredClone(fresh);
+  const entry = Object.values(stale).flat()[0];
+  assert.ok(entry, "license evidence fixture must contain at least one package");
+  entry.versions = ["0.0.0-stale"];
+
+  assert.throws(
+    () => assertPnpmLicenseEvidenceMatches(stale, fresh),
+    /name, version, and license inventory does not match/,
+  );
 });

@@ -216,3 +216,44 @@ test("WRDF-0134 audits a remote image declared by a local Docker action", async 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("WRDF-0136 audits document-prefixed flow references and aliased images", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "warden-actions-yaml-semantics-"));
+  try {
+    const workflows = path.join(root, ".github", "workflows");
+    const flowAction = path.join(root, ".github", "actions", "flow");
+    const dockerAction = path.join(root, ".github", "actions", "docker");
+    await mkdir(workflows, { recursive: true });
+    await mkdir(flowAction, { recursive: true });
+    await mkdir(dockerAction, { recursive: true });
+    await writeFile(path.join(workflows, "fixture.yml"), [
+      "jobs:",
+      "  local:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - uses: ./.github/actions/flow",
+      "      - uses: ./.github/actions/docker",
+      "",
+    ].join("\n"));
+    await writeFile(
+      path.join(flowAction, "action.yml"),
+      "--- {name: local, runs: {using: composite, steps: [{uses: owner/nested@main}]}}\n",
+    );
+    await writeFile(path.join(dockerAction, "action.yml"), [
+      "name: local Docker action",
+      "description: &remote docker://ghcr.io/owner/action:latest",
+      "runs:",
+      "  using: docker",
+      "  image: *remote",
+      "",
+    ].join("\n"));
+
+    const { mutableReferences } = await auditGitHubActionReferences(root, workflows);
+    assert.deepEqual(
+      mutableReferences.map((entry) => entry.replace(/^.*?:\d+: /, "")).sort(),
+      ["docker://ghcr.io/owner/action:latest", "owner/nested@main"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
