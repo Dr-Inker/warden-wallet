@@ -568,6 +568,14 @@ pub(crate) fn handler<'info>(
     // (`fable_p1_stranger_account_delegated_to_third_party_still_allowed`).
     conservation::reject_vault_delegated_foreign_accounts(&before, &account_key)?;
 
+    // Codex WRDF-0119: `close_authority` is another independent account-level
+    // authority. Direct CloseAccount is deny-scanned, but a forwarding CPI can
+    // hide that token opcode from the payload decoder, so refuse a foreign
+    // token account naming the PDA as close authority before any CPI. `before`
+    // spans every logical slot except the Anchor-validated SmartAccount itself,
+    // including the transaction signer (WRDF-0115).
+    conservation::reject_vault_close_authority_foreign_accounts(&before, &account_key)?;
+
     // ---- the adapter registry (session path only) -------------------------
     // (`resolved` is non-empty here — the empty payload was refused above —
     // so a session always meets the list-id / registry gate.)

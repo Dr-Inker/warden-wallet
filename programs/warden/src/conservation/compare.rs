@@ -511,6 +511,39 @@ pub fn reject_vault_delegated_foreign_accounts(snaps: &[Snap], vault: &Pubkey) -
     Ok(())
 }
 
+/// Codex WRDF-0119 (2026-09-02): refuse any token account in `snaps` that the
+/// vault does NOT own but names the vault as its account-level close authority.
+///
+/// `CloseAccount` authorizes `close_authority.unwrap_or(owner)`. Consequently,
+/// this is a distinct authority shape from the delegate guarded above: the PDA
+/// can close a foreign zero-balance account even when it is neither token owner
+/// nor delegate. A direct SPL close is constrained by `deny_scan`, but generic
+/// root execute can reach the same operation through a forwarding program;
+/// structural refusal before dispatch keeps that nested route inside the same
+/// fail-closed authority boundary. The rule covers both classic SPL Token and
+/// Token-2022 because `snapshot` decodes their shared base account fields.
+///
+/// BEFORE-only is deliberate. A successful close removes the account and
+/// therefore leaves no AFTER authority field to inspect. Creating or assigning
+/// this authority during the payload requires the foreign token owner to sign;
+/// generic execute does not need to police a submitter's direct authority over
+/// its own account. A foreign account naming any other close authority remains
+/// valid inert ballast.
+pub fn reject_vault_close_authority_foreign_accounts(
+    snaps: &[Snap],
+    vault: &Pubkey,
+) -> Result<()> {
+    for s in snaps {
+        if let Some(t) = s.token.as_ref() {
+            require!(
+                !(t.owner != *vault && t.close_authority == Some(*vault)),
+                WardenError::VaultCloseAuthorityForeignAccountInPayload
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Codex WRDF-0110 (2026-09-02): does a token-program-owned buffer of exactly
 /// `Multisig::LEN` name `member` among its live signers?
 ///
