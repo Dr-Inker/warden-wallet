@@ -3091,6 +3091,174 @@ fn set_plain_token_account(svm: &mut LiteSVM, address: &Pubkey, mint: &Pubkey, o
     .expect("set_account (plain token account)");
 }
 
+/// Plant a base-layout classic SPL or Token-2022 token account with an
+/// explicit close authority. The runtime owner is selected independently so
+/// one regression pins each token program's shared account-state semantics.
+#[allow(clippy::too_many_arguments)]
+fn set_token_account_with_close_authority(
+    svm: &mut LiteSVM,
+    address: &Pubkey,
+    mint: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+    close_authority: Pubkey,
+    token_program: Pubkey,
+) {
+    use solana_sdk::program_option::COption;
+    use spl_token::state::{Account as SplAccount, AccountState};
+    let a = SplAccount {
+        mint: *mint,
+        owner: *owner,
+        amount,
+        delegate: COption::None,
+        state: AccountState::Initialized,
+        is_native: COption::None,
+        delegated_amount: 0,
+        close_authority: COption::Some(close_authority),
+    };
+    let mut data = vec![0u8; SplAccount::LEN];
+    a.pack_into_slice(&mut data);
+    svm.set_account(
+        *address,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(SplAccount::LEN),
+            data,
+            owner: token_program,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (token account with close authority)");
+}
+
+/// WRDF-0119 RED, root path: a foreign classic-SPL account gives the vault PDA
+/// close authority. A forwarding CPI can then invoke CloseAccount without the
+/// direct SPL deny scanner seeing it. The defensive boundary is structural:
+/// generic execute must reject the authority-bearing account before any CPI.
+#[test]
+fn codex_wrdf0119_root_foreign_close_authority_rejected_before_nested_close() {
+    let (mut svm, payer, pk, account, _registry, mutator_id, _vault_ata) = live();
+    let submitter = Keypair::new();
+    let victim = Pubkey::new_from_array([0x74; 32]);
+    set_token_account_with_close_authority(
+        &mut svm,
+        &victim,
+        &tok_mint(),
+        &Pubkey::new_unique(),
+        0,
+        account,
+        SPL_TOKEN_ID,
+    );
+    let destination = Pubkey::new_unique();
+    let remaining = vec![
+        AccountMeta::new(victim, false),
+        AccountMeta::new(destination, false),
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false),
+        AccountMeta::new_readonly(mutator_id, false),
+    ];
+    let inner_accounts = [(2, FLAG_WRITABLE), (3, FLAG_WRITABLE), (0, FLAG_SIGNER), (4, 0)];
+    let data = mutator::instruction_discriminator("close_account").to_vec();
+    let ixs = root_mutator_ixs(
+        &svm,
+        &submitter,
+        &pk,
+        account,
+        mutator_id,
+        &inner_accounts,
+        &data,
+        &remaining,
+    );
+
+    expect_reject(
+        &mut svm,
+        &[&payer, &submitter],
+        &ixs,
+        1,
+        err::VAULT_CLOSE_AUTHORITY_FOREIGN_ACCOUNT_IN_PAYLOAD,
+    );
+    assert!(svm.get_account(&victim).is_some(), "the foreign token account remains intact");
+}
+
+/// WRDF-0119 RED, session + signer-slot + Token-2022: transaction-signature
+/// status does not erase the token account's independent close-authority
+/// field. An otherwise inert allowed CPI must be refused before dispatch.
+#[test]
+fn codex_wrdf0119_session_t22_signer_slot_foreign_close_authority_rejected() {
+    let (mut svm, payer, _pk, account, registry, mutator_id, _vault_ata) = live();
+    let (session, session_key) = plant_session(&mut svm, &account, OP_EXECUTE, 2);
+    set_token_account_with_close_authority(
+        &mut svm,
+        &session_key.pubkey(),
+        &tok_mint(),
+        &Pubkey::new_unique(),
+        0,
+        account,
+        SPL_TOKEN_2022_ID,
+    );
+    let remaining = vec![AccountMeta::new_readonly(mutator_id, false)];
+    let inner: [(u8, u8); 0] = [];
+    let data = mutator::instruction_discriminator("noop").to_vec();
+    let payload = encode_payload(&[(2, &inner, &data)]);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _logical) = execute_ix_writable_signer(
+        session_key.pubkey(),
+        account,
+        Some(session),
+        false,
+        Some(registry),
+        &remaining,
+        &args,
+    );
+
+    expect_reject(
+        &mut svm,
+        &[&payer, &session_key],
+        &[ix],
+        0,
+        err::VAULT_CLOSE_AUTHORITY_FOREIGN_ACCOUNT_IN_PAYLOAD,
+    );
+}
+
+/// WRDF-0119 narrowness: a foreign account whose close authority is another
+/// stranger grants the vault no authority and remains valid inert ballast.
+#[test]
+fn codex_wrdf0119_foreign_close_authority_stranger_still_allowed() {
+    let (mut svm, payer, _pk, account, registry, mutator_id, _vault_ata) = live();
+    let (session, session_key) = plant_session(&mut svm, &account, OP_EXECUTE, 2);
+    let victim = Pubkey::new_from_array([0x75; 32]);
+    set_token_account_with_close_authority(
+        &mut svm,
+        &victim,
+        &tok_mint(),
+        &Pubkey::new_unique(),
+        0,
+        Pubkey::new_unique(),
+        SPL_TOKEN_ID,
+    );
+    let remaining = vec![
+        AccountMeta::new(victim, false),
+        AccountMeta::new_readonly(mutator_id, false),
+    ];
+    let inner: [(u8, u8); 0] = [];
+    let data = mutator::instruction_discriminator("noop").to_vec();
+    let payload = encode_payload(&[(3, &inner, &data)]);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _logical) = execute_ix(
+        session_key.pubkey(),
+        account,
+        Some(session),
+        false,
+        None,
+        Some(registry),
+        None,
+        &remaining,
+        &args,
+    );
+
+    expect_ok(&mut svm, &[&payer, &session_key], &[ix]);
+    assert!(svm.get_account(&victim).is_some());
+}
+
 /// The P-1 exploit moved to the SIGNER slot, ROOT path: the submitter's own
 /// keypair address IS the vault-delegated token account (logical 1, passed
 /// writable) and is the Transfer source. At the WRD-EXEC-13 base this drains
@@ -3427,4 +3595,5 @@ mod err {
     pub const UNMODELABLE_MINT_EXTENSION_IN_PAYLOAD: u32 = 6077;
     pub const VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD: u32 = 6078;
     pub const VAULT_MULTISIG_MEMBER_IN_PAYLOAD: u32 = 6079;
+    pub const VAULT_CLOSE_AUTHORITY_FOREIGN_ACCOUNT_IN_PAYLOAD: u32 = 6080;
 }

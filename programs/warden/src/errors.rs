@@ -234,4 +234,13 @@ pub enum WardenError {
     // ---------------------------------------------------------------------
     #[msg("generic execute refuses to sign for a payload whose account list contains a token-program Multisig that names the vault PDA among its signers; multisig-authority operations the PDA co-signs are unmetered by conservation and caps")]
     VaultMultisigMemberInPayload,
+    // ---------------------------------------------------------------------
+    // Codex WRDF-0119 (2026-09-02). APPEND ONLY — see above. Code 6080.
+    // Kept distinct from account-level delegate authority (6078): SPL Token
+    // selects `close_authority.unwrap_or(owner)` for CloseAccount, so a
+    // foreign account can grant the PDA a separate destructive authority
+    // even when its owner and delegate are both strangers.
+    // ---------------------------------------------------------------------
+    #[msg("generic execute refuses to sign for a payload whose account list contains a token account the vault does not own but is the close authority of")]
+    VaultCloseAuthorityForeignAccountInPayload,
 }
