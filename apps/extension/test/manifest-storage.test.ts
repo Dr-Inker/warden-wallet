@@ -15,7 +15,9 @@ describe("MV3 manifest keeps explicit, permission-minimal reachability boundarie
     // Port provenance requires MessageSender.documentId, introduced in Chrome 106.
     // Advertising 102 while rejecting every pre-106 sender would be a false support claim.
     expect(manifest.minimum_chrome_version).toBe("106");
-    expect(manifest.permissions).toEqual(["storage"]);
+    // Audit A-2: `alarms` is the eager unlock-expiry wake, deliberately added
+    // alongside `storage`. Nothing else may appear here without a threat review.
+    expect(manifest.permissions).toEqual(["alarms", "storage"]);
     expect(manifest.background).toEqual({ service_worker: "background.js", type: "module" });
     expect(manifest.action).toEqual({ default_popup: "popup.html" });
     // With `world` omitted Chrome runs static content scripts in ISOLATED by

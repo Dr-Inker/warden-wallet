@@ -5,7 +5,11 @@ import {
   type ExtensionStorageAccessApi,
   type StorageAreaAccessControl,
 } from "./storage-access.js";
-import type { UnlockSessionStorageArea } from "./unlock-session.js";
+import {
+  UNLOCK_SESSION_ALARM_NAME,
+  type UnlockAlarmScheduler,
+  type UnlockSessionStorageArea,
+} from "./unlock-session.js";
 import {
   ProviderPortStateError,
   type ProviderRuntimeApi,
@@ -43,6 +47,11 @@ import { shippedExpectedKeyringContext } from "./expected-keyring-context.js";
 export interface ExtensionBackgroundOptions {
   readonly readNow?: () => number;
   readonly expectedContext?: ExpectedKeyringContext;
+  /**
+   * Browser alarm port for eager unlock expiry (audit A-2). Omitting it leaves
+   * expiry entirely lazy, which is the pre-A-2 behaviour, never a wider one.
+   */
+  readonly alarms?: UnlockAlarmScheduler;
 }
 
 export interface ExtensionBackgroundStorageApi extends ExtensionStorageAccessApi {
@@ -77,10 +86,25 @@ export interface ExtensionBackgroundRuntime {
   readonly ready: Promise<boolean>;
 }
 
+export interface ExtensionAlarm {
+  readonly name: string;
+}
+
+export interface ExtensionAlarmEvent {
+  addListener(listener: (alarm: ExtensionAlarm) => void): void;
+  removeListener(listener: (alarm: ExtensionAlarm) => void): void;
+}
+
+/** The intentionally tiny subset of chrome.alarms the worker is given. */
+export interface ExtensionBackgroundAlarmsApi extends UnlockAlarmScheduler {
+  readonly onAlarm: ExtensionAlarmEvent;
+}
+
 export interface ExtensionBackgroundChromeApi {
   readonly storage: ObservableExtensionBackgroundStorageApi;
   readonly runtime: ProviderRuntimeApi;
   readonly windows: ApprovalWindowsApi;
+  readonly alarms: ExtensionBackgroundAlarmsApi;
 }
 
 export interface ExtensionBackgroundApplication extends ExtensionBackgroundRuntime {
@@ -109,6 +133,19 @@ function requireStorageChangeEvent(value: unknown): ExtensionStorageChangeEvent 
     );
   }
   return event as ExtensionStorageChangeEvent;
+}
+
+function requireAlarmEvent(value: unknown): ExtensionAlarmEvent {
+  if (typeof value !== "object" || value === null) {
+    throw new TypeError("extension background: alarms.onAlarm must be an event");
+  }
+  const event = value as Partial<ExtensionAlarmEvent>;
+  if (typeof event.addListener !== "function" || typeof event.removeListener !== "function") {
+    throw new TypeError(
+      "extension background: alarms.onAlarm must support addListener/removeListener",
+    );
+  }
+  return event as ExtensionAlarmEvent;
 }
 
 function requireApprovalStartupLifecycle(value: unknown): ApprovalStartupLifecycle {
@@ -380,7 +417,7 @@ export function startBackground(
     const initialized = initializeBackground(
       chromeApi.storage,
       chromeApi.runtime.id,
-      {},
+      { alarms: chromeApi.alarms },
       approvalInitialization,
     );
     background = initialized.runtime;
@@ -419,6 +456,8 @@ export function startBackground(
   let fatalSettled = false;
   let storageChanges: ExtensionStorageChangeEvent | undefined;
   let storageListenerRegistered = false;
+  let alarmEvent: ExtensionAlarmEvent | undefined;
+  let alarmListenerRegistered = false;
   let rejectFatal!: (error: unknown) => void;
   const fatal = new Promise<never>((_resolve, reject) => {
     rejectFatal = reject;
@@ -429,6 +468,14 @@ export function startBackground(
       try {
         storageChanges!.removeListener(onStorageChanged);
         storageListenerRegistered = false;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (alarmListenerRegistered) {
+      try {
+        alarmEvent!.removeListener(onAlarm);
+        alarmListenerRegistered = false;
       } catch (error) {
         cleanupErrors.push(error);
       }
@@ -489,6 +536,35 @@ export function startBackground(
       failClosed(error);
     }
   };
+  /**
+   * Eager unlock expiry (audit A-2). Chrome delivers the alarm that woke this
+   * worker before any promise settles, so the listener is registered here,
+   * synchronously, exactly like the storage-change listener; the handler itself
+   * only runs the session owner's own lazy check, which is idempotent.
+   */
+  const onAlarm = (alarm: unknown): void => {
+    if (disposed) return;
+    const name = typeof alarm === "object" && alarm !== null
+      ? (alarm as { readonly name?: unknown }).name
+      : undefined;
+    if (name !== UNLOCK_SESSION_ALARM_NAME) return;
+    try {
+      void keyringOwner.handleUnlockExpiryAlarm().catch(failClosed);
+    } catch (error) {
+      failClosed(error);
+    }
+  };
+  try {
+    alarmEvent = requireAlarmEvent(
+      (chromeApi.alarms as Partial<ExtensionBackgroundAlarmsApi> | undefined)?.onAlarm,
+    );
+    // Set before calling Chrome so an adapter that registers and then throws is
+    // still rolled back by the catch path.
+    alarmListenerRegistered = true;
+    alarmEvent.addListener(onAlarm);
+  } catch (error) {
+    throw closeFailure(error, "alarm registration and runtime cleanup both failed");
+  }
   try {
     storageChanges = requireStorageChangeEvent(chromeApi.storage.onChanged);
     // Set this before calling Chrome so an adapter that registers and then

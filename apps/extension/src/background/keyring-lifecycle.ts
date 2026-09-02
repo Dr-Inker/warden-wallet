@@ -34,6 +34,7 @@ import {
 } from "./keyring-record-store.js";
 import {
   UnlockSessionOwner,
+  type UnlockAlarmScheduler,
   type UnlockSessionStorageArea,
 } from "./unlock-session.js";
 
@@ -62,6 +63,11 @@ export interface KeyringLifecycleOptions {
    */
   readonly expectedContext: ExpectedKeyringContext;
   readonly readNow?: () => number;
+  /**
+   * Browser alarm port used only to wake this worker at the unlock deadline
+   * (audit A-2). Omitting it degrades expiry to the pre-existing lazy check.
+   */
+  readonly alarms?: UnlockAlarmScheduler;
 }
 
 export interface UnlockKeyringWithPasswordParams {
@@ -399,6 +405,22 @@ export class KeyringLifecycleOwner implements KeyringLifecycle {
       proof?.fill(0);
       clearContext(context);
     }
+  }
+
+  /**
+   * Eager unlock expiry (audit A-2). Before this existed, expiry was only ever
+   * noticed the next time something happened to touch the session, so the
+   * serialized unwrap key could sit in `chrome.storage.session` for an unbounded
+   * time after both deadlines had passed. The alarm gives that check an
+   * occasion; the check itself is the same one every key use runs.
+   *
+   * This deliberately does NOT take the lifecycle-level `lock()` path: a session
+   * expiring must not revoke a password unlock that is concurrently deriving a
+   * NEW session, and the session owner already aborts leases, zeroes the unwrap
+   * key, and removes the stored record on expiry.
+   */
+  handleUnlockExpiryAlarm(): Promise<void> {
+    return this.sessions.handleExpiryAlarm().then(() => undefined);
   }
 
   /** Revoke memory synchronously, then remove serialized session material. */

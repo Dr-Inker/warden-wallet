@@ -24,7 +24,7 @@ const BASE_MANIFEST = Object.freeze({
   manifest_version: 3,
   name: "Warden release fixture",
   version: "1.2.3",
-  permissions: ["storage"],
+  permissions: ["alarms", "storage"],
   background: { service_worker: "background.js", type: "module" },
   content_security_policy: {
     extension_pages: "script-src 'self'; object-src 'self';",
@@ -203,7 +203,7 @@ describe("reviewed artifact manifest and fail-closed verifier", () => {
     expect(artifactManifest.payload.files.map((entry) => entry.path)).toEqual(
       payloadEntries().map((entry) => entry.path),
     );
-    expect(artifactManifest.extension.permissions).toEqual(["storage"]);
+    expect(artifactManifest.extension.permissions).toEqual(["alarms", "storage"]);
     expect(artifactManifest.extension.contentSecurityPolicy).toEqual(
       BASE_MANIFEST.content_security_policy,
     );

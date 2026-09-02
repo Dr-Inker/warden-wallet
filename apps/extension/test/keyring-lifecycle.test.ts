@@ -24,6 +24,7 @@ import {
 } from "../src/background/keyring-record-store.js";
 import {
   UNLOCK_SESSION_STORAGE_KEY,
+  type UnlockAlarmScheduler,
   type UnlockSessionStorageArea,
 } from "../src/background/unlock-session.js";
 
@@ -643,5 +644,79 @@ describe("v2 record adoption is pinned to the whole expected context", () => {
     await expect(waking.restore()).rejects.toThrow(KeyringAuthError);
     await expect(waking.isUnlocked()).resolves.toBe(false);
     expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
+  });
+});
+
+describe("eager unlock expiry through the lifecycle (audit A-2)", () => {
+  class LifecycleAlarms implements UnlockAlarmScheduler {
+    readonly calls: string[] = [];
+    scheduled: number | undefined;
+
+    create(name: string, info: { readonly when: number }): void {
+      this.calls.push(`create:${name}:${info.when}`);
+      this.scheduled = info.when;
+    }
+
+    clear(name: string): boolean {
+      this.calls.push(`clear:${name}`);
+      const existed = this.scheduled !== undefined;
+      this.scheduled = undefined;
+      return existed;
+    }
+  }
+
+  it("arms the alarm on unlock and clears every key on the alarm's own expiry", async () => {
+    let now = NOW;
+    const local = new LocalStorage(await record());
+    const session = new SessionStorage();
+    const alarms = new LifecycleAlarms();
+    const lifecycle = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
+      readNow: () => now,
+      alarms,
+    });
+
+    await lifecycle.unlockWithPassword({
+      passwordBytes: PASSWORD.slice(),
+      policy: POLICY,
+    });
+    expect(alarms.scheduled).toBe(NOW + POLICY.idleTimeoutMs);
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeDefined();
+
+    // The worker wakes for the alarm alone: no key use, no popup, no message.
+    now = NOW + POLICY.idleTimeoutMs;
+    await lifecycle.handleUnlockExpiryAlarm();
+
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
+    expect(alarms.scheduled).toBeUndefined();
+    expect(await lifecycle.isUnlocked()).toBe(false);
+    await expect(
+      lifecycle.useSessionSignerBytes("sign transaction", async () => Uint8Array.of(1)),
+    ).rejects.toThrow(KeyringLockedError);
+  });
+
+  it("leaves a still-live session unlocked and does not disturb it", async () => {
+    let now = NOW;
+    const local = new LocalStorage(await record());
+    const session = new SessionStorage();
+    const alarms = new LifecycleAlarms();
+    const lifecycle = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
+      readNow: () => now,
+      alarms,
+    });
+    await lifecycle.unlockWithPassword({
+      passwordBytes: PASSWORD.slice(),
+      policy: POLICY,
+    });
+
+    now = NOW + 1_000;
+    await lifecycle.handleUnlockExpiryAlarm();
+
+    expect(await lifecycle.isUnlocked()).toBe(true);
+    expect(alarms.scheduled).toBe(NOW + POLICY.idleTimeoutMs);
+    await expect(
+      lifecycle.useSessionSignerBytes("sign transaction", async () => Uint8Array.of(1)),
+    ).resolves.toEqual(Uint8Array.of(1));
   });
 });

@@ -37,7 +37,9 @@ const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const CENTRAL_DIRECTORY_HEADER_SIGNATURE = 0x02014b50;
 const END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 
-const EXPECTED_RELEASE_PERMISSIONS = Object.freeze(["storage"]);
+// Audit A-2 added `alarms` for eager unlock expiry. This list is the reviewed
+// permission policy: changing it is a deliberate release decision, not a refactor.
+const EXPECTED_RELEASE_PERMISSIONS = Object.freeze(["alarms", "storage"]);
 const EXPECTED_RELEASE_CSP = Object.freeze({
   extension_pages: "script-src 'self'; object-src 'self';",
 });
@@ -538,7 +540,7 @@ function extensionSnapshot(manifest) {
     fail("release manifest version is invalid");
   }
   if (!jsonEqual(manifest.permissions, EXPECTED_RELEASE_PERMISSIONS)) {
-    fail("release manifest permissions differ from the reviewed [storage] policy");
+    fail("release manifest permissions differ from the reviewed [alarms, storage] policy");
   }
   if (!jsonEqual(manifest.content_security_policy, EXPECTED_RELEASE_CSP)) {
     fail("release manifest content security policy differs from the reviewed local-code-only policy");

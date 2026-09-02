@@ -13,6 +13,7 @@ function requireBackgroundChrome(value: unknown): ExtensionBackgroundChromeApi {
     readonly storage?: unknown;
     readonly runtime?: unknown;
     readonly windows?: unknown;
+    readonly alarms?: unknown;
   };
   if (typeof chromeApi.storage !== "object" || chromeApi.storage === null) {
     throw new Error("Warden extension: Chrome storage API is unavailable");
@@ -22,6 +23,10 @@ function requireBackgroundChrome(value: unknown): ExtensionBackgroundChromeApi {
   }
   if (typeof chromeApi.windows !== "object" || chromeApi.windows === null) {
     throw new Error("Warden extension: Chrome windows API is unavailable");
+  }
+  // Eager unlock expiry (audit A-2) needs the manifest `alarms` permission.
+  if (typeof chromeApi.alarms !== "object" || chromeApi.alarms === null) {
+    throw new Error("Warden extension: Chrome alarms API is unavailable");
   }
   return chromeApi as ExtensionBackgroundChromeApi;
 }

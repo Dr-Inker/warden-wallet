@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "description": "Pre-alpha Warden smart-account wallet development build. Do not use with real funds.",
   "minimum_chrome_version": "106",
-  "permissions": ["storage"],
+  "permissions": ["alarms", "storage"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

@@ -174,7 +174,7 @@ function releaseArtifact(
     manifest_version: 3,
     name: "Warden signed-source fixture",
     version: FIXTURE_VERSION,
-    permissions: ["storage"],
+    permissions: ["alarms", "storage"],
     background: { service_worker: "background.js", type: "module" },
     content_security_policy: {
       extension_pages: "script-src 'self'; object-src 'self';",

@@ -7,10 +7,12 @@ import {
 import { describe, expect, it } from "vitest";
 
 import {
+  UNLOCK_SESSION_ALARM_NAME,
   UNLOCK_SESSION_STORAGE_KEY,
   UnlockSessionFormatError,
   UnlockSessionOwner,
   UnlockSessionStorageError,
+  type UnlockAlarmScheduler,
   type UnlockSessionStorageArea,
 } from "../src/background/unlock-session.js";
 
@@ -132,8 +134,37 @@ class MemorySessionStorage implements UnlockSessionStorageArea {
   }
 }
 
-function owner(storage = new MemorySessionStorage(), readNow = () => T0 + 1) {
-  return { storage, owner: new UnlockSessionOwner(storage, { readNow }) };
+/**
+ * Chrome 106 (the manifest floor) returns void/boolean from chrome.alarms, not
+ * promises, so the fake deliberately uses the synchronous shape.
+ */
+class MemoryAlarms implements UnlockAlarmScheduler {
+  readonly calls: string[] = [];
+  scheduled: number | undefined;
+  failCreate = false;
+  failClear = false;
+
+  create(name: string, info: { readonly when: number }): void {
+    this.calls.push(`create:${name}:${info.when}`);
+    if (this.failCreate) throw new Error("chrome.alarms.create failed");
+    this.scheduled = info.when;
+  }
+
+  clear(name: string): boolean {
+    this.calls.push(`clear:${name}`);
+    if (this.failClear) throw new Error("chrome.alarms.clear failed");
+    const existed = this.scheduled !== undefined;
+    this.scheduled = undefined;
+    return existed;
+  }
+}
+
+function owner(
+  storage = new MemorySessionStorage(),
+  readNow = () => T0 + 1,
+  alarms = new MemoryAlarms(),
+) {
+  return { storage, alarms, owner: new UnlockSessionOwner(storage, { readNow, alarms }) };
 }
 
 describe("MV3 unlock session ownership", () => {
@@ -575,5 +606,155 @@ describe("MV3 unlock session ownership", () => {
     await expect(state.owner.useBytes("sign", async () => Uint8Array.of(1))).rejects.toThrow(
       KeyringLockedError,
     );
+  });
+});
+
+describe("eager unlock expiry (audit A-2: material outlives its deadline)", () => {
+  it("schedules one expiry alarm at the nearer of the two deadlines", async () => {
+    const state = owner();
+    const deadlines = startUnlockSession(T0, POLICY);
+    await state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
+    expect(deadlines.idleExpiresAt).toBeLessThan(deadlines.hardExpiresAt);
+    expect(state.alarms.scheduled).toBe(deadlines.idleExpiresAt);
+    expect(state.alarms.calls).toEqual([
+      `create:${UNLOCK_SESSION_ALARM_NAME}:${deadlines.idleExpiresAt}`,
+    ]);
+  });
+
+  it("schedules the hard deadline once it becomes the nearer one", async () => {
+    let now = T0 + 1;
+    const state = owner(undefined, () => now);
+    const policy = { idleTimeoutMs: 15 * 60_000, hardTimeoutMs: 20 * 60_000 };
+    const deadlines = startUnlockSession(T0, policy);
+    await state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
+    now = T0 + 10 * 60_000;
+    await state.owner.touch(policy);
+    expect(state.alarms.scheduled).toBe(deadlines.hardExpiresAt);
+    expect(state.alarms.calls.at(-1)).toBe(
+      `create:${UNLOCK_SESSION_ALARM_NAME}:${deadlines.hardExpiresAt}`,
+    );
+  });
+
+  it("clears the alarm when the session is locked", async () => {
+    const state = owner();
+    await state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines: startUnlockSession(T0, POLICY),
+    });
+    await state.owner.lock();
+    expect(state.alarms.scheduled).toBeUndefined();
+    expect(state.alarms.calls.at(-1)).toBe(`clear:${UNLOCK_SESSION_ALARM_NAME}`);
+  });
+
+  it("re-arms on a restored session and clears when the restored session is expired", async () => {
+    let now = T0 + 1;
+    const storage = new MemorySessionStorage();
+    const deadlines = startUnlockSession(T0, POLICY);
+    const first = new UnlockSessionOwner(storage, { readNow: () => now });
+    await first.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
+
+    const liveAlarms = new MemoryAlarms();
+    const live = new UnlockSessionOwner(storage, { readNow: () => now, alarms: liveAlarms });
+    expect(await live.restore(BUNDLE_ID)).toBe(true);
+    expect(liveAlarms.scheduled).toBe(deadlines.idleExpiresAt);
+
+    now = deadlines.idleExpiresAt;
+    const deadAlarms = new MemoryAlarms();
+    const dead = new UnlockSessionOwner(storage, { readNow: () => now, alarms: deadAlarms });
+    expect(await dead.restore(BUNDLE_ID)).toBe(false);
+    expect(deadAlarms.scheduled).toBeUndefined();
+    expect(deadAlarms.calls.at(-1)).toBe(`clear:${UNLOCK_SESSION_ALARM_NAME}`);
+  });
+
+  it("clears expired material eagerly when the alarm fires, without any other key use", async () => {
+    let now = T0 + 1;
+    const state = owner(undefined, () => now);
+    const deadlines = startUnlockSession(T0, POLICY);
+    await state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
+    expect(state.storage.value).toBeDefined();
+
+    now = deadlines.idleExpiresAt;
+    expect(await state.owner.handleExpiryAlarm()).toBe(false);
+    expect(state.storage.value).toBeUndefined();
+    expect(state.alarms.scheduled).toBeUndefined();
+    await expect(state.owner.useBytes("sign", async () => Uint8Array.of(1))).rejects.toThrow(
+      KeyringLockedError,
+    );
+  });
+
+  it("keeps a live session and re-arms when the alarm fires before the deadline", async () => {
+    let now = T0 + 1;
+    const state = owner(undefined, () => now);
+    const deadlines = startUnlockSession(T0, POLICY);
+    await state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
+    now = deadlines.idleExpiresAt - 1;
+    expect(await state.owner.handleExpiryAlarm()).toBe(true);
+    expect(state.storage.value).toBeDefined();
+    expect(state.alarms.scheduled).toBe(deadlines.idleExpiresAt);
+  });
+
+  it("clears a stale alarm when it fires with no session at all", async () => {
+    const state = owner();
+    expect(await state.owner.handleExpiryAlarm()).toBe(false);
+    expect(state.alarms.calls).toEqual([`clear:${UNLOCK_SESSION_ALARM_NAME}`]);
+  });
+
+  it("keeps the unlock authoritative when the alarms port itself fails", async () => {
+    const alarms = new MemoryAlarms();
+    alarms.failCreate = true;
+    alarms.failClear = true;
+    const state = owner(undefined, () => T0 + 1, alarms);
+    await expect(state.owner.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines: startUnlockSession(T0, POLICY),
+    })).resolves.toBeUndefined();
+    expect(await state.owner.isUnlocked()).toBe(true);
+    await expect(state.owner.lock()).resolves.toBeUndefined();
+    expect(state.storage.value).toBeUndefined();
+  });
+
+  it("works with no alarms port at all, keeping the lazy check as the authority", async () => {
+    let now = T0 + 1;
+    const storage = new MemorySessionStorage();
+    const lazyOnly = new UnlockSessionOwner(storage, { readNow: () => now });
+    const deadlines = startUnlockSession(T0, POLICY);
+    await lazyOnly.unlock({
+      account: ACCOUNT,
+      bundleId: BUNDLE_ID,
+      unwrapKey: key(),
+      deadlines,
+    });
+    now = deadlines.idleExpiresAt;
+    expect(await lazyOnly.handleExpiryAlarm()).toBe(false);
+    expect(storage.value).toBeUndefined();
   });
 });

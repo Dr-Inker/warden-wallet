@@ -30,6 +30,7 @@ import { KeyringLifecycleOwner } from "../src/background/keyring-lifecycle.js";
 import { shippedExpectedKeyringContext } from "../src/background/expected-keyring-context.js";
 import { KEYRING_RECORD_STORAGE_KEY } from "../src/background/keyring-record-store.js";
 import {
+  UNLOCK_SESSION_ALARM_NAME,
   UNLOCK_SESSION_STORAGE_KEY,
   UnlockSessionStorageError,
 } from "../src/background/unlock-session.js";
@@ -290,6 +291,41 @@ class RuntimeWindows implements ApprovalWindowsApi {
   }
 }
 
+class RuntimeAlarmEvent {
+  readonly listeners = new Set<(alarm: { readonly name: string }) => void>();
+
+  addListener(listener: (alarm: { readonly name: string }) => void): void {
+    this.listeners.add(listener);
+  }
+
+  removeListener(listener: (alarm: { readonly name: string }) => void): void {
+    this.listeners.delete(listener);
+  }
+
+  emit(alarm: { readonly name: string }): void {
+    for (const listener of [...this.listeners]) listener(alarm);
+  }
+}
+
+class RuntimeAlarms {
+  readonly calls: string[] = [];
+  scheduled: number | undefined;
+
+  constructor(readonly onAlarm = new RuntimeAlarmEvent()) {}
+
+  create(name: string, info: { readonly when: number }): void {
+    this.calls.push(`create:${name}:${info.when}`);
+    this.scheduled = info.when;
+  }
+
+  clear(name: string): boolean {
+    this.calls.push(`clear:${name}`);
+    const existed = this.scheduled !== undefined;
+    this.scheduled = undefined;
+    return existed;
+  }
+}
+
 function observableStorage(
   storage: ExtensionBackgroundStorageApi,
   onChanged = new RuntimeStorageChangeEvent(),
@@ -298,8 +334,9 @@ function observableStorage(
 }
 
 function startBackground(
-  chromeApi: Omit<ExtensionBackgroundChromeApi, "windows"> & {
+  chromeApi: Omit<ExtensionBackgroundChromeApi, "windows" | "alarms"> & {
     readonly windows?: ApprovalWindowsApi;
+    readonly alarms?: RuntimeAlarms;
   },
   approvalLifecycle: ApprovalStartupLifecycle = {
     read: async () => null,
@@ -312,6 +349,7 @@ function startBackground(
   return startProductionBackground({
     ...chromeApi,
     windows: chromeApi.windows ?? new RuntimeWindows(),
+    alarms: chromeApi.alarms ?? new RuntimeAlarms(),
   }, approvalLifecycle);
 }
 
@@ -1182,6 +1220,7 @@ describe("MV3 background bootstrap", () => {
       storage: observableStorage(storage, onStorageChanged),
       runtime: { id: EXTENSION_ID, onConnect },
       windows,
+      alarms: new RuntimeAlarms(),
     }, approvalLifecycle);
     const launcher = application.approvalWindows;
 
@@ -1242,6 +1281,7 @@ describe("MV3 background bootstrap", () => {
       storage: observableStorage(storage, onStorageChanged),
       runtime: { id: EXTENSION_ID, onConnect },
       windows,
+      alarms: new RuntimeAlarms(),
     }, approvalLifecycle);
     await application.runtimeBoundariesReady;
     await application.approvalWindows.launch(
@@ -1258,5 +1298,62 @@ describe("MV3 background bootstrap", () => {
     expect(windows.onRemoved.listeners.size).toBe(0);
     expect(approvalCloses).toBe(1);
     expect(current.state).toBe("pending");
+  });
+});
+
+describe("eager unlock expiry wiring (audit A-2)", () => {
+  function expiryStorage(): ExtensionBackgroundStorageApi {
+    return {
+      local: localArea(async () => undefined, { get: async () => ({}) }),
+      session: {
+        setAccessLevel: async () => undefined,
+        get: async () => ({}),
+        set: async () => undefined,
+        remove: async () => undefined,
+      },
+    };
+  }
+
+  it("registers one alarm listener synchronously and routes only the unlock alarm", async () => {
+    const alarms = new RuntimeAlarms();
+    const application = startBackground({
+      storage: observableStorage(expiryStorage()),
+      runtime: { id: EXTENSION_ID, onConnect: new RuntimeConnectEvent() },
+      alarms,
+    });
+    // MV3 dispatches the alarm that woke the worker before any promise settles.
+    expect(alarms.onAlarm.listeners.size).toBe(1);
+    await application.ready;
+
+    alarms.calls.length = 0;
+    alarms.onAlarm.emit({ name: "warden.some-other-alarm" });
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    expect(alarms.calls).toEqual([]);
+
+    alarms.onAlarm.emit({ name: UNLOCK_SESSION_ALARM_NAME });
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    expect(alarms.calls).toEqual([`clear:${UNLOCK_SESSION_ALARM_NAME}`]);
+
+    application.dispose();
+    expect(alarms.onAlarm.listeners.size).toBe(0);
+  });
+
+  it("ignores a malformed alarm payload instead of failing the worker closed", async () => {
+    const alarms = new RuntimeAlarms();
+    const application = startBackground({
+      storage: observableStorage(expiryStorage()),
+      runtime: { id: EXTENSION_ID, onConnect: new RuntimeConnectEvent() },
+      alarms,
+    });
+    await application.ready;
+    alarms.calls.length = 0;
+
+    for (const payload of [undefined, null, {}, { name: 7 }] as unknown[]) {
+      alarms.onAlarm.emit(payload as { readonly name: string });
+    }
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+
+    expect(alarms.calls).toEqual([]);
+    application.dispose();
   });
 });

@@ -45,7 +45,7 @@ const FIXTURE_MANIFEST = Object.freeze({
   manifest_version: 3,
   name: "Warden release verifier CLI fixture",
   version: "1.2.3",
-  permissions: ["storage"],
+  permissions: ["alarms", "storage"],
   background: { service_worker: "background.js", type: "module" },
   content_security_policy: {
     extension_pages: "script-src 'self'; object-src 'self';",

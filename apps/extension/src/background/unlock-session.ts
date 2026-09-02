@@ -20,10 +20,29 @@ import {
 export const UNLOCK_SESSION_STORAGE_KEY = "warden.unlock-session.v2";
 const LEGACY_UNLOCK_SESSION_STORAGE_KEY_V1 = "warden.unlock-session.v1";
 
+/**
+ * Name of the single one-shot alarm this owner keeps armed at the nearer of the
+ * two deadlines (audit A-2). One name, replaced in place, so a worker restart
+ * cannot accumulate alarms.
+ */
+export const UNLOCK_SESSION_ALARM_NAME = "warden.unlock-session.expiry";
+
 export interface UnlockSessionStorageArea {
   get(key: string): Promise<Record<string, unknown>>;
   set(items: Record<string, unknown>): Promise<void>;
   remove(keys: string | string[]): Promise<void>;
+}
+
+/**
+ * The intentionally tiny subset of `chrome.alarms` this owner needs.
+ *
+ * Chrome only began returning promises from `alarms.create`/`alarms.clear` in
+ * 111; the manifest floor is 106, so both the synchronous and the promise shape
+ * are accepted and every call is normalised through `Promise.resolve`.
+ */
+export interface UnlockAlarmScheduler {
+  create(name: string, info: { readonly when: number }): void | Promise<void>;
+  clear(name: string): boolean | Promise<boolean>;
 }
 
 export interface ActivateUnlockSessionParams {
@@ -240,6 +259,7 @@ function validateActivation(params: ActivateUnlockSessionParams): {
 
 export class UnlockSessionOwner {
   private readonly storage: UnlockSessionStorageArea;
+  private readonly alarms: UnlockAlarmScheduler | undefined;
   private readonly readNow: () => number;
   private active: ActiveUnlockSession | undefined;
   private transition = 0;
@@ -247,7 +267,10 @@ export class UnlockSessionOwner {
 
   constructor(
     storage: UnlockSessionStorageArea,
-    options: { readonly readNow?: () => number } = {},
+    options: {
+      readonly readNow?: () => number;
+      readonly alarms?: UnlockAlarmScheduler;
+    } = {},
   ) {
     if (typeof storage !== "object" || storage === null) {
       throw new UnlockSessionFormatError("storage adapter must be an object");
@@ -260,8 +283,75 @@ export class UnlockSessionOwner {
     if (options.readNow !== undefined && typeof options.readNow !== "function") {
       throw new UnlockSessionFormatError("readNow must be a function");
     }
+    if (options.alarms !== undefined) {
+      if (typeof options.alarms !== "object" || options.alarms === null) {
+        throw new UnlockSessionFormatError("alarms adapter must be an object");
+      }
+      for (const method of ["create", "clear"] as const) {
+        if (typeof options.alarms[method] !== "function") {
+          throw new UnlockSessionFormatError(`alarms adapter must provide ${method}()`);
+        }
+      }
+    }
     this.storage = storage;
+    this.alarms = options.alarms;
     this.readNow = options.readNow ?? Date.now;
+  }
+
+  /**
+   * Arm the eager-expiry alarm at the nearer deadline (audit A-2).
+   *
+   * The alarm is a WAKE AID, never the authority: Chrome may delay a sub-30s
+   * alarm in a packed extension, may drop alarms across a browser restart, and
+   * the `alarms` permission may be absent in a build that does not declare it.
+   * Every deadline is therefore still enforced by the lazy `assertActive` check
+   * on activation, restore, touch, and every key use. A failing alarms port must
+   * never fail an otherwise valid unlock, so scheduling errors are swallowed.
+   */
+  private async scheduleAlarm(deadlines: UnlockDeadlines): Promise<void> {
+    if (this.alarms === undefined) return;
+    const when = Math.min(deadlines.idleExpiresAt, deadlines.hardExpiresAt);
+    if (!Number.isFinite(when)) return;
+    try {
+      await this.alarms.create(UNLOCK_SESSION_ALARM_NAME, { when });
+    } catch {
+      // Lazy expiry remains authoritative; see the note above.
+    }
+  }
+
+  private async clearAlarm(): Promise<void> {
+    if (this.alarms === undefined) return;
+    try {
+      await this.alarms.clear(UNLOCK_SESSION_ALARM_NAME);
+    } catch {
+      // A stale alarm only causes one extra, idempotent expiry check.
+    }
+  }
+
+  /**
+   * Eager expiry entry point (audit A-2). Runs exactly the lazy check every key
+   * use runs — so the abort/zeroise/remove path has one implementation — and
+   * then leaves the alarm consistent with the outcome. Returns whether a
+   * committed session survived.
+   */
+  async handleExpiryAlarm(): Promise<boolean> {
+    const active = this.active;
+    if (active === undefined || !active.committed) {
+      // Nothing this alarm can expire. An activation still in flight arms its
+      // own alarm when it commits.
+      await this.clearAlarm();
+      return false;
+    }
+    const live = await this.isUnlocked();
+    const current = this.active;
+    if (live && current !== undefined) {
+      // A wall-clock change can make Chrome fire before the deadline. Re-arm
+      // rather than leave a live session unwatched.
+      await this.scheduleAlarm(current.deadlines);
+      return true;
+    }
+    await this.clearAlarm();
+    return false;
   }
 
   private enqueueStorage<T>(operation: () => Promise<T>): Promise<T> {
@@ -449,6 +539,7 @@ export class UnlockSessionOwner {
       }
       await this.assertActive(active, "activate unlock session", true);
       active.committed = true;
+      await this.scheduleAlarm(active.deadlines);
     } catch (error) {
       if (this.active === active) this.abortActive(active);
       throw error;
@@ -458,7 +549,28 @@ export class UnlockSessionOwner {
     }
   }
 
+  /**
+   * Startup restore, wrapped so the eager-expiry alarm always ends up matching
+   * the session that actually survived the wake (audit A-2).
+   */
   async restore(expectedBundleId: Uint8Array): Promise<boolean> {
+    let restored: boolean;
+    try {
+      restored = await this.restoreSession(expectedBundleId);
+    } catch (error) {
+      await this.clearAlarm();
+      throw error;
+    }
+    const active = this.active;
+    if (restored && active !== undefined) {
+      await this.scheduleAlarm(active.deadlines);
+    } else {
+      await this.clearAlarm();
+    }
+    return restored;
+  }
+
+  private async restoreSession(expectedBundleId: Uint8Array): Promise<boolean> {
     if (
       !(expectedBundleId instanceof Uint8Array) ||
       expectedBundleId.length !== KEYRING_BUNDLE_ID_BYTES
@@ -537,7 +649,8 @@ export class UnlockSessionOwner {
   lock(): Promise<void> {
     this.transition++;
     this.abortActive();
-    return this.removeStored();
+    const removed = this.removeStored();
+    return removed.finally(() => this.clearAlarm());
   }
 
   async touch(policy: UnlockPolicy): Promise<void> {
@@ -566,6 +679,7 @@ export class UnlockSessionOwner {
       }
       await this.assertActive(active, "touch unlock session");
       active.deadlines = deadlines;
+      await this.scheduleAlarm(deadlines);
     } catch (error) {
       if (this.active === active) {
         this.transition++;
