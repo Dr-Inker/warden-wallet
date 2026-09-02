@@ -386,14 +386,22 @@ function buildGitProbe(repo: string): GitProbe | null {
   if (!head) return null;
   // Older git lacking the flag → treat as full (fail-closed on missing objects).
   const shallow = git(["rev-parse", "--is-shallow-repository"]) === "true";
+  const resolveCommit = (coordinate: string): string | null => {
+    // `rev-parse <token>` also accepts ref names. Evidence coordinates must be
+    // raw object-id prefixes, so enumerate only objects whose IDs actually
+    // begin with the supplied hex and accept exactly one commit candidate.
+    const output = git(["rev-parse", `--disambiguate=${coordinate}`]);
+    if (output === null) return null;
+    const commits = [...new Set(output.split("\n").filter(Boolean))].filter(
+      (oid) => git(["cat-file", "-t", oid]) === "commit",
+    );
+    return commits.length === 1 ? commits[0] : null;
+  };
   return {
     head,
     shallow,
-    resolveCommit: (sha: string) => git(["rev-parse", "--verify", `${sha}^{commit}`]),
-    commitExists: (sha: string) => {
-      try { runReviewGit(repo, ["cat-file", "-e", `${sha}^{commit}`]); return true; }
-      catch { return false; }
-    },
+    resolveCommit,
+    commitExists: (sha: string) => resolveCommit(sha) !== null,
     isAncestorOrEqual: (a: string, b: string) => {
       try { runReviewGit(repo, ["merge-base", "--is-ancestor", a, b]); return true; }
       catch { return false; }
@@ -428,15 +436,17 @@ export function validateScorecardProvenance(r: Record<string, unknown>, git: Git
     if (!SHA_RE.test(gate ?? "")) errs.push(`${id}: remediation_gate_sha malformed or null`);
     if (typeof cmd !== "string" || cmd.trim().length === 0) errs.push(`${id}: remediation_gate_cmd blank`);
     if (git && SHA_RE.test(fix ?? "") && SHA_RE.test(gate ?? "")) {
-      const fixHere = git.commitExists(fix!);
-      const gateHere = git.commitExists(gate!);
+      const fixOid = git.resolveCommit(fix!);
+      const gateOid = git.resolveCommit(gate!);
+      const fixHere = fixOid !== null;
+      const gateHere = gateOid !== null;
       // A well-formed SHA the FULL clone does not have is fabricated or mistyped
       // — fail-closed. Only a genuinely shallow clone may skip an absent object.
       if (!fixHere && !git.shallow) errs.push(`${id}: remediation_sha ${fix} is not a commit in this full clone`);
       if (!gateHere && !git.shallow) errs.push(`${id}: remediation_gate_sha ${gate} is not a commit in this full clone`);
-      if (fixHere && gateHere) {
-        if (!git.isAncestorOrEqual(fix!, gate!)) errs.push(`${id}: gate ${gate} does not contain fix ${fix}`);
-        if (!git.isAncestorOrEqual(gate!, git.head)) errs.push(`${id}: gate ${gate} is not reachable from reviewed HEAD`);
+      if (fixOid && gateOid) {
+        if (!git.isAncestorOrEqual(fixOid, gateOid)) errs.push(`${id}: gate ${gate} does not contain fix ${fix}`);
+        if (!git.isAncestorOrEqual(gateOid, git.head)) errs.push(`${id}: gate ${gate} is not reachable from reviewed HEAD`);
       }
     }
   }
@@ -583,7 +593,7 @@ export function validateScorecardRedTestBinding(
           typeof file === "string" &&
           typeof name === "string"
         ) {
-          const redSource = git.readFileAtCommit(red, file);
+          const redSource = git.readFileAtCommit(redOid, file);
           if (redSource === null) {
             errs.push(`${id}: red_test_file ${file} is absent at red_test_sha ${red}`);
           } else if (!redSource.includes(JSON.stringify(name))) {
