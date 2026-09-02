@@ -576,16 +576,17 @@ function resolveRecordContext(
 
 /** Derive enrolled KEKs, seal one bundle, and return a canonical persistent record. */
 export async function sealKeyringRecord(params: SealKeyringRecordParams): Promise<KeyringRecord> {
-  const passwordBytes = params.passwordBytes;
+  const callerPasswordBytes = params.passwordBytes;
   const callerPrfOutput = params.prfOutput;
   const callerPlaintext = params.plaintext;
+  let passwordBytes: Uint8Array | undefined;
   let prfOutput: Uint8Array | undefined;
   let plaintext: Uint8Array | undefined;
   let passwordKey: KeyringUnwrapKey | undefined;
   let prfKey: KeyringUnwrapKey | undefined;
   let removeAbortCleanup = (): void => undefined;
   try {
-    if (!(passwordBytes instanceof Uint8Array)) throw new KeyringFormatError("passwordBytes must be a Uint8Array");
+    if (!(callerPasswordBytes instanceof Uint8Array)) throw new KeyringFormatError("passwordBytes must be a Uint8Array");
     if (!(callerPlaintext instanceof Uint8Array)) throw new KeyringFormatError("plaintext must be a Uint8Array");
     if (callerPrfOutput !== undefined && !(callerPrfOutput instanceof Uint8Array)) {
       throw new KeyringFormatError("prfOutput must be a Uint8Array");
@@ -593,9 +594,10 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
     const unlock = snapshotUnlockCheck(params.unlock);
     assertUnlockCheck(unlock, "seal record");
     removeAbortCleanup = registerUnlockAbortCleanup(unlock, () => {
-      passwordBytes.fill(0);
+      callerPasswordBytes.fill(0);
       callerPrfOutput?.fill(0);
       callerPlaintext.fill(0);
+      passwordBytes?.fill(0);
       prfOutput?.fill(0);
       plaintext?.fill(0);
       if (passwordKey !== undefined) zeroizeUnwrapKey(passwordKey);
@@ -612,10 +614,13 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
     }
     const recordBinding = metadataBytes(metadata);
     // Record sealing suspends during password derivation. Transfer the remaining
-    // secret inputs into private snapshots before that boundary so later caller
-    // mutation cannot assemble one authenticated record from mixed states.
-    plaintext = callerPlaintext.slice();
-    prfOutput = callerPrfOutput?.slice();
+    // secret inputs into disjoint, base-class snapshots before clearing any caller
+    // view. `Buffer.slice()` aliases and independent Uint8Array views may overlap,
+    // so dispatching `.slice()` or clearing between copies is not sufficient.
+    passwordBytes = new Uint8Array(callerPasswordBytes);
+    plaintext = new Uint8Array(callerPlaintext);
+    prfOutput = callerPrfOutput === undefined ? undefined : new Uint8Array(callerPrfOutput);
+    callerPasswordBytes.fill(0);
     callerPlaintext.fill(0);
     callerPrfOutput?.fill(0);
     assertUnlockCheck(unlock, "seal record");
@@ -643,9 +648,10 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
     return { metadata, bundle };
   } finally {
     removeAbortCleanup();
-    if (passwordBytes instanceof Uint8Array) passwordBytes.fill(0);
+    if (callerPasswordBytes instanceof Uint8Array) callerPasswordBytes.fill(0);
     if (callerPrfOutput instanceof Uint8Array) callerPrfOutput.fill(0);
     if (callerPlaintext instanceof Uint8Array) callerPlaintext.fill(0);
+    passwordBytes?.fill(0);
     prfOutput?.fill(0);
     plaintext?.fill(0);
     if (passwordKey !== undefined) zeroizeUnwrapKey(passwordKey);
