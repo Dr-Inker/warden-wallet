@@ -150,6 +150,13 @@ mod err {
     pub const SWAP_EXTRA_WRITABLE_VAULT: u32 = 6074;
     // GROK-EXP-05 remediation (2026-08-22), appended 6075.
     pub const SWAP_ROUTE_VARIANT_SESSION_DENIED: u32 = 6075;
+    // WRDF-0105 remediation rounds 1-4 (2026-08-23), appended 6076 / 6077.
+    // (Pinned late: the drift table stopped at 6075 until the 2026-09-02
+    // Fable audit hygiene pass — the enum was appended, the table was not.)
+    pub const VAULT_CONTROLLED_MINT_IN_PAYLOAD: u32 = 6076;
+    pub const UNMODELABLE_MINT_EXTENSION_IN_PAYLOAD: u32 = 6077;
+    // Fable audit P-1 (2026-09-02), appended 6078.
+    pub const VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD: u32 = 6078;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -158,7 +165,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 76] = [
+    let pairs: [(u32, WardenError, &str); 79] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -298,6 +305,21 @@ fn pinned_error_codes_match_the_enum_today() {
             err::SWAP_ROUTE_VARIANT_SESSION_DENIED,
             WardenError::SwapRouteVariantSessionDenied,
             "SwapRouteVariantSessionDenied",
+        ),
+        (
+            err::VAULT_CONTROLLED_MINT_IN_PAYLOAD,
+            WardenError::VaultControlledMintInPayload,
+            "VaultControlledMintInPayload",
+        ),
+        (
+            err::UNMODELABLE_MINT_EXTENSION_IN_PAYLOAD,
+            WardenError::UnmodelableMintExtensionInPayload,
+            "UnmodelableMintExtensionInPayload",
+        ),
+        (
+            err::VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD,
+            WardenError::VaultDelegatedForeignAccountInPayload,
+            "VaultDelegatedForeignAccountInPayload",
         ),
     ];
     for (pinned, variant, name) in pairs {

@@ -539,6 +539,18 @@ pub(crate) fn handler<'info>(
         }
     }
 
+    // FABLE AUDIT P-1 (2026-09-02): the ACCOUNT-level delegate. Everything
+    // above keys on the MINT's authority roles; a token account's own
+    // `delegate` field is a sixth way the PDA can be a valid transfer/burn
+    // authority over tokens that are not the vault's — and it is set by the
+    // account OWNER's `Approve`, so any third party can arrange it. A foreign
+    // account with `delegate == PDA` is refused pre-CPI on BOTH paths. BEFORE
+    // only, deliberately — see the rule's doc for why an AFTER re-application
+    // would be void. Same narrowness discipline as the mint gate: a foreign
+    // account delegated to someone else is untouched
+    // (`fable_p1_stranger_account_delegated_to_third_party_still_allowed`).
+    conservation::reject_vault_delegated_foreign_accounts(&before, &account_key)?;
+
     // ---- the adapter registry (session path only) -------------------------
     // (`resolved` is non-empty here — the empty payload was refused above —
     // so a session always meets the list-id / registry gate.)

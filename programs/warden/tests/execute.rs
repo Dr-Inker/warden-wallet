@@ -2825,6 +2825,192 @@ fn wrdf0105r4_root_execute_with_plain_classic_spl_mint_still_allowed() {
 }
 
 // ---------------------------------------------------------------------------
+// FABLE AUDIT P-1 (2026-09-02): the ACCOUNT-level delegate, not the mint's.
+//
+// WRDF-0105 closed the five MINT-level authority roles the PDA can hold. It
+// never looked at the token-ACCOUNT-level `delegate` field: classic SPL Token
+// `Approve` lets the owner of ANY token account name the SmartAccount PDA as
+// its delegate for `delegated_amount` tokens, and the token program then
+// accepts the PDA as the authority of `Transfer` (tag 3), `TransferChecked`
+// (12), `Burn` (8) and `BurnChecked` (15) from that account. Every one of those
+// tags is `SplTokenOp::Other` to `classify_spl_token_op`, so `deny_scan` never
+// names them; list 1 of the default registry carries [3] and [12] with
+// `ROLE_VAULT_SIGNER`, which checks ONLY that the authority position IS the
+// vault and IS a signer — it does not ask whether the source is the vault's;
+// and conservation skips every account whose token-level owner is not the
+// vault (`compare.rs` step 4), so `outflow` is zero and no bucket is debited.
+//
+// Concretely: a third party that approved the PDA as delegate (a pattern a
+// user's OTHER wallet might legitimately use to let the smart account manage
+// it) can be drained by a SESSION key — the least-privileged path — with no
+// cap, no bucket and no conservation record. The redness tests below prove the
+// drain end to end at the vulnerable base through a real SPL CPI; the fix is a
+// pre-CPI reject of any token account in the list that the vault does not own
+// but is the delegate of (`VaultDelegatedForeignAccountInPayload`), applied to
+// the BEFORE snapshot. (An AFTER re-application was tried and is VOID: the
+// token program clears `delegate` when the approval is fully spent, so the
+// drain shape leaves no trace — see `reject_vault_delegated_foreign_accounts`.)
+// ---------------------------------------------------------------------------
+
+/// Plant a classic SPL token account of `mint`, token-level owner `owner`, with
+/// `delegate` approved for `delegated_amount` — the state `Approve` leaves
+/// behind, planted directly so no `Approve` has to ride through `execute`.
+fn set_delegated_token_account(
+    svm: &mut LiteSVM,
+    address: &Pubkey,
+    mint: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+    delegate: &Pubkey,
+    delegated_amount: u64,
+) {
+    use solana_sdk::program_option::COption;
+    use spl_token::state::{Account as SplAccount, AccountState};
+    let a = SplAccount {
+        mint: *mint,
+        owner: *owner,
+        amount,
+        delegate: COption::Some(*delegate),
+        state: AccountState::Initialized,
+        is_native: COption::None,
+        delegated_amount,
+        close_authority: COption::None,
+    };
+    let mut data = vec![0u8; SplAccount::LEN];
+    a.pack_into_slice(&mut data);
+    svm.set_account(
+        *address,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(SplAccount::LEN),
+            data,
+            owner: SPL_TOKEN_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (delegated token account)");
+}
+
+/// REDNESS 1 — **the exploit, on the SESSION path**: a session key with the
+/// production allowlist (list 1) runs a plain SPL `Transfer` whose SOURCE is a
+/// third party's token account that has the vault PDA as its delegate, naming
+/// logical 0 (the PDA) as the authority. At the vulnerable base this SUCCEEDS
+/// — registry role check satisfied (authority position is the vault signer),
+/// nothing deny-listed, conservation skips both non-vault accounts, no cap
+/// debited — and 9,000 of the victim's tokens land in the thief's account.
+/// With the fix the whole `execute` is refused before any CPI, with its own
+/// error, and neither balance moves.
+#[test]
+fn fable_p1_session_transfer_from_vault_delegated_stranger_account_rejected() {
+    let (mut svm, payer, _pk, account, registry, _mut, vault_ata) = live();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+
+    let victim_owner = Pubkey::new_unique();
+    let victim = Pubkey::new_from_array([0x61; 32]);
+    set_delegated_token_account(&mut svm, &victim, &tok_mint(), &victim_owner, 9_000, &account, 9_000);
+    let thief = dest_ata(&mut svm);
+
+    // Same shape as the honest transfer, with the victim where the vault ATA
+    // would be: source=2 (w), dest=3 (w), authority=PDA(0), token program=4.
+    let remaining = spl_transfer_remaining(victim, thief);
+    let payload = spl_transfer_payload(9_000);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _l) = execute_ix(
+        session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args,
+    );
+
+    expect_reject(
+        &mut svm,
+        &[&payer, &session_kp],
+        &[ix],
+        0,
+        err::VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD,
+    );
+    assert_eq!(token_amount(&svm, &victim), 9_000, "the victim was not drained");
+    assert_eq!(token_amount(&svm, &thief), 0, "the thief received nothing");
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS, "the vault is untouched either way");
+}
+
+/// REDNESS 2 — the same hole on the ROOT path with `Burn` (tag 8), which has no
+/// destination at all: the delegate simply destroys the third party's tokens.
+/// `Burn` takes the mint WRITABLE; it is a plain classic mint whose authorities
+/// are a stranger's, so neither WRDF-0105 gate fires and `supply` is
+/// deliberately not a conservation field — at the base the burn goes through.
+#[test]
+fn fable_p1_root_burn_from_vault_delegated_stranger_account_rejected() {
+    let (mut svm, payer, pk, account, _registry, _mut, _vault_ata) = live();
+    let submitter = Keypair::new();
+
+    let stranger = Pubkey::new_unique();
+    let mint = Pubkey::new_from_array([0x62; 32]);
+    set_mint_with_authority(&mut svm, &mint, &stranger, 6, 100_000);
+    let victim_owner = Pubkey::new_unique();
+    let victim = Pubkey::new_from_array([0x63; 32]);
+    set_delegated_token_account(&mut svm, &victim, &mint, &victim_owner, 9_000, &account, 9_000);
+
+    // Burn accounts: source (w), mint (w), authority — authority = logical 0.
+    let remaining = vec![
+        AccountMeta::new(victim, false),                // logical 2 source
+        AccountMeta::new(mint, false),                  // logical 3 mint
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false), // logical 4 program
+    ];
+    let mut burn = vec![8u8];
+    burn.extend_from_slice(&9_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        4,
+        &[(2, FLAG_WRITABLE), (3, FLAG_WRITABLE), (0, FLAG_SIGNER), (4, 0)],
+        &burn,
+    )]);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args);
+
+    expect_reject(
+        &mut svm,
+        &[&payer, &submitter],
+        &[precompile, ix],
+        1,
+        err::VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD,
+    );
+    assert_eq!(token_amount(&svm, &victim), 9_000, "nothing was burned");
+    let m = spl_token::state::Mint::unpack(&svm.get_account(&mint).unwrap().data).unwrap();
+    assert_eq!(m.supply, 100_000, "supply unchanged");
+}
+
+/// CONTROL (narrowness) — a third party's token account delegated to SOMEONE
+/// ELSE, riding read-only beside an ordinary vault transfer, does not trip the
+/// rule: the gate keys on WHO the delegate is, exactly like the WRDF-0105 mint
+/// gate keys on who holds the mint roles. Passes at the base too; it exists so
+/// the rejects above cannot be explained by "any delegated account is refused".
+#[test]
+fn fable_p1_stranger_account_delegated_to_third_party_still_allowed() {
+    let (mut svm, payer, _pk, account, registry, _mut, vault_ata) = live();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let dest = dest_ata(&mut svm);
+
+    let other_delegate = Pubkey::new_unique();
+    let bystander = Pubkey::new_from_array([0x65; 32]);
+    set_delegated_token_account(
+        &mut svm, &bystander, &tok_mint(), &Pubkey::new_unique(), 9_000, &other_delegate, 9_000,
+    );
+
+    let mut remaining = spl_transfer_remaining(vault_ata, dest);
+    remaining.push(AccountMeta::new_readonly(bystander, false)); // logical 6, unreferenced
+    let payload = spl_transfer_payload(400_000);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _l) = execute_ix(
+        session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args,
+    );
+    expect_ok(&mut svm, &[&payer, &session_kp], &[ix]);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS - 400_000);
+    assert_eq!(token_amount(&svm, &dest), 400_000);
+    assert_eq!(token_amount(&svm, &bystander), 9_000);
+}
+
+// ---------------------------------------------------------------------------
 // Error codes (mirror of tests/root_verify.rs::err, only the ones used here)
 // ---------------------------------------------------------------------------
 mod err {
@@ -2847,4 +3033,5 @@ mod err {
     pub const UNSUPPORTED_ACCOUNT_KIND: u32 = 6040;
     pub const VAULT_CONTROLLED_MINT_IN_PAYLOAD: u32 = 6076;
     pub const UNMODELABLE_MINT_EXTENSION_IN_PAYLOAD: u32 = 6077;
+    pub const VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD: u32 = 6078;
 }

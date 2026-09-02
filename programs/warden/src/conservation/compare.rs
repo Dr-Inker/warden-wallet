@@ -470,6 +470,46 @@ pub fn reject_unsupported_writable_owners(snaps: &[Snap]) -> Result<()> {
     Ok(())
 }
 
+/// Fable audit P-1 (2026-09-02): refuse any token account in `snaps` that the
+/// vault does NOT own (token-level `owner != vault`) but IS the approved
+/// `delegate` of.
+///
+/// Every rule in this module keys on `TokenSnap::owner == vault` — a foreign
+/// token account is skipped by the comparison by design, and `outflow` never
+/// sees it. The token program, however, accepts an account's `delegate` as the
+/// authority of `Transfer` / `TransferChecked` / `Burn` / `BurnChecked` for up
+/// to `delegated_amount`, and `Approve` is the account OWNER's call: any third
+/// party can name the SmartAccount PDA as its delegate. `execute` then signs as
+/// the PDA for a transfer or burn out of that account — passing the default
+/// registry's `ROLE_VAULT_SIGNER` check (authority position is the vault
+/// signer), naming no deny-listed tag (3/12/8/15 are all `SplTokenOp::Other`)
+/// and debiting no bucket, on the SESSION path. WRDF-0105 closed the five
+/// MINT-level roles the PDA can hold; this is the ACCOUNT-level one.
+///
+/// Called on the BEFORE snapshot only, pre-CPI, so the refusal precedes any
+/// signed CPI. An AFTER re-application was tried and dropped as VOID, recorded
+/// here so it is not re-added in good faith: the token program clears
+/// `delegate` the moment `delegated_amount` reaches zero, so exactly the drain
+/// shape — spend the whole approval — leaves no trace in the AFTER snapshot
+/// (the harness proved it: a mid-payload `Approve(9_000)` + `Transfer(9_000)`
+/// passed the AFTER check). A delegation can only be CREATED inside the payload
+/// window by a signer the payload already carries — logical 1, the submitter,
+/// approving its OWN account — which is not a third-party loss, so the entry
+/// check is the whole rule. `delegated_amount` is deliberately not consulted: a
+/// zero-amount delegation grants nothing today, but the field is not what the
+/// rule is about, and a value-free reject is the cheaper mistake.
+pub fn reject_vault_delegated_foreign_accounts(snaps: &[Snap], vault: &Pubkey) -> Result<()> {
+    for s in snaps {
+        if let Some(t) = s.token.as_ref() {
+            require!(
+                !(t.owner != *vault && t.delegate == Some(*vault)),
+                WardenError::VaultDelegatedForeignAccountInPayload
+            );
+        }
+    }
+    Ok(())
+}
+
 /// First not-yet-consumed intent naming `key`.
 fn first_unused_intent(closes: &[CloseIntent], used: &[bool], key: &Pubkey) -> Option<usize> {
     for (j, c) in closes.iter().enumerate() {

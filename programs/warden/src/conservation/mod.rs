@@ -67,7 +67,9 @@ pub mod snapshot;
 mod tests;
 
 pub use accounting::Outflow;
-pub use compare::{compare_and_account, reject_unsupported_writable_owners};
+pub use compare::{
+    compare_and_account, reject_unsupported_writable_owners, reject_vault_delegated_foreign_accounts,
+};
 pub use snapshot::{snapshot, snapshot_one};
 
 /// The fields of an SPL Token / Token-2022 token account that conservation

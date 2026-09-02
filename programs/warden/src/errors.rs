@@ -214,4 +214,13 @@ pub enum WardenError {
     // ---------------------------------------------------------------------
     #[msg("generic execute refuses to sign for a payload whose account list contains a mint whose authority semantics the snapshot cannot model (an unrecognized Token-2022 extension, or a danger class whose authority pubkey is not extracted)")]
     UnmodelableMintExtensionInPayload,
+    // ---------------------------------------------------------------------
+    // Fable audit P-1 (2026-09-02). APPEND ONLY — see above. Code 6078.
+    // The ACCOUNT-level `delegate`, distinct from the five MINT-level roles
+    // `VaultControlledMintInPayload` covers: a token account the vault does
+    // not own but is the approved delegate of would let the PDA sign a
+    // Transfer/Burn from it that conservation skips and no cap meters.
+    // ---------------------------------------------------------------------
+    #[msg("generic execute refuses to sign for a payload whose account list contains a token account the vault does not own but is the delegate of; delegate-authority transfers and burns from third-party accounts are unmetered by conservation and caps")]
+    VaultDelegatedForeignAccountInPayload,
 }

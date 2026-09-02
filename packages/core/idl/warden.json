@@ -1502,6 +1502,11 @@
       "code": 6077,
       "name": "UnmodelableMintExtensionInPayload",
       "msg": "generic execute refuses to sign for a payload whose account list contains a mint whose authority semantics the snapshot cannot model (an unrecognized Token-2022 extension, or a danger class whose authority pubkey is not extracted)"
+    },
+    {
+      "code": 6078,
+      "name": "VaultDelegatedForeignAccountInPayload",
+      "msg": "generic execute refuses to sign for a payload whose account list contains a token account the vault does not own but is the delegate of; delegate-authority transfers and burns from third-party accounts are unmetered by conservation and caps"
     }
   ],
   "types": [
