@@ -294,6 +294,15 @@ HDR
   echo "9. FINDING IDS ARE WRAPPER-OWNED. If you raise findings, assign them contiguously in output"
   echo "   order beginning at ${FINDING_ID_START}; do not reuse any lower WRDF id. A zero-finding"
   echo "   response is valid. The independent validator rejects any other allocation."
+  cat <<'HDR'
+10. PRESERVE REVIEW CONTEXT. Keep every shell result narrowly bounded: start with `--stat`/`--name-only`,
+   use `rg -n` and targeted line ranges, and do not print an entire large file or an entire diff over
+   500 lines. The seeded rows and prior-art corpus are already in this prompt; do not dump them again.
+   Read required sibling files in bounded chunks. Do not explore unrelated refs, worktrees, reflogs, or
+   unreachable objects unless a changed evidence citation requires one exact ancestry/object check.
+   Once the changed code, its direct callers/tests, seeded invariants, siblings, and prior-art classes
+   are decided, return the typed JSON promptly; repeated re-reading does not strengthen the review.
+HDR
   echo
   echo "BASE SHA: $BASE_SHA"
   echo "HEAD SHA: $HEAD_SHA"
