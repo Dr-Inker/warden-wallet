@@ -23,7 +23,7 @@ use common::passkey::{self, TestPasskey, FLAGS_UP_UV, TEST_ORIGIN};
 use common::token::{ata, set_mint, set_token_account, token_amount};
 use common::{
     bump_generation, bump_policy_version, create_smart_account, init_registry_ix,
-    read_smart_account, registry_pda, session_pda, set_program_data, warp_clock,
+    read_session, read_smart_account, registry_pda, session_pda, set_program_data, warp_clock,
     SmartAccountFixture,
 };
 use common::mutator::{self, add_mutator};
@@ -3172,6 +3172,114 @@ fn codex_wrdf0109_session_transfer_from_vault_delegated_account_at_signer_slot_r
     );
     assert_eq!(token_amount(&svm, &session_kp.pubkey()), 9_000, "the victim account at the signer slot was not drained");
     assert_eq!(token_amount(&svm, &thief), 0, "the thief received nothing");
+}
+
+/// WRDF-0115 — logical signer slot 1 participates in conservation too. A
+/// transaction-signing keypair address may itself be an SPL token account;
+/// token ownership is an independent field and may name the vault PDA. The
+/// transfer is allowed, but it must debit the same root threshold and account
+/// bucket as an equivalent source in `remaining_accounts`.
+#[test]
+fn codex_wrdf0115_root_vault_owned_signer_slot_is_metered() {
+    let (mut svm, payer, pk, account, _registry, _mut, _vault_ata) = live();
+    let submitter = Keypair::new();
+    set_plain_token_account(
+        &mut svm,
+        &submitter.pubkey(),
+        &tok_mint(),
+        &account,
+        9_000,
+    );
+    let destination = dest_ata(&mut svm);
+
+    let remaining = vec![
+        AccountMeta::new(destination, false),
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false),
+        mint_meta(),
+    ];
+    let mut transfer = vec![3u8];
+    transfer.extend_from_slice(&9_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        3,
+        &[(1, FLAG_WRITABLE), (2, FLAG_WRITABLE), (0, FLAG_SIGNER), (3, 0)],
+        &transfer,
+    )]);
+    let shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_probe, logical) = execute_ix_writable_signer(
+        submitter.pubkey(),
+        account,
+        None,
+        true,
+        None,
+        &remaining,
+        &shape,
+    );
+    let (precompile, root) =
+        ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _logical) = execute_ix_writable_signer(
+        submitter.pubkey(),
+        account,
+        None,
+        true,
+        None,
+        &remaining,
+        &args,
+    );
+
+    expect_ok(&mut svm, &[&payer, &submitter], &[precompile, ix]);
+    assert_eq!(token_amount(&svm, &submitter.pubkey()), 0);
+    assert_eq!(token_amount(&svm, &destination), 9_000);
+    let state = read_smart_account(&svm, &account);
+    assert_eq!(state.buckets[1].spent_today, 9_000, "signer-slot outflow must debit the day bucket");
+    assert_eq!(state.buckets[1].ring[ring_slot_today(&svm)], 9_000);
+}
+
+/// Same signer-slot conservation requirement on the session path: both the
+/// session lifetime counter and the shared account bucket must be charged.
+#[test]
+fn codex_wrdf0115_session_vault_owned_signer_slot_is_metered() {
+    let (mut svm, payer, _pk, account, registry, _mut, _vault_ata) = live();
+    let (session, session_key) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    set_plain_token_account(
+        &mut svm,
+        &session_key.pubkey(),
+        &tok_mint(),
+        &account,
+        9_000,
+    );
+    let destination = dest_ata(&mut svm);
+
+    let remaining = vec![
+        AccountMeta::new(destination, false),
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false),
+        mint_meta(),
+    ];
+    let mut transfer = vec![3u8];
+    transfer.extend_from_slice(&9_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        3,
+        &[(1, FLAG_WRITABLE), (2, FLAG_WRITABLE), (0, FLAG_SIGNER), (3, 0)],
+        &transfer,
+    )]);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _logical) = execute_ix_writable_signer(
+        session_key.pubkey(),
+        account,
+        Some(session),
+        false,
+        Some(registry),
+        &remaining,
+        &args,
+    );
+
+    expect_ok(&mut svm, &[&payer, &session_key], &[ix]);
+    assert_eq!(token_amount(&svm, &session_key.pubkey()), 0);
+    assert_eq!(token_amount(&svm, &destination), 9_000);
+    assert_eq!(read_session(&svm, &session).lifetime_spent[1], 9_000);
+    let state = read_smart_account(&svm, &account);
+    assert_eq!(state.buckets[1].spent_today, 9_000, "signer-slot outflow must debit the shared day bucket");
+    assert_eq!(state.buckets[1].ring[ring_slot_today(&svm)], 9_000);
 }
 
 /// WRDF-0110 — the MULTISIG authority shape, ROOT path: a 1-of-1 SPL Multisig

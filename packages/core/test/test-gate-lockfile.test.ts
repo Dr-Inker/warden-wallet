@@ -29,6 +29,17 @@ describe("the local gate's Cargo.lock boundary", () => {
       expect(command, `${prefix} must exist in the local gate`).toBeDefined();
       expect(command, `${prefix} must refuse lockfile resolution drift`).toMatch(/(?:^|\s)--locked(?:\s|$)/u);
     }
+
+    const anchorSbf = commands.find((line) => line.includes("anchor build"));
+    expect(anchorSbf).toBe("nice -n 10 anchor build --no-idl -- --features test-jup -- --locked");
+    const anchorIdl = commands.find((line) => line.includes("anchor idl build"));
+    expect(anchorIdl).toBe(
+      "nice -n 10 anchor idl build -p warden -o target/idl/warden.json -- --features test-jup --locked",
+    );
+
+    for (const command of commands.filter((line) => line.includes("cargo-build-sbf --manifest-path"))) {
+      expect(command, "the direct SBF fallback must lock Cargo resolution").toMatch(/ -- --locked$/u);
+    }
   });
 
   it("proves Cargo's locked preflight refuses a stale graph without rewriting the lock", () => {

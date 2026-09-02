@@ -114,7 +114,14 @@ if ls programs/*/Cargo.toml >/dev/null 2>&1; then
   # declare an inert `test-jup` feature so the forward does not error).
   if [ "$needs_build" -eq 1 ]; then
     if command -v anchor >/dev/null 2>&1; then
-      nice -n 10 anchor build -- --features test-jup -- --locked
+      # Anchor 1.1.2 forwards one argument vector to both cargo-build-sbf
+      # and its IDL cargo-test pass. `-- --locked` is correct for the former
+      # but becomes a test-binary argument in the latter. Split the two so
+      # BOTH Cargo invocations are actually locked instead of relying on an
+      # invalid combined command (WRDF-0112 remediation correction).
+      nice -n 10 anchor build --no-idl -- --features test-jup -- --locked
+      mkdir -p target/idl
+      nice -n 10 anchor idl build -p warden -o target/idl/warden.json -- --features test-jup --locked
     else
       nice -n 10 cargo-build-sbf --manifest-path programs/warden/Cargo.toml --features test-jup -- --locked
       nice -n 10 cargo-build-sbf --manifest-path programs/test-middleman/Cargo.toml --features test-jup -- --locked

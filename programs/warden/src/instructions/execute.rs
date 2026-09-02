@@ -379,23 +379,19 @@ pub(crate) fn handler<'info>(
     drop(account);
 
     // ---- BEFORE snapshot (spec §5.2 rule 2) -------------------------------
-    let before = conservation::snapshot(remaining, &account_key)?;
+    // Logical[0] is the SmartAccount itself and is tracked separately below.
+    // Every other logical account participates in the positional conservation
+    // pair, including logical[1]: being a transaction signer says nothing
+    // about the SPL token-level owner stored at that address (WRDF-0115).
+    let conservation_infos =
+        logical_infos.get(1..).ok_or(WardenError::PayloadInvalid)?;
+    let before = conservation::snapshot(conservation_infos, &account_key)?;
     let pda_lamports_before = sa_info.lamports();
-    // Codex WRDF-0109 (2026-09-02): `before` is positional over `remaining`
-    // and stays that way (compare_and_account / deny_scan index it), so
-    // logical[1] — the `Signer`, an ARBITRARY keypair address of which Anchor
-    // checks only `is_signer` — was never snapshotted. A submitter whose own
-    // address is a token account (owner: a stranger, delegate: the PDA) or a
-    // mint the PDA holds a role on could pass it writable at slot 1 and name
-    // it as the source/target: none of the pre-CPI gates below saw it. It is
-    // snapshotted once here and fed through every gate `before` goes through
-    // (unsupported writable owners, the mint gates, the delegate gate); it
-    // takes no part in conservation because the PDA never owns the signer.
-    // Logical[0] is the SmartAccount PDA itself — program-owned by Anchor's
-    // `AccountLoader` check, so it can be none of these shapes.
-    let signer_info = ctx.accounts.signer.to_account_info();
-    let signer_snap = conservation::snapshot(core::slice::from_ref(&signer_info), &account_key)?;
-    conservation::reject_unsupported_writable_owners(&signer_snap)?;
+    // Codex WRDF-0109 (2026-09-02): the signer is an arbitrary keypair address,
+    // so it must pass every pre-CPI gate that protects `remaining_accounts`.
+    // WRDF-0115 closes the remaining gap by keeping that same slot in the
+    // BEFORE/AFTER conservation pair instead of using a preflight-only side
+    // snapshot. Logical[0] is program-owned by Anchor's AccountLoader check.
     // Codex WRDF-0110 (2026-09-02): the multisig authority shape, over the
     // whole logical list (signer slot included) — see the rule's doc.
     conservation::reject_vault_multisig_members(
@@ -549,7 +545,7 @@ pub(crate) fn handler<'info>(
     //
     // The two refusals get SEPARATE errors on purpose: this one means "the
     // snapshot cannot tell who holds what", not "the vault holds a role".
-    for s in before.iter().chain(signer_snap.iter()) {
+    for s in &before {
         if let Some(m) = s.mint.as_ref() {
             require!(!m.holds_authority(&account_key), WardenError::VaultControlledMintInPayload);
             require!(
@@ -571,8 +567,6 @@ pub(crate) fn handler<'info>(
     // account delegated to someone else is untouched
     // (`fable_p1_stranger_account_delegated_to_third_party_still_allowed`).
     conservation::reject_vault_delegated_foreign_accounts(&before, &account_key)?;
-    // WRDF-0109: the same rule over the signer slot (see the BEFORE snapshot).
-    conservation::reject_vault_delegated_foreign_accounts(&signer_snap, &account_key)?;
 
     // ---- the adapter registry (session path only) -------------------------
     // (`resolved` is non-empty here — the empty payload was refused above —
@@ -643,7 +637,7 @@ pub(crate) fn handler<'info>(
     }
 
     // ---- AFTER snapshot + conservation ------------------------------------
-    let after = conservation::snapshot(remaining, &account_key)?;
+    let after = conservation::snapshot(conservation_infos, &account_key)?;
     let pda_lamports_after = sa_info.lamports();
     // WRDF-0110, AFTER re-application — NOT decorative, unlike the delegate
     // rule's (see `reject_vault_delegated_foreign_accounts`): a multisig can be
