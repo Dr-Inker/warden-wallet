@@ -19,6 +19,7 @@ import {
   APPROVAL_DATABASE_VERSION,
   APPROVAL_OBJECT_STORE_NAME,
 } from "../src/background/approval-store.js";
+import { shippedExpectedKeyringContext } from "../src/background/expected-keyring-context.js";
 
 const EXTENSION_DIRECTORY = resolve(import.meta.dirname, "../dist");
 const PAGE_REQUEST_TYPE = "warden:provider:request";
@@ -41,13 +42,16 @@ function browserPersistentRecord(bundleId: Uint8Array, origin: string): string {
         salt: fill(16, 0x11),
       },
       prf: null,
+      // Record adoption compares the full pinned context (WRD-EXT-03): a
+      // record for any other cluster/deployment is refused at wake, which is
+      // exactly what makes the pinned values the only ones this test can use.
       context: {
         account: fill(32, 0x41),
         origin,
         keyKind: "session-signer",
         schemaVersion: 1,
-        genesisHash: fill(32, 0x31),
-        programId: fill(32, 0x32),
+        genesisHash: shippedExpectedKeyringContext().genesisHash,
+        programId: shippedExpectedKeyringContext().programId,
       },
     },
     bundle: {

@@ -287,6 +287,23 @@ async function createExtension(): Promise<{
   }
 }
 
+/**
+ * Approve the way a person does (audit A-1). The control arms only once the
+ * window has held focus for the dwell and a trusted pointer move has landed
+ * after the review rendered, and the click must carry a trusted
+ * pointerdown/pointerup pair at-or-after the arm time. Every step here is real
+ * Chromium input; nothing sets `disabled` or dispatches synthetic events.
+ */
+async function approveAsHuman(popup: Page): Promise<void> {
+  await popup.bringToFront();
+  const approve = popup.locator("[data-action=approve]");
+  // A trusted pointermove onto the control; hover does not need it enabled.
+  await approve.hover();
+  // toBeEnabled's 10 s expect timeout comfortably outlasts the 600 ms dwell.
+  await expect(approve).toBeEnabled();
+  await approve.click();
+}
+
 async function liveExtensionWorker(
   context: BrowserContext,
   origin = "chrome-extension://",
@@ -520,13 +537,14 @@ test("real Chromium returns exactly the reviewed message after one authenticated
     await expect(popup.locator("#capability-message")).toContainText(
       "durable signed result",
     );
-    await expect(popup.locator("[data-action=approve]")).toBeEnabled();
+    // The review response alone must NOT arm the control (audit A-1).
+    await expect(popup.locator("[data-action=approve]")).toBeDisabled();
     expect(popup.url()).toBe(
       `chrome-extension://${new URL((await liveExtensionWorker(context)).url()).hostname}` +
       `/approval.html?request=${reviewed.latestApprovalId}`,
     );
 
-    await popup.locator("[data-action=approve]").click();
+    await approveAsHuman(popup);
     await expect.poll(() => page.evaluate(() =>
       (globalThis as unknown as { __wardenPageSignStatus: PageSignStatus })
         .__wardenPageSignStatus,
@@ -671,7 +689,7 @@ test("durable signed bytes replay after MV3 death without restoring signer autho
       "data-state",
       "review",
     );
-    await popup.locator("[data-action=approve]").click();
+    await approveAsHuman(popup);
 
     await expect.poll(() => readWorkerStatus(context!)).toMatchObject({
       fatalErrors: [],
@@ -884,7 +902,7 @@ test("uncommitted signature is abandoned after MV3 death without signer retry", 
       "data-state",
       "review",
     );
-    await popup.locator("[data-action=approve]").click();
+    await approveAsHuman(popup);
 
     await expect.poll(() => readWorkerStatus(context!)).toMatchObject({
       fatalErrors: [],
@@ -1087,7 +1105,7 @@ test("in-flight strict signing commit resolves to one durable outcome after MV3 
     ) {
       throw new Error("in-flight commit review evidence is absent");
     }
-    await popup.locator("[data-action=approve]").click();
+    await approveAsHuman(popup);
 
     await expect.poll(() => readSigningCommitCheckpoint(popup)).toMatchObject({
       stage: "during-signing-commit",
@@ -1337,7 +1355,7 @@ test("page-settled signed result reaches one background settlement after MV3 dea
     }
     const extensionControl = await context.newPage();
     await extensionControl.goto(`${extensionOrigin}/control.html`);
-    await popup.locator("[data-action=approve]").click();
+    await approveAsHuman(popup);
 
     await expect.poll(() =>
       readTerminalEnqueuedCheckpoint(extensionControl)
@@ -1574,7 +1592,7 @@ test("accepted page receipt recovers when MV3 dies before settlement enqueue", a
     }
     const extensionControl = await context.newPage();
     await extensionControl.goto(`${extensionOrigin}/control.html`);
-    await popup.locator("[data-action=approve]").click();
+    await approveAsHuman(popup);
 
     await expect.poll(() =>
       readSettlementEnqueueCheckpoint(extensionControl)

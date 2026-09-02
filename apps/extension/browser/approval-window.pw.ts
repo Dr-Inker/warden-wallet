@@ -3,8 +3,37 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { build } from "esbuild";
+import {
+  APPROVAL_WINDOW_ASSUMED_SCREEN_HEIGHT,
+  APPROVAL_WINDOW_ASSUMED_SCREEN_WIDTH,
+} from "../src/background/approval-window.js";
 
 const scriptDirectory = resolve(import.meta.dirname, "../scripts");
+
+/**
+ * Placement is randomised per launch (audit A-1) inside the smallest desktop
+ * display Chrome supports, so the exact corner is not part of the contract; the
+ * window must still fit entirely on that assumed screen and every other option
+ * stays exact.
+ */
+function expectApprovalCreateCall(call: unknown, url: string): void {
+  expect(call).toBeDefined();
+  const { left, top, ...fixed } = call as Record<string, unknown>;
+  expect(fixed).toEqual({
+    url,
+    type: "popup",
+    focused: true,
+    width: 720,
+    height: 600,
+    setSelfAsOpener: false,
+  });
+  expect(Number.isSafeInteger(left)).toBe(true);
+  expect(Number.isSafeInteger(top)).toBe(true);
+  expect(left as number).toBeGreaterThanOrEqual(0);
+  expect(top as number).toBeGreaterThanOrEqual(0);
+  expect((left as number) + 720).toBeLessThanOrEqual(APPROVAL_WINDOW_ASSUMED_SCREEN_WIDTH);
+  expect((top as number) + 600).toBeLessThanOrEqual(APPROVAL_WINDOW_ASSUMED_SCREEN_HEIGHT);
+}
 
 async function liveExtensionWorker(context: BrowserContext, origin?: string) {
   for (const worker of [...context.serviceWorkers()].reverse()) {
@@ -125,14 +154,11 @@ test("permissionless approval popups cancel on user close and worker death", asy
     expect(result.requestId).toBe(`req_${"9a".repeat(16)}`);
     expect(result.permissions).toEqual([]);
     expect(result.fatals).toEqual([]);
-    expect(result.createCalls).toEqual([{
-      url: expectedUrl,
-      type: "popup",
-      focused: true,
-      width: 720,
-      height: 600,
-      setSelfAsOpener: false,
-    }]);
+    // Placement is randomised per launch (audit A-1) inside the smallest
+    // desktop display Chrome supports, so the exact corner is not part of the
+    // contract; the window must still fit entirely on that assumed screen.
+    expect(result.createCalls).toHaveLength(1);
+    expectApprovalCreateCall(result.createCalls[0], expectedUrl);
     expect(result.popups).toHaveLength(1);
     expect(result.popups[0]).toMatchObject({
       type: "popup",
@@ -186,14 +212,7 @@ test("permissionless approval popups cancel on user close and worker death", asy
       restartResultPromise,
     ]) as [Awaited<typeof restartPopupPromise>, typeof result];
     expect(restartPopup.url()).toBe(restartUrl);
-    expect(restartResult.createCalls.at(-1)).toEqual({
-      url: restartUrl,
-      type: "popup",
-      focused: true,
-      width: 720,
-      height: 600,
-      setSelfAsOpener: false,
-    });
+    expectApprovalCreateCall(restartResult.createCalls.at(-1), restartUrl);
     expect(await restartWorker.evaluate(async (requestId) => {
       const reader = (globalThis as unknown as {
         __wardenApprovalWindowRead?: (
