@@ -4,18 +4,21 @@
 #
 # USAGE
 #   scripts/review.sh <base-sha> [head]            review base..head
+#   scripts/review.sh <base-sha> <old-head> --historical  review an old head in a temporary,
+#                                                       detached read-only worktree
 #   scripts/review.sh <base-sha> [head] --dry-run  assemble everything, invoke nothing
 #   scripts/review.sh --selftest                   assert every codex flag this script uses exists
 #   scripts/review.sh --validate <f.json> [--expect <f>]   validate an existing findings file
 #
 #   Options: --dry-run · --with-tools · --out <path> · --model <m> · --effort <e> · --kind <k>
-#            --finding-id-start <WRDF-NNNN>
+#            --finding-id-start <WRDF-NNNN> · --historical
 #
 # WHAT IT DOES
-#   1. Refuses to run on a dirty tree, and refuses unless the checked-out HEAD IS <head>. A review
-#      of a range the working tree does not match is a review of something nobody can reproduce;
-#      and `codex review --base` on a dirty tree repeats HALLUCINATED findings unrelated to the diff
-#      (openai/codex#8404).
+#   1. Refuses to run with a dirty integration tree. The review worktree must be exactly <head>:
+#      normally that is the integration checkout; --historical instead creates a temporary,
+#      detached worktree at an old head while keeping the current review machinery and scorecard
+#      authoritative. A mismatched or dirty worktree is not reproducible, and `codex review --base`
+#      on a dirty tree repeats HALLUCINATED findings unrelated to the diff (openai/codex#8404).
 #   2. Computes the seed list ITSELF from docs/security/invariants.jsonl and writes it, with the two
 #      SHAs and the sibling-file list, to an EXPECTATIONS file. The validator checks the model's
 #      output against that file, not against the model's own account of what it was asked. Without
@@ -46,13 +49,16 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REVIEW_ROOT="$REPO_ROOT"
+HISTORICAL_ROOT=""
+PROMPT_FILE=""
 cd "$REPO_ROOT"
 
-SCHEMA=".codex/schemas/warden-findings.json"
+SCHEMA="$REPO_ROOT/.codex/schemas/warden-findings.json"
 PRIOR_ART="docs/security/PRIOR-ART-FINDINGS.md"
 LEDGER="docs/security/invariants.jsonl"
-SCORECARD="docs/security/REVIEW-SCORECARD.jsonl"
-OUT_DIR=".superpowers/reviews"
+SCORECARD="$REPO_ROOT/docs/security/REVIEW-SCORECARD.jsonl"
+OUT_DIR="$REPO_ROOT/.superpowers/reviews"
 MODEL="gpt-5.6-sol"
 EFFORT="max"
 # Flags this script passes to `codex exec`. --selftest asserts every one of them exists.
@@ -93,10 +99,10 @@ fi
 if [[ "${1:-}" == "--validate" ]]; then
   [[ -n "${2:-}" ]] || die "usage: scripts/review.sh --validate <findings.json> [--expect <f>]"
   shift
-  exec node scripts/validate-findings.mjs "$@" --schema "$SCHEMA"
+  exec node "$REPO_ROOT/scripts/validate-findings.mjs" "$@" --schema "$SCHEMA" --repo-root "$REPO_ROOT"
 fi
 
-DRY_RUN=0; WITH_TOOLS=0; OUT=""; BASE=""; HEAD_REF="HEAD"; KIND="task-diff"; FINDING_ID_START=""
+DRY_RUN=0; WITH_TOOLS=0; HISTORICAL=0; OUT=""; BASE=""; HEAD_REF="HEAD"; KIND="task-diff"; FINDING_ID_START=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift;;
@@ -106,6 +112,7 @@ while [[ $# -gt 0 ]]; do
     --effort) EFFORT="${2:?}"; shift 2;;
     --kind) KIND="${2:?}"; shift 2;;
     --finding-id-start) FINDING_ID_START="${2:?}"; shift 2;;
+    --historical) HISTORICAL=1; shift;;
     -h|--help) sed -n '2,40p' "$0"; exit 0;;
     -*) die "unknown option $1";;
     *) if [[ -z "$BASE" ]]; then BASE="$1"; else HEAD_REF="$1"; fi; shift;;
@@ -115,12 +122,40 @@ done
 
 command -v codex >/dev/null || die "codex CLI not found on PATH"
 command -v node  >/dev/null || die "node not found on PATH"
+
+BASE_SHA="$(git rev-parse --verify "$BASE^{commit}" 2>/dev/null)" || die "not a commit: $BASE"
+HEAD_SHA="$(git rev-parse --verify "$HEAD_REF^{commit}" 2>/dev/null)" || die "not a commit: $HEAD_REF"
+
+# ---- 1. clean integration tree + an exact worktree for <head> ----------------
+if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
+  echo "error: working tree is dirty." >&2
+  echo "  A dirty-tree review is void: codex repeats HALLUCINATED findings unrelated to the diff" >&2
+  echo "  (openai/codex#8404), and the range under review would not match the files on disk." >&2
+  git -C "$REPO_ROOT" status --short >&2
+  exit 1
+fi
+CURRENT_HEAD="$(git -C "$REPO_ROOT" rev-parse --verify HEAD)"
+if [[ "$CURRENT_HEAD" != "$HEAD_SHA" ]]; then
+  [[ $HISTORICAL -eq 1 ]] || die "checked-out HEAD is $CURRENT_HEAD but the requested head is $HEAD_SHA — check out $HEAD_SHA or pass --historical; the model reads files from an exact worktree"
+  HISTORICAL_ROOT="$(mktemp -d /tmp/warden-review-worktree.XXXXXX)"
+  rmdir "$HISTORICAL_ROOT"
+  git -C "$REPO_ROOT" worktree add --detach "$HISTORICAL_ROOT" "$HEAD_SHA" >/dev/null
+  REVIEW_ROOT="$HISTORICAL_ROOT"
+fi
+cleanup() {
+  [[ -z "$PROMPT_FILE" ]] || rm -f "$PROMPT_FILE"
+  if [[ -n "$HISTORICAL_ROOT" ]]; then
+    git -C "$REPO_ROOT" worktree remove --force "$HISTORICAL_ROOT" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+cd "$REVIEW_ROOT"
+[[ -z "$(git status --porcelain)" ]] || die "review worktree is dirty: $REVIEW_ROOT"
+[[ "$(git rev-parse --verify HEAD)" == "$HEAD_SHA" ]] || die "review worktree is not at $HEAD_SHA"
 for f in "$SCHEMA" "$PRIOR_ART" "$LEDGER"; do [[ -f "$f" ]] || die "missing $f"; done
 
 # Finding ids are one committed-ledger namespace, not local to the historical checkout being
-# reviewed. Normally the checked-out scorecard is authoritative. A detached historical review
-# must pass the next id from the integration branch explicitly; otherwise it would silently reuse
-# an old id for unrelated substance when its artefact is carried back to the current branch.
+# reviewed. The integration scorecard is authoritative even when REVIEW_ROOT is historical.
 if [[ -z "$FINDING_ID_START" ]]; then
   FINDING_ID_START="$(SCORECARD="$SCORECARD" node -e '
     const fs = require("fs");
@@ -139,20 +174,6 @@ fi
 [[ "$FINDING_ID_START" =~ ^WRDF-[0-9]{4}$ && "$FINDING_ID_START" != "WRDF-0000" ]] || \
   die "--finding-id-start must be WRDF-0001..WRDF-9999 (got ${FINDING_ID_START})"
 
-BASE_SHA="$(git rev-parse --verify "$BASE^{commit}" 2>/dev/null)" || die "not a commit: $BASE"
-HEAD_SHA="$(git rev-parse --verify "$HEAD_REF^{commit}" 2>/dev/null)" || die "not a commit: $HEAD_REF"
-
-# ---- 1. clean tree AND checked-out HEAD == <head> ---------------------------
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "error: working tree is dirty." >&2
-  echo "  A dirty-tree review is void: codex repeats HALLUCINATED findings unrelated to the diff" >&2
-  echo "  (openai/codex#8404), and the range under review would not match the files on disk." >&2
-  git status --short >&2
-  exit 1
-fi
-CURRENT_HEAD="$(git rev-parse --verify HEAD)"
-[[ "$CURRENT_HEAD" == "$HEAD_SHA" ]] || die "checked-out HEAD is $CURRENT_HEAD but the requested head is $HEAD_SHA — check out $HEAD_SHA first; the model reads files from the worktree, so a mismatched worktree reviews code that is not in the range"
-
 # ---- 2. seed list + expectations file (computed by the WRAPPER) -------------
 CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
 [[ -n "$CHANGED" ]] || die "no changes between $BASE_SHA and $HEAD_SHA"
@@ -162,8 +183,9 @@ mkdir -p "$OUT_DIR"
 # over the same head from overwriting the previous artefact, and the round id — not the model's
 # self-report — is what lands in the scorecard and run record.
 ROUND_ID="${HEAD_SHA:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
-[[ -n "$OUT" ]] || OUT="$OUT_DIR/$ROUND_ID.json"
-EXPECT="${OUT%.json}.expect.json"
+[[ -n "$OUT" ]] || OUT=".superpowers/reviews/$ROUND_ID.json"
+if [[ "$OUT" = /* ]]; then OUT_PATH="$OUT"; else OUT_PATH="$REPO_ROOT/$OUT"; fi
+EXPECT="${OUT_PATH%.json}.expect.json"
 
 # Rows whose LEDGER ENTRY changed in the range are seeded too — a review of the commit that adds
 # or edits an invariant must rule on that invariant (WRDF-0001: the round introducing WRD-CONS-*
@@ -225,7 +247,6 @@ fs.writeFileSync(process.env.EXPECT, JSON.stringify({
 '
 
 PROMPT_FILE="$(mktemp -t warden-review-prompt.XXXXXX)"
-trap 'rm -f "$PROMPT_FILE"' EXIT
 
 # ---- 3. assemble the prompt -------------------------------------------------
 {
@@ -357,8 +378,8 @@ CODEX_ARGS=(exec
   --output-schema "$API_SCHEMA"
   --ephemeral
   -s read-only
-  -C "$REPO_ROOT"
-  -o "$OUT"
+  -C "$REVIEW_ROOT"
+  -o "$OUT_PATH"
   -m "$MODEL"
   -c "model_reasoning_effort=$EFFORT"
 )
@@ -374,7 +395,7 @@ CODEX_ARGS=(exec
 echo "==> range  $BASE_SHA..$HEAD_SHA"
 echo "==> seeded $(wc -w <<<"$SEED_IDS") invariants: $SEED_IDS"
 echo "==> expect $EXPECT"
-echo "==> out    $OUT"
+echo "==> out    $OUT_PATH"
 echo "==> codex ${CODEX_ARGS[*]} - < $PROMPT_FILE"
 
 if [[ $DRY_RUN -eq 1 ]]; then
@@ -386,15 +407,15 @@ fi
 
 # ---- 5. run ------------------------------------------------------------------
 codex "${CODEX_ARGS[@]}" - < "$PROMPT_FILE"
-[[ -s "$OUT" ]] || die "codex produced no output at $OUT"
+[[ -s "$OUT_PATH" ]] || die "codex produced no output at $OUT_PATH"
 
 # ---- 6. canonicalize, then validate independently against the WRAPPER's expectations --------
 # The API-side schema forces optionals to be present-but-null (see step 4). Strip those explicit
 # nulls back out — EXCEPT `reproducer`, where null is meaningful in the canonical schema (it means
 # "infeasible", and must co-occur with reproducer_infeasible_reason) — then validate the result
 # against the FULL canonical schema. The raw model output is preserved alongside as *.raw.json.
-cp "$OUT" "${OUT%.json}.raw.json"
-OUT="$OUT" node -e '
+cp "$OUT_PATH" "${OUT_PATH%.json}.raw.json"
+OUT="$OUT_PATH" node -e '
 const fs = require("fs");
 const strip = (n, key) => {
   if (Array.isArray(n)) return n.map((x) => strip(x, null));
@@ -411,14 +432,15 @@ const strip = (n, key) => {
 const doc = strip(JSON.parse(fs.readFileSync(process.env.OUT, "utf8")), null);
 fs.writeFileSync(process.env.OUT, JSON.stringify(doc, null, 2) + "\n");
 '
-node scripts/validate-findings.mjs "$OUT" --schema "$SCHEMA" --expect "$EXPECT"
+node "$REPO_ROOT/scripts/validate-findings.mjs" "$OUT_PATH" --schema "$SCHEMA" --expect "$EXPECT" --repo-root "$REVIEW_ROOT"
 
 # ---- 7. record the RUN itself FIRST — zero-finding rounds included -----------------
 # Re-validates independently (and refuses a replayed artefact) BEFORE any ledger mutation, so a
 # rejected run leaves the scorecard untouched (WRDF-0007). Model and thread are wrapper-
 # authoritative, and the artefact digest gives the run an immutable identity (WRDF-0002/-0003).
-node scripts/append-review-run.mjs "$OUT" --expect "$EXPECT" --kind "$KIND" \
-  --model "$MODEL@$EFFORT" --thread "$ROUND_ID" --effort "$EFFORT" --scorecard "$SCORECARD"
+(cd "$REPO_ROOT" && node scripts/append-review-run.mjs "$OUT" --expect "$EXPECT" --kind "$KIND" \
+  --model "$MODEL@$EFFORT" --thread "$ROUND_ID" --effort "$EFFORT" --scorecard "$SCORECARD" \
+  --repo-root "$REVIEW_ROOT")
 
 # (The scorecard append now lives INSIDE append-review-run.mjs — one process writes both ledgers,
 # run record first, with rollback on failure, so a rejected or interrupted round leaves neither a

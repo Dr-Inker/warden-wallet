@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Independent validation of a Codex findings JSON.
 //
-//   node scripts/validate-findings.mjs <findings.json> [--schema <f>] [--expect <f>]
+//   node scripts/validate-findings.mjs <findings.json> [--schema <f>] [--expect <f>] [--repo-root <dir>]
 //
 // "Independent" is the point. `codex exec --output-schema` constrains the model's FINAL RESPONSE,
 // not every JSONL event on the way there, so a pipeline that trusts the flag will mis-parse. And a
@@ -147,23 +147,25 @@ export async function compileSchema(schemaPath) {
 
 async function main(argv) {
   const args = argv.slice(2);
-  const findingsPath = args.find((a) => !a.startsWith("--") && args[args.indexOf(a) - 1] !== "--schema" && args[args.indexOf(a) - 1] !== "--expect");
+  const valueFlags = new Set(["--schema", "--expect", "--repo-root"]);
+  const findingsPath = args.find((a, i) => !a.startsWith("--") && !valueFlags.has(args[i - 1]));
   const flag = (n) => {
     const i = args.indexOf(n);
     return i >= 0 ? args[i + 1] : undefined;
   };
   if (!findingsPath) {
-    console.error("usage: node scripts/validate-findings.mjs <findings.json> [--schema <f>] [--expect <f>]");
+    console.error("usage: node scripts/validate-findings.mjs <findings.json> [--schema <f>] [--expect <f>] [--repo-root <dir>]");
     process.exit(2);
   }
   const schemaPath = resolve(flag("--schema") ?? join(REPO_ROOT, ".codex/schemas/warden-findings.json"));
   const expectPath = flag("--expect");
+  const repoRoot = resolve(flag("--repo-root") ?? REPO_ROOT);
   const doc = JSON.parse(readFileSync(resolve(findingsPath), "utf8"));
   const errors = validateFindings(doc, {
     validateSchema: await compileSchema(schemaPath),
     expect: expectPath ? JSON.parse(readFileSync(resolve(expectPath), "utf8")) : undefined,
-    knownInvariants: loadKnownInvariantIds(),
-    knownPriorArt: loadKnownPriorArtIds(),
+    knownInvariants: loadKnownInvariantIds(repoRoot),
+    knownPriorArt: loadKnownPriorArtIds(repoRoot),
   });
   if (errors.length) {
     for (const e of errors) console.error(`FAIL: ${e}`);

@@ -163,6 +163,7 @@ async function main(argv) {
   let effort = null;
   let model = null;
   let thread = null;
+  let repoRoot = REPO_ROOT;
   let dryRun = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -173,6 +174,7 @@ async function main(argv) {
     else if (a === "--effort") effort = args[++i];
     else if (a === "--model") model = args[++i];
     else if (a === "--thread") thread = args[++i];
+    else if (a === "--repo-root") repoRoot = join(args[++i]);
     else if (a === "--dry-run") dryRun = true;
     else if (a.startsWith("-")) throw new Error(`unknown option ${a}`);
     else findingsPath = a;
@@ -184,7 +186,14 @@ async function main(argv) {
   if (!existsSync(findingsPath)) throw new Error(`no such file: ${findingsPath}`);
   const doc = JSON.parse(readFileSync(findingsPath, "utf8"));
   const expect = JSON.parse(readFileSync(expectPath, "utf8"));
-  const record = await buildRunRecord(doc, expect, { kind, effort, model, thread, artefact: findingsPath });
+  const record = await buildRunRecord(doc, expect, {
+    kind,
+    effort,
+    model,
+    thread,
+    artefact: findingsPath,
+    repoRoot,
+  });
   if (dryRun) {
     console.log(JSON.stringify(record));
     return;
