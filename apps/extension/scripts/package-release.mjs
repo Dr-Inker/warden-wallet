@@ -40,7 +40,10 @@ import {
   verifyArtifactArchive,
   verifyCanonicalUnpacked,
 } from "./release-artifact.mjs";
-import { runReleaseGit } from "./release-git.mjs";
+import {
+  assertReleaseGitSourceTree,
+  runReleaseGit,
+} from "./release-git.mjs";
 import {
   RELEASE_RECIPE_INPUT_PATHS,
   createReleaseRecipeInputEvidence,
@@ -145,9 +148,10 @@ async function assertReleaseEnvironment() {
   if (gitRoot !== await realpath(repositoryRoot)) {
     fail(`unexpected git root: ${gitRoot}`);
   }
-  const { stdout: statusOutput } = await runGit(["status", "--porcelain=v1", "--untracked-files=all"]);
-  if (statusOutput !== "") {
-    fail(`release packaging requires a clean source tree:\n${statusOutput.trimEnd()}`);
+  try {
+    await assertReleaseGitSourceTree({ cwd: repositoryRoot, label: "release packaging" });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
   const { stdout: gitCommitOutput } = await runGit(["rev-parse", "HEAD"]);
   const gitCommit = gitCommitOutput.trim();
@@ -255,9 +259,10 @@ async function main() {
   if (!Array.isArray(buildOutput?.bundleResults) || !Array.isArray(buildOutput?.staticResults)) {
     fail("extension build did not return bundle metafiles and static transformations");
   }
-  const { stdout: postBuildStatus } = await runGit(["status", "--porcelain=v1", "--untracked-files=all"]);
-  if (postBuildStatus !== "") {
-    fail(`build changed the source tree:\n${postBuildStatus.trimEnd()}`);
+  try {
+    await assertReleaseGitSourceTree({ cwd: repositoryRoot, label: "extension build" });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
 
   const entries = await collectCanonicalPayload(distributionDirectory);
@@ -306,13 +311,10 @@ async function main() {
       rootDirectory: appDirectory,
       repositoryRoot,
     });
-  const { stdout: postInventoryStatus } = await runGit([
-    "status",
-    "--porcelain=v1",
-    "--untracked-files=all",
-  ]);
-  if (postInventoryStatus !== "") {
-    fail(`dependency inventory changed the source tree:\n${postInventoryStatus.trimEnd()}`);
+  try {
+    await assertReleaseGitSourceTree({ cwd: repositoryRoot, label: "dependency inventory" });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
   const dependencyEvidence = createProductionDependencyEvidence({
     dependencyReport,

@@ -16,7 +16,7 @@ import { PRODUCTION_DEPENDENCY_EVIDENCE_SCHEMA } from "./production-dependency-e
 import { RELEASE_RECIPE_INPUT_EVIDENCE_SCHEMA } from "./release-recipe-input-evidence.mjs";
 import { STATIC_INPUT_EVIDENCE_SCHEMA } from "./static-input-evidence.mjs";
 
-export const ARTIFACT_SCHEMA = "warden.extension-artifact.v5";
+export const ARTIFACT_SCHEMA = "warden.extension-artifact.v6";
 export const CANONICAL_TIMESTAMP = "1980-01-01T00:00:00.000Z";
 
 const CANONICAL_DATE = new Date(CANONICAL_TIMESTAMP);
@@ -43,6 +43,29 @@ const EXPECTED_RELEASE_PERMISSIONS = Object.freeze(["alarms", "storage"]);
 const EXPECTED_RELEASE_CSP = Object.freeze({
   extension_pages: "script-src 'self'; object-src 'self';",
 });
+const EXPECTED_RELEASE_BACKGROUND = Object.freeze({
+  service_worker: "background.js",
+  type: "module",
+});
+const EXPECTED_RELEASE_ACTION = Object.freeze({ default_popup: "popup.html" });
+const EXPECTED_RELEASE_CONTENT_SCRIPTS = Object.freeze([{
+  matches: ["http://*/*", "https://*/*"],
+  js: ["content.js"],
+  run_at: "document_start",
+  all_frames: true,
+}]);
+const ALLOWED_RELEASE_MANIFEST_KEYS = new Set([
+  "action",
+  "background",
+  "content_scripts",
+  "content_security_policy",
+  "description",
+  "manifest_version",
+  "minimum_chrome_version",
+  "name",
+  "permissions",
+  "version",
+]);
 
 const CRC32_TABLE = new Uint32Array(256);
 for (let index = 0; index < CRC32_TABLE.length; index += 1) {
@@ -533,8 +556,20 @@ function jsonEqual(left, right) {
 }
 
 function extensionSnapshot(manifest) {
+  if (Object.hasOwn(manifest, "update_url")) {
+    fail("release manifest must not declare an update URL");
+  }
+  const unexpectedKeys = Object.keys(manifest)
+    .filter((key) => !ALLOWED_RELEASE_MANIFEST_KEYS.has(key))
+    .sort();
+  if (unexpectedKeys.length > 0) {
+    fail(`release manifest contains unreviewed capability fields: ${unexpectedKeys.join(",")}`);
+  }
   if (manifest.manifest_version !== 3) {
     fail("release manifest must use manifest_version 3");
+  }
+  if (typeof manifest.name !== "string" || manifest.name.length === 0) {
+    fail("release manifest name is invalid");
   }
   if (typeof manifest.version !== "string" || !/^\d+(?:\.\d+){0,3}$/.test(manifest.version)) {
     fail("release manifest version is invalid");
@@ -545,13 +580,45 @@ function extensionSnapshot(manifest) {
   if (!jsonEqual(manifest.content_security_policy, EXPECTED_RELEASE_CSP)) {
     fail("release manifest content security policy differs from the reviewed local-code-only policy");
   }
-  if (Object.hasOwn(manifest, "update_url")) {
-    fail("release manifest must not declare an update URL");
+  if (!jsonEqual(manifest.background, EXPECTED_RELEASE_BACKGROUND)) {
+    fail("release manifest background differs from the reviewed service-worker policy");
+  }
+  if (
+    manifest.action !== undefined
+    && !jsonEqual(manifest.action, EXPECTED_RELEASE_ACTION)
+  ) {
+    fail("release manifest action differs from the reviewed popup policy");
+  }
+  if (
+    manifest.content_scripts !== undefined
+    && !jsonEqual(manifest.content_scripts, EXPECTED_RELEASE_CONTENT_SCRIPTS)
+  ) {
+    fail("release manifest content scripts differ from the reviewed isolated bridge policy");
+  }
+  if (
+    manifest.minimum_chrome_version !== undefined
+    && manifest.minimum_chrome_version !== "106"
+  ) {
+    fail("release manifest minimum Chrome version differs from the reviewed policy");
+  }
+  if (
+    manifest.description !== undefined
+    && (typeof manifest.description !== "string" || manifest.description.length === 0)
+  ) {
+    fail("release manifest description is invalid");
   }
   return {
     manifestVersion: manifest.manifest_version,
+    name: manifest.name,
     version: manifest.version,
+    description: manifest.description ?? null,
+    minimumChromeVersion: manifest.minimum_chrome_version ?? null,
     permissions: [...manifest.permissions],
+    background: structuredClone(manifest.background),
+    action: manifest.action === undefined ? null : structuredClone(manifest.action),
+    contentScripts: manifest.content_scripts === undefined
+      ? []
+      : structuredClone(manifest.content_scripts),
     contentSecurityPolicy: structuredClone(manifest.content_security_policy),
     updateUrl: null,
   };
@@ -598,13 +665,47 @@ function assertArtifactManifestShape(artifactManifest) {
   }
   assertExactKeys(
     artifactManifest.extension,
-    ["manifestVersion", "version", "permissions", "contentSecurityPolicy", "updateUrl"],
+    [
+      "manifestVersion",
+      "name",
+      "version",
+      "description",
+      "minimumChromeVersion",
+      "permissions",
+      "background",
+      "action",
+      "contentScripts",
+      "contentSecurityPolicy",
+      "updateUrl",
+    ],
     "artifact extension",
   );
   if (
     artifactManifest.extension.manifestVersion !== 3 ||
+    typeof artifactManifest.extension.name !== "string" ||
+    artifactManifest.extension.name.length === 0 ||
     typeof artifactManifest.extension.version !== "string" ||
+    (
+      artifactManifest.extension.description !== null
+      && (
+        typeof artifactManifest.extension.description !== "string"
+        || artifactManifest.extension.description.length === 0
+      )
+    ) ||
+    ![null, "106"].includes(artifactManifest.extension.minimumChromeVersion) ||
     !jsonEqual(artifactManifest.extension.permissions, EXPECTED_RELEASE_PERMISSIONS) ||
+    !jsonEqual(artifactManifest.extension.background, EXPECTED_RELEASE_BACKGROUND) ||
+    !(
+      artifactManifest.extension.action === null
+      || jsonEqual(artifactManifest.extension.action, EXPECTED_RELEASE_ACTION)
+    ) ||
+    !(
+      jsonEqual(artifactManifest.extension.contentScripts, [])
+      || jsonEqual(
+        artifactManifest.extension.contentScripts,
+        EXPECTED_RELEASE_CONTENT_SCRIPTS,
+      )
+    ) ||
     !jsonEqual(artifactManifest.extension.contentSecurityPolicy, EXPECTED_RELEASE_CSP) ||
     artifactManifest.extension.updateUrl !== null
   ) {
@@ -862,20 +963,8 @@ export function verifyArtifactPayloadEntries({ entries, artifactManifest }) {
   }
 
   const candidateExtension = extensionSnapshot(parseExtensionManifest(canonicalEntries));
-  if (!jsonEqual(candidateExtension.permissions, artifactManifest.extension.permissions)) {
-    fail("candidate manifest permissions differ from the reviewed artifact");
-  }
-  if (!jsonEqual(candidateExtension.contentSecurityPolicy, artifactManifest.extension.contentSecurityPolicy)) {
-    fail("candidate manifest content security policy differs from the reviewed artifact");
-  }
-  if (candidateExtension.updateUrl !== artifactManifest.extension.updateUrl) {
-    fail("candidate manifest update URL differs from the reviewed artifact");
-  }
-  if (
-    candidateExtension.manifestVersion !== artifactManifest.extension.manifestVersion ||
-    candidateExtension.version !== artifactManifest.extension.version
-  ) {
-    fail("candidate extension identity differs from the reviewed artifact");
+  if (!jsonEqual(candidateExtension, artifactManifest.extension)) {
+    fail("candidate manifest capability snapshot differs from the reviewed artifact");
   }
 
   const candidateFiles = payloadFileRecords(canonicalEntries);

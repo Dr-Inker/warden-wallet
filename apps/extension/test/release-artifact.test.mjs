@@ -204,6 +204,12 @@ describe("reviewed artifact manifest and fail-closed verifier", () => {
       payloadEntries().map((entry) => entry.path),
     );
     expect(artifactManifest.extension.permissions).toEqual(["alarms", "storage"]);
+    expect(artifactManifest.extension.background).toEqual({
+      service_worker: "background.js",
+      type: "module",
+    });
+    expect(artifactManifest.extension.action).toBeNull();
+    expect(artifactManifest.extension.contentScripts).toEqual([]);
     expect(artifactManifest.extension.contentSecurityPolicy).toEqual(
       BASE_MANIFEST.content_security_policy,
     );

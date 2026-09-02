@@ -35,6 +35,7 @@ async function git(arguments_, cwd) {
       LC_ALL: "C",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_NO_REPLACE_OBJECTS: "1",
       GIT_OPTIONAL_LOCKS: "0",
       GIT_AUTHOR_NAME: "Warden Release Test",
       GIT_AUTHOR_EMAIL: "release-test@example.invalid",
@@ -160,6 +161,7 @@ describe("release producer git child processes", () => {
       LC_ALL: "C",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_NO_REPLACE_OBJECTS: "1",
       GIT_OPTIONAL_LOCKS: "0",
     });
     expect(Object.keys(environment)).not.toContain("GIT_DIR");

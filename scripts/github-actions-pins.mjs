@@ -1,5 +1,6 @@
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import { isMap, isSeq, LineCounter, parseDocument } from "yaml";
 
 export const IMMUTABLE_ACTION = /^[^/@\s]+\/[^/@\s]+(?:\/[^@\s]+)*@[0-9a-f]{40}$/;
 export const IMMUTABLE_DOCKER_ACTION = /^docker:\/\/[^\s@]+@sha256:[0-9a-f]{64}$/;
@@ -39,26 +40,127 @@ export function isImmutableExternalReference(value) {
   return IMMUTABLE_ACTION.test(value) || IMMUTABLE_DOCKER_ACTION.test(value);
 }
 
+function isWithin(parent, candidate) {
+  const rel = path.relative(parent, candidate);
+  return rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel));
+}
+
+function usesRecordsFromDocument(text, file) {
+  const lineCounter = new LineCounter();
+  const document = parseDocument(text, {
+    lineCounter,
+    prettyErrors: true,
+    uniqueKeys: true,
+  });
+  if (document.errors.length > 0) {
+    throw new Error(`${file}: invalid YAML: ${document.errors.map((error) => error.message).join("; ")}`);
+  }
+
+  const records = [];
+  const visit = (node) => {
+    if (isMap(node)) {
+      for (const pair of node.items) {
+        if (pair.key?.value === "uses") {
+          const offset = pair.key?.range?.[0] ?? 0;
+          records.push({
+            line: lineCounter.linePos(offset).line,
+            value: typeof pair.value?.value === "string" ? pair.value.value : null,
+          });
+        }
+        visit(pair.value);
+      }
+      return;
+    }
+    if (isSeq(node)) {
+      for (const item of node.items) visit(item);
+    }
+  };
+  visit(document.contents);
+  return records;
+}
+
+async function resolveLocalDefinition(canonicalRoot, value) {
+  if (
+    typeof value !== "string"
+    || !value.startsWith("./")
+    || value.includes("\0")
+    || value.includes("\\")
+  ) {
+    throw new Error(`invalid local action reference: ${String(value)}`);
+  }
+  const candidate = path.resolve(canonicalRoot, value);
+  if (!isWithin(canonicalRoot, candidate)) {
+    throw new Error(`local action reference escapes the repository: ${value}`);
+  }
+  const candidateMetadata = await lstat(candidate);
+  if (candidateMetadata.isSymbolicLink()) {
+    throw new Error(`local action reference must not be a symlink: ${value}`);
+  }
+  if (candidateMetadata.isFile()) {
+    if (!/\.ya?ml$/i.test(candidate)) {
+      throw new Error(`local reusable workflow must be YAML: ${value}`);
+    }
+    return await realpath(candidate);
+  }
+  if (!candidateMetadata.isDirectory()) {
+    throw new Error(`local action reference is not a file or directory: ${value}`);
+  }
+  const definitions = [];
+  for (const name of ["action.yml", "action.yaml"]) {
+    const definition = path.join(candidate, name);
+    try {
+      const metadata = await lstat(definition);
+      if (!metadata.isFile() || metadata.isSymbolicLink()) {
+        throw new Error(`local action definition must be a regular file: ${value}/${name}`);
+      }
+      definitions.push(await realpath(definition));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  if (definitions.length !== 1) {
+    throw new Error(`local action must contain exactly one action.yml or action.yaml: ${value}`);
+  }
+  return definitions[0];
+}
+
 export async function auditGitHubActionReferences(
   root = process.cwd(),
   workflowsDirectory = path.join(root, ".github", "workflows"),
 ) {
-  const files = await workflowFiles(workflowsDirectory);
+  const canonicalRoot = await realpath(root);
+  const entryFiles = await workflowFiles(workflowsDirectory);
+  const files = [];
   const externalReferences = [];
   const mutableReferences = [];
 
-  for (const file of files) {
-    const relativeFile = path.relative(root, file);
-    const lines = (await readFile(file, "utf8")).split(/\r?\n/);
-    for (const [index, line] of lines.entries()) {
-      const value = parseUsesValue(line);
-      if (value === null || value.startsWith("./")) continue;
+  const visited = new Set();
+  const scan = async (file) => {
+    const canonicalFile = await realpath(file);
+    if (!isWithin(canonicalRoot, canonicalFile)) {
+      throw new Error(`GitHub Actions source escapes the repository: ${file}`);
+    }
+    if (visited.has(canonicalFile)) return;
+    visited.add(canonicalFile);
+    files.push(canonicalFile);
+    const relativeFile = path.relative(canonicalRoot, canonicalFile);
+    const records = usesRecordsFromDocument(await readFile(canonicalFile, "utf8"), relativeFile);
+    for (const { line, value } of records) {
+      if (value === null) {
+        mutableReferences.push(`${relativeFile}:${line}: non-string uses value`);
+        continue;
+      }
+      if (value.startsWith("./")) {
+        await scan(await resolveLocalDefinition(canonicalRoot, value));
+        continue;
+      }
       externalReferences.push(value);
       if (!isImmutableExternalReference(value)) {
-        mutableReferences.push(`${relativeFile}:${index + 1}: ${value}`);
+        mutableReferences.push(`${relativeFile}:${line}: ${value}`);
       }
     }
-  }
+  };
+  for (const file of entryFiles) await scan(file);
 
   return { files, externalReferences, mutableReferences };
 }

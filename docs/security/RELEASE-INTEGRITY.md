@@ -36,7 +36,8 @@ from a clean commit under the exact JavaScript toolchain pins in
 `docs/TOOLCHAIN.md`. A read-only walk records the pnpm-installed `package.json`
 production closure and package-declared license strings without host paths or
 dev dependencies. It binds the clean source and ZIP hash; artifact-manifest
-schema v5 in turn binds each sidecar's exact byte length and SHA-256. The bundle
+schema v6 in turn binds each sidecar's exact byte length and SHA-256 plus the
+complete reviewed manifest capability snapshot. The bundle
 sidecar records every positive `bytesInOutput` input esbuild reports for the
 four emitted JavaScript files, canonical repository/npm identities, actual
 non-virtual input byte lengths and hashes, explicit esbuild virtual inputs and

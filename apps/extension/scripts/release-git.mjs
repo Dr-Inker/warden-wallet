@@ -20,6 +20,7 @@ export function releaseGitEnvironment() {
     LC_ALL: "C",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_NO_REPLACE_OBJECTS: "1",
     GIT_OPTIONAL_LOCKS: "0",
   };
 }
@@ -41,4 +42,32 @@ export async function runReleaseGit(
     killSignal: RELEASE_GIT_KILL_SIGNAL,
     windowsHide: true,
   });
+}
+
+export async function assertReleaseGitSourceTree({ cwd, label = "release source tree" }) {
+  const { stdout: status } = await runReleaseGit(
+    ["status", "--porcelain=v1", "--untracked-files=all"],
+    { cwd },
+  );
+  if (status !== "") {
+    throw new Error(`${label} requires a clean source tree:\n${status.trimEnd()}`);
+  }
+
+  const { stdout: taggedFiles } = await runReleaseGit(
+    ["ls-files", "--cached", "-v", "-z"],
+    { cwd },
+  );
+  const unsafeIndexEntries = taggedFiles
+    .split("\0")
+    .filter(Boolean)
+    .filter((record) => record.length < 3 || record[1] !== " " || record[0] !== "H");
+  if (unsafeIndexEntries.length > 0) {
+    const displayed = unsafeIndexEntries
+      .slice(0, 20)
+      .map((record) => JSON.stringify(record))
+      .join(", ");
+    throw new Error(
+      `${label} rejects non-default Git index flags (including assume-unchanged and skip-worktree): ${displayed}`,
+    );
+  }
 }
