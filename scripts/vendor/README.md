@@ -9,4 +9,7 @@ pnpm exec esbuild scripts/vendor/yaml-parser.entry.mjs --bundle --platform=node 
 ```
 
 The upstream `yaml` package is ISC licensed. Its exact locked version and
-license record are covered by the repository's pnpm license-evidence gate.
+license record are covered by the repository's pnpm license-evidence gate;
+the required upstream copyright and permission notice is distributed beside
+the bundle as `yaml-LICENSE` and checked byte-for-byte against the locked
+package by `test/pnpm-license-evidence.test.mjs`.
