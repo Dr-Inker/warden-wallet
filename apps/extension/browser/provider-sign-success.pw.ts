@@ -94,6 +94,7 @@ interface WorkerStatus {
 interface SigningCommitCheckpointMarker {
   readonly stage: "during-signing-commit";
   readonly bootId: string;
+  readonly holdUntilWallClockMs: number;
   readonly approvalId: string;
   readonly attemptId: string;
   readonly attemptNumber: number;
@@ -1110,6 +1111,7 @@ test("in-flight strict signing commit resolves to one durable outcome after MV3 
     await expect.poll(() => readSigningCommitCheckpoint(popup)).toMatchObject({
       stage: "during-signing-commit",
       bootId: reviewed.bootId,
+      holdUntilWallClockMs: expect.any(Number),
       approvalId: reviewed.latestApprovalId,
       attemptId: expect.stringMatching(/^attempt_[0-9a-f]{32}$/),
       attemptNumber: 1,
@@ -1128,7 +1130,11 @@ test("in-flight strict signing commit resolves to one durable outcome after MV3 
       },
     });
     const marker = await readSigningCommitCheckpoint(popup);
-    if (marker === null || marker.transactionBytesLength <= 0) {
+    if (
+      marker === null ||
+      marker.transactionBytesLength <= 0 ||
+      !Number.isSafeInteger(marker.holdUntilWallClockMs)
+    ) {
       throw new Error("native signing-completion request did not reach success");
     }
     expect(await page.evaluate(() =>
@@ -1162,10 +1168,24 @@ test("in-flight strict signing commit resolves to one durable outcome after MV3 
       candidate.type === "service_worker" &&
       candidate.url.startsWith(extensionOrigin));
     expect(target, "worker exists during the native signing commit").toBeDefined();
+    expect(
+      Date.now(),
+      "native signing-commit checkpoint expired before target termination",
+    ).toBeLessThan(marker.holdUntilWallClockMs);
     const closed = await cdp.send("Target.closeTarget", {
       targetId: target!.targetId,
     });
     expect(closed.success).toBe(true);
+    const targetsAfterClose = await cdp.send("Target.getTargets");
+    expect(
+      targetsAfterClose.targetInfos.some((candidate) =>
+        candidate.targetId === target!.targetId),
+      "old service-worker target remains after Target.closeTarget",
+    ).toBe(false);
+    expect(
+      Date.now(),
+      "old target was not observed destroyed during the native signing-commit hold",
+    ).toBeLessThan(marker.holdUntilWallClockMs);
 
     await expect.poll(() => page.evaluate(() =>
       (globalThis as unknown as { __wardenPageSignStatus: PageSignStatus })
