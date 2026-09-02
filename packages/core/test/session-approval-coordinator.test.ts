@@ -33,6 +33,7 @@ import {
 import { parseSerializedTransactionEnvelope } from "../src/transaction/envelope.js";
 import {
   SESSION_APPROVAL_COMMITMENT,
+  SESSION_APPROVAL_MAX_ACTIVE,
   SessionApprovalCoordinator,
   SessionApprovalCoordinatorError,
   readSignedSessionApproval,
@@ -342,6 +343,7 @@ interface HarnessOptions {
   readonly completeThenThrow?: boolean;
   readonly failThenThrow?: boolean;
   readonly afterCompleteCommit?: () => void;
+  readonly readNow?: () => number;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -425,7 +427,7 @@ function harness(options: HarnessOptions = {}) {
   };
   const coordinator = new SessionApprovalCoordinator(
     { authority: resolver, blockhash, intent: gate, approvals: owner, keyring },
-    { readNow: () => 1_000, approvalTtlMs: 60_000 },
+    { readNow: options.readNow ?? (() => 1_000), approvalTtlMs: 60_000 },
   );
   return {
     coordinator,
@@ -566,6 +568,22 @@ describe("session approval coordinator", () => {
     expect(test.events.filter((event) => event === "approval:claim")).toHaveLength(2);
     expect(test.events.filter((event) => event === "approval:complete"))
       .toHaveLength(1);
+  });
+
+  it("WRDF-0124 prunes expired failed approvals before enforcing active capacity", async () => {
+    let now = 1_000;
+    const test = harness({ valid: false, readNow: () => now });
+
+    for (let index = 0; index < SESSION_APPROVAL_MAX_ACTIVE; index++) {
+      const prepared = await test.coordinator.prepare(request());
+      await captureError(
+        test.coordinator.approve(prepared.id, prepared.messageDigest),
+        "BLOCKHASH_INVALID",
+      );
+    }
+
+    now = 61_000;
+    await expect(test.coordinator.prepare(request())).resolves.toBeDefined();
   });
 
   it("recovers a committed claim after its acknowledgement is lost", async () => {
