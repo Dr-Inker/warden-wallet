@@ -7,7 +7,7 @@
 // Without the first, review coverage is invisible; without the second, a garbage artefact could
 // buy a coverage line.
 import { describe, it, expect } from "vitest";
-import { readFileSync, writeFileSync, existsSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -356,6 +356,34 @@ interface GitProbe {
   shallow: boolean; // a well-formed SHA absent from a FULL clone is a fabricated/mistyped SHA (fail-closed); absent from a shallow clone is unverifiable (skip). (WRDF-0083)
 }
 
+function buildGitProbe(repo: string): GitProbe | null {
+  const git = (args: string[]): string | null => {
+    try { return execFileSync("git", ["-C", repo, ...args], { stdio: "pipe" }).toString().trim(); }
+    catch { return null; }
+  };
+  if (git(["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
+  const head = git(["rev-parse", "HEAD"]);
+  if (!head) return null;
+  // Older git lacking the flag → treat as full (fail-closed on missing objects).
+  const shallow = git(["rev-parse", "--is-shallow-repository"]) === "true";
+  return {
+    head,
+    shallow,
+    commitExists: (sha: string) => {
+      try { execFileSync("git", ["-C", repo, "cat-file", "-e", `${sha}^{commit}`], { stdio: "pipe" }); return true; }
+      catch { return false; }
+    },
+    isAncestorOrEqual: (a: string, b: string) => {
+      try { execFileSync("git", ["-C", repo, "merge-base", "--is-ancestor", a, b], { stdio: "pipe" }); return true; }
+      catch { return false; }
+    },
+    readFileAtCommit: (sha: string, path: string) => {
+      try { return execFileSync("git", ["-C", repo, "show", `${sha}:${path}`], { stdio: "pipe" }).toString(); }
+      catch { return null; }
+    },
+  };
+}
+
 // Validate ONE scorecard row's provenance. Returns violation strings (empty = ok).
 export function validateScorecardProvenance(r: Record<string, unknown>, git: GitProbe | null): string[] {
   const id = String(r.finding_id ?? "?");
@@ -537,6 +565,14 @@ export function validateScorecardRedTestBinding(
   return errs;
 }
 
+function validateScorecardRedTestRows(
+  rows: Record<string, unknown>[],
+  readSource: (path: string) => string | null,
+  _git: GitProbe | null,
+): string[] {
+  return rows.flatMap((r) => validateScorecardRedTestBinding(r, readSource));
+}
+
 describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
   const cardRows = readFileSync(SCORECARD, "utf8")
     .split("\n")
@@ -546,33 +582,7 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
   // Shallow-aware git probe, mirroring security-ledger.test.ts: in a shallow clone
   // absent objects are skipped; in a full clone (CI sets fetch-depth: 0) the checks
   // are load-bearing and fail-closed.
-  const probe: GitProbe | null = (() => {
-    const git = (args: string[]): string | null => {
-      try { return execFileSync("git", ["-C", REPO, ...args], { stdio: "pipe" }).toString().trim(); }
-      catch { return null; }
-    };
-    if (git(["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
-    const head = git(["rev-parse", "HEAD"]);
-    if (!head) return null;
-    // Older git lacking the flag → treat as full (fail-closed on missing objects).
-    const shallow = git(["rev-parse", "--is-shallow-repository"]) === "true";
-    return {
-      head,
-      shallow,
-      commitExists: (sha: string) => {
-        try { execFileSync("git", ["-C", REPO, "cat-file", "-e", `${sha}^{commit}`], { stdio: "pipe" }); return true; }
-        catch { return false; }
-      },
-      isAncestorOrEqual: (a: string, b: string) => {
-        try { execFileSync("git", ["-C", REPO, "merge-base", "--is-ancestor", a, b], { stdio: "pipe" }); return true; }
-        catch { return false; }
-      },
-      readFileAtCommit: (sha: string, path: string) => {
-        try { return execFileSync("git", ["-C", REPO, "show", `${sha}:${path}`], { stdio: "pipe" }).toString(); }
-        catch { return null; }
-      },
-    };
-  })();
+  const probe = buildGitProbe(REPO);
 
   it("every committed row satisfies both provenance axes", () => {
     const all = cardRows.flatMap((r) => validateScorecardProvenance(r, probe));
@@ -595,8 +605,28 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
         return null;
       }
     };
-    const bad = cardRows.flatMap((r) => validateScorecardRedTestBinding(r, readSource));
+    const bad = validateScorecardRedTestRows(cardRows, readSource, probe);
     expect(bad, bad.join("\n")).toEqual([]);
+  });
+
+  it("WRDF-0143 rejects a missing RED commit for every later promoted row", () => {
+    const name = "WRDF-0143 rejects a missing RED commit for every later promoted row";
+    const fabricated = "f".repeat(40);
+    const candidate = {
+      finding_id: "WRDF-0143",
+      truth_status: "CONFIRMED",
+      evidence_type: "red_test",
+      red_test_file: "test/future.test.ts",
+      red_test_name: name,
+      red_test_sha: fabricated,
+    };
+    expect(probe).not.toBeNull();
+    const bad = validateScorecardRedTestRows(
+      [candidate],
+      () => `it(${JSON.stringify(name)}, () => {});`,
+      probe,
+    );
+    expect(bad.join("\n")).toMatch(/red_test_sha .* is not a commit in this full clone/);
   });
 
   it("WRDF-0140 requires executable commands for the WRDF-0136/0137 green claims", () => {
@@ -706,6 +736,77 @@ describe("scorecard red-test fixture binding (WRDF-0126)", () => {
   it("accepts an exact id-prefixed fixture coordinate", () => {
     const fixture = row();
     expect(validateScorecardRedTestBinding(fixture, () => `test(${JSON.stringify(fixture.red_test_name)}, () => {});`)).toEqual([]);
+  });
+
+  it("WRDF-0144 reads the original RED tree even when a replacement ref is installed", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "warden-red-provenance-"));
+    const sourcePath = join(tmp, "fixture.test.ts");
+    const original = "it(\"original fixture\", () => {});\n";
+    const replacement = "it(\"replacement fixture\", () => {});\n";
+    const safeEnv = {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_NO_REPLACE_OBJECTS: "1",
+      GIT_OPTIONAL_LOCKS: "0",
+    };
+    const git = (args: string[]) => execFileSync(
+      "/usr/bin/git",
+      ["-C", tmp, ...args],
+      { env: safeEnv, stdio: "pipe" },
+    ).toString().trim();
+    try {
+      git(["init", "-q"]);
+      git(["config", "user.name", "Warden Test"]);
+      git(["config", "user.email", "warden@example.invalid"]);
+      writeFileSync(sourcePath, original);
+      git(["add", "fixture.test.ts"]);
+      git(["commit", "-q", "-m", "original"]);
+      const originalSha = git(["rev-parse", "HEAD"]);
+      writeFileSync(sourcePath, replacement);
+      git(["add", "fixture.test.ts"]);
+      const replacementTree = git(["write-tree"]);
+      const replacementSha = git(["commit-tree", replacementTree, "-m", "replacement"]);
+      git(["replace", originalSha, replacementSha]);
+
+      const replacementAwareProbe = buildGitProbe(tmp);
+      expect(replacementAwareProbe).not.toBeNull();
+      expect(replacementAwareProbe?.readFileAtCommit?.(originalSha, "fixture.test.ts")).toBe(original);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("WRDF-0145 rejects an absent reviewed head and a non-distinct remediation", () => {
+    const reviewedHead = "a".repeat(40);
+    const red = "b".repeat(40);
+    const name = "WRDF-0145 rejects an absent reviewed head and a non-distinct remediation";
+    const candidate = {
+      finding_id: "WRDF-0145",
+      truth_status: "CONFIRMED",
+      evidence_type: "red_test",
+      head_sha: reviewedHead,
+      red_test_file: "test/example.test.ts",
+      red_test_name: name,
+      red_test_sha: red,
+      remediation_sha: red,
+    };
+    const probe: GitProbe = {
+      head: "c".repeat(40),
+      shallow: false,
+      commitExists: (sha) => sha !== reviewedHead,
+      isAncestorOrEqual: () => true,
+      readFileAtCommit: () => `it(${JSON.stringify(name)}, () => {});`,
+    };
+    const bad = validateScorecardRedTestBinding(
+      candidate,
+      () => `it(${JSON.stringify(name)}, () => {});`,
+      probe,
+    ).join("\n");
+    expect(bad).toMatch(/head_sha .* is not a commit in this full clone/);
+    expect(bad).toMatch(/strict descendant/);
   });
 });
 
