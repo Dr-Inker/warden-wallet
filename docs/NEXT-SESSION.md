@@ -1,15 +1,32 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-02 POINTER — CODEX PICKUP MEMO SUPERSEDES THIS FILE FOR THE NEXT SESSION
+> ## 2026-09-02 CODEX REVIEW CAMPAIGN — ACTIVE
 >
-> The Fable-5 audit (`docs/security/FABLE-AUDIT-2026-09-02.md`) and its remediation
-> (P-1, K-1, E-1, E-4, A-1, A-2, X-1, X-2; ledger close `f63262b`) are DONE on `phase1b`.
-> The next session is a **Codex review session**, not an implementation session: read
-> **`docs/CODEX-HANDOVER-2026-09-02.md`** first and follow it literally — it carries the exact
-> BASE, the owed review rounds R0–R8 with pre-cut commit ranges, per-round mechanics, ledger
-> rules, OWNER decisions (record, do not take), and every footgun that bit the previous session.
-> The 2026-09-01 memo below is still true for C75 and the external owner work; it is not
-> superseded on those points.
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** the Codex review session resuming the Fable-5 handover.
+> - **TASK:** complete and record the owed R0–R8 adversarial-review ranges, adjudicate and fix
+>   every finding, then run the full repository gate at the final reviewed SHA.
+> - **CWD:** `/opt/warden`, branch `phase1b`.
+> - **BASE:** Fable ledger close `f63262be9e6b51e58269e9eefd64d0fabd4b6c3b`;
+>   campaign machinery/finding work currently builds on `d05f3cb23f8008017095d9726e98e5b38d8803b1`.
+> - **READ:** `docs/CODEX-HANDOVER-2026-09-02.md` first and literally; it carries the pre-cut
+>   ranges, review mechanics, ledger rules, owner decisions O1–O10, and known host footguns.
+> - **WRITE (edit lease):** only the paths granted by that handover plus review-gate tests and
+>   `.claude/test-gate.sh` needed to remediate recorded WRDF findings.
+> - **DO_NOT_TOUCH:** the handover §8 set, especially `/root/.codex/session-graphs/`, live
+>   `/var/www/`, key material, release-pin values, `spikes/`, `main`, tags, pushes, signing,
+>   publishing, deploying, store actions, and mutating RPC calls.
+> - **ACCEPT:** every required range has a validated `REVIEW-RUNS.jsonl` row or an exact recorded
+>   blocker; every finding is adjudicated; adopted defects are fixed with executable evidence;
+>   `node scripts/gen-invariants.mjs --check` and the full gate pass at named SHAs.
+> - **SIDE_EFFECTS:** local repository edits/commits, ignored review artifacts, and disposable
+>   `/tmp` fixtures only; no external-state mutation.
+> - **RETURN:** append the finished command/SHA evidence, remaining owner decisions, and clean
+>   state here using this same contract, and provide the handover §9 report to the user.
+>
+> The 2026-09-01 memo below remains historical evidence for C75 and its external owner work;
+> it no longer instructs this active review campaign to stop.
 
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C75 CLOSED; EXTERNAL OWNER WORK REMAINS
 >

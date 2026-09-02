@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# WRDF-0112: fail before any project Cargo command can resolve a changed graph
+# and rewrite the tracked lockfile. The later supply-chain gate's `--locked`
+# check is too late to detect a lock that an earlier unlocked command already
+# updated during this run.
+cargo metadata --locked --format-version 1 >/dev/null
 # C6: external GitHub Actions references are executable third-party code. Reject
 # mutable tags/branches locally as well as in the workflow's first post-checkout
 # step; only full commit SHAs (or Docker sha256 digests) are accepted.
@@ -72,7 +77,7 @@ if ls programs/*/Cargo.toml >/dev/null 2>&1; then
   # verifies signatures — `programs/warden/tests/sigverify_wiring.rs` is the
   # two-direction runtime gate that does, and this check never substitutes for
   # it. Both are required; they fail for different reasons.
-  if ! cargo tree -e features -p warden 2>/dev/null | grep -q 'litesvm feature "precompiles"'; then
+  if ! cargo tree --locked -e features -p warden 2>/dev/null | grep -q 'litesvm feature "precompiles"'; then
     echo "L0 FAIL: litesvm's \"precompiles\" feature does not resolve for -p warden."
     echo "         Without it the secp256r1 precompile is never loaded and no test"
     echo "         in this repo verifies a real signature. See programs/warden/Cargo.toml"
@@ -109,12 +114,12 @@ if ls programs/*/Cargo.toml >/dev/null 2>&1; then
   # declare an inert `test-jup` feature so the forward does not error).
   if [ "$needs_build" -eq 1 ]; then
     if command -v anchor >/dev/null 2>&1; then
-      nice -n 10 anchor build -- --features test-jup
+      nice -n 10 anchor build -- --features test-jup -- --locked
     else
-      nice -n 10 cargo-build-sbf --manifest-path programs/warden/Cargo.toml --features test-jup
-      nice -n 10 cargo-build-sbf --manifest-path programs/test-middleman/Cargo.toml --features test-jup
-      nice -n 10 cargo-build-sbf --manifest-path programs/test-mutator/Cargo.toml --features test-jup
-      nice -n 10 cargo-build-sbf --manifest-path programs/test-jup-mock/Cargo.toml --features test-jup
+      nice -n 10 cargo-build-sbf --manifest-path programs/warden/Cargo.toml --features test-jup -- --locked
+      nice -n 10 cargo-build-sbf --manifest-path programs/test-middleman/Cargo.toml --features test-jup -- --locked
+      nice -n 10 cargo-build-sbf --manifest-path programs/test-mutator/Cargo.toml --features test-jup -- --locked
+      nice -n 10 cargo-build-sbf --manifest-path programs/test-jup-mock/Cargo.toml --features test-jup -- --locked
     fi
   fi
   # anchor build regenerates target/idl/warden.json from the program source;
@@ -125,11 +130,11 @@ if ls programs/*/Cargo.toml >/dev/null 2>&1; then
   if [ -f target/idl/warden.json ]; then
     cmp -s target/idl/warden.json packages/core/idl/warden.json || { echo "IDL drift: copy target/idl/warden.json to packages/core/idl/"; exit 1; }
   fi
-  cargo test --workspace --features test-jup
+  cargo test --locked --workspace --features test-jup
   # Fable audit R-2 (2026-09-02): these two used to exist ONLY in ci.yml, and
   # CI only runs on push — so on a branch that is hundreds of commits ahead of
   # origin they had silently not run at all. Same commands as ci.yml:196-200.
-  cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects
+  cargo clippy --locked -p warden --lib -- -D clippy::arithmetic_side_effects
 fi
 # L9 supply-chain gate (cargo-deny advisories/bans/sources/licences + frozen
 # lockfile + scoped pnpm audit). Cheap, network-free once the advisory DB is
