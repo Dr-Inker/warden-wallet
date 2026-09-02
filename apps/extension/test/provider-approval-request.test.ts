@@ -74,6 +74,7 @@ import {
 } from "../src/provider-protocol.js";
 import {
   createProviderCapabilityEnvelope,
+  readProviderCapabilityRequestEnvelope,
   createProviderTransportTerminalEnvelope,
   readProviderTransportRequestEnvelope,
 } from "../src/provider-delivery-protocol.js";
@@ -239,6 +240,8 @@ class FlowPage implements ProviderPageWindowApi {
   }
 
   postMessage(message: unknown, targetOrigin: string): void {
+    // The one capability claim is not page-visible provider traffic.
+    if (readProviderCapabilityRequestEnvelope(message) !== null) return;
     this.posted.push({ message, targetOrigin });
   }
 

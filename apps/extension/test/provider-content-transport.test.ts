@@ -45,7 +45,9 @@ import {
   createProviderTransportRequestEnvelope,
   createProviderTransportSettledEnvelope,
   createProviderTransportTerminalEnvelope,
+  createProviderCapabilityRequestEnvelope,
   readProviderCapabilityEnvelope,
+  readProviderCapabilityRequestEnvelope,
   readProviderTransportReceiptEnvelope,
   readProviderTransportCancelEnvelope,
   readProviderTransportTerminalEnvelope,
@@ -234,6 +236,7 @@ class MockWindow implements ContentWindowApi, ProviderPageWindowApi {
     readonly targetOrigin: string;
     readonly transfer: readonly unknown[];
   }> = [];
+  readonly claims: Array<{ readonly message: unknown; readonly targetOrigin: string }> = [];
   readonly channel = new MockChannel();
   dispatchPosts = false;
   throwOnPost = false;
@@ -261,6 +264,11 @@ class MockWindow implements ContentWindowApi, ProviderPageWindowApi {
       this.grants.push({ message, targetOrigin, transfer: transfer ?? [] });
       return;
     }
+    if (readProviderCapabilityRequestEnvelope(message) !== null) {
+      this.claims.push({ message, targetOrigin });
+      if (this.dispatchPosts) this.emit(message);
+      return;
+    }
     this.posted.push({ message, targetOrigin });
     this.postHook?.(message);
     if (this.dispatchPosts) this.emit(message);
@@ -284,15 +292,25 @@ class MockWindow implements ContentWindowApi, ProviderPageWindowApi {
   }
 }
 
+/**
+ * Install the content owner and immediately post the single capability claim a
+ * main-world owner posts as it is constructed, so every existing behaviour test
+ * runs with the capability already granted.
+ */
 function transport(
   page: MockWindow,
   runtime: MockRuntime,
   options: ProviderContentTransportOptions = {},
+  claim = true,
 ): ProviderContentTransportOwner {
-  return new ProviderContentTransportOwner(page, runtime, {
+  const owner = new ProviderContentTransportOwner(page, runtime, {
     channelSource: () => page.channel,
     ...options,
   });
+  // A real main-world owner posts this claim as it is constructed. Tests that
+  // install one themselves pass `claim: false` and let it do so.
+  if (claim) page.emit(createProviderCapabilityRequestEnvelope());
+  return owner;
 }
 
 function signRequest(
@@ -823,7 +841,7 @@ describe("C20 bounded content provider transport", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
     page.dispatchPosts = true;
-    const contentOwner = transport(page, runtime);
+    const contentOwner = transport(page, runtime, {}, false);
     const requestOwner = new ProviderPageRequestOwner(page, {
       randomSource: new FixedRandom(),
       timerSource: new InertTimers(),
@@ -871,11 +889,33 @@ describe("C20 bounded content provider transport", () => {
     contentOwner.dispose();
   });
 
+  it("answers only the first capability claim in a document", () => {
+    const runtime = new MockRuntime();
+    const page = new MockWindow();
+    const owner = transport(page, runtime, {}, false);
+
+    expect(owner.capabilityGrantCount).toBe(0);
+    page.emit(createProviderCapabilityRequestEnvelope());
+    expect(owner.capabilityGrantCount).toBe(1);
+    expect(page.grants).toHaveLength(1);
+    expect(page.grants[0]!.transfer).toEqual([page.channel.port2]);
+    expect(page.channel.port1.starts).toBe(1);
+
+    // A later same-document script asking again gets nothing.
+    page.emit(createProviderCapabilityRequestEnvelope());
+    page.emit(createProviderCapabilityRequestEnvelope());
+    expect(owner.capabilityGrantCount).toBe(1);
+    expect(owner.capabilityRefusalCount).toBe(2);
+    expect(page.grants).toHaveLength(1);
+    owner.dispose();
+    expect(page.channel.port1.closes).toBe(1);
+  });
+
   it("refuses to settle a page promise from a same-window forgery end to end", async () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
     page.dispatchPosts = true;
-    const contentOwner = transport(page, runtime);
+    const contentOwner = transport(page, runtime, {}, false);
     const requestOwner = new ProviderPageRequestOwner(page, {
       randomSource: new FixedRandom(),
       timerSource: new InertTimers(),

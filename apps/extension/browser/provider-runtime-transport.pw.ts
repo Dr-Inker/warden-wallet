@@ -64,31 +64,59 @@ function pageMarkup(): string {
   globalThis.__wardenTerminals = [];
   globalThis.__wardenReceipts = [];
   globalThis.__wardenPortEvents = [];
+  // Audit finding X-1: terminal responses and page receipts cross the one
+  // MessagePort the content owner transfers, never the window. This fixture
+  // therefore performs the same one-shot claim a real main-world owner does.
+  globalThis.__wardenCapability = null;
+  const onTerminal = (data, viaCapability) => {
+    if (data?.type !== "warden:provider:response") return;
+    const terminal = data.payload;
+    if (terminal?.version !== 1 || terminal?.type !== "warden:provider:transport-terminal") return;
+    globalThis.__wardenTerminals.push(terminal);
+    globalThis.__wardenResponses.push(terminal.payload);
+    const receipt = {
+      version: 1,
+      type: "warden:provider:transport-receipt",
+      correlationId: terminal.correlationId,
+      receiptId: terminal.receiptId,
+      expiresAt: terminal.expiresAt,
+    };
+    globalThis.__wardenReceipts.push(receipt);
+    const envelope = {
+      version: 1,
+      type: "warden:provider:receipt",
+      payload: receipt,
+    };
+    // Acknowledge over whichever channel delivered the terminal. The C22
+    // content owner speaks over the capability; the raw-Port overlap driver in
+    // scripts/provider-runtime-transport-browser-overlap-content.ts is a test
+    // driver that never claims one and still uses the window.
+    if (viaCapability) globalThis.__wardenCapability.postMessage(envelope);
+    else postMessage(envelope, location.origin);
+  };
   addEventListener("message", (event) => {
     if (event.source !== window || event.origin !== location.origin) return;
-    if (event.data?.type === "warden:provider:response") {
-      const terminal = event.data.payload;
-      if (terminal?.version !== 1 || terminal?.type !== "warden:provider:transport-terminal") return;
-      globalThis.__wardenTerminals.push(terminal);
-      globalThis.__wardenResponses.push(terminal.payload);
-      const receipt = {
-        version: 1,
-        type: "warden:provider:transport-receipt",
-        correlationId: terminal.correlationId,
-        receiptId: terminal.receiptId,
-        expiresAt: terminal.expiresAt,
-      };
-      globalThis.__wardenReceipts.push(receipt);
-      postMessage({
-        version: 1,
-        type: "warden:provider:receipt",
-        payload: receipt,
-      }, location.origin);
+    if (
+      event.data?.version === 1 &&
+      event.data?.type === "warden:provider:capability" &&
+      globalThis.__wardenCapability === null
+    ) {
+      const port = event.ports?.[0] ?? null;
+      if (port !== null) {
+        globalThis.__wardenCapability = port;
+        port.addEventListener("message", (portEvent) => onTerminal(portEvent.data, true));
+        port.start();
+      }
     }
+    if (event.ports?.length !== 1) onTerminal(event.data, false);
     if (typeof event.data?.type === "string" && event.data.type.startsWith("warden:test:port-")) {
       globalThis.__wardenPortEvents.push(event.data);
     }
   });
+  postMessage({
+    version: 1,
+    type: "warden:provider:capability-request",
+  }, location.origin);
   globalThis.__sendWardenRequest = (request) => postMessage({
     version: 1,
     type: "warden:provider:request",

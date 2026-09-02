@@ -9,7 +9,6 @@ import {
 } from "@solana/web3.js";
 
 import { ProviderPageRequestOwner } from "../src/page/provider-request-owner.js";
-import { readPageProviderReceiptEnvelope } from "../src/provider-delivery-protocol.js";
 
 const WARDEN_PROGRAM = new PublicKey(
   "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
@@ -50,7 +49,20 @@ const sourceMessage = new TransactionMessage({
   ],
 }).compileToV0Message();
 const sourceTransaction = new VersionedTransaction(sourceMessage).serialize();
-const owner = new ProviderPageRequestOwner(window);
+// Audit finding X-1: the delivery receipt now leaves over the transferred
+// capability port, not over `window`, so this fixture observes it through the
+// owner's observation seam instead of a second window listener.
+const owner = new ProviderPageRequestOwner(window, {
+  onReceiptPosted: (receipt) => {
+    pageReceiptPosts++;
+    lastPageReceipt = Object.freeze({
+      correlationId: receipt.correlationId,
+      receiptId: receipt.receiptId,
+      expiresAt: receipt.expiresAt,
+    });
+    publishObservation();
+  },
+});
 
 function observation(
   state: "pending" | "signed" | "failed",
@@ -80,19 +92,6 @@ function publishObservation(): void {
     ),
   });
 }
-
-addEventListener("message", (event: MessageEvent): void => {
-  if (event.source !== window || event.origin !== location.origin) return;
-  const receipt = readPageProviderReceiptEnvelope(event.data);
-  if (receipt === null) return;
-  pageReceiptPosts++;
-  lastPageReceipt = Object.freeze({
-    correlationId: receipt.payload.correlationId,
-    receiptId: receipt.payload.receiptId,
-    expiresAt: receipt.payload.expiresAt,
-  });
-  publishObservation();
-});
 
 publishObservation();
 

@@ -21,6 +21,7 @@ import {
   PAGE_PROVIDER_RECEIPT_TYPE,
   PROVIDER_TRANSPORT_REQUEST_TYPE,
   createProviderCapabilityEnvelope,
+  readProviderCapabilityRequestEnvelope,
   createProviderTransportTerminalEnvelope,
 } from "../src/provider-delivery-protocol.js";
 
@@ -129,6 +130,7 @@ class MockPage implements ProviderPageWindowApi {
   readonly location = { origin: ORIGIN };
   readonly listeners = new Set<ProviderPageWindowMessageListener>();
   readonly posted: Array<{ readonly message: unknown; readonly targetOrigin: string }> = [];
+  readonly claims: Array<{ readonly message: unknown; readonly targetOrigin: string }> = [];
   throwOnPost = false;
   throwAfterListenerAdd = false;
   postHook: (() => void) | null = null;
@@ -153,6 +155,11 @@ class MockPage implements ProviderPageWindowApi {
   postMessage(message: unknown, targetOrigin: string): void {
     this.postHook?.();
     if (this.throwOnPost) throw new Error("window disappeared");
+    // The one capability claim is recorded apart from page-visible traffic.
+    if (readProviderCapabilityRequestEnvelope(message) !== null) {
+      this.claims.push({ message, targetOrigin });
+      return;
+    }
     this.posted.push({ message, targetOrigin });
     try {
       const outer = message as {
@@ -401,6 +408,25 @@ describe("C16 main-world provider request owner", () => {
     expect(owner.hasCapability).toBe(true);
     capability.deliver(successResponse(id, [1, 1, 1]));
     await expect(result).resolves.toEqual(new Uint8Array([1, 1, 1]));
+  });
+
+  it("posts exactly one capability claim as it is constructed", () => {
+    const page = new MockPage();
+    const owner = new ProviderPageRequestOwner(page, {
+      randomSource: new SequenceRandom(randomBytes(1)),
+    });
+
+    expect(page.claims).toEqual([
+      {
+        message: { version: 1, type: "warden:provider:capability-request" },
+        targetOrigin: ORIGIN,
+      },
+    ]);
+    expect(page.posted).toEqual([]);
+    expect(page.listeners.size).toBe(1);
+    page.grant();
+    expect(page.claims).toHaveLength(1);
+    owner.dispose();
   });
 
   it("claims the first capability grant and refuses every later one", async () => {

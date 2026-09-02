@@ -3287,17 +3287,28 @@ a fabricated terminal failure. The C1 residual already accepted that a same-page
 script can forge bridge traffic — but the class a dApp will eventually trust for
 signed bytes was inheriting that acceptance silently.
 
-**What changed.** A one-shot capability handshake. The isolated content owner
-(`ProviderContentTransportOwner`) mints one `MessageChannel` in its constructor —
-at `document_start`, before any page script runs — keeps `port1`, and transfers
-`port2` into the document inside a `warden:provider:capability` envelope. The
-main-world owner claims the **first** grant it observes and refuses every later
-one (`capabilityRefusalCount`, plus an optional `onCapabilityRefused` observer).
-Thereafter terminal responses are accepted **only** from that port's `message`
-events, and page receipts go back over the same port. The port reference is
-private to the instance and is never echoed, logged, or re-posted — which is why
-a transferred port was chosen over a minted nonce: a nonce is observable the
-moment anything logs or reflects it.
+**What changed.** A one-shot capability handshake. The main-world owner
+(`ProviderPageRequestOwner`) posts exactly one `warden:provider:capability-request`
+as it is constructed. The isolated content owner
+(`ProviderContentTransportOwner`), installed at `document_start`, answers the
+**first** claim it sees in a document and never mints a second channel: it
+creates one `MessageChannel`, keeps `port1`, and transfers `port2` back inside a
+`warden:provider:capability` envelope (`capabilityGrantCount` /
+`capabilityRefusalCount`). The page owner in turn claims the first grant it
+observes and refuses every later one (`capabilityRefusalCount`, plus an optional
+`onCapabilityRefused` observer). Thereafter terminal responses are accepted
+**only** from that port's `message` events, and page receipts go back over the
+same port. The port reference is private to the instance and is never echoed,
+logged, or re-posted — which is why a transferred port was chosen over a minted
+nonce: a nonce is observable the moment anything logs or reflects it.
+
+The handshake is claim-then-grant rather than an unsolicited push. The push
+shape was written first and the real-Chromium lane refuted it: a `document_start`
+content script's `postMessage` is a queued task, so a main-world owner that is
+constructed later — which is every configuration the browser lane actually has,
+and every configuration in which the owner is not itself injected at
+`document_start` — simply misses the grant and can never settle anything. Whoever
+asks first wins, which is the same guarantee, reached in an order that exists.
 
 **What is claimed.** A `signTransaction` promise resolves with signed bytes, or
 rejects with a terminal failure, only on a message delivered over the capability.
@@ -3308,17 +3319,19 @@ is ignored.
 **What is still disclaimed.** The bridge residual **stands**: a same-page script
 can still observe, suppress, spoof, or replay the *request* half, which still
 travels over `window.postMessage`; it can still deny service entirely. It can
-post a forged capability grant, and if it wins the race it holds a port the
-content owner never speaks over — the real owner then has no capability and every
-promise times out. That is suppression, not settlement, and it is the same
-denial-of-service the C1 residual already accepted. The guarantee is therefore
-narrow and one-directional: **a resolved promise carrying signed bytes now
-requires the capability; an unresolved or timed-out promise proves nothing.**
-Ordering is a precondition, not a proof: the main-world owner must be installed
-by the extension's own `document_start` injection ahead of the grant. A
-page-script-constructed owner may simply miss it. None of this is measured in
-real Chromium — there is no browser evidence that Chrome's transfer ordering,
-`MessagePort` neutering, or bfcache behaviour matches the vitest model.
+post a forged capability grant, and it can claim the capability first; if it
+does, the real owner is refused, holds nothing, and every promise times out. That
+is suppression, not settlement, and it is the same denial-of-service the C1
+residual already accepted. The guarantee is therefore narrow and one-directional:
+**a resolved promise carrying signed bytes now requires the capability; an
+unresolved or timed-out promise proves nothing.** Ordering is a precondition, not
+a proof: the main-world owner must be installed by the extension's own
+`document_start` injection so that its claim is the first one in the document. No
+production entry point constructs this owner yet, so nothing enforces that
+ordering today. Chrome's own cross-world `MessagePort` transfer semantics ARE now
+measured — the browser lane drives the real handshake between a `document_start`
+isolated content script and a main-world page script — but bfcache, prerender,
+and same-document navigation behaviour of the transferred port are not.
 
 ### X-2 — per-origin approval-path capacity
 

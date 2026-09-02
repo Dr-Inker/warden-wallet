@@ -11,7 +11,10 @@
 //! this owner broadcast itself. Requests still leave over `window.postMessage`
 //! — a same-document script may still read, suppress, or spoof them — but a
 //! terminal response is accepted only over the one `MessagePort` the isolated
-//! content owner transferred into this document at `document_start`. The port
+//! content owner transfers into this document. This owner claims that port by
+//! posting exactly one capability request as it is constructed; the content
+//! owner answers only the FIRST claim it sees in a document, so the owner the
+//! extension installs at `document_start` wins by construction. The port
 //! reference never leaves this class, so no later same-document script can
 //! name it, and a well-formed forgery on `window` is ignored outright.
 
@@ -40,6 +43,7 @@ import {
   createPageProviderReceiptEnvelope,
   createProviderTransportReceiptEnvelope,
   createProviderTransportRequestEnvelope,
+  createProviderCapabilityRequestEnvelope,
   readProviderCapabilityEnvelope,
   readProviderTransportTerminalEnvelope,
   type ProviderTransportReceiptEnvelope,
@@ -148,6 +152,16 @@ export interface ProviderPageRequestOwnerOptions {
    * sink without this class choosing a logging transport.
    */
   readonly onCapabilityRefused?: (reason: string) => void;
+  /**
+   * Observability seam. Invoked, never thrown from, after a delivery receipt
+   * has been posted back over the capability. The receipt is not authority and
+   * carries nothing the holder of the capability does not already have; this
+   * exists because the receipt no longer crosses `window`, where an in-document
+   * browser fixture used to be able to watch it.
+   */
+  readonly onReceiptPosted?: (
+    receipt: ProviderTransportReceiptEnvelope,
+  ) => void;
 }
 
 export class ProviderPageRequestStateError extends Error {
@@ -551,24 +565,26 @@ function encodeCorrelationId(bytes: Uint8Array): string {
  * 1. One owner-issued correlation can settle at most one owner-created promise
  *    and can never name a later request.
  * 2. Audit finding X-1 — a promise only ever settles from a message delivered
- *    over the single `MessagePort` transferred into this document by the
- *    isolated content owner before any page script ran. The port reference is
- *    private to this instance and is never echoed, logged, or re-posted, so no
- *    later same-document script can obtain or name it. A same-window,
- *    same-origin message carrying a correct `correlationId`, a correct
- *    `expiresAt`, and a well-formed `receiptId` is therefore ignored: it can no
- *    longer resolve a pending `signTransaction` with attacker-chosen "signed"
- *    bytes, nor reject one with a fabricated terminal failure.
+ *    over the single `MessagePort` the isolated content owner transferred into
+ *    this document in answer to the one capability claim this constructor
+ *    posts. The port reference is private to this instance and is never echoed,
+ *    logged, or re-posted, so no later same-document script can obtain or name
+ *    it. A same-window, same-origin message carrying a correct
+ *    `correlationId`, a correct `expiresAt`, and a well-formed `receiptId` is
+ *    therefore ignored: it can no longer resolve a pending `signTransaction`
+ *    with attacker-chosen "signed" bytes, nor reject one with a fabricated
+ *    terminal failure.
  *
- * The grant is claimed first-wins. A hostile script that manages to post a
- * grant *before* the content owner's takes its own port and leaves this owner
- * without a capability — every promise then times out. That is suppression,
- * which the bridge threat model already accepts; it is not settlement.
+ * Both halves of the handshake are first-wins: the content owner answers only
+ * the first claim in a document, and this owner claims only the first grant it
+ * observes. A hostile script that claims first holds a port the content owner
+ * will speak over, and this owner then has no capability at all — every promise
+ * times out. That is suppression, which the bridge threat model already
+ * accepts; it is not settlement, and an unsettled promise proves nothing.
  *
  * Ordering requirement: the entry point that constructs this owner must install
- * it in the main world at `document_start`, before the isolated content owner
- * pushes the grant. A page-script-constructed owner may miss the grant and can
- * then only time out.
+ * it in the main world at `document_start`, so that its claim is the first one
+ * in the document. Nothing in this class can enforce that.
  */
 export class ProviderPageRequestOwner {
   readonly #page: ProviderPageWindowApi;
@@ -580,6 +596,9 @@ export class ProviderPageRequestOwner {
   readonly #randomSource: ProviderPageRandomSource;
   readonly #timerSource: ProviderPageTimerSource;
   readonly #onCapabilityRefused: ((reason: string) => void) | null;
+  readonly #onReceiptPosted:
+    | ((receipt: ProviderTransportReceiptEnvelope) => void)
+    | null;
   readonly #pending = new Map<string, PendingPageRequest>();
   readonly #issued = new Set<string>();
   readonly #settledReceipts = new Map<string, SettledPageReceipt>();
@@ -718,6 +737,13 @@ export class ProviderPageRequestOwner {
       stateError("onCapabilityRefused must be a function");
     }
     this.#onCapabilityRefused = options.onCapabilityRefused ?? null;
+    if (
+      options.onReceiptPosted !== undefined &&
+      typeof options.onReceiptPosted !== "function"
+    ) {
+      stateError("onReceiptPosted must be a function");
+    }
+    this.#onReceiptPosted = options.onReceiptPosted ?? null;
     if (CLAIMED_PAGE_WINDOWS.has(this.#page)) {
       stateError("document already has a request owner");
     }
@@ -731,6 +757,20 @@ export class ProviderPageRequestOwner {
       this.#removeListener();
       CLAIMED_PAGE_WINDOWS.delete(this.#page);
       stateError("response listener installation failed", error);
+    }
+
+    // Exactly one claim, posted as late as possible in construction so the
+    // listener that will receive the grant is already installed.
+    try {
+      this.#page.postMessage(
+        createProviderCapabilityRequestEnvelope(),
+        this.#documentOrigin,
+      );
+    } catch (error) {
+      this.#disposed = true;
+      this.#removeListener();
+      CLAIMED_PAGE_WINDOWS.delete(this.#page);
+      stateError("capability request failed", error);
     }
   }
 
@@ -872,6 +912,13 @@ export class ProviderPageRequestOwner {
       // The receipt goes back over the capability, never over the window: the
       // page must not be able to observe or replay delivery acknowledgments.
       port.postMessage(createPageProviderReceiptEnvelope(receipt));
+      if (this.#onReceiptPosted !== null) {
+        try {
+          this.#onReceiptPosted(receipt);
+        } catch {
+          // A broken observer must not change settlement behaviour.
+        }
+      }
     } catch {
       // The promise is already settled. A duplicate exact terminal delivery
       // may retry this idempotent receipt while the document remains alive.

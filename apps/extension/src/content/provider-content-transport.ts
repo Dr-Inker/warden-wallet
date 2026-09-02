@@ -9,12 +9,13 @@
 //! deadline remains authoritative when no durable terminal response arrives.
 //!
 //! Audit finding X-1: this owner mints one `MessageChannel` per document and
-//! transfers `port2` into the page in its constructor — at `document_start`,
-//! before any page script runs. Terminal responses and page receipts travel
-//! only over that channel; requests keep arriving on `window`, where a
-//! same-document script may still spoof or suppress them. The grant is minted
-//! exactly once: this owner never answers a page-initiated handshake, so a
-//! later same-document script has no path to a second port.
+//! transfers `port2` into the document in answer to the FIRST capability claim
+//! it sees. It answers exactly once and never mints a second channel, so the
+//! main-world owner the extension installs at `document_start` wins by
+//! construction and a later same-document script has no path to a port.
+//! Terminal responses and page receipts travel only over that channel; requests
+//! keep arriving on `window`, where a same-document script may still spoof or
+//! suppress them.
 
 import {
   parseProviderRequest,
@@ -45,6 +46,7 @@ import type {
 } from "./bridge.js";
 import {
   createProviderCapabilityEnvelope,
+  readProviderCapabilityRequestEnvelope,
   createProviderTransportCancelEnvelope,
   createProviderTransportReceiptEnvelope,
   createProviderTransportRequestEnvelope,
@@ -470,6 +472,8 @@ export class ProviderContentTransportOwner {
   readonly #pending = new Map<string, PendingContentRequest>();
   readonly #issued = new Set<string>();
   #capabilityPort: ProviderContentMessagePort | null = null;
+  #capabilityGrants = 0;
+  #capabilityRefusals = 0;
   #activePort: BoundContentPort | null = null;
   #nextPortGeneration = 1;
   #open = true;
@@ -492,8 +496,12 @@ export class ProviderContentTransportOwner {
       return;
     }
     // Receipts arrive on the capability channel only; the window carries
-    // requests and nothing else inbound.
-    if (envelope === null) return;
+    // requests and the one capability claim, and nothing else inbound.
+    if (envelope === null) {
+      if (readProviderCapabilityRequestEnvelope(event.data) === null) return;
+      this.#answerCapabilityClaim();
+      return;
+    }
     let snapshot: ContentRequestSnapshot | null;
     try {
       snapshot = snapshotPageRequest(envelope.payload);
@@ -627,21 +635,38 @@ export class ProviderContentTransportOwner {
       stateError("page listener installation failed", error);
     }
 
+  }
+
+  /** Grants answered so far; at most one per document. */
+  get capabilityGrantCount(): number {
+    return this.#capabilityGrants;
+  }
+
+  /** Claims refused because the single grant was already spent. */
+  get capabilityRefusalCount(): number {
+    return this.#capabilityRefusals;
+  }
+
+  #answerCapabilityClaim(): void {
+    if (this.#capabilityGrants > 0) {
+      this.#capabilityRefusals++;
+      return;
+    }
+    this.#capabilityGrants++;
     try {
       this.#grantCapability();
-    } catch (error) {
-      this.#open = false;
-      this.#removePageListenerBestEffort();
-      CLAIMED_CONTENT_WINDOWS.delete(this.#page);
-      if (error instanceof ProviderContentTransportStateError) throw error;
-      stateError("capability grant failed", error);
+    } catch {
+      // A document that cannot be granted a capability can never be settled;
+      // closing is the fail-closed answer, and the page promise then expires
+      // on its own absolute deadline.
+      this.#close(true);
     }
   }
 
   /**
-   * Mint and transfer the one-shot X-1 capability. Called exactly once, from
-   * the constructor, so the port a document receives is bound to the first
-   * owner installed in it and cannot be re-requested by page script later.
+   * Mint and transfer the one-shot X-1 capability. Reached at most once per
+   * document, from the first capability claim, so the port a document receives
+   * is bound to the first owner that asked and cannot be re-minted later.
    */
   #grantCapability(): void {
     let channel: ProviderContentMessageChannel;

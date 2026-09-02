@@ -28,6 +28,14 @@ export const PAGE_PROVIDER_RECEIPT_TYPE =
  */
 export const PROVIDER_CAPABILITY_TYPE =
   "warden:provider:capability" as const;
+/**
+ * The page owner's one claim for the grant above. The content owner answers the
+ * FIRST claim it sees in a document and never mints a second channel, so the
+ * owner the extension installs at `document_start` wins by construction and a
+ * later same-document script has no path to a port.
+ */
+export const PROVIDER_CAPABILITY_REQUEST_TYPE =
+  "warden:provider:capability-request" as const;
 
 const CORRELATION_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 const OPERATION_KEY_PATTERN = /^op_[0-9a-f]{64}$/;
@@ -75,6 +83,11 @@ export interface ProviderTransportCancelEnvelope {
 export interface ProviderCapabilityEnvelope {
   readonly version: 1;
   readonly type: typeof PROVIDER_CAPABILITY_TYPE;
+}
+
+export interface ProviderCapabilityRequestEnvelope {
+  readonly version: 1;
+  readonly type: typeof PROVIDER_CAPABILITY_REQUEST_TYPE;
 }
 
 export interface PageProviderReceiptEnvelope {
@@ -350,6 +363,25 @@ export function readProviderCapabilityEnvelope(
     return null;
   }
   return createProviderCapabilityEnvelope();
+}
+
+export function createProviderCapabilityRequestEnvelope(
+): ProviderCapabilityRequestEnvelope {
+  return Object.freeze({ version: 1, type: PROVIDER_CAPABILITY_REQUEST_TYPE });
+}
+
+export function readProviderCapabilityRequestEnvelope(
+  value: unknown,
+): ProviderCapabilityRequestEnvelope | null {
+  const record = closedDataRecord(value, ["version", "type"]);
+  if (
+    record === null ||
+    record.version !== 1 ||
+    record.type !== PROVIDER_CAPABILITY_REQUEST_TYPE
+  ) {
+    return null;
+  }
+  return createProviderCapabilityRequestEnvelope();
 }
 
 export function createPageProviderReceiptEnvelope(
