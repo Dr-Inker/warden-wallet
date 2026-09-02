@@ -228,17 +228,32 @@ describe("recorded reviewer evidence completeness", () => {
     }
   });
 
-  it("WRDF-0155 accepts an integration-owned finding id for a historical Grok review", () => {
+  it("WRDF-0156 uses the integration wrapper and ledger for a detached historical Grok review", () => {
     const outputDir = mkdtempSync(join(tmpdir(), "warden-grok-historical-id-"));
     const findingsPath = join(outputDir, "findings.json");
-    const integrationFindingId = "WRDF-9000";
+    const historicalBase = "6620be03ddb5a06fab98a85caba5b0ed01fec59c";
+    const historicalHead = "15bde451e7062afeb48751f111bcc18b4087e36f";
     try {
+      const historicalWrapper = execFileSync(
+        "git",
+        ["show", `${historicalHead}:scripts/review-grok.sh`],
+        { cwd: REPO, encoding: "utf8" },
+      );
+      expect(historicalWrapper).not.toContain("--finding-id-start");
+
+      const rows = readFileSync(SCORECARD, "utf8")
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line) as { finding_id: string });
+      const next = Math.max(...rows.map((row) => Number(row.finding_id.slice("WRDF-".length)))) + 1;
+      const integrationFindingId = `WRDF-${String(next).padStart(4, "0")}`;
       const result = spawnSync(
         "bash",
         [
           REVIEW_GROK,
-          "HEAD^",
-          "HEAD",
+          historicalBase,
+          historicalHead,
+          "--historical",
           "--dry-run",
           "--max-chars",
           "1000000",
@@ -253,10 +268,12 @@ describe("recorded reviewer evidence completeness", () => {
 
       const expectations = JSON.parse(
         readFileSync(findingsPath.replace(/\.json$/, ".expect.json"), "utf8"),
-      ) as { finding_id_start?: string };
+      ) as { finding_id_start?: string; head_sha?: string };
       const prompt = readFileSync(findingsPath.replace(/\.json$/, ".prompt.txt"), "utf8");
       expect(expectations.finding_id_start).toBe(integrationFindingId);
+      expect(expectations.head_sha).toBe(historicalHead);
       expect(prompt).toContain(`beginning at ${integrationFindingId}`);
+      expect(prompt).toContain(`DIFF ${historicalBase}..${historicalHead}`);
     } finally {
       rmSync(outputDir, { recursive: true, force: true });
     }
@@ -333,6 +350,56 @@ describe("append-review-run.mjs CLI", () => {
     expect(() => cli(artefact)).toThrow(/finding id collision/);
     expect(readFileSync(runsFile, "utf8")).toBe(beforeRuns);
     expect(readFileSync(cardFile, "utf8")).toBe(beforeCard);
+  });
+
+  it("WRDF-0157 REFUSES a unique finding id that is not the scorecard's next contiguous id", () => {
+    const isolated = mkdtempSync(join(tmpdir(), "warden-review-noncontiguous-id-"));
+    try {
+      const isolatedRuns = join(isolated, "runs.jsonl");
+      const isolatedCard = join(isolated, "scorecard.jsonl");
+      const artefact = join(isolated, "findings.json");
+      const expectFile = join(isolated, "expect.json");
+      writeFileSync(isolatedCard, JSON.stringify({ finding_id: "WRDF-0004" }) + "\n");
+
+      const doc = fresh();
+      const remap = new Map<string, string>();
+      doc.findings.forEach((finding: { id: string }, index: number) => {
+        const replacement = `WRDF-${String(9000 + index).padStart(4, "0")}`;
+        remap.set(finding.id, replacement);
+        finding.id = replacement;
+      });
+      for (const verdict of doc.invariant_verdicts) {
+        if (verdict.finding_ids) {
+          verdict.finding_ids = verdict.finding_ids.map((id: string) => remap.get(id) ?? id);
+        }
+      }
+      const expectDoc = expectations();
+      expectDoc.finding_id_start = "WRDF-9000";
+      writeFileSync(artefact, JSON.stringify(doc));
+      writeFileSync(expectFile, JSON.stringify(expectDoc));
+
+      const beforeCard = readFileSync(isolatedCard, "utf8");
+      expect(() =>
+        execFileSync(
+          "node",
+          [
+            APPENDER,
+            artefact,
+            "--expect",
+            expectFile,
+            "--runs",
+            isolatedRuns,
+            "--scorecard",
+            isolatedCard,
+          ],
+          { stdio: "pipe" },
+        ),
+      ).toThrow(/next contiguous finding id/i);
+      expect(existsSync(isolatedRuns) ? readFileSync(isolatedRuns, "utf8") : "").toBe("");
+      expect(readFileSync(isolatedCard, "utf8")).toBe(beforeCard);
+    } finally {
+      rmSync(isolated, { recursive: true, force: true });
+    }
   });
 
   it("never copies model adjudication or self-claimed truth into the scorecard (WRDF-0009)", () => {
