@@ -188,6 +188,45 @@ describe("recorded reviewer evidence completeness", () => {
       rmSync(outputDir, { recursive: true, force: true });
     }
   });
+
+  it("WRDF-0154 binds the next contiguous finding id into Grok expectations and its prompt", () => {
+    const outputDir = mkdtempSync(join(tmpdir(), "warden-grok-finding-id-"));
+    const findingsPath = join(outputDir, "findings.json");
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          REVIEW_GROK,
+          "HEAD^",
+          "HEAD",
+          "--dry-run",
+          "--max-chars",
+          "1000000",
+          "--out",
+          findingsPath,
+        ],
+        { cwd: REPO, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+
+      const rows = readFileSync(SCORECARD, "utf8")
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line) as { finding_id: string });
+      const next = Math.max(...rows.map((row) => Number(row.finding_id.slice("WRDF-".length)))) + 1;
+      const findingIdStart = `WRDF-${String(next).padStart(4, "0")}`;
+      const expectations = JSON.parse(
+        readFileSync(findingsPath.replace(/\.json$/, ".expect.json"), "utf8"),
+      ) as { finding_id_start?: string };
+      const prompt = readFileSync(findingsPath.replace(/\.json$/, ".prompt.txt"), "utf8");
+
+      expect(expectations.finding_id_start).toBe(findingIdStart);
+      expect(prompt).toContain(`beginning at ${findingIdStart}`);
+      expect(prompt).toMatch(/finding ids are wrapper-owned/i);
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("buildScorecardLines reproducer persistence (WRDF-0015)", () => {
