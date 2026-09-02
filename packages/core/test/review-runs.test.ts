@@ -836,6 +836,34 @@ describe("scorecard red-test fixture binding (WRDF-0126)", () => {
     expect(bad).toMatch(/head_sha .* is not a commit in this full clone/);
     expect(bad).toMatch(/strict descendant/);
   });
+
+  it("WRDF-0146 rejects aliases that resolve to the RED commit", () => {
+    const red = "b".repeat(40);
+    const name = "WRDF-0146 rejects aliases that resolve to the RED commit";
+    const candidate = {
+      finding_id: "WRDF-0146",
+      truth_status: "CONFIRMED",
+      evidence_type: "red_test",
+      head_sha: "a".repeat(40),
+      red_test_file: "test/example.test.ts",
+      red_test_name: name,
+      red_test_sha: red,
+      remediation_sha: red.slice(0, 12),
+    };
+    const probe: GitProbe = {
+      head: "c".repeat(40),
+      shallow: false,
+      commitExists: () => true,
+      isAncestorOrEqual: () => true,
+      readFileAtCommit: () => `it(${JSON.stringify(name)}, () => {});`,
+    };
+    const bad = validateScorecardRedTestBinding(
+      candidate,
+      () => `it(${JSON.stringify(name)}, () => {});`,
+      probe,
+    ).join("\n");
+    expect(bad).toMatch(/strict descendant/);
+  });
 });
 
 describe("scorecard STANDING validator (WRDF-0100/0101) — adversarial mutations", () => {
