@@ -873,6 +873,41 @@ describe("scorecard red-test fixture binding (WRDF-0126)", () => {
     ).join("\n");
     expect(bad).toMatch(/strict descendant/);
   });
+
+  it("WRDF-0147 rejects a hexadecimal ref name as a commit coordinate", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "warden-red-coordinate-"));
+    const safeEnv = {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_NO_REPLACE_OBJECTS: "1",
+      GIT_OPTIONAL_LOCKS: "0",
+    };
+    const git = (args: string[]) => execFileSync(
+      "/usr/bin/git",
+      ["-C", tmp, ...args],
+      { env: safeEnv, stdio: "pipe" },
+    ).toString().trim();
+    try {
+      git(["init", "-q"]);
+      git(["config", "user.name", "Warden Test"]);
+      git(["config", "user.email", "warden@example.invalid"]);
+      writeFileSync(join(tmp, "fixture.test.ts"), "fixture\n");
+      git(["add", "fixture.test.ts"]);
+      git(["commit", "-q", "-m", "fixture"]);
+      const target = git(["rev-parse", "HEAD"]);
+      const refName = target.startsWith("abcdef0") ? "1234567" : "abcdef0";
+      git(["branch", refName, target]);
+
+      const probe = buildGitProbe(tmp);
+      expect(probe).not.toBeNull();
+      expect(probe?.resolveCommit(refName)).toBeNull();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("scorecard STANDING validator (WRDF-0100/0101) — adversarial mutations", () => {
