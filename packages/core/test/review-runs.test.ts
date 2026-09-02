@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, writeFileSync, existsSync, mkdtempSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRunRecord, buildScorecardLines } from "../../../scripts/append-review-run.mjs";
 
@@ -445,6 +445,44 @@ export function validateScorecardStanding(r: Record<string, unknown>): string[] 
   return errs;
 }
 
+// WRDF-0126 adoption boundary: every newly promoted red-test finding must carry
+// an exact fixture coordinate whose name begins with its finding id. Earlier
+// historical rows predate this contract and cannot be reconstructed from the
+// gitignored raw review artefacts.
+const RED_TEST_BINDING_START = 125;
+
+export function validateScorecardRedTestBinding(
+  r: Record<string, unknown>,
+  readSource: ((path: string) => string | null) | null,
+): string[] {
+  if (r.truth_status !== "CONFIRMED" || r.evidence_type !== "red_test") return [];
+
+  const id = String(r.finding_id ?? "?");
+  const match = id.match(/^WRDF-(\d{4})$/);
+  if (!match || Number(match[1]) < RED_TEST_BINDING_START) return [];
+
+  const file = r.red_test_file;
+  const name = r.red_test_name;
+  const errs: string[] = [];
+  if (typeof file !== "string" || file.length === 0) {
+    errs.push(`${id}: promoted red-test evidence has no red_test_file`);
+  }
+  if (typeof name !== "string" || name.length === 0) {
+    errs.push(`${id}: promoted red-test evidence has no red_test_name`);
+  } else if (!name.startsWith(`${id} `)) {
+    errs.push(`${id}: red_test_name must begin with \"${id} \"`);
+  }
+  if (readSource && typeof file === "string" && file.length > 0 && typeof name === "string" && name.length > 0) {
+    const source = readSource(file);
+    if (source === null) {
+      errs.push(`${id}: red_test_file ${file} is absent or outside the repository`);
+    } else if (!source.includes(JSON.stringify(name))) {
+      errs.push(`${id}: red_test_name is absent from ${file}`);
+    }
+  }
+  return errs;
+}
+
 describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
   const cardRows = readFileSync(SCORECARD, "utf8")
     .split("\n")
@@ -488,6 +526,21 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
     expect(bad, bad.join("\n")).toEqual([]);
   });
 
+  it("binds every promoted red-test finding from WRDF-0125 onward to its named fixture (WRDF-0126)", () => {
+    const repoPrefix = `${resolve(REPO)}${sep}`;
+    const readSource = (path: string): string | null => {
+      const absolute = resolve(REPO, path);
+      if (!absolute.startsWith(repoPrefix)) return null;
+      try {
+        return readFileSync(absolute, "utf8");
+      } catch {
+        return null;
+      }
+    };
+    const bad = cardRows.flatMap((r) => validateScorecardRedTestBinding(r, readSource));
+    expect(bad, bad.join("\n")).toEqual([]);
+  });
+
   const stub = (opts: { exists?: (s: string) => boolean; anc?: (a: string, b: string) => boolean; head?: string; shallow?: boolean }): GitProbe => ({
     head: opts.head ?? "h".repeat(40),
     commitExists: opts.exists ?? (() => true),
@@ -526,6 +579,34 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
   });
   it("accepts a well-formed remediation row", () => {
     expect(validateScorecardProvenance(row({}), stub({}))).toEqual([]);
+  });
+});
+
+describe("scorecard red-test fixture binding (WRDF-0126)", () => {
+  const row = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    finding_id: "WRDF-0125",
+    truth_status: "CONFIRMED",
+    evidence_type: "red_test",
+    red_test_file: "test/example.test.ts",
+    red_test_name: "WRDF-0125 rejects the broken behavior",
+    ...over,
+  });
+
+  it("rejects a promoted red-test row without fixture coordinates", () => {
+    expect(validateScorecardRedTestBinding(row({ red_test_file: null, red_test_name: null }), null).join()).toMatch(/no red_test_file.*no red_test_name/);
+  });
+
+  it("rejects a fixture name that does not begin with the finding id", () => {
+    expect(validateScorecardRedTestBinding(row({ red_test_name: "generic regression" }), null).join()).toMatch(/must begin/);
+  });
+
+  it("rejects a claimed fixture name absent from its source", () => {
+    expect(validateScorecardRedTestBinding(row(), () => "test(\"some other test\", () => {}); ").join()).toMatch(/absent from/);
+  });
+
+  it("accepts an exact id-prefixed fixture coordinate", () => {
+    const fixture = row();
+    expect(validateScorecardRedTestBinding(fixture, () => `test(${JSON.stringify(fixture.red_test_name)}, () => {});`)).toEqual([]);
   });
 });
 
