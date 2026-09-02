@@ -356,9 +356,28 @@ interface GitProbe {
   shallow: boolean; // a well-formed SHA absent from a FULL clone is a fabricated/mistyped SHA (fail-closed); absent from a shallow clone is unverifiable (skip). (WRDF-0083)
 }
 
+const REVIEW_GIT_EXECUTABLE = "/usr/bin/git";
+const REVIEW_GIT_ENVIRONMENT = {
+  PATH: "/usr/bin:/bin",
+  LANG: "C",
+  LC_ALL: "C",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_NO_REPLACE_OBJECTS: "1",
+  GIT_OPTIONAL_LOCKS: "0",
+};
+
+function runReviewGit(repo: string, args: string[]): string {
+  return execFileSync(
+    REVIEW_GIT_EXECUTABLE,
+    ["-c", "core.fsmonitor=false", "-C", repo, ...args],
+    { env: REVIEW_GIT_ENVIRONMENT, stdio: "pipe" },
+  ).toString();
+}
+
 function buildGitProbe(repo: string): GitProbe | null {
   const git = (args: string[]): string | null => {
-    try { return execFileSync("git", ["-C", repo, ...args], { stdio: "pipe" }).toString().trim(); }
+    try { return runReviewGit(repo, args).trim(); }
     catch { return null; }
   };
   if (git(["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
@@ -370,15 +389,15 @@ function buildGitProbe(repo: string): GitProbe | null {
     head,
     shallow,
     commitExists: (sha: string) => {
-      try { execFileSync("git", ["-C", repo, "cat-file", "-e", `${sha}^{commit}`], { stdio: "pipe" }); return true; }
+      try { runReviewGit(repo, ["cat-file", "-e", `${sha}^{commit}`]); return true; }
       catch { return false; }
     },
     isAncestorOrEqual: (a: string, b: string) => {
-      try { execFileSync("git", ["-C", repo, "merge-base", "--is-ancestor", a, b], { stdio: "pipe" }); return true; }
+      try { runReviewGit(repo, ["merge-base", "--is-ancestor", a, b]); return true; }
       catch { return false; }
     },
     readFileAtCommit: (sha: string, path: string) => {
-      try { return execFileSync("git", ["-C", repo, "show", `${sha}:${path}`], { stdio: "pipe" }).toString(); }
+      try { return runReviewGit(repo, ["show", `${sha}:${path}`]); }
       catch { return null; }
     },
   };
@@ -527,22 +546,31 @@ export function validateScorecardRedTestBinding(
       }
       if (redHere) {
         const reviewedHead = r.head_sha;
-        if (
-          typeof reviewedHead === "string" &&
-          SHA_RE.test(reviewedHead) &&
-          git.commitExists(reviewedHead) &&
-          !git.isAncestorOrEqual(reviewedHead, red)
-        ) {
-          errs.push(`${id}: red_test_sha ${red} does not follow reviewed head ${reviewedHead}`);
+        if (typeof reviewedHead !== "string" || !SHA_RE.test(reviewedHead)) {
+          errs.push(`${id}: head_sha is malformed or absent for promoted RED evidence`);
+        } else {
+          const reviewedHeadHere = git.commitExists(reviewedHead);
+          if (!reviewedHeadHere && !git.shallow) {
+            errs.push(`${id}: head_sha ${reviewedHead} is not a commit in this full clone`);
+          } else if (reviewedHeadHere && !git.isAncestorOrEqual(reviewedHead, red)) {
+            errs.push(`${id}: red_test_sha ${red} does not follow reviewed head ${reviewedHead}`);
+          }
         }
         const remediation = r.remediation_sha;
-        if (
-          typeof remediation === "string" &&
-          SHA_RE.test(remediation) &&
-          git.commitExists(remediation) &&
-          !git.isAncestorOrEqual(red, remediation)
-        ) {
-          errs.push(`${id}: remediation ${remediation} does not contain red_test_sha ${red}`);
+        if (remediation !== undefined && remediation !== null) {
+          if (typeof remediation !== "string" || !SHA_RE.test(remediation)) {
+            errs.push(`${id}: remediation_sha is malformed for promoted RED evidence`);
+          } else {
+            const remediationHere = git.commitExists(remediation);
+            if (!remediationHere && !git.shallow) {
+              errs.push(`${id}: remediation_sha ${remediation} is not a commit in this full clone`);
+            } else if (
+              remediationHere &&
+              (remediation === red || !git.isAncestorOrEqual(red, remediation))
+            ) {
+              errs.push(`${id}: remediation ${remediation} must be a strict descendant of red_test_sha ${red}`);
+            }
+          }
         }
         if (!git.isAncestorOrEqual(red, git.head)) {
           errs.push(`${id}: red_test_sha ${red} is not reachable from reviewed HEAD`);
@@ -568,9 +596,9 @@ export function validateScorecardRedTestBinding(
 function validateScorecardRedTestRows(
   rows: Record<string, unknown>[],
   readSource: (path: string) => string | null,
-  _git: GitProbe | null,
+  git: GitProbe | null,
 ): string[] {
-  return rows.flatMap((r) => validateScorecardRedTestBinding(r, readSource));
+  return rows.flatMap((r) => validateScorecardRedTestBinding(r, readSource, git));
 }
 
 describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
