@@ -9,7 +9,7 @@
 #   scripts/review-grok.sh --validate <f.json> [--expect <f>]   validate an existing findings file
 #
 #   Options: --dry-run · --out <path> · --model <m> · --kind <k> · --max-chars <n> ·
-#            --max-tokens <n> · --no-full-files
+#            --max-tokens <n> · --finding-id-start <WRDF-NNNN> · --no-full-files
 #
 # WHY THIS EXISTS
 #   scripts/review.sh is the canonical recorded lane (Codex, gpt-5.6-sol@max). It has now been
@@ -150,7 +150,7 @@ if [[ "${1:-}" == "--validate" ]]; then
   exec node scripts/validate-findings.mjs "$@" --schema "$SCHEMA"
 fi
 
-DRY_RUN=0; OUT=""; BASE=""; HEAD_REF="HEAD"; KIND="task-diff"
+DRY_RUN=0; OUT=""; BASE=""; HEAD_REF="HEAD"; KIND="task-diff"; FINDING_ID_START=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift;;
@@ -159,6 +159,7 @@ while [[ $# -gt 0 ]]; do
     --kind) KIND="${2:?}"; shift 2;;
     --max-chars) MAX_CHARS="${2:?}"; shift 2;;
     --max-tokens) MAX_TOKENS="${2:?}"; shift 2;;
+    --finding-id-start) FINDING_ID_START="${2:?}"; shift 2;;
     --no-full-files) FULL_FILES=0; shift;;
     -h|--help) sed -n '2,40p' "$0"; exit 0;;
     -*) die "unknown option $1";;
@@ -252,21 +253,23 @@ SEED_IDS="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).map(r=>r.i
 # Finding ids belong to the committed scorecard namespace, not to one provider
 # lane. Bind the next contiguous id into both the expectation gate and the prompt
 # so a unique-but-out-of-sequence model-selected id cannot enter the ledger.
-FINDING_ID_START="$(SCORECARD="$SCORECARD" node -e '
-  const fs = require("fs");
-  let max = 0;
-  if (fs.existsSync(process.env.SCORECARD)) {
-    for (const line of fs.readFileSync(process.env.SCORECARD, "utf8").split("\n")) {
-      if (!line.trim()) continue;
-      const m = String(JSON.parse(line).finding_id ?? "").match(/^WRDF-(\d{4})$/);
-      if (m) max = Math.max(max, Number(m[1]));
+if [[ -z "$FINDING_ID_START" ]]; then
+  FINDING_ID_START="$(SCORECARD="$SCORECARD" node -e '
+    const fs = require("fs");
+    let max = 0;
+    if (fs.existsSync(process.env.SCORECARD)) {
+      for (const line of fs.readFileSync(process.env.SCORECARD, "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        const m = String(JSON.parse(line).finding_id ?? "").match(/^WRDF-(\d{4})$/);
+        if (m) max = Math.max(max, Number(m[1]));
+      }
     }
-  }
-  if (max >= 9999) throw new Error("WRDF finding id namespace exhausted");
-  process.stdout.write(`WRDF-${String(max + 1).padStart(4, "0")}`);
-')"
+    if (max >= 9999) throw new Error("WRDF finding id namespace exhausted");
+    process.stdout.write(`WRDF-${String(max + 1).padStart(4, "0")}`);
+  ')"
+fi
 [[ "$FINDING_ID_START" =~ ^WRDF-[0-9]{4}$ && "$FINDING_ID_START" != "WRDF-0000" ]] ||
-  die "failed to derive the next finding id from $SCORECARD"
+  die "--finding-id-start must be WRDF-0001..WRDF-9999 (got $FINDING_ID_START)"
 
 SEED_JSON="$SEED_JSON" BASE_SHA="$BASE_SHA" HEAD_SHA="$HEAD_SHA" \
 FINDING_ID_START="$FINDING_ID_START" \
