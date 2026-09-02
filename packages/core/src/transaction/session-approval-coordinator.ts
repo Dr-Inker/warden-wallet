@@ -1243,6 +1243,7 @@ export class SessionApprovalCoordinator {
   }
 
   async #pruneInactiveCapsules(): Promise<void> {
+    const now = this.#currentTime();
     for (const [id, capsule] of [...this.#capsules]) {
       let record: ApprovalRecord | null;
       try {
@@ -1278,7 +1279,7 @@ export class SessionApprovalCoordinator {
             // retry capsule. Capacity remains closed until a later observation.
             continue;
           }
-          retain = signing?.outcome.state === "failed";
+          retain = signing?.outcome.state === "failed" && now < current.expiresAt;
         }
         if (this.#capsules.get(id) !== capsule) continue;
         if (!retain) {
