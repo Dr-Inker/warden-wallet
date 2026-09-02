@@ -726,6 +726,14 @@ const keyring = new KeyringLifecycleOwner(
   chromeApi.storage.local,
   chromeApi.storage.session,
   chromeApi.runtime.id,
+  // This fixture drives the devnet release pins above, so it names the same
+  // cluster/deployment the records it seals are bound to.
+  {
+    expectedContext: {
+      genesisHash: DEVNET_GENESIS.slice(),
+      programId: WARDEN_PROGRAM.toBytes(),
+    },
+  },
 );
 
 const approvals: SessionApprovalOwner = Object.freeze({

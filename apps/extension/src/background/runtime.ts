@@ -27,11 +27,23 @@ import {
 } from "./keyring-record-store.js";
 import {
   type AuthenticatedSessionIdentity,
+  type ExpectedKeyringContext,
   KeyringLifecycleOwner,
   type KeyringLifecycle,
   type SessionSignerLease,
   type UnlockKeyringWithPasswordParams,
 } from "./keyring-lifecycle.js";
+import { shippedExpectedKeyringContext } from "./expected-keyring-context.js";
+
+/**
+ * Startup knobs. `expectedContext` exists so a test (or a future non-default
+ * release channel) can name the pin explicitly; omitting it selects the shipped
+ * pin, never "no pin".
+ */
+export interface ExtensionBackgroundOptions {
+  readonly readNow?: () => number;
+  readonly expectedContext?: ExpectedKeyringContext;
+}
 
 export interface ExtensionBackgroundStorageApi extends ExtensionStorageAccessApi {
   readonly local: StorageAreaAccessControl & KeyringRecordStorageArea;
@@ -228,14 +240,17 @@ interface InitializedBackground {
 function initializeBackground(
   storage: ExtensionBackgroundStorageApi,
   runtimeId: string,
-  options: { readonly readNow?: () => number } = {},
+  options: ExtensionBackgroundOptions = {},
   approvalInitialization?: Promise<unknown>,
 ): InitializedBackground {
   const owner = new KeyringLifecycleOwner(
     storage.local,
     storage.session,
     runtimeId,
-    options,
+    {
+      ...options,
+      expectedContext: options.expectedContext ?? shippedExpectedKeyringContext(),
+    },
   );
   const keyringInitialization = restrictStorageToTrustedContexts(storage)
     .then(() => owner.restore());
@@ -261,7 +276,7 @@ function initializeBackground(
 export function bootstrapBackground(
   storage: ExtensionBackgroundStorageApi,
   runtimeId: string,
-  options: { readonly readNow?: () => number } = {},
+  options: ExtensionBackgroundOptions = {},
 ): ExtensionBackgroundRuntime {
   return initializeBackground(storage, runtimeId, options).runtime;
 }

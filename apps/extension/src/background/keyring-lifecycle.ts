@@ -37,6 +37,33 @@ import {
   type UnlockSessionStorageArea,
 } from "./unlock-session.js";
 
+/**
+ * The context fields the extension itself pins, as opposed to the ones a record
+ * legitimately chooses (the SmartAccount) or the ones already fixed by the
+ * record schema (`keyKind`, `schemaVersion`).
+ *
+ * The record's context is AAD-authenticated, so it cannot be *edited* without
+ * the KEK — but a whole record can be REPLACED by a different, validly sealed
+ * one. `WRD-KEY-04`'s cross-cluster promise therefore only reaches the trust
+ * boundary if the extension compares these bytes to its own expectation instead
+ * of taking them from the record it is about to adopt.
+ */
+export interface ExpectedKeyringContext {
+  /** Canonical cluster identity this build adopts records for. */
+  readonly genesisHash: Uint8Array;
+  /** Warden deployment this build adopts records for. */
+  readonly programId: Uint8Array;
+}
+
+export interface KeyringLifecycleOptions {
+  /**
+   * Injected exactly like the extension origin: source-owned configuration, never
+   * a value this class or a stored record chooses for itself.
+   */
+  readonly expectedContext: ExpectedKeyringContext;
+  readonly readNow?: () => number;
+}
+
 export interface UnlockKeyringWithPasswordParams {
   /** Caller-owned and synchronously overwritten before the first suspension. */
   readonly passwordBytes: Uint8Array;
@@ -147,6 +174,37 @@ function canonicalStoredRecord(value: unknown): string {
   return value as string;
 }
 
+/** Copy-own the pinned bytes so a later caller mutation cannot widen the check. */
+function snapshotExpectedContext(value: unknown): ExpectedKeyringContext {
+  if (typeof value !== "object" || value === null || value instanceof Uint8Array) {
+    throw new KeyringFormatError(
+      "keyring lifecycle expected context must be an object",
+    );
+  }
+  const expected = value as Partial<ExpectedKeyringContext>;
+  const fields: ReadonlyArray<readonly [string, unknown]> = [
+    ["genesisHash", expected.genesisHash],
+    ["programId", expected.programId],
+  ];
+  const copies: Uint8Array[] = [];
+  for (const [name, bytes] of fields) {
+    if (!(bytes instanceof Uint8Array) || bytes.length !== PUBKEY_BYTES) {
+      throw new KeyringFormatError(
+        `keyring lifecycle expected ${name} must be exactly ${PUBKEY_BYTES} bytes`,
+      );
+    }
+    let combined = 0;
+    for (const byte of bytes) combined |= byte;
+    if (combined === 0) {
+      throw new KeyringFormatError(
+        `keyring lifecycle expected ${name} must not be all zero`,
+      );
+    }
+    copies.push(bytes.slice());
+  }
+  return Object.freeze({ genesisHash: copies[0]!, programId: copies[1]! });
+}
+
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
 
 function extensionOrigin(runtimeId: unknown): string {
@@ -173,6 +231,7 @@ export class KeyringLifecycleOwner implements KeyringLifecycle {
   private readonly sessions: UnlockSessionOwner;
   private readonly readNow: () => number;
   private readonly expectedOrigin: string;
+  private readonly expectedContext: ExpectedKeyringContext;
   private transition = 0;
   private pendingPasswordUnlock: AbortController | undefined;
 
@@ -180,11 +239,17 @@ export class KeyringLifecycleOwner implements KeyringLifecycle {
     localStorage: KeyringRecordStorageArea,
     sessionStorage: UnlockSessionStorageArea,
     runtimeId: string,
-    options: { readonly readNow?: () => number } = {},
+    options: KeyringLifecycleOptions,
   ) {
+    if (typeof options !== "object" || options === null) {
+      throw new KeyringFormatError("keyring lifecycle options must be an object");
+    }
     if (options.readNow !== undefined && typeof options.readNow !== "function") {
       throw new KeyringFormatError("keyring lifecycle readNow must be a function");
     }
+    // Resolve the pin before any storage owner exists: a build with no pinned
+    // cluster/deployment must not be constructible at all.
+    this.expectedContext = snapshotExpectedContext(options.expectedContext);
     this.records = new PersistentKeyringRecordStore(localStorage);
     this.sessions = new UnlockSessionOwner(sessionStorage, options);
     this.readNow = options.readNow ?? Date.now;
@@ -201,7 +266,16 @@ export class KeyringLifecycleOwner implements KeyringLifecycle {
       );
     }
     const context = snapshotSessionSignerContext(record.metadata.context);
-    if (context.origin !== this.expectedOrigin) {
+    // Every field this build pins is compared here, not carried out of the
+    // record: AEAD authentication proves the context was not edited, never that
+    // it is the context this extension is allowed to adopt. `keyKind` and
+    // `schemaVersion` are already pinned by `snapshotSessionSignerContext`; the
+    // SmartAccount is the record's own choice and has no build-level expectation.
+    if (
+      context.origin !== this.expectedOrigin ||
+      !equalBytes(context.genesisHash, this.expectedContext.genesisHash) ||
+      !equalBytes(context.programId, this.expectedContext.programId)
+    ) {
       clearContext(context);
       throw new KeyringAuthError();
     }

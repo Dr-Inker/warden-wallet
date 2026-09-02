@@ -27,6 +27,7 @@ import {
   type ExtensionBackgroundStorageApi,
 } from "../src/background/runtime.js";
 import { KeyringLifecycleOwner } from "../src/background/keyring-lifecycle.js";
+import { shippedExpectedKeyringContext } from "../src/background/expected-keyring-context.js";
 import { KEYRING_RECORD_STORAGE_KEY } from "../src/background/keyring-record-store.js";
 import {
   UNLOCK_SESSION_STORAGE_KEY,
@@ -53,13 +54,16 @@ const EXTENSION_ID = "a".repeat(32);
 const SESSION_NOW = 1_700_000_000_000;
 const PERSISTENT_BUNDLE_ID = fill(16, 0x12);
 const SIGNER_PASSWORD = new TextEncoder().encode("runtime integration password");
+// Production startup pins the shipped cluster/deployment, so a record the
+// composed runtime is expected to adopt must carry exactly those bytes.
+const SHIPPED_PINS = shippedExpectedKeyringContext();
 const SIGNER_CONTEXT: KeyringContext = {
   account: fill(32, 0x41),
   origin: `chrome-extension://${EXTENSION_ID}`,
   keyKind: "session-signer",
   schemaVersion: SESSION_SIGNER_PAYLOAD_SCHEMA_VERSION,
-  genesisHash: fill(32, 0x31),
-  programId: fill(32, 0x32),
+  genesisHash: SHIPPED_PINS.genesisHash,
+  programId: SHIPPED_PINS.programId,
 };
 const SIGNER_POLICY = {
   idleTimeoutMs: 60_000,

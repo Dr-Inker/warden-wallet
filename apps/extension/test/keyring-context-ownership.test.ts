@@ -30,6 +30,10 @@ const CONTEXT: KeyringContext = {
   genesisHash: fill(32, 0x52),
   programId: fill(32, 0x63),
 };
+const EXPECTED_CONTEXT = {
+  genesisHash: fill(32, 0x52),
+  programId: fill(32, 0x63),
+};
 const POLICY = { idleTimeoutMs: 60_000, hardTimeoutMs: 120_000 } as const;
 
 function hex(value: string): Uint8Array {
@@ -96,7 +100,7 @@ describe("background-owned keyring context", () => {
       new LocalStorage(await record()),
       new SessionStorage(),
       EXTENSION_ID,
-      { readNow: () => NOW },
+      { expectedContext: EXPECTED_CONTEXT, readNow: () => NOW },
     );
 
     await lifecycle.unlockWithPassword({
@@ -121,7 +125,7 @@ describe("background-owned keyring context", () => {
       new LocalStorage(await record(CONTEXT, seed)),
       new SessionStorage(),
       EXTENSION_ID,
-      { readNow: () => NOW },
+      { expectedContext: EXPECTED_CONTEXT, readNow: () => NOW },
     );
     await lifecycle.unlockWithPassword({
       passwordBytes: PASSWORD.slice(),
@@ -172,6 +176,7 @@ describe("background-owned keyring context", () => {
     const local = new LocalStorage(first);
     const session = new SessionStorage();
     const lifecycle = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
       readNow: () => NOW,
     });
     await lifecycle.unlockWithPassword({
@@ -203,7 +208,7 @@ describe("background-owned keyring context", () => {
       new LocalStorage(await record(copiedContext)),
       session,
       EXTENSION_ID,
-      { readNow: () => NOW },
+      { expectedContext: EXPECTED_CONTEXT, readNow: () => NOW },
     );
     const secret = PASSWORD.slice();
 

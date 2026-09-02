@@ -45,6 +45,23 @@ const CONTEXT: KeyringContext = {
   genesisHash: fill(32, 0x52),
   programId: fill(32, 0x63),
 };
+/**
+ * The cluster/deployment this build is pinned to. Every record the lifecycle
+ * adopts must carry exactly these AAD-authenticated bytes; a validly encrypted
+ * record for any other cluster or Warden deployment is a foreign record.
+ */
+const EXPECTED_CONTEXT = {
+  genesisHash: fill(32, 0x52),
+  programId: fill(32, 0x63),
+};
+const FOREIGN_GENESIS_CONTEXT: KeyringContext = {
+  ...CONTEXT,
+  genesisHash: fill(32, 0x7a),
+};
+const FOREIGN_PROGRAM_CONTEXT: KeyringContext = {
+  ...CONTEXT,
+  programId: fill(32, 0x7b),
+};
 
 interface Gate {
   readonly promise: Promise<void>;
@@ -137,6 +154,7 @@ async function record(
 function owner(local: LocalStorage, session = new SessionStorage()) {
   return {
     lifecycle: new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
       readNow: () => NOW,
     }),
     session,
@@ -439,6 +457,7 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     const local = new LocalStorage(await record());
     const session = new SessionStorage();
     const first = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
       readNow: () => NOW,
     });
     await first.unlockWithPassword({
@@ -449,6 +468,7 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
 
     local.value = "malformed-persistent-record";
     const waking = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
       readNow: () => NOW,
     });
     await expect(waking.restore()).rejects.toThrow(KeyringFormatError);
@@ -459,6 +479,7 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     const local = new LocalStorage(await record());
     const session = new SessionStorage();
     const first = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
       readNow: () => NOW,
     });
     await first.unlockWithPassword({
@@ -481,6 +502,7 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     });
 
     const waking = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
       readNow: () => NOW,
     });
     await expect(waking.restore()).rejects.toThrow(KeyringAuthError);
@@ -492,6 +514,7 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     const local = new LocalStorage(await record());
     const session = new SessionStorage();
     const first = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
       readNow: () => NOW,
     });
     await first.unlockWithPassword({
@@ -500,6 +523,7 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
     });
 
     const waking = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
       readNow: () => NOW,
     });
     await expect(waking.restore()).resolves.toBe(true);
@@ -507,9 +531,117 @@ describe("composed persistent-record / unlock-session lifecycle", () => {
 
     local.value = await record(fill(32, 0xaa));
     const mismatched = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
       readNow: () => NOW,
     });
     await expect(mismatched.restore()).resolves.toBe(false);
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
+  });
+});
+
+/**
+ * K-1. A record's context is AAD-authenticated, so it cannot be *edited* without
+ * the KEK — but a whole record can be REPLACED by a different, validly sealed
+ * one. Anything the extension itself pins must therefore be compared at the
+ * trust boundary, not merely carried out of the record. Every record below is
+ * sealed correctly and unlocks with the real password; only the pinned cluster
+ * or Warden deployment differs, and the extension origin always matches.
+ */
+describe("v2 record adoption is pinned to the whole expected context", () => {
+  it("refuses a password unlock of a validly sealed record from a foreign cluster", async () => {
+    const local = new LocalStorage(
+      await record(SEED, PASSWORD, FOREIGN_GENESIS_CONTEXT),
+    );
+    const { lifecycle, session } = owner(local);
+
+    await expect(
+      lifecycle.unlockWithPassword({
+        passwordBytes: PASSWORD.slice(),
+        policy: POLICY,
+      }),
+    ).rejects.toThrow(KeyringAuthError);
+    expect(await lifecycle.isUnlocked()).toBe(false);
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it("refuses a password unlock of a validly sealed record from a foreign Warden deployment", async () => {
+    const local = new LocalStorage(
+      await record(SEED, PASSWORD, FOREIGN_PROGRAM_CONTEXT),
+    );
+    const { lifecycle, session } = owner(local);
+
+    await expect(
+      lifecycle.unlockWithPassword({
+        passwordBytes: PASSWORD.slice(),
+        policy: POLICY,
+      }),
+    ).rejects.toThrow(KeyringAuthError);
+    expect(await lifecycle.isUnlocked()).toBe(false);
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it("refuses to store a foreign-cluster replacement record and keeps the live session", async () => {
+    const pinned = await record();
+    const local = new LocalStorage(pinned);
+    const { lifecycle } = owner(local);
+    await lifecycle.unlockWithPassword({
+      passwordBytes: PASSWORD.slice(),
+      policy: POLICY,
+    });
+
+    await expect(
+      lifecycle.replacePersistentRecord(
+        await record(SEED, PASSWORD, FOREIGN_GENESIS_CONTEXT),
+      ),
+    ).rejects.toThrow(KeyringAuthError);
+    expect(local.value).toBe(pinned);
+    expect(await lifecycle.isUnlocked()).toBe(true);
+  });
+
+  it("refuses to store a foreign-deployment replacement record and keeps the live session", async () => {
+    const pinned = await record();
+    const local = new LocalStorage(pinned);
+    const { lifecycle } = owner(local);
+    await lifecycle.unlockWithPassword({
+      passwordBytes: PASSWORD.slice(),
+      policy: POLICY,
+    });
+
+    await expect(
+      lifecycle.replacePersistentRecord(
+        await record(SEED, PASSWORD, FOREIGN_PROGRAM_CONTEXT),
+      ),
+    ).rejects.toThrow(KeyringAuthError);
+    expect(local.value).toBe(pinned);
+    expect(await lifecycle.isUnlocked()).toBe(true);
+  });
+
+  it("refuses to restore a wake session whose record names a foreign cluster", async () => {
+    const local = new LocalStorage(
+      await record(SEED, PASSWORD, FOREIGN_GENESIS_CONTEXT),
+    );
+    const session = new SessionStorage();
+    // Model a build that adopted the foreign record before the pin existed: the
+    // serialized session is genuine, so only the wake-time comparison can refuse.
+    const unpinned = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: {
+        genesisHash: FOREIGN_GENESIS_CONTEXT.genesisHash,
+        programId: FOREIGN_GENESIS_CONTEXT.programId,
+      },
+      readNow: () => NOW,
+    });
+    await unpinned.unlockWithPassword({
+      passwordBytes: PASSWORD.slice(),
+      policy: POLICY,
+    });
+    expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeDefined();
+
+    const waking = new KeyringLifecycleOwner(local, session, EXTENSION_ID, {
+      expectedContext: EXPECTED_CONTEXT,
+      readNow: () => NOW,
+    });
+    await expect(waking.restore()).rejects.toThrow(KeyringAuthError);
+    await expect(waking.isUnlocked()).resolves.toBe(false);
     expect(session.values[UNLOCK_SESSION_STORAGE_KEY]).toBeUndefined();
   });
 });
