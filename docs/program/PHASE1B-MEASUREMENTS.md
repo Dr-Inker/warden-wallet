@@ -2019,3 +2019,18 @@ primary lane is blocked — not an equivalent reviewer.** Round 101 does NOT
 discharge the obligation to run a Codex round over `c5a4514..77a8273` once the
 filter clears. Treat a 0-finding Grok round as "nothing this reviewer could see",
 never as "this range is clean".
+
+## WRDF-0117 — historical gate-claim correction (2026-09-02)
+
+The sentence `Workspace green, clippy clean, IDL unchanged` in commit
+`14ee34b7daa4f58c2b4e49c123ff11e58393fdcd` is **retracted as executable gate
+evidence**. That immutable commit message names neither the command nor the SHA
+at which it passed, so it must not be cited as a green-gate attestation.
+
+The first later executable full-gate evidence containing that program change is
+`bash .claude/test-gate.sh` at
+`e8365a76b43779cf4bd8032603a1f6bfcfca8831` (exit 0; `@warden/core` 700/700,
+`@warden/extension` 700/700 Vitest plus 15/15 Playwright, Rust 692 passed / 0
+failed, clippy `-D clippy::arithmetic_side_effects` clean, L9 supply-chain gate
+PASS). This later evidence does not retroactively make the wording in `14ee34b`
+properly sourced; it is the durable replacement evidence.
