@@ -411,9 +411,9 @@ CODEX_ARGS=(exec
   -c "model_reasoning_effort=$EFFORT"
   # A caller-owned include/exclude policy must not strip the raw-object pin from reviewer tool
   # shells. Replace the policy at the CLI layer: preserve the caller environment needed by Codex,
-  # apply the default secret-name exclusions, clear filters, then inject the one required Git
+  # apply the default secret-name exclusions, then inject the one required Git
   # control after exclusions (WRDF-0160; Codex config reference: shell_environment_policy.set).
-  -c 'shell_environment_policy={inherit="all",ignore_default_excludes=false,filters={},set={GIT_NO_REPLACE_OBJECTS="1"}}'
+  -c 'shell_environment_policy={inherit="all",ignore_default_excludes=false,set={GIT_NO_REPLACE_OBJECTS="1"}}'
 )
 # Tool-free by default: nothing to fetch, nothing to be prompt-injected through.
 # CAVEAT (UNVERIFIED): `-c mcp_servers={}` relies on the value parsing as an empty TOML inline table
