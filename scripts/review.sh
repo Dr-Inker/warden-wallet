@@ -302,6 +302,11 @@ HDR
    unreachable objects unless a changed evidence citation requires one exact ancestry/object check.
    Once the changed code, its direct callers/tests, seeded invariants, siblings, and prior-art classes
    are decided, return the typed JSON promptly; repeated re-reading does not strengthen the review.
+11. KEEP FINDINGS DEFENSIVE AND CONCISE. Identify the affected function, violated invariant, and
+   fail-closed regression assertion, but do not include operational exploitation instructions,
+   executable payload bytes, or step-by-step abuse sequences. In `reproducer`, name the defensive
+   test setup and expected rejection at a high level; the remediation owner can implement it from
+   the cited source locations. This is a code-review artefact, not an exploitation guide.
 HDR
   echo
   echo "BASE SHA: $BASE_SHA"
