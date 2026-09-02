@@ -3011,6 +3011,238 @@ fn fable_p1_stranger_account_delegated_to_third_party_still_allowed() {
 }
 
 // ---------------------------------------------------------------------------
+// Codex sol@max round over the P-1 fix (thread 06aac9dfd711-20260902T044843Z):
+// WRDF-0109 — the rule ran over `before`, which snapshots ONLY `remaining`;
+// logical[1] (the `Signer`, an arbitrary keypair address) was never looked at.
+// WRDF-0110 — an SPL Multisig naming the vault PDA among its signers is a
+// third authority shape (after mint roles and the account delegate) the PDA
+// can satisfy; a 355-byte account classifies as "neither" and rides through.
+// ---------------------------------------------------------------------------
+
+/// `execute_ix` with the signer slot passed WRITABLE — what an attacker whose
+/// keypair address is a token account must do for it to be a Transfer source.
+/// Nothing in the handler pins logical[1] read-only; the harness default is a
+/// convention, not a rule.
+#[allow(clippy::too_many_arguments)]
+fn execute_ix_writable_signer(
+    signer: Pubkey,
+    smart_account: Pubkey,
+    session: Option<Pubkey>,
+    with_sysvar: bool,
+    registry: Option<Pubkey>,
+    remaining: &[AccountMeta],
+    args: &ExecuteArgs,
+) -> (Instruction, Vec<Logical>) {
+    let (mut ix, mut logical) =
+        execute_ix(signer, smart_account, session, with_sysvar, None, registry, None, remaining, args);
+    ix.accounts[1] = AccountMeta::new(signer, true);
+    logical[1].is_writable = true;
+    (ix, logical)
+}
+
+/// Plant an SPL Token `Multisig` (355 B, owned by the token program):
+/// `m`-of-`signers.len()`, initialized.
+fn set_multisig(svm: &mut LiteSVM, address: &Pubkey, m: u8, signers: &[Pubkey]) {
+    use spl_token::state::Multisig;
+    let mut ms = Multisig { m, n: signers.len() as u8, is_initialized: true, signers: [Pubkey::default(); 11] };
+    ms.signers[..signers.len()].copy_from_slice(signers);
+    let mut data = vec![0u8; Multisig::LEN];
+    ms.pack_into_slice(&mut data);
+    svm.set_account(
+        *address,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(Multisig::LEN),
+            data,
+            owner: SPL_TOKEN_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (multisig)");
+}
+
+/// Plant a classic SPL token account with NO delegate (the shape `InitializeAccount`
+/// leaves behind), token-level owner `owner`.
+fn set_plain_token_account(svm: &mut LiteSVM, address: &Pubkey, mint: &Pubkey, owner: &Pubkey, amount: u64) {
+    use solana_sdk::program_option::COption;
+    use spl_token::state::{Account as SplAccount, AccountState};
+    let a = SplAccount {
+        mint: *mint,
+        owner: *owner,
+        amount,
+        delegate: COption::None,
+        state: AccountState::Initialized,
+        is_native: COption::None,
+        delegated_amount: 0,
+        close_authority: COption::None,
+    };
+    let mut data = vec![0u8; SplAccount::LEN];
+    a.pack_into_slice(&mut data);
+    svm.set_account(
+        *address,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(SplAccount::LEN),
+            data,
+            owner: SPL_TOKEN_ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("set_account (plain token account)");
+}
+
+/// The P-1 exploit moved to the SIGNER slot, ROOT path: the submitter's own
+/// keypair address IS the vault-delegated token account (logical 1, passed
+/// writable) and is the Transfer source. At the WRD-EXEC-13 base this drains
+/// the account: the rule only ever saw `remaining`.
+#[test]
+fn codex_wrdf0109_root_transfer_from_vault_delegated_account_at_signer_slot_rejected() {
+    let (mut svm, payer, pk, account, _registry, _mut, _vault_ata) = live();
+    let submitter = Keypair::new();
+    let victim_owner = Pubkey::new_unique();
+    // The signer slot is the victim account: a keypair address the submitter
+    // controls, whose token-level owner is a stranger and whose delegate is the vault.
+    set_delegated_token_account(&mut svm, &submitter.pubkey(), &tok_mint(), &victim_owner, 9_000, &account, 9_000);
+    let thief = dest_ata(&mut svm);
+
+    // Transfer: source = logical 1 (w), dest = 2 (w), authority = PDA (0), program = 3.
+    let remaining = vec![
+        AccountMeta::new(thief, false),                 // logical 2
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false), // logical 3
+        mint_meta(),                                    // logical 4
+    ];
+    let mut data = vec![3u8];
+    data.extend_from_slice(&9_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        3,
+        &[(1, FLAG_WRITABLE), (2, FLAG_WRITABLE), (0, FLAG_SIGNER), (3, 0)],
+        &data,
+    )]);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) =
+        execute_ix_writable_signer(submitter.pubkey(), account, None, true, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix_writable_signer(submitter.pubkey(), account, None, true, None, &remaining, &args);
+
+    expect_reject(
+        &mut svm,
+        &[&payer, &submitter],
+        &[precompile, ix],
+        1,
+        err::VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD,
+    );
+    assert_eq!(token_amount(&svm, &submitter.pubkey()), 9_000, "the victim account at the signer slot was not drained");
+    assert_eq!(token_amount(&svm, &thief), 0, "the thief received nothing");
+}
+
+/// Same hole on the SESSION path: the session key's own address is the
+/// delegated account.
+#[test]
+fn codex_wrdf0109_session_transfer_from_vault_delegated_account_at_signer_slot_rejected() {
+    let (mut svm, payer, _pk, account, registry, _mut, _vault_ata) = live();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let victim_owner = Pubkey::new_unique();
+    set_delegated_token_account(&mut svm, &session_kp.pubkey(), &tok_mint(), &victim_owner, 9_000, &account, 9_000);
+    let thief = dest_ata(&mut svm);
+
+    let remaining = vec![
+        AccountMeta::new(thief, false),                 // logical 2
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false), // logical 3
+        mint_meta(),                                    // logical 4
+    ];
+    let mut data = vec![3u8];
+    data.extend_from_slice(&9_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        3,
+        &[(1, FLAG_WRITABLE), (2, FLAG_WRITABLE), (0, FLAG_SIGNER), (3, 0)],
+        &data,
+    )]);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _l) = execute_ix_writable_signer(
+        session_kp.pubkey(), account, Some(session), false, Some(registry), &remaining, &args,
+    );
+
+    expect_reject(
+        &mut svm,
+        &[&payer, &session_kp],
+        &[ix],
+        0,
+        err::VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD,
+    );
+    assert_eq!(token_amount(&svm, &session_kp.pubkey()), 9_000, "the victim account at the signer slot was not drained");
+    assert_eq!(token_amount(&svm, &thief), 0, "the thief received nothing");
+}
+
+/// WRDF-0110 — the MULTISIG authority shape, ROOT path: a 1-of-1 SPL Multisig
+/// `M` whose only member is the vault PDA owns a stranger's token account;
+/// `Transfer(source, dest, authority = M, signers = [PDA])` under the PDA's
+/// forwarded signature moves the tokens. At the base: `M` is 355 B, so the
+/// snapshot classifies it as "neither" (`token_parse_failed`, tolerated for a
+/// read-only non-vault account), the source is not vault-owned, no delegate is
+/// set, and nothing is metered. Fails closed pre-CPI with its own error.
+#[test]
+fn codex_wrdf0110_root_transfer_via_vault_member_multisig_rejected() {
+    let (mut svm, payer, pk, account, _registry, _mut, _vault_ata) = live();
+    let submitter = Keypair::new();
+    let multisig = Pubkey::new_from_array([0x71; 32]);
+    set_multisig(&mut svm, &multisig, 1, &[account]);
+    let victim = Pubkey::new_from_array([0x72; 32]);
+    set_plain_token_account(&mut svm, &victim, &tok_mint(), &multisig, 9_000);
+    let thief = dest_ata(&mut svm);
+
+    // Transfer: source (w), dest (w), authority = M (read-only, not a signer),
+    // then the multisig member signer = PDA (0); program = 5.
+    let remaining = vec![
+        AccountMeta::new(victim, false),                // logical 2
+        AccountMeta::new(thief, false),                 // logical 3
+        AccountMeta::new_readonly(multisig, false),     // logical 4
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false), // logical 5
+        mint_meta(),                                    // logical 6
+    ];
+    let mut data = vec![3u8];
+    data.extend_from_slice(&9_000u64.to_le_bytes());
+    let payload = encode_payload(&[(
+        5,
+        &[(2, FLAG_WRITABLE), (3, FLAG_WRITABLE), (4, 0), (0, FLAG_SIGNER), (5, 0)],
+        &data,
+    )]);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) =
+        execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix(submitter.pubkey(), account, None, true, None, None, None, &remaining, &args);
+
+    expect_reject(&mut svm, &[&payer, &submitter], &[precompile, ix], 1, err::VAULT_MULTISIG_MEMBER_IN_PAYLOAD);
+    assert_eq!(token_amount(&svm, &victim), 9_000, "the multisig-owned account was not drained");
+    assert_eq!(token_amount(&svm, &thief), 0, "the thief received nothing");
+}
+
+/// CONTROL (narrowness) — a multisig whose members are all strangers, riding
+/// read-only beside an honest vault transfer, is untouched: the gate keys on
+/// WHO the members are, not on "any multisig in the list". Passes at the base.
+#[test]
+fn codex_wrdf0110_stranger_multisig_in_list_still_allowed() {
+    let (mut svm, payer, _pk, account, registry, _mut, vault_ata) = live();
+    let (session, session_kp) = plant_session(&mut svm, &account, OP_EXECUTE, 1);
+    let dest = dest_ata(&mut svm);
+    let bystander = Pubkey::new_from_array([0x73; 32]);
+    set_multisig(&mut svm, &bystander, 2, &[Pubkey::new_unique(), Pubkey::new_unique(), Pubkey::new_unique()]);
+
+    let mut remaining = spl_transfer_remaining(vault_ata, dest);
+    remaining.push(AccountMeta::new_readonly(bystander, false)); // logical 6, unreferenced
+    let payload = spl_transfer_payload(400_000);
+    let args = ExecuteArgs { root: None, payload: Some(payload) };
+    let (ix, _l) = execute_ix(
+        session_kp.pubkey(), account, Some(session), false, None, Some(registry), None, &remaining, &args,
+    );
+    expect_ok(&mut svm, &[&payer, &session_kp], &[ix]);
+    assert_eq!(token_amount(&svm, &vault_ata), VAULT_TOKENS - 400_000);
+    assert_eq!(token_amount(&svm, &dest), 400_000);
+}
+
+// ---------------------------------------------------------------------------
 // Error codes (mirror of tests/root_verify.rs::err, only the ones used here)
 // ---------------------------------------------------------------------------
 mod err {
@@ -3034,4 +3266,5 @@ mod err {
     pub const VAULT_CONTROLLED_MINT_IN_PAYLOAD: u32 = 6076;
     pub const UNMODELABLE_MINT_EXTENSION_IN_PAYLOAD: u32 = 6077;
     pub const VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD: u32 = 6078;
+    pub const VAULT_MULTISIG_MEMBER_IN_PAYLOAD: u32 = 6079;
 }

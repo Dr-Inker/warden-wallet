@@ -68,7 +68,8 @@ mod tests;
 
 pub use accounting::Outflow;
 pub use compare::{
-    compare_and_account, reject_unsupported_writable_owners, reject_vault_delegated_foreign_accounts,
+    compare_and_account, multisig_names_member, reject_unsupported_writable_owners,
+    reject_vault_delegated_foreign_accounts, reject_vault_multisig_members,
 };
 pub use snapshot::{snapshot, snapshot_one};
 

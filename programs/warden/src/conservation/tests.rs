@@ -2237,3 +2237,59 @@ fn wrdf0105_round3_permanent_delegate_reassignment_on_a_controlled_mint_is_rejec
     // writable-unmodelable rule is not what fired.)
     assert_eq!(cmp(&before, &before, &[]).expect("unchanged is fine"), Outflow::default());
 }
+
+// ---------------------------------------------------------------------------
+// Codex WRDF-0110 (2026-09-02): the multisig membership predicate. The
+// end-to-end shape lives in tests/execute.rs (`codex_wrdf0110_*`); these pin
+// the byte-level edges the SVM tests cannot cheaply reach.
+// ---------------------------------------------------------------------------
+
+fn multisig_bytes(m: u8, n: u8, initialized: bool, signers: &[Pubkey]) -> Vec<u8> {
+    use spl_token::state::Multisig;
+    let mut ms = Multisig { m, n, is_initialized: initialized, signers: [Pubkey::default(); 11] };
+    ms.signers[..signers.len()].copy_from_slice(signers);
+    let mut data = vec![0u8; Multisig::LEN];
+    ms.pack_into_slice(&mut data);
+    data
+}
+
+#[test]
+fn multisig_names_member_matches_a_live_slot_under_either_token_program() {
+    let vault = Pubkey::new_unique();
+    let data = multisig_bytes(1, 2, true, &[Pubkey::new_unique(), vault]);
+    assert!(multisig_names_member(&SPL_TOKEN_ID, &data, &vault));
+    assert!(multisig_names_member(&SPL_TOKEN_2022_ID, &data, &vault));
+    // Not a token program: never a multisig, whatever the bytes say.
+    assert!(!multisig_names_member(&SYSTEM_PROGRAM_ID, &data, &vault));
+    assert!(!multisig_names_member(&Pubkey::new_unique(), &data, &vault));
+}
+
+#[test]
+fn multisig_names_member_ignores_a_stale_key_past_n() {
+    // The vault sits in slot 2 but n == 2: the token program's
+    // `validate_owner` walks `signers[..n]` only, so neither does the gate.
+    let vault = Pubkey::new_unique();
+    let data = multisig_bytes(1, 2, true, &[Pubkey::new_unique(), Pubkey::new_unique(), vault]);
+    assert!(!multisig_names_member(&SPL_TOKEN_ID, &data, &vault));
+    // Bump n to 3 in place and the same key is live.
+    let mut live = data.clone();
+    live[1] = 3;
+    assert!(multisig_names_member(&SPL_TOKEN_ID, &live, &vault));
+}
+
+#[test]
+fn multisig_names_member_rejects_uninitialized_and_wrong_length_and_clamps_n() {
+    let vault = Pubkey::new_unique();
+    let data = multisig_bytes(1, 1, false, &[vault]);
+    assert!(!multisig_names_member(&SPL_TOKEN_ID, &data, &vault), "uninitialized is not an authority");
+    // A 165-byte token account whose bytes happen to carry the vault at
+    // offset 3 is a token account, not a multisig.
+    let data = multisig_bytes(1, 1, true, &[vault]);
+    assert!(!multisig_names_member(&SPL_TOKEN_ID, &data[..TOKEN_ACCOUNT_LEN], &vault));
+    assert!(!multisig_names_member(&SPL_TOKEN_ID, &[data.clone(), vec![0]].concat(), &vault));
+    // n = 255 must not read past the 11 slots; the vault in slot 0 is still found.
+    let mut wide = data;
+    wide[1] = 255;
+    assert!(multisig_names_member(&SPL_TOKEN_ID, &wide, &vault));
+    assert!(!multisig_names_member(&SPL_TOKEN_ID, &wide, &Pubkey::new_unique()));
+}

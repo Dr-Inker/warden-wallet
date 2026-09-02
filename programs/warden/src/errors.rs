@@ -223,4 +223,15 @@ pub enum WardenError {
     // ---------------------------------------------------------------------
     #[msg("generic execute refuses to sign for a payload whose account list contains a token account the vault does not own but is the delegate of; delegate-authority transfers and burns from third-party accounts are unmetered by conservation and caps")]
     VaultDelegatedForeignAccountInPayload,
+    // ---------------------------------------------------------------------
+    // Codex WRDF-0110 (2026-09-02). APPEND ONLY — see above. Code 6079.
+    // The THIRD authority shape after the mint roles (6076) and the account
+    // delegate (6078): an SPL Token / Token-2022 `Multisig` that names the
+    // PDA among its members. The token program accepts the multisig as the
+    // owner/delegate/mint/freeze authority of anything, satisfied by the
+    // PDA's forwarded signature — and a 355-byte account is neither a mint
+    // nor a token account to the snapshot, so it rode through unexamined.
+    // ---------------------------------------------------------------------
+    #[msg("generic execute refuses to sign for a payload whose account list contains a token-program Multisig that names the vault PDA among its signers; multisig-authority operations the PDA co-signs are unmetered by conservation and caps")]
+    VaultMultisigMemberInPayload,
 }

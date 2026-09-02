@@ -157,6 +157,8 @@ mod err {
     pub const UNMODELABLE_MINT_EXTENSION_IN_PAYLOAD: u32 = 6077;
     // Fable audit P-1 (2026-09-02), appended 6078.
     pub const VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD: u32 = 6078;
+    // Codex WRDF-0110 over the P-1 fix (2026-09-02), appended 6079.
+    pub const VAULT_MULTISIG_MEMBER_IN_PAYLOAD: u32 = 6079;
 }
 
 /// The pinned table above must describe the enum as it stands today. If this
@@ -165,7 +167,7 @@ mod err {
 /// meaning, and the table (and the TS client) must be updated deliberately.
 #[test]
 fn pinned_error_codes_match_the_enum_today() {
-    let pairs: [(u32, WardenError, &str); 79] = [
+    let pairs: [(u32, WardenError, &str); 80] = [
         (err::OVERFLOW, WardenError::Overflow, "Overflow"),
         (err::FROZEN, WardenError::Frozen, "Frozen"),
         (err::UNAUTHORIZED, WardenError::Unauthorized, "Unauthorized"),
@@ -320,6 +322,11 @@ fn pinned_error_codes_match_the_enum_today() {
             err::VAULT_DELEGATED_FOREIGN_ACCOUNT_IN_PAYLOAD,
             WardenError::VaultDelegatedForeignAccountInPayload,
             "VaultDelegatedForeignAccountInPayload",
+        ),
+        (
+            err::VAULT_MULTISIG_MEMBER_IN_PAYLOAD,
+            WardenError::VaultMultisigMemberInPayload,
+            "VaultMultisigMemberInPayload",
         ),
     ];
     for (pinned, variant, name) in pairs {

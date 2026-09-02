@@ -63,8 +63,9 @@
 use anchor_lang::prelude::*;
 
 use crate::constants::{
-    DANGER_NEVER_ALLOWLISTABLE, DANGER_TRANSFER_FEE, NATIVE_MINT, SYSTEM_PROGRAM_ID,
-    TOKEN_STATE_INITIALIZED, UNSUPPORTED_WRITABLE_OWNERS,
+    DANGER_NEVER_ALLOWLISTABLE, DANGER_TRANSFER_FEE, NATIVE_MINT, SPL_TOKEN_2022_ID, SPL_TOKEN_ID,
+    SYSTEM_PROGRAM_ID, TOKEN_MULTISIG_LEN, TOKEN_MULTISIG_MAX_SIGNERS,
+    TOKEN_MULTISIG_SIGNERS_OFFSET, TOKEN_STATE_INITIALIZED, UNSUPPORTED_WRITABLE_OWNERS,
 };
 use crate::errors::WardenError;
 
@@ -506,6 +507,68 @@ pub fn reject_vault_delegated_foreign_accounts(snaps: &[Snap], vault: &Pubkey) -
                 WardenError::VaultDelegatedForeignAccountInPayload
             );
         }
+    }
+    Ok(())
+}
+
+/// Codex WRDF-0110 (2026-09-02): does a token-program-owned buffer of exactly
+/// `Multisig::LEN` name `member` among its live signers?
+///
+/// Layout (`spl_token::state::Multisig`, identical in Token-2022): `m: u8`,
+/// `n: u8`, `is_initialized: u8`, then `signers: [Pubkey; 11]`. Only the first
+/// `n` entries are live; the token program's `validate_owner` walks exactly
+/// `signers[..n]`, so the same slice is read here — a stale key in an unused
+/// slot is not an authority. `n` is clamped to 11 rather than trusted, and an
+/// uninitialized multisig is not an authority to the token program either
+/// (`Multisig::unpack` refuses it), so it is not one here.
+///
+/// A pure byte predicate on purpose: it needs no `Snap`, so the heap-bound
+/// execute path can run it over every logical account without allocating,
+/// and `snapshot_one`'s 56 call sites keep their signature.
+pub fn multisig_names_member(owner_program: &Pubkey, data: &[u8], member: &Pubkey) -> bool {
+    if *owner_program != SPL_TOKEN_ID && *owner_program != SPL_TOKEN_2022_ID {
+        return false;
+    }
+    if data.len() != TOKEN_MULTISIG_LEN {
+        return false;
+    }
+    let live = match (data.get(1), data.get(2)) {
+        (Some(n), Some(1)) => usize::from(*n).min(TOKEN_MULTISIG_MAX_SIGNERS),
+        _ => return false,
+    };
+    (0..live).any(|i| {
+        let start = TOKEN_MULTISIG_SIGNERS_OFFSET.saturating_add(i.saturating_mul(32));
+        data.get(start..start.saturating_add(32)) == Some(member.as_ref())
+    })
+}
+
+/// Codex WRDF-0110 (2026-09-02): refuse any account in `accts` that is a
+/// token-program `Multisig` naming the vault PDA among its members.
+///
+/// The token program accepts a multisig as the owner, delegate, close, mint or
+/// freeze authority of anything, satisfied by `m` of its members signing —
+/// and the PDA's forwarded signature is one such member signature. That is
+/// the third authority shape the PDA can satisfy, after the five mint roles
+/// (WRDF-0105, err 6076) and the account delegate (P-1, err 6078): a stranger
+/// makes a 1-of-1 multisig with the vault as its member, owns a token account
+/// by it, and `execute` signs a Transfer out of it that conservation skips
+/// (the source is not vault-owned) and no cap meters. The snapshot could not
+/// see it because a 355-byte account is deliberately classified as neither a
+/// mint nor a token account (`snapshot::classify`); its `token_parse_failed`
+/// is only fatal for accounts that were vault-owned before.
+///
+/// Pre-CPI, BEFORE only, over the whole logical list including the signer
+/// slot. Membership is a property of the multisig account, not of the
+/// payload, so a payload that never references it is refused too — same
+/// discipline as the mint gate. A multisig whose members are all strangers
+/// is untouched (`codex_wrdf0110_stranger_multisig_in_list_still_allowed`).
+pub fn reject_vault_multisig_members(accts: &[AccountInfo], vault: &Pubkey) -> Result<()> {
+    for ai in accts {
+        let data = ai.try_borrow_data()?;
+        require!(
+            !multisig_names_member(ai.owner, &data, vault),
+            WardenError::VaultMultisigMemberInPayload
+        );
     }
     Ok(())
 }

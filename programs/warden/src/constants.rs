@@ -365,6 +365,12 @@ pub const MINT_ACCOUNT_LEN: usize = 82;
 /// and is neither a mint nor a token account; Token-2022 refuses to treat an
 /// account of exactly this length as extensible, and so do we.
 pub const TOKEN_MULTISIG_LEN: usize = 355;
+/// `spl_token::state::MAX_SIGNERS`: a `Multisig` carries room for 11 signer
+/// keys; only the first `n` are live (Codex WRDF-0110).
+pub const TOKEN_MULTISIG_MAX_SIGNERS: usize = 11;
+/// Byte offset of `Multisig::signers` — after `m: u8`, `n: u8`,
+/// `is_initialized: u8`.
+pub const TOKEN_MULTISIG_SIGNERS_OFFSET: usize = 3;
 /// Absolute offset of the Token-2022 `AccountType` discriminator byte, for
 /// both mints and token accounts (`BASE_ACCOUNT_LENGTH`).
 pub const T22_ACCOUNT_TYPE_OFFSET: usize = 165;

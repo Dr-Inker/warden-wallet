@@ -1507,6 +1507,11 @@
       "code": 6078,
       "name": "VaultDelegatedForeignAccountInPayload",
       "msg": "generic execute refuses to sign for a payload whose account list contains a token account the vault does not own but is the delegate of; delegate-authority transfers and burns from third-party accounts are unmetered by conservation and caps"
+    },
+    {
+      "code": 6079,
+      "name": "VaultMultisigMemberInPayload",
+      "msg": "generic execute refuses to sign for a payload whose account list contains a token-program Multisig that names the vault PDA among its signers; multisig-authority operations the PDA co-signs are unmetered by conservation and caps"
     }
   ],
   "types": [
