@@ -249,11 +249,32 @@ process.stdout.write(JSON.stringify(out.map((r) => ({ id: r.id, title: r.title, 
 SEED_IDS="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).map(r=>r.id).join(" "))' "$SEED_JSON")"
 [[ -n "$SEED_IDS" ]] || die "no invariants selected — refusing to run an unseeded review"
 
+# Finding ids belong to the committed scorecard namespace, not to one provider
+# lane. Bind the next contiguous id into both the expectation gate and the prompt
+# so a unique-but-out-of-sequence model-selected id cannot enter the ledger.
+FINDING_ID_START="$(SCORECARD="$SCORECARD" node -e '
+  const fs = require("fs");
+  let max = 0;
+  if (fs.existsSync(process.env.SCORECARD)) {
+    for (const line of fs.readFileSync(process.env.SCORECARD, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      const m = String(JSON.parse(line).finding_id ?? "").match(/^WRDF-(\d{4})$/);
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+  }
+  if (max >= 9999) throw new Error("WRDF finding id namespace exhausted");
+  process.stdout.write(`WRDF-${String(max + 1).padStart(4, "0")}`);
+')"
+[[ "$FINDING_ID_START" =~ ^WRDF-[0-9]{4}$ && "$FINDING_ID_START" != "WRDF-0000" ]] ||
+  die "failed to derive the next finding id from $SCORECARD"
+
 SEED_JSON="$SEED_JSON" BASE_SHA="$BASE_SHA" HEAD_SHA="$HEAD_SHA" \
+FINDING_ID_START="$FINDING_ID_START" \
 SIBS="$(printf '%s\n' "${SIBLINGS[@]}")" EXPECT="$EXPECT" node -e '
 const fs = require("fs");
 fs.writeFileSync(process.env.EXPECT, JSON.stringify({
   base_sha: process.env.BASE_SHA, head_sha: process.env.HEAD_SHA,
+  finding_id_start: process.env.FINDING_ID_START,
   seeded_invariants: JSON.parse(process.env.SEED_JSON).map((r) => r.id),
   sibling_files: process.env.SIBS.split("\n").filter(Boolean).filter((f) => fs.existsSync(f)),
 }, null, 2) + "\n");
@@ -288,7 +309,7 @@ SEED_COUNT="$(wc -w <<<"$SEED_IDS" | tr -d ' ')"
 
 # ---- the header + RULES OF THIS ROUND ---------------------------------------
 # !!! THE RULES BLOCK BELOW IS DUPLICATED FROM scripts/review.sh — KEEP THE TWO IN SYNC. !!!
-# Only rules 1's closing sentence, rule 7 and rule 8 differ, and ONLY because Grok has no shell:
+# Only rules 1's closing sentence, rule 7, rule 8 and provider-specific rule 9 differ:
 # review.sh tells Codex to open the sibling files itself; here their contents are inlined, so the
 # rule points at the inlined section instead of at the filesystem. Every other word is verbatim,
 # deliberately: the two lanes must review under the same contract or their findings are not
@@ -343,6 +364,9 @@ RULES OF THIS ROUND
    and `head_sha` VERBATIM from the two lines below — they are checked against the wrapper's record
    and a paraphrase fails the round. No prose outside the JSON, no markdown fences.
 HDR
+  echo "9. FINDING IDS ARE WRAPPER-OWNED. If you raise findings, assign them contiguously in output"
+  echo "   order beginning at ${FINDING_ID_START}; do not reuse any lower WRDF id. A zero-finding"
+  echo "   response is valid. The independent validator rejects any other allocation."
 } > "$TMPD/header.txt"
 
 cat > "$TMPD/assemble.cjs" <<'ASM'
