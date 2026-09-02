@@ -9,6 +9,7 @@
 #   scripts/review.sh --validate <f.json> [--expect <f>]   validate an existing findings file
 #
 #   Options: --dry-run · --with-tools · --out <path> · --model <m> · --effort <e> · --kind <k>
+#            --finding-id-start <WRDF-NNNN>
 #
 # WHAT IT DOES
 #   1. Refuses to run on a dirty tree, and refuses unless the checked-out HEAD IS <head>. A review
@@ -95,7 +96,7 @@ if [[ "${1:-}" == "--validate" ]]; then
   exec node scripts/validate-findings.mjs "$@" --schema "$SCHEMA"
 fi
 
-DRY_RUN=0; WITH_TOOLS=0; OUT=""; BASE=""; HEAD_REF="HEAD"; KIND="task-diff"
+DRY_RUN=0; WITH_TOOLS=0; OUT=""; BASE=""; HEAD_REF="HEAD"; KIND="task-diff"; FINDING_ID_START=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift;;
@@ -104,6 +105,7 @@ while [[ $# -gt 0 ]]; do
     --model) MODEL="${2:?}"; shift 2;;
     --effort) EFFORT="${2:?}"; shift 2;;
     --kind) KIND="${2:?}"; shift 2;;
+    --finding-id-start) FINDING_ID_START="${2:?}"; shift 2;;
     -h|--help) sed -n '2,40p' "$0"; exit 0;;
     -*) die "unknown option $1";;
     *) if [[ -z "$BASE" ]]; then BASE="$1"; else HEAD_REF="$1"; fi; shift;;
@@ -114,6 +116,28 @@ done
 command -v codex >/dev/null || die "codex CLI not found on PATH"
 command -v node  >/dev/null || die "node not found on PATH"
 for f in "$SCHEMA" "$PRIOR_ART" "$LEDGER"; do [[ -f "$f" ]] || die "missing $f"; done
+
+# Finding ids are one committed-ledger namespace, not local to the historical checkout being
+# reviewed. Normally the checked-out scorecard is authoritative. A detached historical review
+# must pass the next id from the integration branch explicitly; otherwise it would silently reuse
+# an old id for unrelated substance when its artefact is carried back to the current branch.
+if [[ -z "$FINDING_ID_START" ]]; then
+  FINDING_ID_START="$(SCORECARD="$SCORECARD" node -e '
+    const fs = require("fs");
+    let max = 0;
+    if (fs.existsSync(process.env.SCORECARD)) {
+      for (const line of fs.readFileSync(process.env.SCORECARD, "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        const m = String(JSON.parse(line).finding_id ?? "").match(/^WRDF-(\d{4})$/);
+        if (m) max = Math.max(max, Number(m[1]));
+      }
+    }
+    if (max >= 9999) throw new Error("WRDF finding id namespace exhausted");
+    process.stdout.write(`WRDF-${String(max + 1).padStart(4, "0")}`);
+  ')"
+fi
+[[ "$FINDING_ID_START" =~ ^WRDF-[0-9]{4}$ && "$FINDING_ID_START" != "WRDF-0000" ]] || \
+  die "--finding-id-start must be WRDF-0001..WRDF-9999 (got ${FINDING_ID_START})"
 
 BASE_SHA="$(git rev-parse --verify "$BASE^{commit}" 2>/dev/null)" || die "not a commit: $BASE"
 HEAD_SHA="$(git rev-parse --verify "$HEAD_REF^{commit}" 2>/dev/null)" || die "not a commit: $HEAD_REF"
@@ -189,11 +213,12 @@ process.stdout.write(JSON.stringify(out.map((r) => ({ id: r.id, title: r.title, 
 SEED_IDS="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).map(r=>r.id).join(" "))' "$SEED_JSON")"
 [[ -n "$SEED_IDS" ]] || die "no invariants selected — refusing to run an unseeded review"
 
-SEED_JSON="$SEED_JSON" BASE_SHA="$BASE_SHA" HEAD_SHA="$HEAD_SHA" \
+SEED_JSON="$SEED_JSON" BASE_SHA="$BASE_SHA" HEAD_SHA="$HEAD_SHA" FINDING_ID_START="$FINDING_ID_START" \
 SIBS="$(printf '%s\n' "${SIBLINGS[@]}")" EXPECT="$EXPECT" node -e '
 const fs = require("fs");
 fs.writeFileSync(process.env.EXPECT, JSON.stringify({
   base_sha: process.env.BASE_SHA, head_sha: process.env.HEAD_SHA,
+  finding_id_start: process.env.FINDING_ID_START,
   seeded_invariants: JSON.parse(process.env.SEED_JSON).map((r) => r.id),
   sibling_files: process.env.SIBS.split("\n").filter(Boolean).filter((f) => fs.existsSync(f)),
 }, null, 2) + "\n");
@@ -245,6 +270,9 @@ RULES OF THIS ROUND
 8. Output MUST be a single JSON object conforming to the supplied output schema, and it MUST carry
    `base_sha`, `head_sha`, `thread` and `reviewer_model`. No prose outside the JSON.
 HDR
+  echo "9. FINDING IDS ARE WRAPPER-OWNED. If you raise findings, assign them contiguously in output"
+  echo "   order beginning at ${FINDING_ID_START}; do not reuse any lower WRDF id. A zero-finding"
+  echo "   response is valid. The independent validator rejects any other allocation."
   echo
   echo "BASE SHA: $BASE_SHA"
   echo "HEAD SHA: $HEAD_SHA"

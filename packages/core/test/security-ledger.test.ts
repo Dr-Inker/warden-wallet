@@ -433,6 +433,18 @@ describe("findings validator (scripts/validate-findings.mjs)", () => {
     expect([...expectations().seeded_invariants].sort()).toEqual([...fresh().seeded_invariants].sort());
   });
 
+  it("FAILS when finding ids do not use the wrapper-authoritative contiguous allocation", () => {
+    const doc = fresh();
+    doc.findings[1].id = "WRDF-0005";
+    for (const verdict of doc.invariant_verdicts) {
+      verdict.finding_ids = verdict.finding_ids.map((id: string) =>
+        id === "WRDF-0002" ? "WRDF-0005" : id,
+      );
+    }
+    const errs = run(doc, expectations());
+    expect(errs.some((e) => e.includes("finding id allocation"))).toBe(true);
+  });
+
   it("FAILS when the model drops a seeded invariant from both the seed list and the verdicts", () => {
     const doc = fresh();
     const dropped = doc.seeded_invariants.pop();

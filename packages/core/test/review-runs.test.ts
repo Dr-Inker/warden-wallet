@@ -221,6 +221,18 @@ describe("append-review-run.mjs CLI", () => {
     }
   });
 
+  it("REFUSES to append a new round whose finding id already exists in the scorecard", () => {
+    const doc = fresh();
+    doc.invariant_verdicts[0].rationale += " (fresh collision variant)";
+    const artefact = join(tmp, "finding-id-collision.json");
+    writeFileSync(artefact, JSON.stringify(doc));
+    const beforeRuns = readFileSync(runsFile, "utf8");
+    const beforeCard = readFileSync(cardFile, "utf8");
+    expect(() => cli(artefact)).toThrow(/finding id collision/);
+    expect(readFileSync(runsFile, "utf8")).toBe(beforeRuns);
+    expect(readFileSync(cardFile, "utf8")).toBe(beforeCard);
+  });
+
   it("never copies model adjudication or self-claimed truth into the scorecard (WRDF-0009)", () => {
     // The worked example deliberately carries an adjudication object and a CONFIRMED finding —
     // both are untrusted model output and must enter as pending/POTENTIAL claims.

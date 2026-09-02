@@ -203,6 +203,18 @@ async function main(argv) {
   const readOr = (p) => { try { return existsSync(p) ? readFileSync(p, "utf8") : ""; } catch { return ""; } };
   const prevRuns = readOr(runsPath);
   const prevCard = readOr(scorecardPath);
+  // A finding id identifies one defect lineage across rounds. Reusing it for unrelated substance
+  // is silent ledger corruption, most easily triggered when an artefact was produced from a
+  // detached historical checkout. review.sh's wrapper-authoritative finding_id_start prevents
+  // new occurrences; this preflight also protects direct appender invocation and old artefacts.
+  const existingFindingIds = new Set(
+    prevCard.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l).finding_id),
+  );
+  const collisions = doc.findings.map((f) => f.id).filter((id) => existingFindingIds.has(id));
+  if (collisions.length)
+    throw new Error(
+      `finding id collision with committed scorecard: ${collisions.join(", ")} — rerun the review with scripts/review.sh --finding-id-start set to the integration branch's next id`,
+    );
   const lastRun = prevRuns.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l)).pop();
   if (lastRun && lastRun.artefact !== "not-recorded" && lastRun.findings_count > 0) {
     const carried = prevCard.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))

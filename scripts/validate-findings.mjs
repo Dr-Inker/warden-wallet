@@ -40,7 +40,7 @@ export function loadKnownPriorArtIds(root = REPO_ROOT) {
  * @param {object}  opts
  * @param {Function} opts.validateSchema  a compiled ajv validator for warden-findings.json
  * @param {object=} opts.expect  wrapper-supplied expectations
- *                  {base_sha, head_sha, seeded_invariants[], sibling_files[]}
+ *                  {base_sha, head_sha, finding_id_start?, seeded_invariants[], sibling_files[]}
  * @param {Set=}    opts.knownInvariants
  * @param {Set=}    opts.knownPriorArt
  */
@@ -114,6 +114,24 @@ export function validateFindings(doc, opts) {
   for (const v of doc.invariant_verdicts)
     for (const id of v.finding_ids ?? [])
       if (!findingIds.has(id)) fail(`${v.invariant_id}: verdict cites unknown finding ${id}`);
+
+  // Finding ids belong to the committed scorecard namespace. The wrapper computes the first id
+  // before a round (or receives the integration branch's next id for a detached historical
+  // review); the model may not silently allocate from an older checkout's ledger.
+  if (expect?.finding_id_start) {
+    const match = String(expect.finding_id_start).match(/^WRDF-(\d{4})$/);
+    if (!match || Number(match[1]) === 0) {
+      fail(`expectations carry invalid finding_id_start ${expect.finding_id_start}`);
+    } else {
+      const start = Number(match[1]);
+      const wanted = doc.findings.map((_, i) => `WRDF-${String(start + i).padStart(4, "0")}`);
+      const got = doc.findings.map((f) => f.id);
+      if (start + got.length - 1 > 9999 || got.some((id, i) => id !== wanted[i]))
+        fail(
+          `finding id allocation mismatch: wrapper requires contiguous ids from ${expect.finding_id_start}; got ${got.join(", ") || "no findings"}`,
+        );
+    }
+  }
 
   return errors;
 }
