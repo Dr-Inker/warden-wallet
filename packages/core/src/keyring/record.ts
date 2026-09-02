@@ -577,36 +577,48 @@ function resolveRecordContext(
 /** Derive enrolled KEKs, seal one bundle, and return a canonical persistent record. */
 export async function sealKeyringRecord(params: SealKeyringRecordParams): Promise<KeyringRecord> {
   const passwordBytes = params.passwordBytes;
-  const prfOutput = params.prfOutput;
-  const plaintext = params.plaintext;
+  const callerPrfOutput = params.prfOutput;
+  const callerPlaintext = params.plaintext;
+  let prfOutput: Uint8Array | undefined;
+  let plaintext: Uint8Array | undefined;
   let passwordKey: KeyringUnwrapKey | undefined;
   let prfKey: KeyringUnwrapKey | undefined;
   let removeAbortCleanup = (): void => undefined;
   try {
     if (!(passwordBytes instanceof Uint8Array)) throw new KeyringFormatError("passwordBytes must be a Uint8Array");
-    if (!(plaintext instanceof Uint8Array)) throw new KeyringFormatError("plaintext must be a Uint8Array");
-    if (prfOutput !== undefined && !(prfOutput instanceof Uint8Array)) {
+    if (!(callerPlaintext instanceof Uint8Array)) throw new KeyringFormatError("plaintext must be a Uint8Array");
+    if (callerPrfOutput !== undefined && !(callerPrfOutput instanceof Uint8Array)) {
       throw new KeyringFormatError("prfOutput must be a Uint8Array");
     }
     const unlock = snapshotUnlockCheck(params.unlock);
     assertUnlockCheck(unlock, "seal record");
     removeAbortCleanup = registerUnlockAbortCleanup(unlock, () => {
       passwordBytes.fill(0);
+      callerPrfOutput?.fill(0);
+      callerPlaintext.fill(0);
       prfOutput?.fill(0);
-      plaintext.fill(0);
+      plaintext?.fill(0);
       if (passwordKey !== undefined) zeroizeUnwrapKey(passwordKey);
       if (prfKey !== undefined) zeroizeUnwrapKey(prfKey);
     });
     assertUnlockCheck(unlock, "seal record");
     const metadata = canonicalMetadata(params.metadata);
     const context = resolveRecordContext(metadata, params.context);
-    if (metadata.prf === null && prfOutput !== undefined) {
+    if (metadata.prf === null && callerPrfOutput !== undefined) {
       throw new KeyringFormatError("PRF output supplied for a password-only record");
     }
-    if (metadata.prf !== null && prfOutput === undefined) {
+    if (metadata.prf !== null && callerPrfOutput === undefined) {
       throw new KeyringFormatError("PRF output is required by enrolled PRF metadata");
     }
     const recordBinding = metadataBytes(metadata);
+    // Record sealing suspends during password derivation. Transfer the remaining
+    // secret inputs into private snapshots before that boundary so later caller
+    // mutation cannot assemble one authenticated record from mixed states.
+    plaintext = callerPlaintext.slice();
+    prfOutput = callerPrfOutput?.slice();
+    callerPlaintext.fill(0);
+    callerPrfOutput?.fill(0);
+    assertUnlockCheck(unlock, "seal record");
     passwordKey = await deriveUnwrapKeyFromPasswordBytesAsync(
       passwordBytes,
       metadata.argon2id.salt,
@@ -619,7 +631,7 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
       assertUnlockCheck(unlock, "seal record");
     }
     const bundle = await sealKeyringBundle({
-      plaintext,
+      plaintext: plaintext!,
       passwordKey,
       prfKey,
       context,
@@ -632,8 +644,10 @@ export async function sealKeyringRecord(params: SealKeyringRecordParams): Promis
   } finally {
     removeAbortCleanup();
     if (passwordBytes instanceof Uint8Array) passwordBytes.fill(0);
-    if (prfOutput instanceof Uint8Array) prfOutput.fill(0);
-    if (plaintext instanceof Uint8Array) plaintext.fill(0);
+    if (callerPrfOutput instanceof Uint8Array) callerPrfOutput.fill(0);
+    if (callerPlaintext instanceof Uint8Array) callerPlaintext.fill(0);
+    prfOutput?.fill(0);
+    plaintext?.fill(0);
     if (passwordKey !== undefined) zeroizeUnwrapKey(passwordKey);
     if (prfKey !== undefined) zeroizeUnwrapKey(prfKey);
   }
