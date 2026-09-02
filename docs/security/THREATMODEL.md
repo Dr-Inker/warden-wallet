@@ -3261,7 +3261,7 @@ accessibility cost, not a free win.
 
 ---
 
-## Audit X-1 / X-2 provider-path hardening — `audit/x1-x2-provider-hardening` — 2026-09-02 — pending sign-off
+## Audit X-1 / X-2 provider-path hardening — 69a6282 (+ 243f469 claim-then-grant correction) — 2026-09-02 — pending sign-off
 
 Two extension findings from the independent Fable audit
 (`docs/security/FABLE-AUDIT-2026-09-02.md` §2 rows X-1 and X-2, and the "E-5 and
