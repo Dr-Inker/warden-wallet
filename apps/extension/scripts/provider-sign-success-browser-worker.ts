@@ -481,9 +481,9 @@ function installSigningCommitCheckpoint(): void {
           rpc: { ...rpcCounters },
         },
       });
-      while (Date.now() < holdUntilWallClockMs) {
-        // C26 closes the actual worker target before this native event returns.
-      }
+      // C26 enables the debugger before approval, observes this exact pause,
+      // and kills the owning extension process before this event can return.
+      debugger;
     }, { once: true });
     return request;
   };

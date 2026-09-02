@@ -3,6 +3,7 @@ import {
   expect,
   test,
   type BrowserContext,
+  type CDPSession,
   type Page,
 } from "@playwright/test";
 import { PublicKey, VersionedTransaction } from "@solana/web3.js";
@@ -28,6 +29,52 @@ const TERMINAL_ENQUEUED_CHECKPOINT_STORAGE_KEY =
   "warden:test:terminal-enqueued-v1";
 const SETTLEMENT_ENQUEUE_CHECKPOINT_STORAGE_KEY =
   "warden:test:before-settlement-enqueue-v1";
+
+let attachedCommandId = 0;
+
+async function sendAttachedTargetCommand(
+  cdp: CDPSession,
+  sessionId: string,
+  method: string,
+  params: Record<string, unknown> = {},
+): Promise<unknown> {
+  const id = ++attachedCommandId;
+  const response = new Promise<unknown>((resolveResponse, rejectResponse) => {
+    const onMessage = (event: {
+      readonly sessionId: string;
+      readonly message: string;
+    }): void => {
+      if (event.sessionId !== sessionId) return;
+      let message: {
+        readonly id?: number;
+        readonly result?: unknown;
+        readonly error?: { readonly message?: string };
+      };
+      try {
+        message = JSON.parse(event.message) as typeof message;
+      } catch (error) {
+        cdp.off("Target.receivedMessageFromTarget", onMessage);
+        rejectResponse(error);
+        return;
+      }
+      if (message.id !== id) return;
+      cdp.off("Target.receivedMessageFromTarget", onMessage);
+      if (message.error !== undefined) {
+        rejectResponse(new Error(
+          message.error.message ?? "attached CDP command failed",
+        ));
+      } else {
+        resolveResponse(message.result);
+      }
+    };
+    cdp.on("Target.receivedMessageFromTarget", onMessage);
+  });
+  await cdp.send("Target.sendMessageToTarget", {
+    sessionId,
+    message: JSON.stringify({ id, method, params }),
+  });
+  return response;
+}
 
 interface TestServer {
   readonly origin: string;
@@ -265,7 +312,7 @@ async function createExtension(): Promise<{
         name: "Warden Exact-Byte Signing Browser Contract",
         version: "0.0.0",
         minimum_chrome_version: "106",
-        permissions: ["storage"],
+        permissions: ["storage", "processes"],
         background: { service_worker: "background.js", type: "module" },
         content_scripts: [{
           matches: ["http://127.0.0.1/*"],
@@ -1064,6 +1111,36 @@ test("in-flight strict signing commit resolves to one durable outcome after MV3 
     const firstWorker = await liveExtensionWorker(context);
     const extensionOrigin =
       `chrome-extension://${new URL(firstWorker.url()).hostname}`;
+    const controlPage = await context.newPage();
+    const cdp = await context.newCDPSession(controlPage);
+    const initialTargets = await cdp.send("Target.getTargets");
+    const target = initialTargets.targetInfos.find((candidate) =>
+      candidate.type === "service_worker" &&
+      candidate.url.startsWith(extensionOrigin));
+    expect(target, "worker exists before the native signing commit").toBeDefined();
+    const workerSession = await cdp.send("Target.attachToTarget", {
+      targetId: target!.targetId,
+      flatten: false,
+    });
+    let debuggerPaused = false;
+    const onWorkerMessage = (event: {
+      readonly sessionId: string;
+      readonly message: string;
+    }): void => {
+      if (event.sessionId !== workerSession.sessionId) return;
+      try {
+        const message = JSON.parse(event.message) as { readonly method?: string };
+        if (message.method === "Debugger.paused") debuggerPaused = true;
+      } catch {
+        // The explicit paused-event assertion below remains authoritative.
+      }
+    };
+    cdp.on("Target.receivedMessageFromTarget", onWorkerMessage);
+    await sendAttachedTargetCommand(
+      cdp,
+      workerSession.sessionId,
+      "Debugger.enable",
+    );
     await firstWorker.evaluate(() => {
       const arm = (globalThis as unknown as {
         __wardenProviderSignSuccessArmCheckpoint?: (stage: string) => void;
@@ -1149,6 +1226,37 @@ test("in-flight strict signing commit resolves to one durable outcome after MV3 
     });
     expect(await readContentPending(page)).toBe(1);
 
+    const extensionProcesses = await popup.evaluate(async () => {
+      const processes = (globalThis as unknown as {
+        chrome: {
+          processes: {
+            getProcessInfo(
+              processIds: number[],
+              includeMemory: boolean,
+            ): Promise<Record<string, {
+              readonly id: number;
+              readonly osProcessId: number;
+              readonly type: string;
+              readonly tasks?: ReadonlyArray<{ readonly title?: string }>;
+            }>>;
+          };
+        };
+      }).chrome.processes;
+      return processes.getProcessInfo([], true);
+    });
+    const signingProcesses = Object.values(extensionProcesses).filter((process) =>
+      process.type === "extension" &&
+      process.tasks?.some((task) =>
+        task.title === `Service Worker: ${extensionOrigin}/background.js`) === true);
+    expect(
+      signingProcesses,
+      "one extension renderer owns the paused signing worker",
+    ).toHaveLength(1);
+    const signingProcess = signingProcesses[0]!;
+    expect(signingProcess.id).toBeGreaterThan(0);
+    expect(signingProcess.osProcessId).toBeGreaterThan(0);
+    expect(signingProcess.osProcessId).not.toBe(process.pid);
+
     // The worker is synchronously held inside the real IDBRequest success
     // event. Use the independent extension page to revoke restart authority.
     await popup.evaluate(async () => {
@@ -1161,37 +1269,45 @@ test("in-flight strict signing commit resolves to one durable outcome after MV3 
       }).chrome.storage.session;
       await storage.remove("warden.unlock-session.v2");
     });
-    const controlPage = await context.newPage();
-    const cdp = await context.newCDPSession(controlPage);
-    const targets = await cdp.send("Target.getTargets");
-    const target = targets.targetInfos.find((candidate) =>
-      candidate.type === "service_worker" &&
-      candidate.url.startsWith(extensionOrigin));
-    expect(target, "worker exists during the native signing commit").toBeDefined();
+    await expect.poll(
+      () => debuggerPaused,
+      {
+        message: "worker did not pause inside the native IDB success event",
+        timeout: Math.max(1, marker.holdUntilWallClockMs - Date.now()),
+      },
+    ).toBe(true);
     expect(
       Date.now(),
-      "native signing-commit checkpoint expired before target termination",
+      "native signing-commit checkpoint expired before process termination",
     ).toBeLessThan(marker.holdUntilWallClockMs);
-    const closed = await cdp.send("Target.closeTarget", {
-      targetId: target!.targetId,
-    });
-    expect(closed.success).toBe(true);
-    let oldTargetPresent = true;
-    while (oldTargetPresent && Date.now() < marker.holdUntilWallClockMs) {
-      const targetsAfterClose = await cdp.send("Target.getTargets");
-      oldTargetPresent = targetsAfterClose.targetInfos.some((candidate) =>
-        candidate.targetId === target!.targetId);
-      if (oldTargetPresent) {
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
+    const processDeath: { observedAt: number | null } = { observedAt: null };
+    try {
+      process.kill(signingProcess.osProcessId, "SIGKILL");
+      await expect.poll(
+        () => {
+          try {
+            process.kill(signingProcess.osProcessId, 0);
+            return false;
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+            processDeath.observedAt = Date.now();
+            return true;
+          }
+        },
+        {
+          message: "signing-worker renderer process survived the forced cut",
+          timeout: Math.max(1, marker.holdUntilWallClockMs - Date.now()),
+        },
+      ).toBe(true);
+    } finally {
+      cdp.off("Target.receivedMessageFromTarget", onWorkerMessage);
+    }
+    if (processDeath.observedAt === null) {
+      throw new Error("signing-worker renderer process death was not observed");
     }
     expect(
-      oldTargetPresent,
-      "old service-worker target remained past the native signing-commit hold",
-    ).toBe(false);
-    expect(
-      Date.now(),
-      "old target was not observed destroyed during the native signing-commit hold",
+      processDeath.observedAt,
+      "worker process did not die during the native signing-commit hold",
     ).toBeLessThan(marker.holdUntilWallClockMs);
 
     await expect.poll(() => page.evaluate(() =>
