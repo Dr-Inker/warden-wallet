@@ -668,7 +668,7 @@ describe("release source annotated-tag verification", () => {
     const replacementObject = await signedTag(
       "release-fixture",
       releaseTagMessage(sha256(fixture.reviewedArtifact.artifactManifestBytes)),
-      fixture.environment,
+      { ...process.env, GNUPGHOME: fixture.gnupgHome },
       fixture.siblingSigningFingerprint,
       fixture.firstCommit,
     );
