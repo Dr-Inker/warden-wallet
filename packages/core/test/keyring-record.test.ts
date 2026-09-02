@@ -379,6 +379,50 @@ describe("outer metadata is authenticated, including an unused fallback", () => 
       ),
     ).toBe(hex(SECRET));
   });
+
+  it("copies accepted byte-view shapes into disjoint seal inputs (WRDF-0123)", async () => {
+    const bufferPlaintext = Buffer.from(SECRET);
+    const bufferPrfOutput = Buffer.from(PRF_OUTPUT);
+    const bufferRecord = await sealKeyringRecord({
+      metadata: prepared(true),
+      plaintext: bufferPlaintext,
+      passwordBytes: password(),
+      prfOutput: bufferPrfOutput,
+    });
+    expect(
+      hex(await openKeyringRecordWithPasswordBytes({ record: bufferRecord, passwordBytes: password() })),
+    ).toBe(hex(SECRET));
+    expect(
+      hex(
+        await openKeyringRecordWithPrfBytes({
+          record: bufferRecord,
+          prfOutput: PRF_OUTPUT.slice(),
+        }),
+      ),
+    ).toBe(hex(SECRET));
+
+    const expectedPassword = password();
+    const shared = new Uint8Array(expectedPassword.length + SECRET.length - 1);
+    const overlappingPassword = shared.subarray(0, expectedPassword.length);
+    const overlappingPlaintext = shared.subarray(expectedPassword.length - 1);
+    overlappingPassword.set(expectedPassword);
+    overlappingPlaintext.set(SECRET);
+    const passwordAtEntry = overlappingPassword.slice();
+    const plaintextAtEntry = overlappingPlaintext.slice();
+    const overlappingRecord = await sealKeyringRecord({
+      metadata: prepared(false),
+      plaintext: overlappingPlaintext,
+      passwordBytes: overlappingPassword,
+    });
+    expect(
+      hex(
+        await openKeyringRecordWithPasswordBytes({
+          record: overlappingRecord,
+          passwordBytes: passwordAtEntry,
+        }),
+      ),
+    ).toBe(hex(plaintextAtEntry));
+  });
 });
 
 describe("record orchestration cannot carry a stale clock sample across derivation", () => {
