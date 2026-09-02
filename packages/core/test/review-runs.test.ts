@@ -228,6 +228,43 @@ describe("recorded reviewer evidence completeness", () => {
     }
   });
 
+  it("WRDF-0155 accepts an integration-owned finding id for a historical Grok review", () => {
+    const outputDir = mkdtempSync(join(tmpdir(), "warden-grok-integration-id-"));
+    const findingsPath = join(outputDir, "findings.json");
+    try {
+      const rows = readFileSync(SCORECARD, "utf8")
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line) as { finding_id: string });
+      const next = Math.max(...rows.map((row) => Number(row.finding_id.slice("WRDF-".length)))) + 1;
+      const integrationFindingId = `WRDF-${String(next).padStart(4, "0")}`;
+      const result = spawnSync(
+        "bash",
+        [
+          REVIEW_GROK,
+          "HEAD^",
+          "HEAD",
+          "--dry-run",
+          "--max-chars",
+          "1000000",
+          "--finding-id-start",
+          integrationFindingId,
+          "--out",
+          findingsPath,
+        ],
+        { cwd: REPO, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+
+      const expectDoc = JSON.parse(
+        readFileSync(findingsPath.replace(/\.json$/, ".expect.json"), "utf8"),
+      ) as { finding_id_start?: string };
+      expect(expectDoc.finding_id_start).toBe(integrationFindingId);
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
+  });
+
   it("WRDF-0156 uses the integration wrapper and ledger for a detached historical Grok review", () => {
     const outputDir = mkdtempSync(join(tmpdir(), "warden-grok-historical-id-"));
     const findingsPath = join(outputDir, "findings.json");
