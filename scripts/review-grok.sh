@@ -94,6 +94,11 @@
 # =============================================================================
 set -euo pipefail
 
+# Review coordinates name immutable Git objects, not the caller's local replacement-ref view.
+# Export this once so commit resolution, worktree creation, diffs, and every later Git probe all
+# read the original object graph (WRDF-0158). A clean worktree does not reveal refs/replace/*.
+export GIT_NO_REPLACE_OBJECTS=1
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REVIEW_ROOT="$REPO_ROOT"
 HISTORICAL_ROOT=""
