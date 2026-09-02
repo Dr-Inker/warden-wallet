@@ -541,6 +541,26 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
     expect(bad, bad.join("\n")).toEqual([]);
   });
 
+  it("WRDF-0140 requires executable commands for the WRDF-0136/0137 green claims", () => {
+    const commands = [
+      "node --test test/github-actions-pins.test.mjs",
+      "node --test test/pnpm-license-evidence.test.mjs",
+      "env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test",
+      "env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck",
+      "git diff --check",
+    ];
+    for (const id of ["WRDF-0136", "WRDF-0137"]) {
+      const row = cardRows.find((candidate) => candidate.finding_id === id);
+      expect(row, `${id} is absent from the scorecard`).toBeTruthy();
+      for (const command of commands) {
+        expect(
+          String(row?.rationale ?? ""),
+          `${id} does not record the exact command ${command}`,
+        ).toContain(`\`${command}\``);
+      }
+    }
+  });
+
   const stub = (opts: { exists?: (s: string) => boolean; anc?: (a: string, b: string) => boolean; head?: string; shallow?: boolean }): GitProbe => ({
     head: opts.head ?? "h".repeat(40),
     commitExists: opts.exists ?? (() => true),

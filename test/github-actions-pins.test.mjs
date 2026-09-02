@@ -264,3 +264,31 @@ test("WRDF-0136 audits document-prefixed flow references and aliased images", as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("WRDF-0138 audits alias-resolved mapping keys", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "warden-actions-alias-key-"));
+  try {
+    const workflows = path.join(root, ".github", "workflows");
+    await mkdir(workflows, { recursive: true });
+    await writeFile(path.join(workflows, "fixture.yml"), [
+      "env:",
+      "  ACTION_KEY: &action_key uses",
+      "jobs:",
+      "  audit:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      `      - uses: owner/repository@${"0".repeat(40)}`,
+      "        ? *action_key",
+      "        : owner/repository@main",
+      "",
+    ].join("\n"));
+
+    const { mutableReferences } = await auditGitHubActionReferences(root, workflows);
+    assert.deepEqual(
+      mutableReferences.map((entry) => entry.replace(/^.*?:\d+: /, "")),
+      ["owner/repository@main"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

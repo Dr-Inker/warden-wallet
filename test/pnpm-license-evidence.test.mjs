@@ -124,3 +124,11 @@ test("vendored YAML parser exactly reproduces from pinned source and bundler", a
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("WRDF-0139 preserves the upstream ISC notice with the vendored YAML parser", async () => {
+  assert.equal(
+    await readFile("scripts/vendor/yaml-LICENSE", "utf8"),
+    await readFile("node_modules/yaml/LICENSE", "utf8"),
+    "the vendored yaml@2.8.1 parser must carry its exact upstream ISC notice",
+  );
+});
