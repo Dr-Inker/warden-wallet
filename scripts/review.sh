@@ -156,8 +156,7 @@ for f in "$SCHEMA" "$PRIOR_ART" "$LEDGER"; do [[ -f "$f" ]] || die "missing $f";
 
 # Finding ids are one committed-ledger namespace, not local to the historical checkout being
 # reviewed. The integration scorecard is authoritative even when REVIEW_ROOT is historical.
-if [[ -z "$FINDING_ID_START" ]]; then
-  FINDING_ID_START="$(SCORECARD="$SCORECARD" node -e '
+NEXT_FINDING_ID="$(SCORECARD="$SCORECARD" node -e '
     const fs = require("fs");
     let max = 0;
     if (fs.existsSync(process.env.SCORECARD)) {
@@ -170,6 +169,10 @@ if [[ -z "$FINDING_ID_START" ]]; then
     if (max >= 9999) throw new Error("WRDF finding id namespace exhausted");
     process.stdout.write(`WRDF-${String(max + 1).padStart(4, "0")}`);
   ')"
+if [[ -z "$FINDING_ID_START" ]]; then
+  FINDING_ID_START="$NEXT_FINDING_ID"
+elif [[ "$FINDING_ID_START" != "$NEXT_FINDING_ID" ]]; then
+  die "--finding-id-start must equal the integration scorecard's next contiguous finding id $NEXT_FINDING_ID (got $FINDING_ID_START)"
 fi
 [[ "$FINDING_ID_START" =~ ^WRDF-[0-9]{4}$ && "$FINDING_ID_START" != "WRDF-0000" ]] || \
   die "--finding-id-start must be WRDF-0001..WRDF-9999 (got ${FINDING_ID_START})"

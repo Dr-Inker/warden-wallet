@@ -233,6 +233,21 @@ async function main(argv) {
         `inconsistent ledgers: last run (thread ${lastRun.thread}) claims ${lastRun.findings_count} finding(s) but the scorecard carries ${carried} — a previous round was interrupted or truncated mid-write; repair the committed files before recording new rounds`,
       );
   }
+  // The expectations file binds the provider response to a wrapper allocation, but an old or
+  // detached wrapper can still present a unique, unused, non-next id. Recompute the namespace
+  // boundary from the scorecard this process is about to append before either ledger write
+  // (WRDF-0157).
+  let maxFindingNumber = 0;
+  for (const id of existingFindingIds) {
+    const match = String(id ?? "").match(/^WRDF-(\d{4})$/);
+    if (match) maxFindingNumber = Math.max(maxFindingNumber, Number(match[1]));
+  }
+  if (maxFindingNumber >= 9999) throw new Error("WRDF finding id namespace exhausted");
+  const nextFindingId = `WRDF-${String(maxFindingNumber + 1).padStart(4, "0")}`;
+  if (expect.finding_id_start !== nextFindingId)
+    throw new Error(
+      `finding_id_start must equal the scorecard's next contiguous finding id ${nextFindingId} (got ${expect.finding_id_start ?? "missing"})`,
+    );
   // BOTH ledgers are written by this one process, run record first, and rolled back together on a
   // synchronous failure. Rollback is a truncate-to-previous-content, safe because these files are
   // only ever appended to.

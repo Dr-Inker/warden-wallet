@@ -4,12 +4,14 @@
 #
 # USAGE
 #   scripts/review-grok.sh <base-sha> [head]            review base..head
+#   scripts/review-grok.sh <base-sha> <old-head> --historical  review an old head in a temporary,
+#                                                            detached read-only worktree
 #   scripts/review-grok.sh <base-sha> [head] --dry-run  assemble everything, invoke nothing
 #   scripts/review-grok.sh --selftest                   check node/fetch, key resolution, inputs
 #   scripts/review-grok.sh --validate <f.json> [--expect <f>]   validate an existing findings file
 #
 #   Options: --dry-run · --out <path> · --model <m> · --kind <k> · --max-chars <n> ·
-#            --max-tokens <n> · --finding-id-start <WRDF-NNNN> · --no-full-files
+#            --max-tokens <n> · --finding-id-start <WRDF-NNNN> · --historical · --no-full-files
 #
 # WHY THIS EXISTS
 #   scripts/review.sh is the canonical recorded lane (Codex, gpt-5.6-sol@max). It has now been
@@ -25,10 +27,11 @@
 #   ~/.claude/mcp-servers/grok/server.mjs remains the UNRECORDED second-opinion path.)
 #
 # WHAT IT DOES — the same six safeguards as review.sh, for the same reasons
-#   1. Refuses to run on a dirty tree, and refuses unless the checked-out HEAD IS <head>. A review
-#      of a range the working tree does not match is a review nobody can reproduce. (Grok cannot
-#      read the worktree at all, but the wrapper reads it ON ITS BEHALF to build the prompt — so a
-#      mismatched worktree would feed the model whole-file context from code outside the range.)
+#   1. Refuses to run on a dirty integration tree. The review worktree must be exactly <head>:
+#      normally that is the integration checkout; --historical instead creates a temporary,
+#      detached worktree at the requested old head while the current wrapper and integration
+#      scorecard remain authoritative. (Grok cannot read the worktree at all, but the wrapper reads
+#      it ON ITS BEHALF to build the prompt.)
 #   2. The WRAPPER computes the seed list ITSELF from docs/security/invariants.jsonl and writes it,
 #      with both SHAs and the sibling-file list, to an EXPECTATIONS file. The validator checks the
 #      model's output against THAT file, never against the model's own account of what it was
@@ -92,13 +95,16 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REVIEW_ROOT="$REPO_ROOT"
+HISTORICAL_ROOT=""
+TMPD=""
 cd "$REPO_ROOT"
 
-SCHEMA=".codex/schemas/warden-findings.json"
+SCHEMA="$REPO_ROOT/.codex/schemas/warden-findings.json"
 PRIOR_ART="docs/security/PRIOR-ART-FINDINGS.md"
 LEDGER="docs/security/invariants.jsonl"
-SCORECARD="docs/security/REVIEW-SCORECARD.jsonl"
-OUT_DIR=".superpowers/reviews"
+SCORECARD="$REPO_ROOT/docs/security/REVIEW-SCORECARD.jsonl"
+OUT_DIR="$REPO_ROOT/.superpowers/reviews"
 # The configured model id. It is a FALLBACK for the recorded reviewer_model; the API response's
 # own `model` field wins when present. Never a copy of the Codex lane's id.
 MODEL="${XAI_TEXT_MODEL:-grok-4.3}"
@@ -147,10 +153,10 @@ fi
 if [[ "${1:-}" == "--validate" ]]; then
   [[ -n "${2:-}" ]] || die "usage: scripts/review-grok.sh --validate <findings.json> [--expect <f>]"
   shift
-  exec node scripts/validate-findings.mjs "$@" --schema "$SCHEMA"
+  exec node "$REPO_ROOT/scripts/validate-findings.mjs" "$@" --schema "$SCHEMA" --repo-root "$REPO_ROOT"
 fi
 
-DRY_RUN=0; OUT=""; BASE=""; HEAD_REF="HEAD"; KIND="task-diff"; FINDING_ID_START=""
+DRY_RUN=0; HISTORICAL=0; OUT=""; BASE=""; HEAD_REF="HEAD"; KIND="task-diff"; FINDING_ID_START=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift;;
@@ -160,6 +166,7 @@ while [[ $# -gt 0 ]]; do
     --max-chars) MAX_CHARS="${2:?}"; shift 2;;
     --max-tokens) MAX_TOKENS="${2:?}"; shift 2;;
     --finding-id-start) FINDING_ID_START="${2:?}"; shift 2;;
+    --historical) HISTORICAL=1; shift;;
     --no-full-files) FULL_FILES=0; shift;;
     -h|--help) sed -n '2,40p' "$0"; exit 0;;
     -*) die "unknown option $1";;
@@ -170,24 +177,39 @@ done
 
 command -v node >/dev/null || die "node not found on PATH"
 command -v git  >/dev/null || die "git not found on PATH"
-for f in "$SCHEMA" "$PRIOR_ART" "$LEDGER"; do [[ -f "$f" ]] || die "missing $f"; done
 
-BASE_SHA="$(git rev-parse --verify "$BASE^{commit}" 2>/dev/null)" || die "not a commit: $BASE"
-HEAD_SHA="$(git rev-parse --verify "$HEAD_REF^{commit}" 2>/dev/null)" || die "not a commit: $HEAD_REF"
+BASE_SHA="$(git -C "$REPO_ROOT" rev-parse --verify "$BASE^{commit}" 2>/dev/null)" || die "not a commit: $BASE"
+HEAD_SHA="$(git -C "$REPO_ROOT" rev-parse --verify "$HEAD_REF^{commit}" 2>/dev/null)" || die "not a commit: $HEAD_REF"
 
-# ---- 1. clean tree AND checked-out HEAD == <head> ---------------------------
-# Same refusal as review.sh, for a reason that is if anything STRONGER here: this wrapper reads the
-# worktree to build the prompt (sibling contents, whole-file context), so on a mismatched or dirty
-# tree the model would be shown code that is not in the range while being told that it is.
-if [[ -n "$(git status --porcelain)" ]]; then
+# ---- 1. clean integration tree + an exact worktree for <head> ----------------
+# Same refusal as review.sh, for a reason that is if anything STRONGER here: this wrapper reads an
+# exact worktree to build the prompt (sibling contents, whole-file context) on Grok's behalf.
+if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
   echo "error: working tree is dirty." >&2
   echo "  A dirty-tree review is void: the whole-file context and sibling contents embedded in the" >&2
   echo "  prompt would not be the code in the range under review." >&2
-  git status --short >&2
+  git -C "$REPO_ROOT" status --short >&2
   exit 1
 fi
-CURRENT_HEAD="$(git rev-parse --verify HEAD)"
-[[ "$CURRENT_HEAD" == "$HEAD_SHA" ]] || die "checked-out HEAD is $CURRENT_HEAD but the requested head is $HEAD_SHA — check out $HEAD_SHA first; this wrapper reads files from the worktree to build the prompt, so a mismatched worktree reviews code that is not in the range"
+CURRENT_HEAD="$(git -C "$REPO_ROOT" rev-parse --verify HEAD)"
+if [[ "$CURRENT_HEAD" != "$HEAD_SHA" ]]; then
+  [[ $HISTORICAL -eq 1 ]] || die "checked-out HEAD is $CURRENT_HEAD but the requested head is $HEAD_SHA — check out $HEAD_SHA or pass --historical; the wrapper reads files from an exact worktree"
+  HISTORICAL_ROOT="$(mktemp -d /tmp/warden-grok-review-worktree.XXXXXX)"
+  rmdir "$HISTORICAL_ROOT"
+  git -C "$REPO_ROOT" worktree add --detach "$HISTORICAL_ROOT" "$HEAD_SHA" >/dev/null
+  REVIEW_ROOT="$HISTORICAL_ROOT"
+fi
+cleanup() {
+  [[ -z "$TMPD" ]] || rm -rf "$TMPD"
+  if [[ -n "$HISTORICAL_ROOT" ]]; then
+    git -C "$REPO_ROOT" worktree remove --force "$HISTORICAL_ROOT" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+cd "$REVIEW_ROOT"
+[[ -z "$(git status --porcelain)" ]] || die "review worktree is dirty: $REVIEW_ROOT"
+[[ "$(git rev-parse --verify HEAD)" == "$HEAD_SHA" ]] || die "review worktree is not at $HEAD_SHA"
+for f in "$SCHEMA" "$PRIOR_ART" "$LEDGER"; do [[ -f "$f" ]] || die "missing $f"; done
 
 # ---- 2. seed list + expectations file (computed by the WRAPPER) -------------
 # NOTE: steps 2's seeding logic is a deliberate duplicate of review.sh's, for the same reason as the
@@ -200,7 +222,10 @@ mkdir -p "$OUT_DIR"
 # timestamp keeps a re-round over the same head from overwriting the previous artefact, and the
 # round id — not the model's self-report — is what lands in the scorecard and run record.
 ROUND_ID="${HEAD_SHA:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
-[[ -n "$OUT" ]] || OUT="$OUT_DIR/$ROUND_ID.json"
+[[ -n "$OUT" ]] || OUT=".superpowers/reviews/$ROUND_ID.json"
+OUT_RECORD="$OUT"
+if [[ "$OUT" = /* ]]; then OUT_PATH="$OUT"; else OUT_PATH="$REPO_ROOT/$OUT"; fi
+OUT="$OUT_PATH"
 EXPECT="${OUT%.json}.expect.json"
 PROMPT_SAVE="${OUT%.json}.prompt.txt"
 
@@ -253,8 +278,7 @@ SEED_IDS="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).map(r=>r.i
 # Finding ids belong to the committed scorecard namespace, not to one provider
 # lane. Bind the next contiguous id into both the expectation gate and the prompt
 # so a unique-but-out-of-sequence model-selected id cannot enter the ledger.
-if [[ -z "$FINDING_ID_START" ]]; then
-  FINDING_ID_START="$(SCORECARD="$SCORECARD" node -e '
+NEXT_FINDING_ID="$(SCORECARD="$SCORECARD" node -e '
     const fs = require("fs");
     let max = 0;
     if (fs.existsSync(process.env.SCORECARD)) {
@@ -267,6 +291,10 @@ if [[ -z "$FINDING_ID_START" ]]; then
     if (max >= 9999) throw new Error("WRDF finding id namespace exhausted");
     process.stdout.write(`WRDF-${String(max + 1).padStart(4, "0")}`);
   ')"
+if [[ -z "$FINDING_ID_START" ]]; then
+  FINDING_ID_START="$NEXT_FINDING_ID"
+elif [[ "$FINDING_ID_START" != "$NEXT_FINDING_ID" ]]; then
+  die "--finding-id-start must equal the integration scorecard's next contiguous finding id $NEXT_FINDING_ID (got $FINDING_ID_START)"
 fi
 [[ "$FINDING_ID_START" =~ ^WRDF-[0-9]{4}$ && "$FINDING_ID_START" != "WRDF-0000" ]] ||
   die "--finding-id-start must be WRDF-0001..WRDF-9999 (got $FINDING_ID_START)"
@@ -288,7 +316,6 @@ fs.writeFileSync(process.env.EXPECT, JSON.stringify({
 # within a hair of Linux's 128 KB per-string exec limit, and an E2BIG here would look like a
 # mysterious assembler failure rather than what it is.
 TMPD="$(mktemp -d -t warden-grok-review.XXXXXX)"
-trap 'rm -rf "$TMPD"' EXIT
 PROMPT_FILE="$TMPD/prompt.txt"
 
 git diff "$BASE_SHA" "$HEAD_SHA" > "$TMPD/diff.txt"
@@ -742,15 +769,16 @@ fs.writeFileSync(process.env.OUT, JSON.stringify(doc, null, 2) + "\n");
 '
 
 # ---- 6. validate independently against the WRAPPER's expectations ------------
-node scripts/validate-findings.mjs "$OUT" --schema "$SCHEMA" --expect "$EXPECT"
+node "$REPO_ROOT/scripts/validate-findings.mjs" "$OUT" --schema "$SCHEMA" --expect "$EXPECT" --repo-root "$REVIEW_ROOT"
 
 # ---- 7. record the RUN itself — zero-finding rounds included ------------------
 # append-review-run.mjs re-validates independently, refuses a replayed artefact, and writes BOTH
 # ledgers in one process with rollback (WRDF-0007). This script never writes a ledger row itself.
 # --effort is deliberately NOT passed: xAI exposes no reasoning-effort knob, and inventing one would
 # put a fiction in the ledger. The run record carries effort: null, which is the honest value.
-node scripts/append-review-run.mjs "$OUT" --expect "$EXPECT" --kind "$KIND" \
-  --model "$REVIEWER_MODEL" --thread "$ROUND_ID" --scorecard "$SCORECARD"
+(cd "$REPO_ROOT" && node scripts/append-review-run.mjs "$OUT_RECORD" --expect "$EXPECT" --kind "$KIND" \
+  --model "$REVIEWER_MODEL" --thread "$ROUND_ID" --scorecard "$SCORECARD" \
+  --repo-root "$REVIEW_ROOT")
 
 echo
 echo "Next: adjudicate every finding (disputed and scoped-out included), record the ruling in"
