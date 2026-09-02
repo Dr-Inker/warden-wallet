@@ -49,8 +49,11 @@ pub const OP_ROTATE_NONCE: u8 = 0x00;
 /// `borsh(GrantBody)` — every `grant_session` argument except `root`.
 pub const OP_GRANT_SESSION: u8 = 0x01;
 /// `op_type` byte for the root path of session revocation (Task 5); hashed
-/// over `borsh(session_pubkey)` (the bare 32 pubkey bytes). The session-self
-/// path carries no root assertion and therefore no action hash.
+/// over `borsh(RevokeBody { session_pubkey, refund_to })` — 64 bytes, see
+/// `instructions/revoke_session.rs` for why the rent destination is in the
+/// signed body (an earlier revision hashed only the bare session pubkey).
+/// The session-self path carries no root assertion and therefore no action
+/// hash.
 pub const OP_REVOKE_SESSION: u8 = 0x02;
 /// `op_type` byte for `freeze` (Task 6). Like `rotate_nonce`, it has no
 /// arguments of its own beyond `RootArgs`, so it is hashed over an empty

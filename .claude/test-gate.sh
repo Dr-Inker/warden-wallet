@@ -126,4 +126,13 @@ if ls programs/*/Cargo.toml >/dev/null 2>&1; then
     cmp -s target/idl/warden.json packages/core/idl/warden.json || { echo "IDL drift: copy target/idl/warden.json to packages/core/idl/"; exit 1; }
   fi
   cargo test --workspace --features test-jup
+  # Fable audit R-2 (2026-09-02): these two used to exist ONLY in ci.yml, and
+  # CI only runs on push — so on a branch that is hundreds of commits ahead of
+  # origin they had silently not run at all. Same commands as ci.yml:196-200.
+  cargo clippy -p warden --lib -- -D clippy::arithmetic_side_effects
 fi
+# L9 supply-chain gate (cargo-deny advisories/bans/sources/licences + frozen
+# lockfile + scoped pnpm audit). Cheap, network-free once the advisory DB is
+# cached; runs even when the Rust build is skipped because it also covers the
+# JS lockfile.
+./scripts/supply-chain-gate.sh
