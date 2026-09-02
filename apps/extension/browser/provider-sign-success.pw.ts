@@ -1176,11 +1176,18 @@ test("in-flight strict signing commit resolves to one durable outcome after MV3 
       targetId: target!.targetId,
     });
     expect(closed.success).toBe(true);
-    const targetsAfterClose = await cdp.send("Target.getTargets");
+    let oldTargetPresent = true;
+    while (oldTargetPresent && Date.now() < marker.holdUntilWallClockMs) {
+      const targetsAfterClose = await cdp.send("Target.getTargets");
+      oldTargetPresent = targetsAfterClose.targetInfos.some((candidate) =>
+        candidate.targetId === target!.targetId);
+      if (oldTargetPresent) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
     expect(
-      targetsAfterClose.targetInfos.some((candidate) =>
-        candidate.targetId === target!.targetId),
-      "old service-worker target remains after Target.closeTarget",
+      oldTargetPresent,
+      "old service-worker target remained past the native signing-commit hold",
     ).toBe(false);
     expect(
       Date.now(),
