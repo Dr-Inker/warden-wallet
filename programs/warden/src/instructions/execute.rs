@@ -645,6 +645,18 @@ pub(crate) fn handler<'info>(
     // ---- AFTER snapshot + conservation ------------------------------------
     let after = conservation::snapshot(remaining, &account_key)?;
     let pda_lamports_after = sa_info.lamports();
+    // WRDF-0110, AFTER re-application — NOT decorative, unlike the delegate
+    // rule's (see `reject_vault_delegated_foreign_accounts`): a multisig can be
+    // CREATED inside the payload (`Allocate` + `Assign` + `InitializeMultisig2`
+    // on the writable signer slot, whose keypair the submitter holds) and used
+    // as the authority in the same transaction, when the BEFORE gate saw only
+    // an empty System account. The token program never erases a multisig, so
+    // the AFTER state cannot hide one — this is the only barrier for that
+    // shape (`codex_wrdf0110_root_multisig_created_inside_payload_rejected`).
+    conservation::reject_vault_multisig_members(
+        logical_infos.get(1..).ok_or(WardenError::PayloadInvalid)?,
+        &account_key,
+    )?;
     let outflow = compare_and_account(
         &before,
         &after,

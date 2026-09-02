@@ -3219,6 +3219,58 @@ fn codex_wrdf0110_root_transfer_via_vault_member_multisig_rejected() {
     assert_eq!(token_amount(&svm, &thief), 0, "the thief received nothing");
 }
 
+/// WRDF-0110, the MID-PAYLOAD variant: the multisig does not exist yet when
+/// the BEFORE gate runs. The submitter's keypair address `M` (logical 1,
+/// writable signer, pre-funded with rent) is a plain System account; the
+/// payload runs `Allocate(355)` + `Assign(token program)` +
+/// `InitializeMultisig2(M, [PDA])`, then the Transfer. Unlike the delegate
+/// shape (the token program clears a spent delegate), a multisig is never
+/// erased by the token program, so an AFTER re-application is not void here —
+/// it is the only barrier. Refused after the CPIs with the same error.
+#[test]
+fn codex_wrdf0110_root_multisig_created_inside_payload_rejected() {
+    let (mut svm, payer, pk, account, _registry, _mut, _vault_ata) = live();
+    let multisig_kp = Keypair::new();
+    let multisig = multisig_kp.pubkey();
+    svm.airdrop(&multisig, 10_000_000).expect("pre-fund the future multisig");
+    let victim = Pubkey::new_from_array([0x74; 32]);
+    set_plain_token_account(&mut svm, &victim, &tok_mint(), &multisig, 9_000);
+    let thief = dest_ata(&mut svm);
+
+    let remaining = vec![
+        AccountMeta::new(victim, false),                                      // logical 2
+        AccountMeta::new(thief, false),                                       // logical 3
+        AccountMeta::new_readonly(SPL_TOKEN_ID, false),                       // logical 4
+        mint_meta(),                                                          // logical 5
+        AccountMeta::new_readonly(anchor_lang::system_program::ID, false),    // logical 6
+    ];
+    // System: Allocate { space } = enum index 8; Assign { owner } = index 1.
+    let mut allocate = 8u32.to_le_bytes().to_vec();
+    allocate.extend_from_slice(&355u64.to_le_bytes());
+    let mut assign = 1u32.to_le_bytes().to_vec();
+    assign.extend_from_slice(SPL_TOKEN_ID.as_ref());
+    // SPL Token: InitializeMultisig2 { m } = tag 19; accounts [multisig (w), ...signer pubkeys].
+    let init_ms = vec![19u8, 1u8];
+    let mut transfer = vec![3u8];
+    transfer.extend_from_slice(&9_000u64.to_le_bytes());
+    let payload = encode_payload(&[
+        (6, &[(1, FLAG_WRITABLE | FLAG_SIGNER)], &allocate),
+        (6, &[(1, FLAG_WRITABLE | FLAG_SIGNER)], &assign),
+        (4, &[(1, FLAG_WRITABLE), (0, 0)], &init_ms),
+        (4, &[(2, FLAG_WRITABLE), (3, FLAG_WRITABLE), (1, 0), (0, FLAG_SIGNER), (4, 0)], &transfer),
+    ]);
+    let args_shape = ExecuteArgs { root: None, payload: Some(payload.clone()) };
+    let (_p, logical) = execute_ix_writable_signer(multisig, account, None, true, None, &remaining, &args_shape);
+    let (precompile, root) = ceremony(&svm, &account, &pk, execute_action_hash(&payload, &logical));
+    let args = ExecuteArgs { root: Some(root), payload: Some(payload) };
+    let (ix, _l) = execute_ix_writable_signer(multisig, account, None, true, None, &remaining, &args);
+
+    expect_reject(&mut svm, &[&payer, &multisig_kp], &[precompile, ix], 1, err::VAULT_MULTISIG_MEMBER_IN_PAYLOAD);
+    assert_eq!(token_amount(&svm, &victim), 9_000, "the account owned by the in-payload multisig was not drained");
+    assert_eq!(token_amount(&svm, &thief), 0, "the thief received nothing");
+    assert!(svm.get_account(&multisig).unwrap().data.is_empty(), "the whole tx reverted: no multisig exists");
+}
+
 /// CONTROL (narrowness) — a multisig whose members are all strangers, riding
 /// read-only beside an honest vault transfer, is untouched: the gate keys on
 /// WHO the members are, not on "any multisig in the list". Passes at the base.

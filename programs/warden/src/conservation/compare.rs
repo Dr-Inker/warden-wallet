@@ -557,11 +557,16 @@ pub fn multisig_names_member(owner_program: &Pubkey, data: &[u8], member: &Pubke
 /// mint nor a token account (`snapshot::classify`); its `token_parse_failed`
 /// is only fatal for accounts that were vault-owned before.
 ///
-/// Pre-CPI, BEFORE only, over the whole logical list including the signer
-/// slot. Membership is a property of the multisig account, not of the
-/// payload, so a payload that never references it is refused too — same
-/// discipline as the mint gate. A multisig whose members are all strangers
-/// is untouched (`codex_wrdf0110_stranger_multisig_in_list_still_allowed`).
+/// Applied BEFORE (pre-CPI) and AGAIN AFTER the CPIs, over the whole logical
+/// list including the signer slot. The AFTER pass is load-bearing, not the
+/// decorative kind the delegate rule rejected: a multisig can be created
+/// inside the payload on the writable signer slot (`Allocate` + `Assign` +
+/// `InitializeMultisig2`) and used in the same transaction, and the token
+/// program never erases one, so the AFTER state always shows it. Membership
+/// is a property of the multisig account, not of the payload, so a payload
+/// that never references it is refused too — same discipline as the mint
+/// gate. A multisig whose members are all strangers is untouched
+/// (`codex_wrdf0110_stranger_multisig_in_list_still_allowed`).
 pub fn reject_vault_multisig_members(accts: &[AccountInfo], vault: &Pubkey) -> Result<()> {
     for ai in accts {
         let data = ai.try_borrow_data()?;
