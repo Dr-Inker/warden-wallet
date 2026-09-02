@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { promisify } from "node:util";
@@ -7,6 +8,17 @@ import { promisify } from "node:util";
 const execFile = promisify(execFileCallback);
 
 test("WRDF-0135 covers every declared direct package in committed license evidence", async () => {
+  const lockfile = await readFile("pnpm-lock.yaml");
+  const expectedLockfileHash = `${createHash("sha256").update(lockfile).digest("hex")}  pnpm-lock.yaml`;
+  const recordedLockfileHash = (
+    await readFile("docs/security/third-party/pnpm-lock.sha256", "utf8")
+  ).trim();
+  assert.equal(
+    recordedLockfileHash,
+    expectedLockfileHash,
+    "pnpm license evidence is stale: regenerate it and its pnpm-lock.sha256 binding",
+  );
+
   const { stdout } = await execFile("/usr/bin/git", ["ls-files", "--cached", "-z"], {
     encoding: "buffer",
     env: {

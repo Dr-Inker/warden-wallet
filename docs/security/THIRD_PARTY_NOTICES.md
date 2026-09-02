@@ -1,7 +1,8 @@
 # Third-party notices
 
-Generated 2026-08-19 from two tool runs against the workspace as it stood at
-this commit — **not hand-curated**, so it is exactly as complete/stale as
+Generated from two tool runs against the workspace as it stood at the evidence
+commits (Rust 2026-08-19; TypeScript 2026-09-02) — **not hand-curated**, so it
+is exactly as complete/stale as
 `Cargo.lock`/`pnpm-lock.yaml` are. Regenerate on any dependency change with
 the two commands below; this file is evidence, not a hand-maintained legal
 document.
@@ -9,20 +10,23 @@ document.
 ```sh
 cargo deny list                     # Rust — license -> crate@version, from Cargo.lock
 pnpm licenses list --json           # TypeScript — package -> license, from pnpm-lock.yaml
+sha256sum pnpm-lock.yaml             # bind TypeScript evidence to the exact lockfile bytes
 ```
 
-**This file is a hand-written summary, not the raw output.** The full raw
-output of both commands as run 2026-08-19 is committed alongside it —
+**This file is a hand-written summary, not the raw output.** The raw Rust output
+from 2026-08-19 and TypeScript output from 2026-09-02 are committed alongside
+it —
 `docs/security/third-party/cargo-deny-list.txt` (human-format `cargo deny
 list`) and `docs/security/third-party/pnpm-licenses.json` (`pnpm licenses
-list --json`) — small text files, not gitignored, so a clone of this repo
+list --json`) plus `docs/security/third-party/pnpm-lock.sha256` (the exact
+lockfile binding) — small text files, not gitignored, so a clone of this repo
 carries the actual evidence, not just a pointer to a report that lives
 outside git (`.superpowers/` is gitignored per `CLAUDE.md`; the Task 11 fix
 report there has the same output too, but it is not the durable copy).
-Regenerate both files (the commands above, redirected to those two paths) on
-any dependency change; this summary table can go stale independently of
-them, so treat the two files under `docs/security/third-party/` as the
-source of truth and this table as a convenience index into them.
+Regenerate the raw evidence and matching hash (the commands above, redirected
+to those paths) on any dependency change; this summary table can go stale
+independently of them, so treat the files under `docs/security/third-party/`
+as the source of truth and this table as a convenience index into them.
 
 ## Rust (`cargo deny list`, root workspace: `programs/warden`, `programs/test-middleman`)
 
@@ -111,7 +115,7 @@ license posture.
   positive-byte esbuild input files for the four JavaScript outputs, but does
   not make an automatic package/license crosswalk or legal disposition.
   Re-evaluate the machine evidence with counsel before SHIP; see the table above.
-- This file is **generated, not hand-curated** — regenerate it (rerun both
-  commands, re-paste) on every `Cargo.lock`/`pnpm-lock.yaml` change that
+- This file is **generated, not hand-curated** — regenerate the raw evidence
+  and its lockfile binding on every `Cargo.lock`/`pnpm-lock.yaml` change that
   Task 11's or a successor's review cares about; it will silently go stale
   otherwise.

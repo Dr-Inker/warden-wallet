@@ -83,6 +83,10 @@ test("WRDF-0130 audits semantic uses keys and recursively follows local composit
       "    steps:",
       "      - \"uses\": owner/quoted@v1",
       "      - { uses: owner/flow@main }",
+      "      - \"u\\u0073es\": owner/escaped@dev",
+      "      - uses: *dynamic-reference",
+      "      - run: |",
+      "          printf 'uses: owner/inside-script@main\\n'",
       "      - uses: ./.github/actions/local",
       "",
     ].join("\n"));
@@ -98,8 +102,43 @@ test("WRDF-0130 audits semantic uses keys and recursively follows local composit
     const { mutableReferences } = await auditGitHubActionReferences(root, workflows);
     assert.deepEqual(
       mutableReferences.map((entry) => entry.replace(/^.*?:\d+: /, "")).sort(),
-      ["owner/flow@main", "owner/nested@v2", "owner/quoted@v1"],
+      [
+        "non-literal uses value",
+        "owner/escaped@dev",
+        "owner/flow@main",
+        "owner/nested@v2",
+        "owner/quoted@v1",
+      ],
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("action audit rejects complex YAML keys outside its constrained grammar", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "warden-actions-complex-key-"));
+  try {
+    const workflows = path.join(root, ".github", "workflows");
+    await mkdir(workflows, { recursive: true });
+    for (const step of [
+      ["      - ? uses", "        : owner/explicit-key@main"],
+      ["      - &hidden uses: owner/anchored@main"],
+      ["      - { &hidden uses: owner/flow-anchor@main }"],
+    ]) {
+      await writeFile(path.join(workflows, "fixture.yml"), [
+        "jobs:",
+        "  audit:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        ...step,
+        "",
+      ].join("\n"));
+
+      await assert.rejects(
+        auditGitHubActionReferences(root, workflows),
+        /complex or tagged YAML mapping keys are not permitted/,
+      );
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

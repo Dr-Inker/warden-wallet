@@ -236,9 +236,9 @@ describe("release producer git child processes", () => {
     await git(["status", "--porcelain=v1", "--untracked-files=all"], monitored.path);
     await git(["update-index", "--fsmonitor-valid", "tracked.txt"], monitored.path);
     await writeFile(join(monitored.path, "tracked.txt"), "uncommitted hidden release input\n");
-    const { stdout: status } = await runReleaseGit(
+    const { stdout: status } = await git(
       ["status", "--porcelain=v1", "--untracked-files=all"],
-      { cwd: monitored.path },
+      monitored.path,
     );
     expect(status).toBe("");
 

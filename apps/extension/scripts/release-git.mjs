@@ -33,7 +33,7 @@ export async function runReleaseGit(
     timeoutMs = RELEASE_GIT_TIMEOUT_MS,
   } = {},
 ) {
-  return await execFile(RELEASE_GIT_EXECUTABLE, args, {
+  return await execFile(RELEASE_GIT_EXECUTABLE, ["-c", "core.fsmonitor=false", ...args], {
     cwd,
     env: releaseGitEnvironment(),
     encoding: "utf8",

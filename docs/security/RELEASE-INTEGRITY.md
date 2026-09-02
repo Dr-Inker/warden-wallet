@@ -12,10 +12,13 @@ standalone audit is:
 node --test test/github-actions-pins.test.mjs
 ```
 
-It recursively scans every workflow, fails if no workflow or no external action
-was measured, and rejects mutable Git refs, expressions, abbreviated or
-uppercase pseudo-SHAs, and Docker actions without a SHA-256 digest. It runs as
-the blocking workflow's first post-checkout command and at the start of
+It recursively scans every workflow and locally referenced composite, reusable,
+or Docker action, fails if no workflow or no external action was measured, and
+rejects mutable Git refs, expressions, abbreviated or uppercase pseudo-SHAs,
+and Docker actions without a SHA-256 digest. Its dependency-free, constrained
+YAML scanner runs before package installation; unsupported complex/tagged key
+forms fail closed, while quoted/escaped and flow-style `uses` mappings remain
+covered. It runs as the blocking workflow's first post-checkout command and at the start of
 `.claude/test-gate.sh`. The exact action/ref/commit map and upstream resolution
 method are recorded in `docs/TOOLCHAIN.md`.
 
@@ -101,14 +104,17 @@ and environment. Every producer git call goes through one shared helper,
 `/usr/bin/git` with a child environment built from an allow-list rather than
 from `process.env`: `PATH=/usr/bin:/bin`, `LANG=C`, `LC_ALL=C`,
 `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
-`GIT_OPTIONAL_LOCKS=0` — plus the call's own `cwd`, a 10-minute timeout, and
+`GIT_NO_REPLACE_OBJECTS=1`, `GIT_OPTIONAL_LOCKS=0`, and a command-line
+`core.fsmonitor=false` override — plus the call's own `cwd`, a 10-minute timeout, and
 `killSignal: "SIGKILL"`. An inherited `GIT_DIR`, `GIT_WORK_TREE`,
 `GIT_INDEX_FILE`, `GIT_CEILING_DIRECTORIES`, or `GIT_OBJECT_DIRECTORY`
 therefore cannot make a different repository answer the clean-tree gate or
 supply the recorded commit, and a `git` executable placed earlier on the
 inherited PATH is never selected — which matters because `pnpm run` prepends
 `node_modules/.bin`, so a compromised dependency shipping a `git` bin would
-otherwise shadow the real one for the producer. The signed-source verifier's git
+otherwise shadow the real one for the producer. The explicit fsmonitor override
+also prevents repository-local monitor state from suppressing a tracked-byte
+change during the clean-tree comparison. The signed-source verifier's git
 environment and the same-host dual-checkout rehearsal's git calls are now
 defined by that same helper, so producer and verifier cannot drift apart. This
 is environment pinning, not host attestation: it does not defend against a

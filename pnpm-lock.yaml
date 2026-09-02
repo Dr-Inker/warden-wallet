@@ -17,9 +17,6 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.8.1)
-      yaml:
-        specifier: 2.8.1
-        version: 2.8.1
 
   apps/extension:
     dependencies:
@@ -2049,4 +2046,5 @@ snapshots:
       bufferutil: 4.1.0
       utf-8-validate: 6.0.6
 
-  yaml@2.8.1: {}
+  yaml@2.8.1:
+    optional: true

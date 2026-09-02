@@ -66,10 +66,12 @@
     {
       "name": "@noble/hashes",
       "versions": [
-        "1.8.0"
+        "1.8.0",
+        "2.4.0"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes"
+        "/opt/warden/node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes",
+        "/opt/warden/node_modules/.pnpm/@noble+hashes@2.4.0/node_modules/@noble/hashes"
       ],
       "license": "MIT",
       "author": "Paul Miller",
@@ -330,7 +332,7 @@
         "3.2.7"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@vitest+mocker@3.2.7_vite@7.3.6_@types+node@22.20.1_tsx@4.23.12_/node_modules/@vitest/mocker"
+        "/opt/warden/node_modules/.pnpm/@vitest+mocker@3.2.7_vite@7.3.6_@types+node@22.20.1_tsx@4.23.12_yaml@2.8.1_/node_modules/@vitest/mocker"
       ],
       "license": "MIT",
       "homepage": "https://github.com/vitest-dev/vitest/tree/main/packages/mocker#readme",
@@ -876,7 +878,7 @@
         "4.0.1"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/isomorphic-ws@4.0.1_ws@7.5.13_bufferutil@4.1.0_utf-8-validate@6.0.6_/node_modules/isomorphic-ws"
+        "/opt/warden/node_modules/.pnpm/isomorphic-ws@4.0.1_ws@7.5.13_bufferutil@4.1.0_/node_modules/isomorphic-ws"
       ],
       "license": "MIT",
       "author": "@heineiuo",
@@ -1350,7 +1352,7 @@
         "7.3.6"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/vite@7.3.6_@types+node@22.20.1_tsx@4.23.12/node_modules/vite"
+        "/opt/warden/node_modules/.pnpm/vite@7.3.6_@types+node@22.20.1_tsx@4.23.12_yaml@2.8.1/node_modules/vite"
       ],
       "license": "MIT",
       "author": "Evan You",
@@ -1363,7 +1365,7 @@
         "3.2.4"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/vite-node@3.2.4_@types+node@22.20.1_tsx@4.23.12/node_modules/vite-node"
+        "/opt/warden/node_modules/.pnpm/vite-node@3.2.4_@types+node@22.20.1_tsx@4.23.12_yaml@2.8.1/node_modules/vite-node"
       ],
       "license": "MIT",
       "author": "Anthony Fu",
@@ -1376,7 +1378,7 @@
         "3.2.7"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/vitest@3.2.7_@types+node@22.20.1_tsx@4.23.12/node_modules/vitest"
+        "/opt/warden/node_modules/.pnpm/vitest@3.2.7_@types+node@22.20.1_tsx@4.23.12_yaml@2.8.1/node_modules/vitest"
       ],
       "license": "MIT",
       "author": "Anthony Fu",
@@ -1432,7 +1434,7 @@
         "0.28.0"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@coral-xyz+anchor@0.28.0_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6/node_modules/@coral-xyz/anchor"
+        "/opt/warden/node_modules/.pnpm/@coral-xyz+anchor@0.28.0_bufferutil@4.1.0_typescript@5.9.3/node_modules/@coral-xyz/anchor"
       ],
       "license": "(MIT OR Apache-2.0)",
       "homepage": "https://github.com/coral-xyz/anchor#readme",
@@ -1446,7 +1448,7 @@
         "0.28.0"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@coral-xyz+borsh@0.28.0_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6_/node_modules/@coral-xyz/borsh"
+        "/opt/warden/node_modules/.pnpm/@coral-xyz+borsh@0.28.0_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_/node_modules/@coral-xyz/borsh"
       ],
       "license": "Apache-2.0",
       "description": "Anchor Borsh"
@@ -1470,7 +1472,7 @@
         "0.2.0"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@solana+buffer-layout-utils@0.2.0_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6/node_modules/@solana/buffer-layout-utils"
+        "/opt/warden/node_modules/.pnpm/@solana+buffer-layout-utils@0.2.0_bufferutil@4.1.0_typescript@5.9.3/node_modules/@solana/buffer-layout-utils"
       ],
       "license": "Apache-2.0",
       "author": "Solana Maintainers",
@@ -1482,7 +1484,7 @@
         "0.2.5"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@solana+spl-memo@0.2.5_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6_/node_modules/@solana/spl-memo"
+        "/opt/warden/node_modules/.pnpm/@solana+spl-memo@0.2.5_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_/node_modules/@solana/spl-memo"
       ],
       "license": "Apache-2.0",
       "author": "Solana Labs Maintainers",
@@ -1496,8 +1498,8 @@
         "0.4.14"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@solana+spl-token@0.4.9_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_utf-8-_6ae4a7f6074b28c0882b795db6cfa2a9/node_modules/@solana/spl-token",
-        "/opt/warden/node_modules/.pnpm/@solana+spl-token@0.4.14_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3_utf-8_3ed350ec948d2f6646f78e07a6ecb7d2/node_modules/@solana/spl-token"
+        "/opt/warden/node_modules/.pnpm/@solana+spl-token@0.4.9_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3__buffe_1113a4a374281c7bde8a4243cff4c8f0/node_modules/@solana/spl-token",
+        "/opt/warden/node_modules/.pnpm/@solana+spl-token@0.4.14_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3__buff_231436dcfaa55390560bb7552227ddc8/node_modules/@solana/spl-token"
       ],
       "license": "Apache-2.0",
       "author": "Solana Labs Maintainers",
@@ -1510,7 +1512,7 @@
         "0.0.7"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@solana+spl-token-group@0.0.7_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3__d371257137ded6f26d0a33bd5ef15d81/node_modules/@solana/spl-token-group"
+        "/opt/warden/node_modules/.pnpm/@solana+spl-token-group@0.0.7_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9.3__cf815652faa3a67759f9cb4f22ae9539/node_modules/@solana/spl-token-group"
       ],
       "license": "Apache-2.0",
       "author": "Solana Labs Maintainers",
@@ -1523,7 +1525,7 @@
         "0.1.6"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@solana+spl-token-metadata@0.1.6_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9_0009ac5a42a9adac12f3888b98daeec0/node_modules/@solana/spl-token-metadata"
+        "/opt/warden/node_modules/.pnpm/@solana+spl-token-metadata@0.1.6_@solana+web3.js@1.98.4_bufferutil@4.1.0_typescript@5.9_d7e54a7eae4fe8b52c07469e4f9fb837/node_modules/@solana/spl-token-metadata"
       ],
       "license": "Apache-2.0",
       "author": "Solana Labs Maintainers",
@@ -1626,7 +1628,7 @@
         "6.0.1"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@marinade.finance+marinade-ts-sdk@6.0.1_bufferutil@4.1.0_fastestsmallesttextencoderdeco_fe33246bac5c71068d0c871818dadafc/node_modules/@marinade.finance/marinade-ts-sdk"
+        "/opt/warden/node_modules/.pnpm/@marinade.finance+marinade-ts-sdk@6.0.1_bufferutil@4.1.0_fastestsmallesttextencoderdecoder@1.0.22_typescript@5.9.3/node_modules/@marinade.finance/marinade-ts-sdk"
       ],
       "license": "ISC",
       "homepage": "https://github.com/marinade-finance/marinade-ts-sdk#readme",
@@ -1638,7 +1640,7 @@
         "1.3.4"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@marinade.finance+native-staking-sdk@1.3.4_bufferutil@4.1.0_typescript@5.9.3_utf-8-validate@6.0.6/node_modules/@marinade.finance/native-staking-sdk"
+        "/opt/warden/node_modules/.pnpm/@marinade.finance+native-staking-sdk@1.3.4_bufferutil@4.1.0_typescript@5.9.3/node_modules/@marinade.finance/native-staking-sdk"
       ],
       "license": "ISC",
       "homepage": "https://github.com/marinade-finance/native-staking#readme",
@@ -1650,7 +1652,7 @@
         "1.1.8"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/@solana+spl-stake-pool@1.1.8_bufferutil@4.1.0_fastestsmallesttextencoderdecoder@1.0.22__d5eef510e5579a9a1bc3720d42108a18/node_modules/@solana/spl-stake-pool"
+        "/opt/warden/node_modules/.pnpm/@solana+spl-stake-pool@1.1.8_bufferutil@4.1.0_fastestsmallesttextencoderdecoder@1.0.22_typescript@5.9.3/node_modules/@solana/spl-stake-pool"
       ],
       "license": "ISC",
       "homepage": "https://solana.com",
@@ -1694,6 +1696,19 @@
       "author": "Emil Bay",
       "homepage": "https://github.com/emilbayes/siginfo#readme",
       "description": "Utility module to print pretty messages on SIGINFO/SIGUSR1"
+    },
+    {
+      "name": "yaml",
+      "versions": [
+        "2.8.1"
+      ],
+      "paths": [
+        "/opt/warden/node_modules/.pnpm/yaml@2.8.1/node_modules/yaml"
+      ],
+      "license": "ISC",
+      "author": "Eemeli Aro",
+      "homepage": "https://eemeli.org/yaml/",
+      "description": "JavaScript parser and stringifier for YAML"
     }
   ],
   "BSD-3-Clause": [
