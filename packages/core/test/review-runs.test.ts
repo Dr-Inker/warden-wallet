@@ -7,7 +7,7 @@
 // Without the first, review coverage is invisible; without the second, a garbage artefact could
 // buy a coverage line.
 import { describe, it, expect } from "vitest";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, chmodSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -511,6 +511,98 @@ describe("recorded reviewer evidence completeness", () => {
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(result.stdout).toContain('"title": "ORIGINAL_HEAD"');
       expect(result.stdout).not.toContain('"title": "SUBSTITUTED_HEAD"');
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+      rmSync(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  it("WRDF-0160 pins raw-object semantics inside the Codex tool shell", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "warden-codex-shell-policy-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "warden-codex-shell-output-"));
+    const fakeBin = join(fixture, "fake-bin");
+    const findingsPath = join(outputDir, "findings.json");
+    const gitEnv = {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_OPTIONAL_LOCKS: "0",
+    };
+    const git = (args: string[]) => execFileSync(
+      "/usr/bin/git",
+      ["-C", fixture, ...args],
+      { env: gitEnv, stdio: "pipe" },
+    ).toString().trim();
+    const put = (path: string, contents: string) => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, contents);
+    };
+    try {
+      git(["init", "-q"]);
+      git(["config", "user.name", "Warden Test"]);
+      git(["config", "user.email", "warden@example.invalid"]);
+      put(join(fixture, "scripts/review.sh"), readFileSync(REVIEW_CODEX, "utf8"));
+      put(
+        join(fixture, ".codex/schemas/warden-findings.json"),
+        readFileSync(join(REPO, ".codex/schemas/warden-findings.json"), "utf8"),
+      );
+      put(join(fixture, "docs/security/PRIOR-ART-FINDINGS.md"), "# Prior art\n");
+      put(join(fixture, "docs/security/REVIEW-SCORECARD.jsonl"), '{"finding_id":"WRDF-0004"}\n');
+      put(
+        join(fixture, "docs/security/invariants.jsonl"),
+        JSON.stringify({
+          id: "WRD-TEST-01",
+          title: "Codex tool environment",
+          statement: "The reviewer's Git reads use original objects.",
+          status: "unimplemented",
+          spec_ref: "test",
+          code_ref: null,
+          prior_art: [],
+          evidence: [],
+        }) + "\n",
+      );
+      git(["add", "."]);
+      git(["commit", "-q", "-m", "base"]);
+      const baseSha = git(["rev-parse", "HEAD"]);
+      put(join(fixture, "review-target.txt"), "head\n");
+      git(["add", "review-target.txt"]);
+      git(["commit", "-q", "-m", "head"]);
+      const headSha = git(["rev-parse", "HEAD"]);
+
+      const fakeCodex = join(fakeBin, "codex");
+      put(fakeCodex, `#!/usr/bin/env bash
+set -euo pipefail
+[[ "\${GIT_NO_REPLACE_OBJECTS:-}" == "1" ]] || exit 90
+found=0
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-c" && "\${2:-}" == 'shell_environment_policy={inherit="all",ignore_default_excludes=true,filters={},set={GIT_NO_REPLACE_OBJECTS="1"}}' ]]; then
+    found=1
+  fi
+  shift
+done
+[[ $found -eq 1 ]] || exit 91
+exit 86
+`);
+      chmodSync(fakeCodex, 0o755);
+
+      const wrapperEnv = { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? "/usr/bin:/bin"}` };
+      delete wrapperEnv.GIT_NO_REPLACE_OBJECTS;
+      const result = spawnSync(
+        "bash",
+        [
+          "scripts/review.sh",
+          baseSha,
+          headSha,
+          "--finding-id-start",
+          "WRDF-0005",
+          "--out",
+          findingsPath,
+        ],
+        { cwd: fixture, env: wrapperEnv, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(86);
     } finally {
       rmSync(fixture, { recursive: true, force: true });
       rmSync(outputDir, { recursive: true, force: true });
