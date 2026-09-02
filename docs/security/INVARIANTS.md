@@ -177,6 +177,11 @@ current loop structurally cannot: **how often is the reviewer wrong?**
  "ruling":"adopted","ruled_by":"human:owner","rationale":"…","reproducer_verified":true}
 ```
 
+For every `CONFIRMED` `red_test` finding from `WRDF-0138` onward, `red_test_sha` is the structured
+commit coordinate where the named fixture was present and RED. In a full clone the ledger gate
+requires that commit to exist, follow the reviewed head, precede the remediation, remain reachable
+from HEAD, and contain `red_test_file` / `red_test_name`; prose commit claims are not provenance.
+
 **Log every finding — disputed and scoped-out ones included.** Four Codex rounds on Phase 1A produced
 1 Critical / 4 Important / 6 Minor at **100% adopted**; that is a survivorship artifact of what gets
 committed, not a 0% false-positive rate, and a scorecard that only records adopted findings would
