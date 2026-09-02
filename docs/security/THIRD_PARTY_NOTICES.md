@@ -9,8 +9,7 @@ document.
 
 ```sh
 cargo deny list                     # Rust — license -> crate@version, from Cargo.lock
-pnpm licenses list --json           # TypeScript — package -> license, from pnpm-lock.yaml
-sha256sum pnpm-lock.yaml             # bind TypeScript evidence to the exact lockfile bytes
+node scripts/update-pnpm-license-evidence.mjs # TypeScript report + exact lockfile binding
 ```
 
 **This file is a hand-written summary, not the raw output.** The raw Rust output
@@ -23,8 +22,8 @@ lockfile binding) — small text files, not gitignored, so a clone of this repo
 carries the actual evidence, not just a pointer to a report that lives
 outside git (`.superpowers/` is gitignored per `CLAUDE.md`; the Task 11 fix
 report there has the same output too, but it is not the durable copy).
-Regenerate the raw evidence and matching hash (the commands above, redirected
-to those paths) on any dependency change; this summary table can go stale
+Regenerate the raw evidence and matching hash with the command above on any
+dependency change; this summary table can go stale
 independently of them, so treat the files under `docs/security/third-party/`
 as the source of truth and this table as a convenience index into them.
 
@@ -67,6 +66,11 @@ license-scanner file cannot check.
 Overwhelmingly MIT/Apache-2.0/BSD/ISC, consistent with the Rust side. Two
 entries need a human note, both transitive (neither authored by, nor a
 direct dependency of, this repo):
+
+The root's exact `yaml@2.8.1` development dependency is ISC licensed. Its
+parser is bundled into `scripts/vendor/yaml-parser.mjs` so the action-pin audit
+can run before package installation; the bundle entry and reproducible build
+command live beside it.
 
 | Package | License | Where it comes from | Note |
 | --- | --- | --- | --- |

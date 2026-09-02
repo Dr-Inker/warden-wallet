@@ -115,15 +115,15 @@ test("WRDF-0130 audits semantic uses keys and recursively follows local composit
   }
 });
 
-test("action audit rejects complex YAML keys outside its constrained grammar", async () => {
+test("action audit measures complex YAML spellings with semantic key values", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "warden-actions-complex-key-"));
   try {
     const workflows = path.join(root, ".github", "workflows");
     await mkdir(workflows, { recursive: true });
-    for (const step of [
-      ["      - ? uses", "        : owner/explicit-key@main"],
-      ["      - &hidden uses: owner/anchored@main"],
-      ["      - { &hidden uses: owner/flow-anchor@main }"],
+    for (const [step, expected] of [
+      [["      - ? uses", "        : owner/explicit-key@main"], "owner/explicit-key@main"],
+      [["      - &hidden uses: owner/anchored@main"], "owner/anchored@main"],
+      [["      - { &hidden uses: owner/flow-anchor@main }"], "owner/flow-anchor@main"],
     ]) {
       await writeFile(path.join(workflows, "fixture.yml"), [
         "jobs:",
@@ -134,9 +134,10 @@ test("action audit rejects complex YAML keys outside its constrained grammar", a
         "",
       ].join("\n"));
 
-      await assert.rejects(
-        auditGitHubActionReferences(root, workflows),
-        /complex or tagged YAML mapping keys are not permitted/,
+      const { mutableReferences } = await auditGitHubActionReferences(root, workflows);
+      assert.deepEqual(
+        mutableReferences.map((entry) => entry.replace(/^.*?:\d+: /, "")),
+        [expected],
       );
     }
   } finally {
@@ -148,12 +149,18 @@ test("WRDF-0132 reaches the action audit in a clean checkout without node_module
   const root = await mkdtemp(path.join(tmpdir(), "warden-actions-clean-checkout-"));
   try {
     const scripts = path.join(root, "scripts");
+    const vendor = path.join(scripts, "vendor");
     const workflows = path.join(root, ".github", "workflows");
     await mkdir(scripts, { recursive: true });
+    await mkdir(vendor, { recursive: true });
     await mkdir(workflows, { recursive: true });
     await copyFile(
       path.resolve("scripts/github-actions-pins.mjs"),
       path.join(scripts, "github-actions-pins.mjs"),
+    );
+    await copyFile(
+      path.resolve("scripts/vendor/yaml-parser.mjs"),
+      path.join(vendor, "yaml-parser.mjs"),
     );
     await writeFile(path.join(workflows, "fixture.yml"), [
       "jobs:",

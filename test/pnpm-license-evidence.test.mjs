@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
+import path from "node:path";
 import { promisify } from "node:util";
 
 import { assertPnpmLicenseEvidenceMatches } from "../scripts/pnpm-license-evidence.mjs";
@@ -51,6 +53,21 @@ test("WRDF-0135 covers every declared direct package in committed license eviden
   const evidence = JSON.parse(
     await readFile("docs/security/third-party/pnpm-licenses.json", "utf8"),
   );
+  const { stdout: freshLicenseOutput } = await execFile(
+    "pnpm",
+    ["licenses", "list", "--json"],
+    {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      env: {
+        ...process.env,
+        COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
+        LANG: "C",
+        LC_ALL: "C",
+      },
+    },
+  );
+  assertPnpmLicenseEvidenceMatches(evidence, JSON.parse(freshLicenseOutput));
   const evidenced = new Set(
     Object.values(evidence).flat().map((entry) => entry.name),
   );
@@ -71,4 +88,39 @@ test("WRDF-0137 rejects license evidence whose versions differ from a fresh norm
     () => assertPnpmLicenseEvidenceMatches(stale, fresh),
     /name, version, and license inventory does not match/,
   );
+});
+
+test("vendored YAML parser exactly reproduces from pinned source and bundler", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "warden-yaml-bundle-"));
+  try {
+    const output = path.join(directory, "yaml-parser.mjs");
+    await execFile("pnpm", [
+      "exec",
+      "esbuild",
+      "scripts/vendor/yaml-parser.entry.mjs",
+      "--bundle",
+      "--platform=node",
+      "--format=esm",
+      "--target=node22",
+      "--minify",
+      "--legal-comments=eof",
+      '--banner:js=import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
+      `--outfile=${output}`,
+    ], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
+        LANG: "C",
+        LC_ALL: "C",
+      },
+    });
+    assert.deepEqual(
+      await readFile(output),
+      await readFile("scripts/vendor/yaml-parser.mjs"),
+      "vendored YAML parser differs from its pinned source build",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

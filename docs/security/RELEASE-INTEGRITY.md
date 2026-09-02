@@ -15,10 +15,11 @@ node --test test/github-actions-pins.test.mjs
 It recursively scans every workflow and locally referenced composite, reusable,
 or Docker action, fails if no workflow or no external action was measured, and
 rejects mutable Git refs, expressions, abbreviated or uppercase pseudo-SHAs,
-and Docker actions without a SHA-256 digest. Its dependency-free, constrained
-YAML scanner runs before package installation; unsupported complex/tagged key
-forms fail closed, while quoted/escaped and flow-style `uses` mappings remain
-covered. It runs as the blocking workflow's first post-checkout command and at the start of
+and Docker actions without a SHA-256 digest. Its self-contained, vendored
+`yaml@2.8.1` parser bundle runs before package installation and resolves the
+same YAML mappings, flow collections, anchors, and aliases that Actions reads.
+The bundle's source package remains exactly pinned in the root manifest and
+lockfile. It runs as the blocking workflow's first post-checkout command and at the start of
 `.claude/test-gate.sh`. The exact action/ref/commit map and upstream resolution
 method are recorded in `docs/TOOLCHAIN.md`.
 
