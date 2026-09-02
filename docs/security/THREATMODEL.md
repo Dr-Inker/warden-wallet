@@ -3333,6 +3333,21 @@ measured — the browser lane drives the real handshake between a `document_star
 isolated content script and a main-world page script — but bfcache, prerender,
 and same-document navigation behaviour of the transferred port are not.
 
+**2026-09-02 Codex correction (WRDF-0121).** The suppression-only claim above
+is not established by the implemented handshake. `ProviderPageRequestOwner`
+accepts the first same-window, same-origin capability envelope carrying one
+structurally valid transferred port; it does not prove that
+`ProviderContentTransportOwner` created that port. A same-document script whose
+forged grant is accepted first therefore owns the channel on which terminal
+envelopes are trusted and can settle, rather than merely suppress, the pending
+promise. This is a static-trace finding on an unshipped path. The finding is
+adopted, but remediation is blocked on owner decision O8: the production MAIN-world
+`document_start` bootstrap and the extension-owned state to which the grant
+would be bound do not exist yet, and this handover forbids Codex from choosing
+that architecture. WRD-EXT-05 is consequently `llm-asserted`; the existing
+tests prove separation from ordinary window terminal messages, not provenance
+of an arbitrary first transferred port.
+
 ### X-2 — per-origin approval-path capacity
 
 **What was wrong.** Four flat global counters — 16 approval windows, 32
