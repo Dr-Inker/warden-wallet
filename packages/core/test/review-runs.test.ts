@@ -227,6 +227,40 @@ describe("recorded reviewer evidence completeness", () => {
       rmSync(outputDir, { recursive: true, force: true });
     }
   });
+
+  it("WRDF-0155 accepts an integration-owned finding id for a historical Grok review", () => {
+    const outputDir = mkdtempSync(join(tmpdir(), "warden-grok-historical-id-"));
+    const findingsPath = join(outputDir, "findings.json");
+    const integrationFindingId = "WRDF-9000";
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          REVIEW_GROK,
+          "HEAD^",
+          "HEAD",
+          "--dry-run",
+          "--max-chars",
+          "1000000",
+          "--finding-id-start",
+          integrationFindingId,
+          "--out",
+          findingsPath,
+        ],
+        { cwd: REPO, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+
+      const expectations = JSON.parse(
+        readFileSync(findingsPath.replace(/\.json$/, ".expect.json"), "utf8"),
+      ) as { finding_id_start?: string };
+      const prompt = readFileSync(findingsPath.replace(/\.json$/, ".prompt.txt"), "utf8");
+      expect(expectations.finding_id_start).toBe(integrationFindingId);
+      expect(prompt).toContain(`beginning at ${integrationFindingId}`);
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("buildScorecardLines reproducer persistence (WRDF-0015)", () => {
