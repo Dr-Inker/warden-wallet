@@ -520,7 +520,7 @@ describe("recorded reviewer evidence completeness", () => {
   it("WRDF-0160 pins raw-object semantics inside the Codex tool shell", () => {
     const fixture = mkdtempSync(join(tmpdir(), "warden-codex-shell-policy-"));
     const outputDir = mkdtempSync(join(tmpdir(), "warden-codex-shell-output-"));
-    const fakeBin = join(fixture, "fake-bin");
+    const fakeBin = join(outputDir, "fake-bin");
     const findingsPath = join(outputDir, "findings.json");
     const gitEnv = {
       PATH: "/usr/bin:/bin",
