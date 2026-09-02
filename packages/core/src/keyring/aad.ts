@@ -114,6 +114,26 @@ export interface KeyringContext {
 const TEXT_ENCODER = /* @__PURE__ */ new TextEncoder();
 const TEXT_DECODER = /* @__PURE__ */ new TextDecoder("utf-8", { fatal: true });
 
+/**
+ * JavaScript strings are UTF-16 code-unit sequences, so the type also admits
+ * lone surrogates that are not Unicode scalar values. `TextEncoder` replaces
+ * every such code unit with U+FFFD; accepting one would make distinct origin
+ * strings encode to identical AAD. Validate before that lossy conversion.
+ */
+function isWellFormedUnicode(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const unit = value.charCodeAt(i);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      i++;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function u16be(n: number, name: string): [number, number] {
   if (!Number.isInteger(n) || n < 0 || n > 0xffff) {
     throw new KeyringFormatError(`${name} must be a u16 (0..65535), got ${n}`);
@@ -228,6 +248,9 @@ export function assertValidKeyringContext(context: KeyringContext): void {
   }
   if (typeof context.origin !== "string" || context.origin.length === 0) {
     throw new KeyringFormatError("origin must be a non-empty string");
+  }
+  if (!isWellFormedUnicode(context.origin)) {
+    throw new KeyringFormatError("origin must contain only well-formed Unicode scalar values");
   }
   // Control characters would never appear in a real extension origin and are a
   // classic confusable/log-injection vector, so refuse them rather than bind them.

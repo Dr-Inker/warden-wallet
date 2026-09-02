@@ -56,14 +56,14 @@
 #   Consequence: the prompt is the ENTIRE evidence base of the round. It is therefore saved next to
 #   the artefact as <round>.prompt.txt so a recorded round is reproducible.
 #
-# SIZE BUDGET AND TRUNCATION — NEVER SILENT
+# SIZE BUDGET AND COMPLETENESS — ELISION ABORTS THE ROUND
 #   Embedding all of that can exceed any context. Sections are budgeted (see ASSEMBLER below) and
 #   anything over budget is truncated MIDDLE-OUT — head and tail both carry signal (a diff's first
 #   hunks and its last hunks are equally load-bearing; a Rust file's imports and its test module
-#   are at opposite ends). Every elision is announced three times: inline at the cut, in a CONTEXT
-#   COMPLETENESS NOTICE at the TOP of the prompt so the MODEL knows its evidence is partial, and on
-#   this script's stderr naming the section and the exact byte counts. A review of a silently
-#   shortened diff is a false green; that is the one failure mode this section exists to prevent.
+#   are at opposite ends). The assembler still reports every would-be elision with exact byte
+#   counts, but the wrapper then aborts before the API call and before either ledger append. The
+#   canonical schema deliberately has no publishable "insufficient context" verdict, so a partial
+#   evidence base cannot produce a recordable assurance round. Raise --max-chars and rerun.
 #
 # API-SIDE SHAPING vs THE GATE
 #   The request sets response_format={"type":"json_object"} and inlines the canonical schema in the
@@ -516,6 +516,13 @@ console.error(
     Object.entries(alloc).map(([k, v]) => `${k}=${v}`).join(" ") +
     `) — ${warnings.length} elision(s)`,
 );
+if (warnings.length) {
+  console.error(
+    "error: refusing a recordable review with elided mandatory evidence; " +
+      "raise --max-chars until the assembler reports zero elisions",
+  );
+  process.exit(2);
+}
 ASM
 
 ASM_OUT="$PROMPT_FILE" ASM_WARN="$TMPD/warnings.json" ASM_HEADER="$TMPD/header.txt" \
