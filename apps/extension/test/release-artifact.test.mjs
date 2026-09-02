@@ -271,6 +271,32 @@ describe("reviewed artifact manifest and fail-closed verifier", () => {
     })).toThrow(/permissions/);
   });
 
+  it("WRDF-0131 rejects manifest capabilities outside the exact reviewed policy", () => {
+    for (const [field, value] of [
+      ["host_permissions", ["https://example.invalid/*"]],
+      ["optional_permissions", ["tabs"]],
+      ["optional_host_permissions", ["https://example.invalid/*"]],
+      ["externally_connectable", { matches: ["https://example.invalid/*"] }],
+      ["web_accessible_resources", [{ resources: ["background.js"], matches: ["<all_urls>"] }]],
+    ]) {
+      const entries = replaceManifest(payloadEntries(), (manifest) => {
+        manifest[field] = value;
+      });
+      const archiveBytes = createCanonicalZip(entries);
+      expect(() => createArtifactManifest({
+        entries,
+        archiveBytes,
+        artifactFileName: "warden-extension-1.2.3.zip",
+        source: RELEASE_SOURCE,
+        toolchain: RELEASE_TOOLCHAIN,
+        dependencyEvidence: DEPENDENCY_EVIDENCE,
+        bundleInputEvidence: BUNDLE_INPUT_EVIDENCE,
+        staticInputEvidence: STATIC_INPUT_EVIDENCE,
+        releaseRecipeInputEvidence: RELEASE_RECIPE_INPUT_EVIDENCE,
+      }), field).toThrow(/manifest|capability|policy/);
+    }
+  });
+
   it("rejects a recomputed canonical ZIP after CSP is relaxed", () => {
     const entries = payloadEntries();
     const { artifactManifest } = baselineArtifact(entries);

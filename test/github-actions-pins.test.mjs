@@ -1,46 +1,16 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
 import path from "node:path";
 
+import {
+  auditGitHubActionReferences,
+  isImmutableExternalReference,
+  parseUsesValue,
+} from "../scripts/github-actions-pins.mjs";
+
 const WORKFLOWS_DIR = path.resolve(".github/workflows");
-const IMMUTABLE_ACTION = /^[^/@\s]+\/[^/@\s]+(?:\/[^@\s]+)*@[0-9a-f]{40}$/;
-const IMMUTABLE_DOCKER_ACTION = /^docker:\/\/[^\s@]+@sha256:[0-9a-f]{64}$/;
-
-async function workflowFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = [];
-
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    const candidate = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...await workflowFiles(candidate));
-    } else if (entry.isFile() && /\.ya?ml$/i.test(entry.name)) {
-      files.push(candidate);
-    }
-  }
-
-  return files;
-}
-
-function parseUsesValue(line) {
-  const match = line.match(/^\s*(?:-\s*)?uses:\s*(.*?)\s*(?:#.*)?$/);
-  if (!match) return null;
-
-  const value = match[1];
-  if (
-    value.length >= 2
-    && ((value.startsWith("\"") && value.endsWith("\""))
-      || (value.startsWith("'") && value.endsWith("'")))
-  ) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
-function isImmutableExternalReference(value) {
-  return IMMUTABLE_ACTION.test(value) || IMMUTABLE_DOCKER_ACTION.test(value);
-}
 
 test("pin grammar distinguishes immutable and mutable action references", () => {
   const commit = "0123456789abcdef0123456789abcdef01234567";
@@ -71,7 +41,8 @@ test("pin grammar distinguishes immutable and mutable action references", () => 
 });
 
 test("every external GitHub Actions reference is immutable", async () => {
-  const files = await workflowFiles(WORKFLOWS_DIR);
+  const { files, externalReferences, mutableReferences } =
+    await auditGitHubActionReferences(process.cwd(), WORKFLOWS_DIR);
   assert.ok(files.length > 0, "no GitHub Actions workflow files were found");
 
   // The walk above is a recursive glob, so a new workflow is audited without
@@ -87,28 +58,46 @@ test("every external GitHub Actions reference is immutable", async () => {
     );
   }
 
-  const externalReferences = [];
-  const mutableReferences = [];
-
-  for (const file of files) {
-    const relativeFile = path.relative(process.cwd(), file);
-    const lines = (await readFile(file, "utf8")).split(/\r?\n/);
-
-    for (const [index, line] of lines.entries()) {
-      const value = parseUsesValue(line);
-      if (value === null || value.startsWith("./")) continue;
-
-      externalReferences.push(value);
-      if (!isImmutableExternalReference(value)) {
-        mutableReferences.push(`${relativeFile}:${index + 1}: ${value}`);
-      }
-    }
-  }
-
   assert.ok(externalReferences.length > 0, "audit found no external action references");
   assert.deepEqual(
     mutableReferences,
     [],
     `external actions must use a full 40-character commit SHA (or Docker sha256 digest):\n${mutableReferences.join("\n")}`,
   );
+});
+
+test("WRDF-0130 audits semantic uses keys and recursively follows local composite actions", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "warden-actions-audit-"));
+  try {
+    const workflows = path.join(root, ".github", "workflows");
+    const localAction = path.join(root, ".github", "actions", "local");
+    await mkdir(workflows, { recursive: true });
+    await mkdir(localAction, { recursive: true });
+    await writeFile(path.join(workflows, "fixture.yml"), [
+      "jobs:",
+      "  quoted:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - \"uses\": owner/quoted@v1",
+      "      - { uses: owner/flow@main }",
+      "      - uses: ./.github/actions/local",
+      "",
+    ].join("\n"));
+    await writeFile(path.join(localAction, "action.yml"), [
+      "name: local",
+      "runs:",
+      "  using: composite",
+      "  steps:",
+      "    - uses: owner/nested@v2",
+      "",
+    ].join("\n"));
+
+    const { mutableReferences } = await auditGitHubActionReferences(root, workflows);
+    assert.deepEqual(
+      mutableReferences.map((entry) => entry.replace(/^.*?:\d+: /, "")).sort(),
+      ["owner/flow@main", "owner/nested@v2", "owner/quoted@v1"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

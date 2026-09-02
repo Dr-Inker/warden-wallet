@@ -663,6 +663,33 @@ describe("release source annotated-tag verification", () => {
     });
   });
 
+  it("WRDF-0129 reads the selected tag object with replacement processing disabled", async () => {
+    await git(["update-ref", "-d", "refs/tags/release-fixture", fixture.releaseTagObject]);
+    const replacementObject = await signedTag(
+      "release-fixture",
+      releaseTagMessage(sha256(fixture.reviewedArtifact.artifactManifestBytes)),
+      fixture.environment,
+      fixture.siblingSigningFingerprint,
+      fixture.firstCommit,
+    );
+    await git([
+      "update-ref",
+      "refs/tags/release-fixture",
+      fixture.releaseTagObject,
+      replacementObject,
+    ]);
+    await git(["replace", fixture.releaseTagObject, replacementObject]);
+
+    let result;
+    try {
+      result = await verify();
+    } finally {
+      await git(["replace", "-d", fixture.releaseTagObject]);
+    }
+    expect(result.tagObject).toBe(fixture.releaseTagObject);
+    expect(result.signingFingerprint).toBe(fixture.signingFingerprint);
+  });
+
   it("rejects a separately valid dual report for a different source commit", async () => {
     const artifact = releaseArtifact(fixture.firstCommit);
     const dualReleaseReportBytes = localDualReportBytes(fixture.secondCommit);

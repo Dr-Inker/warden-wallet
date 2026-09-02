@@ -189,4 +189,25 @@ describe("release producer git child processes", () => {
       expect(text).not.toMatch(/\bspawn\w*\s*\(\s*"git"/);
     }
   });
+
+  it("WRDF-0128 rejects a tracked source change hidden by an index flag", async () => {
+    const hidden = await createRepository(
+      fixture.root,
+      "index-hidden",
+      "committed release input\n",
+    );
+    await git(["update-index", "--assume-unchanged", "tracked.txt"], hidden.path);
+    await writeFile(join(hidden.path, "tracked.txt"), "uncommitted hidden release input\n");
+    const { stdout: status } = await runReleaseGit(
+      ["status", "--porcelain=v1", "--untracked-files=all"],
+      { cwd: hidden.path },
+    );
+    expect(status).toBe("");
+
+    const releaseGit = await import("../scripts/release-git.mjs");
+    expect(typeof releaseGit.assertReleaseGitSourceTree).toBe("function");
+    await expect(
+      releaseGit.assertReleaseGitSourceTree({ cwd: hidden.path }),
+    ).rejects.toThrow(/index flag|source tree/);
+  });
 });

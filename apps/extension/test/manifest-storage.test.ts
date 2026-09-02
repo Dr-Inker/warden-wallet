@@ -33,6 +33,7 @@ describe("MV3 manifest keeps explicit, permission-minimal reachability boundarie
     ]);
     for (const forbidden of [
       "host_permissions",
+      "optional_permissions",
       "optional_host_permissions",
       "externally_connectable",
       "web_accessible_resources",
