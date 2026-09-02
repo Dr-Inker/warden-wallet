@@ -351,6 +351,7 @@ const SHA_RE = /^[0-9a-f]{7,40}$/;
 interface GitProbe {
   commitExists(sha: string): boolean;
   isAncestorOrEqual(a: string, b: string): boolean; // a is ancestor of, or equal to, b
+  readFileAtCommit?(sha: string, path: string): string | null;
   head: string;
   shallow: boolean; // a well-formed SHA absent from a FULL clone is a fabricated/mistyped SHA (fail-closed); absent from a shallow clone is unverifiable (skip). (WRDF-0083)
 }
@@ -450,10 +451,12 @@ export function validateScorecardStanding(r: Record<string, unknown>): string[] 
 // historical rows predate this contract and cannot be reconstructed from the
 // gitignored raw review artefacts.
 const RED_TEST_BINDING_START = 125;
+const RED_TEST_SHA_START = 138;
 
 export function validateScorecardRedTestBinding(
   r: Record<string, unknown>,
   readSource: ((path: string) => string | null) | null,
+  git: GitProbe | null = null,
 ): string[] {
   if (r.truth_status !== "CONFIRMED" || r.evidence_type !== "red_test") return [];
 
@@ -478,6 +481,57 @@ export function validateScorecardRedTestBinding(
       errs.push(`${id}: red_test_file ${file} is absent or outside the repository`);
     } else if (!source.includes(JSON.stringify(name))) {
       errs.push(`${id}: red_test_name is absent from ${file}`);
+    }
+  }
+
+  // WRDF-0141: prose saying "At <sha>" is not a provenance field. Newly
+  // promoted findings must name the exact RED fixture commit structurally, and
+  // a full clone must prove that the object exists, follows the reviewed head,
+  // precedes the remediation, and contains the named fixture.
+  if (Number(match[1]) >= RED_TEST_SHA_START) {
+    const red = r.red_test_sha;
+    if (typeof red !== "string" || !SHA_RE.test(red)) {
+      errs.push(`${id}: promoted red-test evidence has no well-formed red_test_sha`);
+    } else if (git) {
+      const redHere = git.commitExists(red);
+      if (!redHere && !git.shallow) {
+        errs.push(`${id}: red_test_sha ${red} is not a commit in this full clone`);
+      }
+      if (redHere) {
+        const reviewedHead = r.head_sha;
+        if (
+          typeof reviewedHead === "string" &&
+          SHA_RE.test(reviewedHead) &&
+          git.commitExists(reviewedHead) &&
+          !git.isAncestorOrEqual(reviewedHead, red)
+        ) {
+          errs.push(`${id}: red_test_sha ${red} does not follow reviewed head ${reviewedHead}`);
+        }
+        const remediation = r.remediation_sha;
+        if (
+          typeof remediation === "string" &&
+          SHA_RE.test(remediation) &&
+          git.commitExists(remediation) &&
+          !git.isAncestorOrEqual(red, remediation)
+        ) {
+          errs.push(`${id}: remediation ${remediation} does not contain red_test_sha ${red}`);
+        }
+        if (!git.isAncestorOrEqual(red, git.head)) {
+          errs.push(`${id}: red_test_sha ${red} is not reachable from reviewed HEAD`);
+        }
+        if (
+          git.readFileAtCommit &&
+          typeof file === "string" &&
+          typeof name === "string"
+        ) {
+          const redSource = git.readFileAtCommit(red, file);
+          if (redSource === null) {
+            errs.push(`${id}: red_test_file ${file} is absent at red_test_sha ${red}`);
+          } else if (!redSource.includes(JSON.stringify(name))) {
+            errs.push(`${id}: red_test_name is absent from ${file} at red_test_sha ${red}`);
+          }
+        }
+      }
     }
   }
   return errs;
@@ -513,6 +567,10 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
         try { execFileSync("git", ["-C", REPO, "merge-base", "--is-ancestor", a, b], { stdio: "pipe" }); return true; }
         catch { return false; }
       },
+      readFileAtCommit: (sha: string, path: string) => {
+        try { return execFileSync("git", ["-C", REPO, "show", `${sha}:${path}`], { stdio: "pipe" }).toString(); }
+        catch { return null; }
+      },
     };
   })();
 
@@ -547,7 +605,7 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
       "node --test test/pnpm-license-evidence.test.mjs",
       "env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension test",
       "env npm_config_cache=/tmp/warden-npm-cache pnpm --filter @warden/extension typecheck",
-      "git diff --check",
+      "git diff --check eafa449052951c7f5644991ea3596c2760203471..67120222c0c4bf63ca0d250ecbe3243f70a5ba1e",
     ];
     for (const id of ["WRDF-0136", "WRDF-0137"]) {
       const row = cardRows.find((candidate) => candidate.finding_id === id);
@@ -558,6 +616,27 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
           `${id} does not record the exact command ${command}`,
         ).toContain(`\`${command}\``);
       }
+    }
+  });
+
+  it("WRDF-0141 rejects nonexistent RED commits in promoted scorecard evidence", () => {
+    const bad = ["WRDF-0138", "WRDF-0140"].flatMap((id) => {
+      const row = cardRows.find((candidate) => candidate.finding_id === id);
+      expect(row, `${id} is absent from the scorecard`).toBeTruthy();
+      return validateScorecardRedTestBinding(row!, null, probe);
+    });
+    expect(bad, bad.join("\n")).toEqual([]);
+  });
+
+  it("WRDF-0142 requires a commit-qualified diff check for the WRDF-0136/0137 green claims", () => {
+    const command =
+      "git diff --check eafa449052951c7f5644991ea3596c2760203471..67120222c0c4bf63ca0d250ecbe3243f70a5ba1e";
+    for (const id of ["WRDF-0136", "WRDF-0137"]) {
+      const row = cardRows.find((candidate) => candidate.finding_id === id);
+      expect(row, `${id} is absent from the scorecard`).toBeTruthy();
+      expect(String(row?.rationale ?? ""), `${id} does not record ${command}`).toContain(
+        `\`${command}\``,
+      );
     }
   });
 
