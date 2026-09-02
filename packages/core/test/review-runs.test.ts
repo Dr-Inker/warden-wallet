@@ -21,6 +21,7 @@ const EXAMPLE = join(REPO, ".codex/schemas/warden-findings.example.json");
 const EXPECT_FILE = join(REPO, ".codex/schemas/warden-findings.example.expect.json");
 const APPENDER = join(REPO, "scripts/append-review-run.mjs");
 const REVIEW_GROK = join(REPO, "scripts/review-grok.sh");
+const REVIEW_CODEX = join(REPO, "scripts/review.sh");
 
 const KINDS = ["task-diff", "docs", "milestone", "whole-feature", "baseline-not-recorded"];
 
@@ -418,6 +419,98 @@ describe("recorded reviewer evidence completeness", () => {
       expect(expectations.head_sha).toBe(originalHead);
       expect(prompt).toContain('export const evidence = "ORIGINAL_HEAD";');
       expect(prompt).not.toContain('export const evidence = "SUBSTITUTED_HEAD";');
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+      rmSync(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  it("WRDF-0159 reads original historical objects in the canonical Codex lane", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "warden-codex-raw-objects-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "warden-codex-raw-output-"));
+    const invariantPath = join(fixture, "docs/security/invariants.jsonl");
+    const findingsPath = join(outputDir, "findings.json");
+    const gitEnv = {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_OPTIONAL_LOCKS: "0",
+    };
+    const git = (args: string[]) => execFileSync(
+      "/usr/bin/git",
+      ["-C", fixture, ...args],
+      { env: gitEnv, stdio: "pipe" },
+    ).toString().trim();
+    const put = (path: string, contents: string) => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, contents);
+    };
+    const invariant = (marker: string) => JSON.stringify({
+      id: "WRD-TEST-01",
+      title: marker,
+      statement: "Review evidence comes from the named original objects.",
+      status: "unimplemented",
+      spec_ref: "test",
+      code_ref: null,
+      prior_art: [],
+      evidence: [],
+    }) + "\n";
+    try {
+      git(["init", "-q"]);
+      git(["config", "user.name", "Warden Test"]);
+      git(["config", "user.email", "warden@example.invalid"]);
+      put(join(fixture, "scripts/review.sh"), readFileSync(REVIEW_CODEX, "utf8"));
+      put(
+        join(fixture, ".codex/schemas/warden-findings.json"),
+        readFileSync(join(REPO, ".codex/schemas/warden-findings.json"), "utf8"),
+      );
+      put(join(fixture, "docs/security/PRIOR-ART-FINDINGS.md"), "# Prior art\n");
+      put(join(fixture, "docs/security/REVIEW-SCORECARD.jsonl"), '{"finding_id":"WRDF-0004"}\n');
+      put(invariantPath, invariant("BASE"));
+      git(["add", "."]);
+      git(["commit", "-q", "-m", "base"]);
+      const baseSha = git(["rev-parse", "HEAD"]);
+
+      put(invariantPath, invariant("ORIGINAL_HEAD"));
+      git(["add", "docs/security/invariants.jsonl"]);
+      git(["commit", "-q", "-m", "original head"]);
+      const originalHead = git(["rev-parse", "HEAD"]);
+
+      put(join(fixture, "integration-marker.txt"), "integration\n");
+      git(["add", "integration-marker.txt"]);
+      git(["commit", "-q", "-m", "integration head"]);
+      const integrationBranch = git(["branch", "--show-current"]);
+
+      git(["checkout", "-q", "-b", "replacement-tree", baseSha]);
+      put(invariantPath, invariant("SUBSTITUTED_HEAD"));
+      git(["add", "docs/security/invariants.jsonl"]);
+      git(["commit", "-q", "-m", "replacement head"]);
+      const replacementHead = git(["rev-parse", "HEAD"]);
+      git(["checkout", "-q", integrationBranch]);
+      git(["replace", originalHead, replacementHead]);
+
+      const wrapperEnv = { ...process.env };
+      delete wrapperEnv.GIT_NO_REPLACE_OBJECTS;
+      const result = spawnSync(
+        "bash",
+        [
+          "scripts/review.sh",
+          baseSha,
+          originalHead,
+          "--historical",
+          "--dry-run",
+          "--finding-id-start",
+          "WRDF-0005",
+          "--out",
+          findingsPath,
+        ],
+        { cwd: fixture, env: wrapperEnv, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain('"title": "ORIGINAL_HEAD"');
+      expect(result.stdout).not.toContain('"title": "SUBSTITUTED_HEAD"');
     } finally {
       rmSync(fixture, { recursive: true, force: true });
       rmSync(outputDir, { recursive: true, force: true });
