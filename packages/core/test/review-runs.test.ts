@@ -350,6 +350,7 @@ const SHA_RE = /^[0-9a-f]{7,40}$/;
 // staying fail-closed in a full clone. null = skip git-dependent checks.
 interface GitProbe {
   commitExists(sha: string): boolean;
+  resolveCommit(sha: string): string | null;
   isAncestorOrEqual(a: string, b: string): boolean; // a is ancestor of, or equal to, b
   readFileAtCommit?(sha: string, path: string): string | null;
   head: string;
@@ -388,6 +389,7 @@ function buildGitProbe(repo: string): GitProbe | null {
   return {
     head,
     shallow,
+    resolveCommit: (sha: string) => git(["rev-parse", "--verify", `${sha}^{commit}`]),
     commitExists: (sha: string) => {
       try { runReviewGit(repo, ["cat-file", "-e", `${sha}^{commit}`]); return true; }
       catch { return false; }
@@ -540,19 +542,20 @@ export function validateScorecardRedTestBinding(
     if (typeof red !== "string" || !SHA_RE.test(red)) {
       errs.push(`${id}: promoted red-test evidence has no well-formed red_test_sha`);
     } else if (git) {
-      const redHere = git.commitExists(red);
+      const redOid = git.resolveCommit(red);
+      const redHere = redOid !== null;
       if (!redHere && !git.shallow) {
         errs.push(`${id}: red_test_sha ${red} is not a commit in this full clone`);
       }
-      if (redHere) {
+      if (redOid) {
         const reviewedHead = r.head_sha;
         if (typeof reviewedHead !== "string" || !SHA_RE.test(reviewedHead)) {
           errs.push(`${id}: head_sha is malformed or absent for promoted RED evidence`);
         } else {
-          const reviewedHeadHere = git.commitExists(reviewedHead);
-          if (!reviewedHeadHere && !git.shallow) {
+          const reviewedHeadOid = git.resolveCommit(reviewedHead);
+          if (!reviewedHeadOid && !git.shallow) {
             errs.push(`${id}: head_sha ${reviewedHead} is not a commit in this full clone`);
-          } else if (reviewedHeadHere && !git.isAncestorOrEqual(reviewedHead, red)) {
+          } else if (reviewedHeadOid && !git.isAncestorOrEqual(reviewedHeadOid, redOid)) {
             errs.push(`${id}: red_test_sha ${red} does not follow reviewed head ${reviewedHead}`);
           }
         }
@@ -561,18 +564,18 @@ export function validateScorecardRedTestBinding(
           if (typeof remediation !== "string" || !SHA_RE.test(remediation)) {
             errs.push(`${id}: remediation_sha is malformed for promoted RED evidence`);
           } else {
-            const remediationHere = git.commitExists(remediation);
-            if (!remediationHere && !git.shallow) {
+            const remediationOid = git.resolveCommit(remediation);
+            if (!remediationOid && !git.shallow) {
               errs.push(`${id}: remediation_sha ${remediation} is not a commit in this full clone`);
             } else if (
-              remediationHere &&
-              (remediation === red || !git.isAncestorOrEqual(red, remediation))
+              remediationOid &&
+              (remediationOid === redOid || !git.isAncestorOrEqual(redOid, remediationOid))
             ) {
               errs.push(`${id}: remediation ${remediation} must be a strict descendant of red_test_sha ${red}`);
             }
           }
         }
-        if (!git.isAncestorOrEqual(red, git.head)) {
+        if (!git.isAncestorOrEqual(redOid, git.head)) {
           errs.push(`${id}: red_test_sha ${red} is not reachable from reviewed HEAD`);
         }
         if (
@@ -698,12 +701,16 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
     }
   });
 
-  const stub = (opts: { exists?: (s: string) => boolean; anc?: (a: string, b: string) => boolean; head?: string; shallow?: boolean }): GitProbe => ({
-    head: opts.head ?? "h".repeat(40),
-    commitExists: opts.exists ?? (() => true),
-    isAncestorOrEqual: opts.anc ?? (() => true),
-    shallow: opts.shallow ?? false,
-  });
+  const stub = (opts: { exists?: (s: string) => boolean; anc?: (a: string, b: string) => boolean; head?: string; shallow?: boolean }): GitProbe => {
+    const exists = opts.exists ?? (() => true);
+    return {
+      head: opts.head ?? "h".repeat(40),
+      commitExists: exists,
+      resolveCommit: (sha) => exists(sha) ? sha : null,
+      isAncestorOrEqual: opts.anc ?? (() => true),
+      shallow: opts.shallow ?? false,
+    };
+  };
   const fixS = "a".repeat(40), gateS = "b".repeat(40);
   const row = (over: Record<string, unknown>) => ({ finding_id: "WRDF-TEST", remediation_verified: true, remediation_sha: fixS, remediation_gate_sha: gateS, remediation_gate_cmd: "cmd", ...over });
 
@@ -825,6 +832,7 @@ describe("scorecard red-test fixture binding (WRDF-0126)", () => {
       head: "c".repeat(40),
       shallow: false,
       commitExists: (sha) => sha !== reviewedHead,
+      resolveCommit: (sha) => sha === reviewedHead ? null : sha,
       isAncestorOrEqual: () => true,
       readFileAtCommit: () => `it(${JSON.stringify(name)}, () => {});`,
     };
@@ -854,6 +862,7 @@ describe("scorecard red-test fixture binding (WRDF-0126)", () => {
       head: "c".repeat(40),
       shallow: false,
       commitExists: () => true,
+      resolveCommit: (sha) => sha === red.slice(0, 12) ? red : sha,
       isAncestorOrEqual: () => true,
       readFileAtCommit: () => `it(${JSON.stringify(name)}, () => {});`,
     };
