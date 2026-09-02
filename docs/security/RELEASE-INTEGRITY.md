@@ -44,13 +44,14 @@ zero-byte counts, and each output's byte length and hash. The static sidecar
 records source/output byte lengths and hashes for `approval.css`,
 `approval.html`, `manifest.json`, and `popup.html`, distinguishing three exact
 byte copies from the manifest's JSON parse/two-space/newline serialization. The
-recipe sidecar records exact byte lengths and SHA-256 hashes for the 25 reviewed
+recipe sidecar records exact byte lengths and SHA-256 hashes for the 26 reviewed
 non-payload files that declare the install/release path: `.node-version`,
 `.npmrc`, both root/workspace pnpm configuration files, root/extension/core
 package manifests, the upload package/verification modules, the CRX3
 store-package comparison modules, the signed release-source verifier, and the
-reviewed-artifact detached-signature verifier plus their CLIs, and the one
-shared public-release-CLI argument normalizer. The verifier
+reviewed-artifact detached-signature verifier plus their CLIs, the one
+shared public-release-CLI argument normalizer, and the shared pinned-git
+runner. The verifier
 independently asks `unzip -t` to parse a private temporary copy of the same
 stable-read archive bytes. It opens and verifies a same-inode `O_RDONLY` handle
 after syncing the exclusive **0600** construction writer, closes the writer,
@@ -90,6 +91,28 @@ binding, dependency graph shape, JavaScript bundle/input shape, static
 source/output mapping, recipe input path/byte/hash drift against the current
 checkout, or canonical JSON drift. Generated outputs are ignored;
 this document does not pretend an ordinary development build is a release row.
+
+The producer's own `git` children — the clean-tree gate and the `rev-parse HEAD`
+whose output becomes `source.gitCommit`, the single value binding the OpenPGP-
+signed release tag to the built bytes — no longer run from the inherited PATH
+and environment. Every producer git call goes through one shared helper,
+`apps/extension/scripts/release-git.mjs`, which spawns the absolute
+`/usr/bin/git` with a child environment built from an allow-list rather than
+from `process.env`: `PATH=/usr/bin:/bin`, `LANG=C`, `LC_ALL=C`,
+`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
+`GIT_OPTIONAL_LOCKS=0` — plus the call's own `cwd`, a 10-minute timeout, and
+`killSignal: "SIGKILL"`. An inherited `GIT_DIR`, `GIT_WORK_TREE`,
+`GIT_INDEX_FILE`, `GIT_CEILING_DIRECTORIES`, or `GIT_OBJECT_DIRECTORY`
+therefore cannot make a different repository answer the clean-tree gate or
+supply the recorded commit, and a `git` executable placed earlier on the
+inherited PATH is never selected — which matters because `pnpm run` prepends
+`node_modules/.bin`, so a compromised dependency shipping a `git` bin would
+otherwise shadow the real one for the producer. The signed-source verifier's git
+environment and the same-host dual-checkout rehearsal's git calls are now
+defined by that same helper, so producer and verifier cannot drift apart. This
+is environment pinning, not host attestation: it does not defend against a
+replaced `/usr/bin/git`, a malicious same-UID process, or root, and the timeout
+bounds the direct child rather than escaped descendants.
 
 The dependency evidence scope deliberately retains
 `bundleCoverage: "not-asserted"`: pnpm's installed production closure is broader

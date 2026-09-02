@@ -10,9 +10,13 @@ import {
   parseArtifactManifest,
   verifyArtifactArchive,
 } from "./release-artifact.mjs";
+import {
+  RELEASE_GIT_EXECUTABLE,
+  releaseGitEnvironment,
+} from "./release-git.mjs";
 import { verifyStorePackage } from "./store-package.mjs";
 
-const GIT_EXECUTABLE = "/usr/bin/git";
+const GIT_EXECUTABLE = RELEASE_GIT_EXECUTABLE;
 const GPG_LAUNCHER_PREFIX = "warden-release-source-gpg-launcher-";
 export const RELEASE_TAG_MESSAGE_SCHEMA = "warden.extension-release-tag.v1";
 const OPENPGP_SIGNATURE_BEGIN = "-----BEGIN PGP SIGNATURE-----\n";
@@ -673,14 +677,7 @@ function executeGit(arguments_, { repositoryRoot, environment, allowFailure = fa
 }
 
 function verificationEnvironment(gnupgHome) {
-  const sanitized = {
-    PATH: "/usr/bin:/bin",
-    LANG: "C",
-    LC_ALL: "C",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_OPTIONAL_LOCKS: "0",
-  };
+  const sanitized = releaseGitEnvironment();
   sanitized.GNUPGHOME = gnupgHome;
   return sanitized;
 }

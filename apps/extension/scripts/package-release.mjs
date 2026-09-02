@@ -40,6 +40,7 @@ import {
   verifyArtifactArchive,
   verifyCanonicalUnpacked,
 } from "./release-artifact.mjs";
+import { runReleaseGit } from "./release-git.mjs";
 import {
   RELEASE_RECIPE_INPUT_PATHS,
   createReleaseRecipeInputEvidence,
@@ -98,6 +99,17 @@ async function run(command, args, cwd = repositoryRoot) {
   }
 }
 
+async function runGit(args, cwd = repositoryRoot) {
+  try {
+    return await runReleaseGit(args, { cwd });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const stdout = typeof error?.stdout === "string" ? error.stdout.trim() : "";
+    const stderr = typeof error?.stderr === "string" ? error.stderr.trim() : "";
+    fail(`git ${args.join(" ")} failed: ${[detail, stdout, stderr].filter(Boolean).join(" | ")}`);
+  }
+}
+
 async function assertReleaseEnvironment() {
   const rootPackage = await readJson(join(repositoryRoot, "package.json"), "root package.json");
   const extensionPackage = await readJson(join(appDirectory, "package.json"), "extension package.json");
@@ -128,21 +140,21 @@ async function assertReleaseEnvironment() {
     fail(`esbuild mismatch: expected ${expectedEsbuild}, got ${esbuildVersion}`);
   }
 
-  const { stdout: gitRootOutput } = await run("git", ["rev-parse", "--show-toplevel"]);
+  const { stdout: gitRootOutput } = await runGit(["rev-parse", "--show-toplevel"]);
   const gitRoot = await realpath(gitRootOutput.trim());
   if (gitRoot !== await realpath(repositoryRoot)) {
     fail(`unexpected git root: ${gitRoot}`);
   }
-  const { stdout: statusOutput } = await run("git", ["status", "--porcelain=v1", "--untracked-files=all"]);
+  const { stdout: statusOutput } = await runGit(["status", "--porcelain=v1", "--untracked-files=all"]);
   if (statusOutput !== "") {
     fail(`release packaging requires a clean source tree:\n${statusOutput.trimEnd()}`);
   }
-  const { stdout: gitCommitOutput } = await run("git", ["rev-parse", "HEAD"]);
+  const { stdout: gitCommitOutput } = await runGit(["rev-parse", "HEAD"]);
   const gitCommit = gitCommitOutput.trim();
   if (!/^[0-9a-f]{40}$/.test(gitCommit)) {
     fail(`git did not return a full commit SHA: ${gitCommit}`);
   }
-  await run("git", ["check-ignore", "--quiet", "--no-index", "apps/extension/release/probe"]);
+  await runGit(["check-ignore", "--quiet", "--no-index", "apps/extension/release/probe"]);
 
   const lockfileBytes = await readFile(join(repositoryRoot, "pnpm-lock.yaml"));
   return {
@@ -243,7 +255,7 @@ async function main() {
   if (!Array.isArray(buildOutput?.bundleResults) || !Array.isArray(buildOutput?.staticResults)) {
     fail("extension build did not return bundle metafiles and static transformations");
   }
-  const { stdout: postBuildStatus } = await run("git", ["status", "--porcelain=v1", "--untracked-files=all"]);
+  const { stdout: postBuildStatus } = await runGit(["status", "--porcelain=v1", "--untracked-files=all"]);
   if (postBuildStatus !== "") {
     fail(`build changed the source tree:\n${postBuildStatus.trimEnd()}`);
   }
@@ -294,7 +306,7 @@ async function main() {
       rootDirectory: appDirectory,
       repositoryRoot,
     });
-  const { stdout: postInventoryStatus } = await run("git", [
+  const { stdout: postInventoryStatus } = await runGit([
     "status",
     "--porcelain=v1",
     "--untracked-files=all",

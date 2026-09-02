@@ -18,6 +18,8 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { runReleaseGit } from "../apps/extension/scripts/release-git.mjs";
+
 export const LOCAL_DUAL_RELEASE_SCHEMA =
   "warden.extension-local-dual-release-rehearsal.v1";
 
@@ -307,6 +309,16 @@ async function run(command, args, cwd = repositoryRoot) {
   }
 }
 
+async function runGit(args, cwd = repositoryRoot) {
+  try {
+    return await runReleaseGit(args, { cwd, maxBuffer: 32 * 1024 * 1024 });
+  } catch (error) {
+    const stdout = typeof error?.stdout === "string" ? error.stdout.trim() : "";
+    const stderr = typeof error?.stderr === "string" ? error.stderr.trim() : "";
+    fail(`git ${args.join(" ")} failed: ${[error?.message, stdout, stderr].filter(Boolean).join(" | ")}`);
+  }
+}
+
 async function assertRegularFile(path, label) {
   const stat = await lstat(path);
   if (!stat.isFile() || stat.isSymbolicLink()) {
@@ -362,10 +374,9 @@ async function collectBuilderRelease(checkout, version, sourceGitCommit, expecte
 async function materializeAndBuild({ temporaryRoot, id, sourceGitCommit, version, toolchain }) {
   const checkout = join(temporaryRoot, id);
   try {
-    await run("git", ["clone", "--quiet", "--shared", "--no-checkout", repositoryRoot, checkout]);
-    await run("git", ["checkout", "--quiet", "--detach", sourceGitCommit], checkout);
-    const { stdout: initialStatus } = await run(
-      "git",
+    await runGit(["clone", "--quiet", "--shared", "--no-checkout", repositoryRoot, checkout]);
+    await runGit(["checkout", "--quiet", "--detach", sourceGitCommit], checkout);
+    const { stdout: initialStatus } = await runGit(
       ["status", "--porcelain=v1", "--untracked-files=all"],
       checkout,
     );
@@ -378,8 +389,7 @@ async function materializeAndBuild({ temporaryRoot, id, sourceGitCommit, version
       checkout,
     );
     await run("pnpm", ["--filter", "@warden/extension", "release:gate"], checkout);
-    const { stdout: finalStatus } = await run(
-      "git",
+    const { stdout: finalStatus } = await runGit(
       ["status", "--porcelain=v1", "--untracked-files=all"],
       checkout,
     );
@@ -417,15 +427,15 @@ async function writeReport(path, bytes) {
 
 async function main() {
   const canonicalRoot = await realpath(repositoryRoot);
-  const { stdout: gitRootOutput } = await run("git", ["rev-parse", "--show-toplevel"]);
+  const { stdout: gitRootOutput } = await runGit(["rev-parse", "--show-toplevel"]);
   if (await realpath(gitRootOutput.trim()) !== canonicalRoot) {
     fail("script is not running from its repository");
   }
-  const { stdout: status } = await run("git", ["status", "--porcelain=v1", "--untracked-files=all"]);
+  const { stdout: status } = await runGit(["status", "--porcelain=v1", "--untracked-files=all"]);
   if (status !== "") {
     fail(`source tree must be clean before the local dual release:\n${status.trimEnd()}`);
   }
-  const { stdout: commitOutput } = await run("git", ["rev-parse", "HEAD"]);
+  const { stdout: commitOutput } = await runGit(["rev-parse", "HEAD"]);
   const sourceGitCommit = commitOutput.trim();
   if (!/^[0-9a-f]{40}$/.test(sourceGitCommit)) {
     fail("git did not return a full source SHA");
