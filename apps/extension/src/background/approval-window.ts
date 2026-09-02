@@ -9,6 +9,21 @@ export const APPROVAL_WINDOW_WIDTH = 720;
 export const APPROVAL_WINDOW_HEIGHT = 600;
 export const MAX_ACTIVE_APPROVAL_WINDOWS = 16;
 
+/**
+ * Placement bounds the launcher assumes when it has no screen metrics.
+ *
+ * Audit finding A-1: a fixed window position lets a page pre-compute where the
+ * approve control will appear and prime input there. The position is therefore
+ * randomised. An MV3 service worker has no `screen`, and reading the real
+ * display geometry would require the `system.display` permission, which is not
+ * worth adding for a placement jitter — so the launcher assumes the smallest
+ * desktop display Chrome supports and stays entirely inside it. Chrome clamps
+ * any remaining off-screen bounds itself, so a larger real display only widens
+ * the range we could have used, never breaks the window.
+ */
+export const APPROVAL_WINDOW_ASSUMED_SCREEN_WIDTH = 1024;
+export const APPROVAL_WINDOW_ASSUMED_SCREEN_HEIGHT = 768;
+
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
 
 export interface ApprovalWindowCreateData {
@@ -17,6 +32,9 @@ export interface ApprovalWindowCreateData {
   readonly focused: true;
   readonly width: number;
   readonly height: number;
+  /** Randomised per launch; see APPROVAL_WINDOW_ASSUMED_SCREEN_WIDTH. */
+  readonly left: number;
+  readonly top: number;
   readonly setSelfAsOpener: false;
 }
 
@@ -47,6 +65,13 @@ export interface ApprovalWindowOwnerOptions {
   readonly approvals: ApprovalWindowRecordOwner;
   readonly ready: Promise<unknown>;
   readonly onFatal: (error: unknown) => void;
+  /**
+   * Source of the per-launch placement draw, injected so tests are
+   * deterministic. Defaults to `Math.random`. A draw is a jitter, never a
+   * secret: a broken source degrades placement to a fixed corner, which is the
+   * pre-A-1 behaviour, rather than refusing to show the user their request.
+   */
+  readonly random?: () => number;
 }
 
 export interface ApprovalWindowLauncher {
@@ -131,6 +156,25 @@ function requireWindowId(value: unknown, operation: string): number {
   return value as number;
 }
 
+/**
+ * One placement coordinate, uniform over the inclusive `[0, span]` integer
+ * range. A draw outside `[0, 1)`, a non-finite draw, or a source that throws
+ * collapses to `0`; nothing here may prevent a pending request from being shown.
+ */
+function placementOffset(random: () => number, span: number): number {
+  if (span <= 0) return 0;
+  let draw: unknown;
+  try {
+    draw = random();
+  } catch {
+    return 0;
+  }
+  if (typeof draw !== "number" || !Number.isFinite(draw) || draw < 0 || draw >= 1) {
+    return 0;
+  }
+  return Math.min(span, Math.max(0, Math.floor(draw * (span + 1))));
+}
+
 function clearRecord(value: ApprovalRecord | null | undefined): void {
   value?.account.fill(0);
   value?.genesisHash.fill(0);
@@ -185,6 +229,10 @@ export function installApprovalWindowOwner(
   if (typeof options.onFatal !== "function") {
     throw new ApprovalWindowStateError("onFatal must be a function");
   }
+  if (options.random !== undefined && typeof options.random !== "function") {
+    throw new ApprovalWindowStateError("random must be a function");
+  }
+  const random = options.random ?? Math.random;
   const ready = options.ready;
   const runtimeId = options.runtimeId;
   const reportFatal = options.onFatal;
@@ -419,6 +467,16 @@ export function installApprovalWindowOwner(
           focused: true,
           width: APPROVAL_WINDOW_WIDTH,
           height: APPROVAL_WINDOW_HEIGHT,
+          // Drawn per launch so a page cannot pre-compute where the approve
+          // control lands (audit A-1). Left is drawn before top.
+          left: placementOffset(
+            random,
+            APPROVAL_WINDOW_ASSUMED_SCREEN_WIDTH - APPROVAL_WINDOW_WIDTH,
+          ),
+          top: placementOffset(
+            random,
+            APPROVAL_WINDOW_ASSUMED_SCREEN_HEIGHT - APPROVAL_WINDOW_HEIGHT,
+          ),
           setSelfAsOpener: false,
         }));
       } catch (error) {

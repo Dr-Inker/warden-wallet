@@ -154,6 +154,8 @@ if (
 // provider code; those remain background-only trust boundaries.
 const allowedApprovalInputs = [
   join(appDirectory, "src/approval/main.ts"),
+  // Audit A-1 arming guard: a pure, DOM-free, clock-free decision module.
+  join(appDirectory, "src/approval/approval-arm.ts"),
   join(appDirectory, "src/approval-protocol.ts"),
 ].map((input) => resolve(input)).sort();
 const approvalInputs = Object.keys(approvalResult.metafile.inputs)

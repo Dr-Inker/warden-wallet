@@ -4,6 +4,7 @@ import {
   parseApprovalUiResponse,
   type ApprovalReviewDetails,
 } from "../approval-protocol.js";
+import { ApprovalArmGuard } from "./approval-arm.js";
 
 interface ApprovalUiPort {
   readonly onMessage: {
@@ -125,10 +126,53 @@ let correlationId = "";
 let expiryWallClock = 0;
 let expiryMonotonicDeadline = 0;
 let expiryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+/**
+ * Audit A-1. The approve control is not armed by the review response; it arms
+ * only after this guard's dwell/pointer/trust conditions hold, and a click is
+ * turned into an approve request only if the guard also accepts the activation
+ * behind it.
+ */
+const arm = new ApprovalArmGuard();
+let approvalEnabled = false;
+let armTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+
+/** One monotonic clock for every arming timestamp, shared with event.timeStamp. */
+function armClock(): number {
+  return globalThis.performance.now();
+}
 
 function setStatus(state: string, message: string): void {
   status.dataset.state = state;
   status.textContent = message;
+}
+
+function clearArmTimer(): void {
+  if (armTimer === undefined) return;
+  globalThis.clearTimeout(armTimer);
+  armTimer = undefined;
+}
+
+/**
+ * Recompute whether the approve control may be pressed, and schedule exactly one
+ * re-check when the only outstanding condition is the remaining dwell. The
+ * control is disabled in every state that is not "armed, approvable, and still
+ * showing this request", so losing focus re-disables it immediately.
+ */
+function refreshArmState(): void {
+  clearArmTimer();
+  if (phase !== "review-visible" || !approvalEnabled) {
+    approveButton.disabled = true;
+    return;
+  }
+  const now = armClock();
+  if (arm.isArmed(now)) {
+    approveButton.disabled = false;
+    return;
+  }
+  approveButton.disabled = true;
+  const remaining = arm.msUntilArmed(now);
+  if (remaining === undefined) return;
+  armTimer = globalThis.setTimeout(refreshArmState, Math.max(16, Math.ceil(remaining)));
 }
 
 function clearExpiryTimer(): void {
@@ -148,6 +192,7 @@ function expireUi(): void {
   if (phase === "terminal") return;
   phase = "terminal";
   clearExpiryTimer();
+  clearArmTimer();
   rejectButton.disabled = true;
   approveButton.disabled = true;
   expiryCountdown.textContent = "Expired";
@@ -184,6 +229,7 @@ function closeUi(state: "closed" | "unavailable", message: string): void {
   if (phase === "terminal") return;
   phase = "terminal";
   clearExpiryTimer();
+  clearArmTimer();
   rejectButton.disabled = true;
   approveButton.disabled = true;
   setStatus(state, message);
@@ -228,7 +274,13 @@ function renderReview(review: ApprovalReviewDetails, canApprove: boolean): void 
     Math.max(0, review.expiresAt - now);
   phase = "review-visible";
   rejectButton.disabled = false;
-  approveButton.disabled = !canApprove;
+  approvalEnabled = canApprove;
+  // The control stays closed until the guard arms it; a review response is a
+  // reason to START the dwell, never a reason to accept a click (audit A-1).
+  approveButton.disabled = true;
+  arm.noteReviewVisible(armClock());
+  if (document.hasFocus()) arm.noteFocus(armClock());
+  refreshArmState();
   approveButton.textContent = canApprove ? "Approve and sign" : "Signing unavailable";
   capabilityTitle.textContent = canApprove ? "Signing enabled." : "Review only.";
   capabilityMessage.textContent = canApprove
@@ -274,6 +326,7 @@ try {
     ) {
       phase = "terminal";
       clearExpiryTimer();
+      clearArmTimer();
       rejectButton.disabled = true;
       approveButton.disabled = true;
       setStatus(
@@ -290,6 +343,7 @@ try {
     ) {
       phase = "terminal";
       clearExpiryTimer();
+      clearArmTimer();
       rejectButton.disabled = true;
       approveButton.disabled = true;
       setStatus("rejected", "Request rejected. No signature was produced.");
@@ -304,6 +358,7 @@ try {
     if (phase === "terminal") return;
     phase = "terminal";
     clearExpiryTimer();
+    clearArmTimer();
     rejectButton.disabled = true;
     approveButton.disabled = true;
     setStatus(
@@ -316,6 +371,7 @@ try {
     if (phase !== "review-visible" || rejectButton.disabled) return;
     phase = "awaiting-reject";
     clearExpiryTimer();
+    clearArmTimer();
     rejectButton.disabled = true;
     approveButton.disabled = true;
     correlationId = mintCorrelationId();
@@ -333,10 +389,18 @@ try {
     }
   });
 
-  approveButton.addEventListener("click", () => {
+  approveButton.addEventListener("click", (event) => {
     if (phase !== "review-visible" || approveButton.disabled) return;
+    // Audit A-1. Refuse silently: an untrusted event, an activation primed
+    // before the control armed, or a focus/visibility loss inside the dwell
+    // produces no approve request and leaves the request pending.
+    if (!arm.acceptsActivation(event.timeStamp, event.isTrusted)) {
+      refreshArmState();
+      return;
+    }
     phase = "awaiting-approve";
     clearExpiryTimer();
+    clearArmTimer();
     rejectButton.disabled = true;
     approveButton.disabled = true;
     correlationId = mintCorrelationId();
@@ -355,10 +419,39 @@ try {
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") refreshExpiry();
+    if (document.visibilityState === "visible") {
+      refreshExpiry();
+      if (document.hasFocus()) arm.noteFocus(armClock());
+    } else {
+      arm.noteVisibilityLoss(armClock());
+    }
+    refreshArmState();
   });
-  addEventListener("focus", refreshExpiry);
+  addEventListener("focus", () => {
+    refreshExpiry();
+    arm.noteFocus(armClock());
+    refreshArmState();
+  });
+  addEventListener("blur", () => {
+    arm.noteFocusLoss(armClock());
+    refreshArmState();
+  });
   addEventListener("pageshow", refreshExpiry);
+  // One genuine pointer move anywhere in the document is the human-presence
+  // half of arming; the press/release pair is scoped to the control itself.
+  document.addEventListener("pointermove", (event) => {
+    arm.notePointerMove(event.timeStamp, event.isTrusted);
+    refreshArmState();
+  }, { passive: true });
+  approveButton.addEventListener("pointerdown", (event) => {
+    arm.notePointerDown(event.timeStamp, event.isTrusted);
+  });
+  approveButton.addEventListener("pointerup", (event) => {
+    arm.notePointerUp(event.timeStamp, event.isTrusted);
+  });
+  approveButton.addEventListener("keydown", (event) => {
+    arm.noteKeyActivation(event.timeStamp, event.isTrusted, event.key);
+  });
   addEventListener("pagehide", () => {
     closeUi(
       "closed",

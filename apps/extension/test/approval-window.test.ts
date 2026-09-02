@@ -7,6 +7,8 @@ import {
   type ApprovalRecord,
 } from "@warden/core/approval";
 import {
+  APPROVAL_WINDOW_ASSUMED_SCREEN_HEIGHT,
+  APPROVAL_WINDOW_ASSUMED_SCREEN_WIDTH,
   APPROVAL_WINDOW_HEIGHT,
   APPROVAL_WINDOW_WIDTH,
   MAX_ACTIVE_APPROVAL_WINDOWS,
@@ -141,6 +143,7 @@ function install(
   overrides: {
     readonly ready?: Promise<unknown>;
     readonly onFatal?: (error: unknown) => void;
+    readonly random?: () => number;
   } = {},
 ) {
   const fatals: unknown[] = [];
@@ -149,6 +152,9 @@ function install(
     approvals: owner,
     ready: overrides.ready ?? Promise.resolve(),
     onFatal: overrides.onFatal ?? ((error) => fatals.push(error)),
+    // Injected so placement is deterministic under test; production uses the
+    // platform CSPRNG-backed Math.random default.
+    random: overrides.random ?? (() => 0),
   });
   return { installed, windows, fatals };
 }
@@ -170,6 +176,8 @@ describe("background-owned approval windows", () => {
       focused: true,
       width: 720,
       height: 600,
+      left: 0,
+      top: 0,
       setSelfAsOpener: false,
     }]);
     expect(windows.getCalls).toEqual([1]);
@@ -512,5 +520,99 @@ describe("background-owned approval windows", () => {
     await flush();
     expect(windows.removeCalls).toEqual([73]);
     expect(owner.records.get(REQUEST_ID)?.state).toBe("pending");
+  });
+});
+
+describe("approval window placement (audit A-1: predictable click target)", () => {
+  const maxLeft = APPROVAL_WINDOW_ASSUMED_SCREEN_WIDTH - APPROVAL_WINDOW_WIDTH;
+  const maxTop = APPROVAL_WINDOW_ASSUMED_SCREEN_HEIGHT - APPROVAL_WINDOW_HEIGHT;
+
+  it("assumes a screen at least as large as the window it is placing", () => {
+    expect(maxLeft).toBeGreaterThan(0);
+    expect(maxTop).toBeGreaterThan(0);
+  });
+
+  it("derives left and top from the injected RNG across the whole placement range", async () => {
+    const draws = [0.25, 0.75];
+    let index = 0;
+    const owner = new MemoryOwner(record());
+    const { installed, windows } = install(owner, new FakeWindows(), {
+      random: () => draws[index++]!,
+    });
+
+    await installed.launch(REQUEST_ID, new AbortController().signal);
+
+    expect(index).toBe(2);
+    expect(windows.createCalls).toEqual([{
+      url: `chrome-extension://${EXTENSION_ID}/approval.html?request=${REQUEST_ID}`,
+      type: "popup",
+      focused: true,
+      width: APPROVAL_WINDOW_WIDTH,
+      height: APPROVAL_WINDOW_HEIGHT,
+      left: Math.floor(0.25 * (maxLeft + 1)),
+      top: Math.floor(0.75 * (maxTop + 1)),
+      setSelfAsOpener: false,
+    }]);
+  });
+
+  it("reaches both ends of the range and never leaves the assumed screen", async () => {
+    for (const [draw, expectedLeft, expectedTop] of [
+      [0, 0, 0],
+      [0.999_999, maxLeft, maxTop],
+    ] as const) {
+      const owner = new MemoryOwner(record());
+      const { installed, windows } = install(owner, new FakeWindows(), {
+        random: () => draw,
+      });
+      await installed.launch(REQUEST_ID, new AbortController().signal);
+      const created = windows.createCalls[0] as { left: number; top: number };
+      expect(created.left).toBe(expectedLeft);
+      expect(created.top).toBe(expectedTop);
+    }
+  });
+
+  it("clamps a hostile or broken RNG onto the screen instead of failing the launch", async () => {
+    for (const random of [
+      () => 1,
+      () => -1,
+      () => Number.NaN,
+      () => Number.POSITIVE_INFINITY,
+      (): number => {
+        throw new Error("rng unavailable");
+      },
+    ]) {
+      const owner = new MemoryOwner(record());
+      const { installed, windows } = install(owner, new FakeWindows(), { random });
+      await expect(
+        installed.launch(REQUEST_ID, new AbortController().signal),
+      ).resolves.toBeUndefined();
+      const created = windows.createCalls[0] as { left: number; top: number };
+      expect(Number.isSafeInteger(created.left)).toBe(true);
+      expect(Number.isSafeInteger(created.top)).toBe(true);
+      expect(created.left).toBeGreaterThanOrEqual(0);
+      expect(created.left).toBeLessThanOrEqual(maxLeft);
+      expect(created.top).toBeGreaterThanOrEqual(0);
+      expect(created.top).toBeLessThanOrEqual(maxTop);
+    }
+  });
+
+  it("does not reuse one position for two launches from the default RNG", async () => {
+    const positions = new Set<string>();
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const owner = new MemoryOwner(record());
+      const windows = new FakeWindows();
+      // No `random` override: this exercises the production default.
+      const installed = installApprovalWindowOwner(windows, {
+        runtimeId: EXTENSION_ID,
+        approvals: owner,
+        ready: Promise.resolve(),
+        onFatal: () => undefined,
+      });
+      await installed.launch(REQUEST_ID, new AbortController().signal);
+      const created = windows.createCalls[0] as { left: number; top: number };
+      positions.add(`${created.left}x${created.top}`);
+      installed.dispose();
+    }
+    expect(positions.size).toBeGreaterThan(1);
   });
 });
