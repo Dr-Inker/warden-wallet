@@ -1715,10 +1715,10 @@
     {
       "name": "fast-uri",
       "versions": [
-        "3.1.5"
+        "3.1.6"
       ],
       "paths": [
-        "/opt/warden/node_modules/.pnpm/fast-uri@3.1.5/node_modules/fast-uri"
+        "/opt/warden/node_modules/.pnpm/fast-uri@3.1.6/node_modules/fast-uri"
       ],
       "license": "BSD-3-Clause",
       "author": "Vincent Le Goff",
