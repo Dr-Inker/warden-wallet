@@ -526,7 +526,7 @@ describe("scorecard provenance (docs/security/REVIEW-SCORECARD.jsonl)", () => {
     expect(bad, bad.join("\n")).toEqual([]);
   });
 
-  it("binds every promoted red-test finding from WRDF-0125 onward to its named fixture (WRDF-0126)", () => {
+  it("WRDF-0126 binds every promoted red-test finding from WRDF-0125 onward to its named fixture", () => {
     const repoPrefix = `${resolve(REPO)}${sep}`;
     const readSource = (path: string): string | null => {
       const absolute = resolve(REPO, path);

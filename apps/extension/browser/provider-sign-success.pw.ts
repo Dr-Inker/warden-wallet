@@ -1094,7 +1094,7 @@ test("uncommitted signature is abandoned after MV3 death without signer retry", 
   }
 });
 
-test("in-flight strict signing commit resolves to one durable outcome after MV3 death", async () => {
+test("WRDF-0125 in-flight strict signing commit resolves to one durable outcome after MV3 death", async () => {
   const extension = await createExtension();
   let server: TestServer | undefined;
   let context: BrowserContext | undefined;
