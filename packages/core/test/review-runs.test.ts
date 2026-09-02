@@ -577,7 +577,7 @@ set -euo pipefail
 [[ "\${GIT_NO_REPLACE_OBJECTS:-}" == "1" ]] || exit 90
 found=0
 while [[ $# -gt 0 ]]; do
-  if [[ "$1" == "-c" && "\${2:-}" == 'shell_environment_policy={inherit="core",ignore_default_excludes=false,filters={},set={GIT_NO_REPLACE_OBJECTS="1"}}' ]]; then
+  if [[ "$1" == "-c" && "\${2:-}" == 'shell_environment_policy={inherit="all",ignore_default_excludes=false,filters={},set={GIT_NO_REPLACE_OBJECTS="1"}}' ]]; then
     found=1
   fi
   shift
