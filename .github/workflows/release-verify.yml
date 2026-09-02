@@ -1,0 +1,184 @@
+name: release-verify
+
+# Anchored release verification (Fable audit 2026-09-02, finding E-4).
+#
+# ci.yml runs only `pnpm --filter @warden/extension release:gate`, which is
+# `release:package && release:verify` — it packages the extension and then
+# compares the ZIP against an `.artifact.json` the same job generated seconds
+# earlier. That is a SELF-CONSISTENCY check: an attacker who replaces both
+# files defeats it, and nothing in it is anchored to an owner-held expectation.
+# The three anchored verifiers in apps/extension/scripts/ —
+# verify-release-source-tag.mjs, verify-reviewed-artifact-signature.mjs and
+# verify-store-package.mjs — never ran in CI, and no expected primary/signing
+# fingerprint, tag object SHA, artifact-manifest SHA-256 or extension id was
+# committed anywhere. This job is that missing lane.
+#
+# *** THIS JOB CURRENTLY FAILS ON EVERY TAG. THAT IS INTENDED. ***
+# apps/extension/release-pins.json is committed as a DELIBERATE PLACEHOLDER
+# (tag "REPLACE_ME", all-zero fingerprints and digests) and
+# apps/extension/scripts/release-pins.mjs refuses placeholder pins before it
+# spawns a single verifier. The job stays red until the owner replaces that
+# file with the real, out-of-band-recorded release pins and commits the
+# ASCII-armored release public key(s) under apps/extension/release-pubkeys/.
+# A green run here means an anchored release; a red one means "not anchored
+# yet", never "verification was skipped".
+#
+# What this job does NOT establish is written up in
+# docs/security/RELEASE-INTEGRITY.md, section "CI release-verify job (anchored
+# pins)": no host attestation, no defence against a compromised GitHub runner,
+# and the pins live in the same repository the tag comes from — so the owner
+# must ALSO run these verifiers locally against a keyring and a pins record
+# held outside this repository.
+#
+# UNVERIFIED: like ci.yml, this workflow has not been executed by GitHub
+# Actions as of authoring. It is validated locally only by YAML parse and by
+# test/github-actions-pins.test.mjs (which globs every file under
+# .github/workflows, so this file is covered without any change to it).
+
+on:
+  push:
+    tags:
+      # No release-tag naming convention is pinned anywhere in the repository
+      # today (release-source-tag.mjs accepts any well-formed tag name; the
+      # tag GRAMMAR it pins is the annotated tag's MESSAGE body, not its
+      # name). `v*` is therefore a deliberate default chosen here, not a
+      # convention read off existing code — OWNER: narrow it if the real
+      # release tags are named differently. Whatever this pattern matches,
+      # the job still refuses any tag that is not the one pinned in
+      # release-pins.json, so a wide pattern cannot verify the wrong release.
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to verify (must equal the tag pinned in apps/extension/release-pins.json)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-verify-${{ github.workflow }}-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Must match ci.yml and docs/TOOLCHAIN.md exactly.
+  NODE_VERSION: "22.23.2"
+  PNPM_VERSION: "11.12.0"
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  anchored-release-verify:
+    name: anchored release verification (pinned tag / signature / store package)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # RELEASE_TAG comes from a workflow_dispatch input or a pushed ref name.
+      # It is consumed as an environment variable everywhere below, never
+      # interpolated into a shell command — but it also reaches actions/checkout
+      # as `ref:`, so constrain its grammar here, before the first checkout,
+      # rather than trusting the caller.
+      - name: Validate the requested tag name
+        run: |
+          set -euo pipefail
+          case "$RELEASE_TAG" in
+            *[!A-Za-z0-9._/-]* | "" | -* | */ | *..* )
+              echo "refusing to verify an implausible tag name: $RELEASE_TAG" >&2
+              exit 1 ;;
+          esac
+          [ "${#RELEASE_TAG}" -le 256 ] || { echo "tag name too long" >&2; exit 1; }
+          echo "tag under verification: $RELEASE_TAG"
+
+      - name: Checkout the release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          # Full history AND tags: verify-release-source-tag.mjs resolves the
+          # exact refs/tags/<tag> ref and the annotated tag OBJECT, and
+          # compares its target commit against the artifact manifest's
+          # source.gitCommit. A shallow, tag-less checkout cannot do that.
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      # C6: run this before any other external action, exactly as ci.yml does.
+      # It globs every workflow under .github/workflows, so it audits this file
+      # too.
+      - name: Audit immutable GitHub Actions references
+        run: node --test test/github-actions-pins.test.mjs
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up pnpm ${{ env.PNPM_VERSION }}
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4 resolved 2026-09-01
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: pnpm install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Assert pinned Node / pnpm versions
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            local name="$1" expected="$2" actual="$3"
+            if ! echo "$actual" | grep -qF "$expected"; then
+              echo "VERSION MISMATCH: $name — expected to contain '$expected', got: $actual" >&2
+              fail=1
+            else
+              echo "OK: $name -> $actual"
+            fi
+          }
+          check "node" "v${{ env.NODE_VERSION }}" "$(node --version)"
+          check "pnpm" "${{ env.PNPM_VERSION }}"  "$(pnpm --version)"
+          [ "$fail" -eq 0 ] || exit 1
+
+      # The pins loader is product code; prove it before trusting its verdict.
+      - name: Release-pins unit tests (fail-closed grammar + argument vectors)
+        run: pnpm --filter @warden/extension exec vitest run test/release-pins.test.mjs
+
+      # Rebuild the release artifacts from the tagged source. This is what makes
+      # the pinned artifact-manifest SHA-256 meaningful: the manifest is
+      # regenerated here and must hash to the value the owner recorded
+      # out-of-band, rather than being trusted because it was co-generated.
+      - name: Rebuild the release package from the tagged source
+        run: pnpm --filter @warden/extension release:package
+
+      # Build the verification keyring from ASCII-armored public keys committed
+      # by the owner. No key server, no network, no secret. Fails loudly when
+      # the directory is absent, which is today's state.
+      - name: Build the OpenPGP verification keyring
+        run: |
+          set -euo pipefail
+          keydir="apps/extension/release-pubkeys"
+          if [ ! -d "$keydir" ]; then
+            echo "MISSING: $keydir — commit the ASCII-armored release public key(s) whose fingerprints are pinned in apps/extension/release-pins.json" >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          keys=("$keydir"/*.asc)
+          if [ "${#keys[@]}" -eq 0 ]; then
+            echo "MISSING: no *.asc public keys in $keydir" >&2
+            exit 1
+          fi
+          home="$RUNNER_TEMP/warden-release-keyring"
+          rm -rf "$home"
+          mkdir -p "$home"
+          chmod 700 "$home"
+          for key in "${keys[@]}"; do
+            echo "importing $key"
+            gpg --homedir "$home" --batch --no-tty --import "$key"
+          done
+          gpg --homedir "$home" --batch --no-tty --fingerprint
+          echo "GNUPGHOME=$home" >> "$GITHUB_ENV"
+
+      # The one step that matters: run every anchored verifier the committed
+      # pins support, with every expectation coming from release-pins.json and
+      # nothing learned from the candidate. --tag makes the job refuse to
+      # "verify" a tag other than the pinned one.
+      - name: Run the anchored release verifiers against the committed pins
+        run: pnpm --filter @warden/extension release:verify-pins -- --tag "$RELEASE_TAG"

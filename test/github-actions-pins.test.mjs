@@ -74,6 +74,19 @@ test("every external GitHub Actions reference is immutable", async () => {
   const files = await workflowFiles(WORKFLOWS_DIR);
   assert.ok(files.length > 0, "no GitHub Actions workflow files were found");
 
+  // The walk above is a recursive glob, so a new workflow is audited without
+  // touching this test. Naming the two that exist keeps that property honest:
+  // if one is renamed out of .github/workflows (or into a directory this walk
+  // stops recursing into), the audit silently stops covering it, and this
+  // assertion is what notices.
+  const audited = new Set(files.map((file) => path.basename(file)));
+  for (const expected of ["ci.yml", "release-verify.yml"]) {
+    assert.ok(
+      audited.has(expected),
+      `${expected} was not discovered by the workflow audit — every workflow under .github/workflows must be pin-audited`,
+    );
+  }
+
   const externalReferences = [];
   const mutableReferences = [];
 

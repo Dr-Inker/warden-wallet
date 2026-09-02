@@ -470,6 +470,112 @@ signature. An independently digested report can be composed with the signed-
 source verifier above, but that binds source identity rather than making either
 builder independent. It cannot promote `WRD-REL-01` by itself.
 
+### CI release-verify job (anchored pins)
+
+Audit finding **E-4** (Fable, 2026-09-02) recorded that the only release check
+CI ran was `pnpm --filter @warden/extension release:gate` — `release:package &&
+release:verify` — which packages the extension and then compares the ZIP
+against an `.artifact.json` the same job generated seconds earlier. That is a
+self-consistency check, not verification: replacing both files defeats it, and
+it is anchored to nothing an owner recorded. The three verifiers that DO take
+independent expectations —
+`verify-release-source-tag.mjs`, `verify-reviewed-artifact-signature.mjs`, and
+`verify-store-package.mjs` — never ran in CI, and no expected primary/signing
+fingerprint, tag object SHA, artifact-manifest SHA-256, or extension id was
+committed anywhere in the repository. The paragraph above about co-generated
+JSON stated the weakness; nothing acted on it.
+
+`.github/workflows/release-verify.yml` is that lane. It triggers on a pushed
+tag matching `v*` and on `workflow_dispatch` with an explicit `tag` input, runs
+with `contents: read` only, and uses the same pinned `actions/checkout`,
+`actions/setup-node`, and `pnpm/action-setup` commit SHAs as `ci.yml` (audited
+by `test/github-actions-pins.test.mjs`, which globs every workflow file and now
+also asserts that both `ci.yml` and `release-verify.yml` were discovered). It
+checks out the tag with full history and tags, rebuilds the release package
+from the tagged source, imports the ASCII-armored release public key(s) from
+`apps/extension/release-pubkeys/*.asc` into a private `GNUPGHOME` under
+`RUNNER_TEMP`, and then runs `pnpm --filter @warden/extension
+release:verify-pins -- --tag <tag>`.
+
+**The `v*` trigger pattern is a choice made at authoring, not a convention read
+off existing code.** No release-tag naming convention is pinned anywhere in the
+repository: `release-source-tag.mjs` accepts any well-formed tag name, and the
+grammar it does pin is the annotated tag's *message body*
+(`warden.extension-release-tag.v1` + `artifact-manifest-sha256 <digest>`), not
+its name. The owner should narrow the pattern if real release tags are named
+differently. A wide pattern cannot cause the wrong release to be "verified":
+the runner refuses any tag that is not the one named in the pins file.
+
+**The pins file.** `apps/extension/release-pins.json` is the owner-authored
+anchor. Its schema is `warden.extension-release-pins.v1` and it carries exactly
+eleven keys: `schema`, `tag`, `tagObjectSha`, `primaryFingerprint`,
+`signingFingerprint`, `artifactManifestPath`, `artifactManifestSha256`,
+`reviewedUploadArchivePath`, and the three optional tuples
+`dualReleaseReport` (`path`, `sha256`), `artifactReviewSignature` (`path`,
+`sha256`, `primaryFingerprint`, `signingFingerprint`), and `storePackage`
+(`path`, `sha256`, `extensionId`). `apps/extension/scripts/release-pins.mjs`
+loads it and **fails closed** before spawning anything on: a missing or
+unreadable file, unparsable or non-object JSON, a wrong `schema`, any missing
+key, any unknown key (top level or inside a tuple), a placeholder value
+(blank, `TODO`, `REPLACE_ME`, `CHANGE_ME`, or a single-repeated-hex-character
+run such as all-zeroes), a tag object SHA that is not 40 lowercase hex, an
+OpenPGP fingerprint that is not 40 UPPERCASE hex, a SHA-256 that is not 64
+lowercase hex, an extension id that is not 32 characters `a-p`, or a file
+operand that is not a plain relative path under `apps/extension` (absolute
+prefixes, `..` segments, trailing separators, and control characters are all
+refused). It also refuses pins that skip a tier of the source-tag verifier's
+nested grammar — `storePackage` requires `artifactReviewSignature`, which
+requires `dualReleaseReport` — because such pins could never be turned into a
+legal invocation.
+
+**What is bound.** The mandatory tier always runs
+`verify-release-source-tag.mjs` with six operands built from the pins: the tag
+name, the expected annotated-tag object SHA, the expected primary and signing
+fingerprints, the explicit reviewed artifact-manifest path, and its expected
+SHA-256. Because the manifest is *regenerated* from the tagged source earlier in
+the job, that digest comparison is the thing the old `release:gate` could not
+do: the rebuilt bytes must hash to a value the owner recorded out of band. When
+`dualReleaseReport` is pinned the call composes to eight operands; with
+`artifactReviewSignature`, twelve, and `verify-reviewed-artifact-signature.mjs`
+runs as well; with `storePackage`, sixteen, and `verify-store-package.mjs` runs
+against the CRX3 envelope, its digest, the expected extension id, the
+artifact-manifest digest, the reviewed upload ZIP, and the manifest. Optional
+tuples left `null` are **skipped with a loud notice** naming exactly what is
+therefore *not* bound (no reviewer signature; no store envelope), and the run
+ends by restating how many verifiers were skipped. Verifier children are
+spawned with `execFileSync(process.execPath, [script, ...args])` — an explicit
+argv, never a shell string — under the same allow-listed environment the
+release git helper uses (`apps/extension/scripts/release-git.mjs`:
+`PATH=/usr/bin:/bin`, `LANG`/`LC_ALL=C`, `GIT_CONFIG_NOSYSTEM=1`,
+`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_OPTIONAL_LOCKS=0`) plus the one variable the
+OpenPGP lane needs, `GNUPGHOME`, which must be an absolute path. Nothing is
+inherited from `process.env`, so `NODE_OPTIONS`, `LD_PRELOAD`, `GIT_DIR`, and a
+hostile `PATH` cannot reach the verifiers or the `git`/`gpg` children they
+spawn.
+
+**The committed pins file is a DELIBERATE PLACEHOLDER, so this job currently
+FAILS on every tag.** That is the intended state, not a defect: an anchored
+verifier with no anchor is worse than no verifier, because it looks green.
+`apps/extension/test/release-pins.test.mjs` asserts the rejection of the
+committed file specifically, so the placeholder cannot quietly become
+acceptable. The owner closes this by replacing every value with the real pins
+recorded out of band and committing the release public key(s) under
+`apps/extension/release-pubkeys/`.
+
+**What this does NOT establish.** It is not host attestation: it does not
+defend against a compromised GitHub-hosted runner, a replaced `/usr/bin/git` or
+`/usr/bin/gpg` on that runner, or a malicious action in the pinned set. It does
+not make the build reproducible or independent — `release-verify.yml` is one
+builder on one host, and the same-host caveat above still applies. Most
+importantly, **the pins are committed to the same repository the tag comes
+from**, so an attacker who can push both can move both; CI can only prove that
+the tag, the signature, and the rebuilt bytes agree with the pins *as
+committed*. The owner must therefore ALSO run these verifiers locally, from a
+keyring and a pins record held outside this repository, before treating a
+release as verified. A green run here is a necessary condition, never a
+sufficient one, and it does not promote `WRD-REL-01`, `WRD-REL-02`, or
+`WRD-REL-03`.
+
 This document is the addressable record `scripts/deploy-gate.sh` checks against
 (spec §17 item L7, plan Task 11 item 5): for every release SHA that is a
 deploy candidate, this table's row for that SHA must carry the artifact hash

@@ -1,0 +1,13 @@
+{
+  "schema": "warden.extension-release-pins.v1",
+  "tag": "REPLACE_ME",
+  "tagObjectSha": "0000000000000000000000000000000000000000",
+  "primaryFingerprint": "0000000000000000000000000000000000000000",
+  "signingFingerprint": "0000000000000000000000000000000000000000",
+  "artifactManifestPath": "REPLACE_ME",
+  "artifactManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "reviewedUploadArchivePath": "REPLACE_ME",
+  "dualReleaseReport": null,
+  "artifactReviewSignature": null,
+  "storePackage": null
+}

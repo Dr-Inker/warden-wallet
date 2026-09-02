@@ -12,6 +12,7 @@
     "release:dual-local": "node ../../scripts/local-dual-extension-release.mjs",
     "release:source-tag-message": "node scripts/print-release-source-tag-message.mjs",
     "release:verify-artifact-signature": "node scripts/verify-reviewed-artifact-signature.mjs",
+    "release:verify-pins": "node scripts/release-pins.mjs",
     "release:verify-source-tag": "node scripts/verify-release-source-tag.mjs",
     "release:verify-store": "node scripts/verify-store-package.mjs",
     "test": "vitest run",
