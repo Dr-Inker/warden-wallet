@@ -8,7 +8,7 @@
 // buy a coverage line.
 import { describe, it, expect } from "vitest";
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ const SCORECARD = join(REPO, "docs/security/REVIEW-SCORECARD.jsonl");
 const EXAMPLE = join(REPO, ".codex/schemas/warden-findings.example.json");
 const EXPECT_FILE = join(REPO, ".codex/schemas/warden-findings.example.expect.json");
 const APPENDER = join(REPO, "scripts/append-review-run.mjs");
+const REVIEW_GROK = join(REPO, "scripts/review-grok.sh");
 
 const KINDS = ["task-diff", "docs", "milestone", "whole-feature", "baseline-not-recorded"];
 
@@ -158,6 +159,34 @@ describe("buildRunRecord (scripts/append-review-run.mjs)", () => {
     expect(rec.reviewer_model).toBe("gpt-5.6-sol@max");
     expect(rec.thread).toBe("wrapper-round-1");
     expect(rec.artefact_sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("recorded reviewer evidence completeness", () => {
+  it("WRDF-0152 refuses a Grok round when the configured prompt budget elides mandatory evidence", () => {
+    const outputDir = mkdtempSync(join(tmpdir(), "warden-grok-elision-"));
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          REVIEW_GROK,
+          "HEAD^",
+          "HEAD",
+          "--dry-run",
+          "--max-chars",
+          "80000",
+          "--out",
+          join(outputDir, "findings.json"),
+        ],
+        { cwd: REPO, encoding: "utf8", maxBuffer: 1024 * 1024 },
+      );
+      expect(result.status).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toMatch(
+        /refusing a recordable review with elided mandatory evidence/i,
+      );
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
   });
 });
 
