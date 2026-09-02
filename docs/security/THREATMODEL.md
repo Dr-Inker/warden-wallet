@@ -3258,3 +3258,112 @@ not reachable by keyboard alone. That is the stronger reading — a primed
 keypress stream is part of this same threat, and accepting a trusted keydown as
 presence would let one arm the control once the dwell elapsed — but it is an
 accessibility cost, not a free win.
+
+---
+
+## Audit X-1 / X-2 provider-path hardening — `audit/x1-x2-provider-hardening` — 2026-09-02 — pending sign-off
+
+Two extension findings from the independent Fable audit
+(`docs/security/FABLE-AUDIT-2026-09-02.md` §2 rows X-1 and X-2, and the "E-5 and
+the gated extension findings" paragraph). Both live entirely in the **unshipped**
+provider pipeline: `scripts/build.mjs` keeps `page/provider-request-owner.ts` off
+both the background and content bundles, and keeps
+`content/provider-content-transport.ts` and every C12–C28 background owner off
+the content bundle. Nothing a user can reach today exercises either control.
+
+Per this file's append-only rule the C1-bridge residual recorded above (the
+"Residual, stated honestly" paragraph of the **Client C1 zero-authority page
+bridge** section) is **corrected here, not rewritten in place**.
+
+### X-1 — page-side terminal-response authenticity
+
+**What was wrong.** The main-world request owner authenticated a terminal
+response by `event.source === window`, `event.origin === documentOrigin`, and a
+`correlationId` / `expiresAt` pair it had itself broadcast in the request; the
+`receiptId` was only shape-checked. Every one of those values is visible to any
+script in the same document, so a same-page script could resolve a pending
+`signTransaction` promise with attacker-chosen "signed" bytes, or reject it with
+a fabricated terminal failure. The C1 residual already accepted that a same-page
+script can forge bridge traffic — but the class a dApp will eventually trust for
+signed bytes was inheriting that acceptance silently.
+
+**What changed.** A one-shot capability handshake. The isolated content owner
+(`ProviderContentTransportOwner`) mints one `MessageChannel` in its constructor —
+at `document_start`, before any page script runs — keeps `port1`, and transfers
+`port2` into the document inside a `warden:provider:capability` envelope. The
+main-world owner claims the **first** grant it observes and refuses every later
+one (`capabilityRefusalCount`, plus an optional `onCapabilityRefused` observer).
+Thereafter terminal responses are accepted **only** from that port's `message`
+events, and page receipts go back over the same port. The port reference is
+private to the instance and is never echoed, logged, or re-posted — which is why
+a transferred port was chosen over a minted nonce: a nonce is observable the
+moment anything logs or reflects it.
+
+**What is claimed.** A `signTransaction` promise resolves with signed bytes, or
+rejects with a terminal failure, only on a message delivered over the capability.
+A well-formed same-window forgery — correct origin, correct source, correct
+correlation id, correct deadline, plausible receipt id — against a pending entry
+is ignored.
+
+**What is still disclaimed.** The bridge residual **stands**: a same-page script
+can still observe, suppress, spoof, or replay the *request* half, which still
+travels over `window.postMessage`; it can still deny service entirely. It can
+post a forged capability grant, and if it wins the race it holds a port the
+content owner never speaks over — the real owner then has no capability and every
+promise times out. That is suppression, not settlement, and it is the same
+denial-of-service the C1 residual already accepted. The guarantee is therefore
+narrow and one-directional: **a resolved promise carrying signed bytes now
+requires the capability; an unresolved or timed-out promise proves nothing.**
+Ordering is a precondition, not a proof: the main-world owner must be installed
+by the extension's own `document_start` injection ahead of the grant. A
+page-script-constructed owner may simply miss it. None of this is measured in
+real Chromium — there is no browser evidence that Chrome's transfer ordering,
+`MessagePort` neutering, or bfcache behaviour matches the vitest model.
+
+### X-2 — per-origin approval-path capacity
+
+**What was wrong.** Four flat global counters — 16 approval windows, 32
+signed-result flows, 32 preparing/active approval requests, 128 journal rows —
+with no per-origin subdivision and no test in which two origins competed. One
+hostile http(s) origin could hold all of any of them. The journal was the worst
+case: a failed row is swept only on a later successful `claim()`, and only after
+a ten-minute retention, so the starvation outlived the attack.
+
+**What changed.** A per-origin share beneath each global cap, in
+`apps/extension/src/background/provider-origin-capacity.ts`: at most **1** open
+approval window per (origin, documentId) and **4** per origin; **4**
+signed-result flows per origin; **4** preparing+active approval requests per
+origin; **16** journal rows per origin. Each is a quarter or less of its global
+cap and each is an owner-tunable exported constant, not a derived number. The
+global cap is still checked **first**, so genuine global exhaustion still reports
+itself as global exhaustion; the per-origin share only ever refuses earlier, with
+a distinguishable `ProviderOriginCapacityError` (or, inside the store's own error
+hierarchy, `ProviderOperationOriginCapacityError`, which carries the same marker
+and still extends `ProviderOperationCapacityError`). The refusal text names only
+the refused site's own browser-authenticated origin and document id, never
+another site. Separately (lane report F-10): worker-restart invalidation now
+deletes retention-expired rows during the full cursor walk it already performs,
+so capacity is freed at worker start rather than only by a later claim.
+
+**What is claimed.** With one origin saturating its share of any pool, a second
+origin is still served its own full share; the saturated origin's excess is
+refused with the origin-scoped error; the global cap is still reachable and still
+enforced across enough distinct origins.
+
+**What is still disclaimed.** The quota subject is `(origin, documentId)` as
+Chrome reported it — one attacker who controls many origins, or many subdomains,
+still scales linearly, and four cooperating origins can still exhaust any global
+pool. The approval-window quota is **optional at the API**: `launch()` takes the
+scope as a third argument, the provider route always passes it, and a route with
+no page principal (privileged UI, harnesses) passes none and is bounded only by
+the global cap. That is a deliberate choice recorded here rather than hidden: an
+unscoped launch is unattributable, and refusing it outright would break routes
+that legitimately have no page origin. The chosen numbers are policy, not
+measurement — no load, abuse, or real-usage data stands behind 1/4/4/4/16. The
+`read()` and database-open sweeps proposed in F-10 were **not** done: `read()` is
+a single-key point lookup on the replay hot path and turning it into a cursor
+walk is a real behavioural change, not a small one; only the worker-restart sweep
+was in scope. The journal changes are covered by direct unit tests of the
+extracted pure admission and retention decisions, not by an IndexedDB-backed
+test — `provider-operation-store.ts` still has no vitest harness, and its only
+end-to-end coverage remains the Playwright browser lane.

@@ -21,6 +21,11 @@ import {
   type ProviderOperationRecord,
   type ProviderOperationRepository,
 } from "./provider-operation.js";
+import {
+  MAX_PROVIDER_OPERATIONS_PER_ORIGIN,
+  providerOriginCapacityMessage,
+  type ProviderOriginCapacityRefusal,
+} from "./provider-origin-capacity.js";
 
 export const PROVIDER_OPERATION_DATABASE_VERSION = 1;
 export const PROVIDER_OPERATION_DATABASE_NAME = "warden-provider-operations-v1";
@@ -56,6 +61,34 @@ export class ProviderOperationCapacityError extends ProviderOperationStoreError 
   constructor(message: string) {
     super(message);
     this.name = "ProviderOperationCapacityError";
+  }
+}
+
+/**
+ * Audit finding X-2. The store's error hierarchy is rooted in
+ * `ProviderOperationStoreError`, so this cannot extend the shared
+ * `ProviderOriginCapacityError`; it carries the same marker instead, and
+ * `isProviderOriginCapacityRefusal` recognises both. Existing handlers that
+ * catch `ProviderOperationCapacityError` still see an origin-scoped refusal.
+ */
+export class ProviderOperationOriginCapacityError
+  extends ProviderOperationCapacityError
+  implements ProviderOriginCapacityRefusal {
+  readonly providerOriginCapacity = true as const;
+  readonly origin: string;
+  readonly documentId: string | null;
+  readonly limit: number;
+
+  constructor(origin: string, limit: number) {
+    super(providerOriginCapacityMessage(
+      "retained operations",
+      { origin, documentId: null },
+      limit,
+    ));
+    this.name = "ProviderOperationOriginCapacityError";
+    this.origin = origin;
+    this.documentId = null;
+    this.limit = limit;
   }
 }
 
@@ -157,6 +190,56 @@ function retentionTimestamp(record: ProviderOperationRecord): number | null {
   if (record.state === "preparing") return null;
   if (record.state === "bound") return record.expiresAt;
   return record.resolvedAt;
+}
+
+/**
+ * Pure retention decision. Shared by `claim()`'s sweep and the worker-restart
+ * invalidation sweep (lane report F-10) so the two can never disagree about
+ * which rows are still occupying capacity.
+ */
+export function isProviderOperationRetentionExpired(
+  record: ProviderOperationRecord,
+  now: number,
+): boolean {
+  const retainedAt = retentionTimestamp(record);
+  if (retainedAt === null) return false;
+  return now >= retainedAt &&
+    now - retainedAt >= PROVIDER_OPERATION_RETENTION_MS;
+}
+
+/**
+ * Pure admission decision for the journal, extracted so it is directly
+ * testable without an IndexedDB implementation.
+ *
+ * Order matters and is deliberate (audit finding X-2): the two global caps are
+ * evaluated first, so genuine global exhaustion still reports itself as global
+ * exhaustion, and the per-origin share only ever refuses earlier — with a
+ * distinguishable error — for a site that has already used its own quarter of
+ * the pool.
+ */
+export function providerOperationCapacityRefusal(counts: {
+  readonly preparingCount: number;
+  readonly totalCount: number;
+  readonly originCount: number;
+  readonly origin: string;
+}): ProviderOperationCapacityError | null {
+  if (counts.preparingCount >= MAX_PREPARING_PROVIDER_OPERATIONS) {
+    return new ProviderOperationCapacityError(
+      `at most ${MAX_PREPARING_PROVIDER_OPERATIONS} operations may be preparing`,
+    );
+  }
+  if (counts.totalCount >= MAX_TOTAL_PROVIDER_OPERATIONS) {
+    return new ProviderOperationCapacityError(
+      `at most ${MAX_TOTAL_PROVIDER_OPERATIONS} operations may be retained`,
+    );
+  }
+  if (counts.originCount >= MAX_PROVIDER_OPERATIONS_PER_ORIGIN) {
+    return new ProviderOperationOriginCapacityError(
+      counts.origin,
+      MAX_PROVIDER_OPERATIONS_PER_ORIGIN,
+    );
+  }
+  return null;
 }
 
 function transactionFailure(
@@ -359,6 +442,8 @@ implements ProviderOperationRepository {
       return await this.#writeTransaction((store, control) => {
         let preparingCount = 0;
         let totalCount = 0;
+        // X-2: rows the claiming origin already holds, counted in the same walk.
+        let originCount = 0;
         let existing: ProviderOperationRecord | undefined;
         let failed = false;
         const cursorRequest = store.openCursor();
@@ -381,16 +466,14 @@ implements ProviderOperationRepository {
               existing = undefined;
               return;
             }
-            if (preparingCount >= MAX_PREPARING_PROVIDER_OPERATIONS) {
-              control.failAfterCommit(new ProviderOperationCapacityError(
-                `at most ${MAX_PREPARING_PROVIDER_OPERATIONS} operations may be preparing`,
-              ));
-              return;
-            }
-            if (totalCount >= MAX_TOTAL_PROVIDER_OPERATIONS) {
-              control.failAfterCommit(new ProviderOperationCapacityError(
-                `at most ${MAX_TOTAL_PROVIDER_OPERATIONS} operations may be retained`,
-              ));
+            const refusal = providerOperationCapacityRefusal({
+              preparingCount,
+              totalCount,
+              originCount,
+              origin: candidate.origin,
+            });
+            if (refusal !== null) {
+              control.failAfterCommit(refusal);
               return;
             }
             const add = store.add(candidate);
@@ -436,6 +519,7 @@ implements ProviderOperationRepository {
                 existing = snapshotProviderOperation(current);
               }
               totalCount++;
+              if (current.origin === candidate.origin) originCount++;
               if (current.state === "preparing" && now < current.expiresAt) {
                 preparingCount++;
               }
@@ -454,9 +538,11 @@ implements ProviderOperationRepository {
                 cursor.update(expired);
                 clearRecord(expired);
                 totalCount++;
+                if (current.origin === candidate.origin) originCount++;
               } else {
                 preparingCount++;
                 totalCount++;
+                if (current.origin === candidate.origin) originCount++;
               }
             } else {
               const retainedAt = retentionTimestamp(current)!;
@@ -472,6 +558,7 @@ implements ProviderOperationRepository {
                 cursor.delete();
               } else {
                 totalCount++;
+                if (current.origin === candidate.origin) originCount++;
               }
             }
             cursor.continue();
@@ -694,6 +781,13 @@ implements ProviderOperationRepository {
             );
             cursor.update(failed);
             invalidated++;
+          } else if (isProviderOperationRetentionExpired(current, now)) {
+            // Lane report F-10 / audit finding X-2: capacity used to be freed
+            // only by a later successful claim(), so a burst of failed rows
+            // starved every origin for the whole retention window. This walk
+            // already visits every row at worker start, so sweep here too.
+            // The return value keeps its meaning: invalidated preparing rows.
+            cursor.delete();
           }
           cursor.continue();
         } catch (error) {

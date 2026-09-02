@@ -17,6 +17,17 @@ export const PROVIDER_TRANSPORT_CANCEL_TYPE =
   "warden:provider:transport-cancel" as const;
 export const PAGE_PROVIDER_RECEIPT_TYPE =
   "warden:provider:receipt" as const;
+/**
+ * Audit finding X-1. The one-shot capability grant the isolated content owner
+ * pushes into the document at `document_start`, carrying exactly one
+ * transferred `MessagePort`. The envelope itself is public and forgeable; the
+ * unforgeable half is the transferred port, which a later same-document script
+ * cannot obtain or name. The page owner claims the first grant it observes and
+ * refuses every later one, so a forged grant can suppress delivery but can
+ * never displace an already-claimed capability.
+ */
+export const PROVIDER_CAPABILITY_TYPE =
+  "warden:provider:capability" as const;
 
 const CORRELATION_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 const OPERATION_KEY_PATTERN = /^op_[0-9a-f]{64}$/;
@@ -59,6 +70,11 @@ export interface ProviderTransportCancelEnvelope {
   readonly type: typeof PROVIDER_TRANSPORT_CANCEL_TYPE;
   readonly expiresAt: number;
   readonly payload: unknown;
+}
+
+export interface ProviderCapabilityEnvelope {
+  readonly version: 1;
+  readonly type: typeof PROVIDER_CAPABILITY_TYPE;
 }
 
 export interface PageProviderReceiptEnvelope {
@@ -316,6 +332,24 @@ export function readProviderTransportCancelEnvelope(
   } catch {
     return null;
   }
+}
+
+export function createProviderCapabilityEnvelope(): ProviderCapabilityEnvelope {
+  return Object.freeze({ version: 1, type: PROVIDER_CAPABILITY_TYPE });
+}
+
+export function readProviderCapabilityEnvelope(
+  value: unknown,
+): ProviderCapabilityEnvelope | null {
+  const record = closedDataRecord(value, ["version", "type"]);
+  if (
+    record === null ||
+    record.version !== 1 ||
+    record.type !== PROVIDER_CAPABILITY_TYPE
+  ) {
+    return null;
+  }
+  return createProviderCapabilityEnvelope();
 }
 
 export function createPageProviderReceiptEnvelope(

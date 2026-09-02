@@ -20,7 +20,10 @@ import {
   MAX_PROVIDER_CONTENT_REQUEST_TTL_MS,
   MAX_PROVIDER_CONTENT_REQUESTS_PER_DOCUMENT,
   ProviderContentTransportOwner,
+  type ProviderContentMessagePort,
+  type ProviderContentMessagePortListener,
   type ProviderContentTimerSource,
+  type ProviderContentTransportOptions,
 } from "../src/content/provider-content-transport.js";
 import {
   ProviderPageRequestOwner,
@@ -42,6 +45,7 @@ import {
   createProviderTransportRequestEnvelope,
   createProviderTransportSettledEnvelope,
   createProviderTransportTerminalEnvelope,
+  readProviderCapabilityEnvelope,
   readProviderTransportReceiptEnvelope,
   readProviderTransportCancelEnvelope,
   readProviderTransportTerminalEnvelope,
@@ -142,14 +146,98 @@ class MockRuntime implements ContentRuntimeApi {
   }
 }
 
+/**
+ * One end of the X-1 capability channel. `port1` stays with the content owner;
+ * `port2` is what the grant transfers into the document. A message posted on
+ * one end reaches the other end's listeners, so the joint test wires a real
+ * page owner through it; with nobody listening on the far end, `port1`
+ * simulates the page's delivery receipt instead.
+ */
+class MockChannelPort implements ProviderContentMessagePort {
+  readonly listeners = new Set<ProviderContentMessagePortListener>();
+  readonly posted: unknown[] = [];
+  peer: MockChannelPort | null = null;
+  starts = 0;
+  closes = 0;
+  throwOnPost = false;
+  autoReceipt = true;
+  postHook: ((message: unknown) => void) | null = null;
+
+  addEventListener(
+    type: "message",
+    listener: ProviderContentMessagePortListener,
+  ): void {
+    expect(type).toBe("message");
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(
+    type: "message",
+    listener: ProviderContentMessagePortListener,
+  ): void {
+    expect(type).toBe("message");
+    this.listeners.delete(listener);
+  }
+
+  postMessage(message: unknown): void {
+    if (this.throwOnPost) throw new Error("capability channel is closed");
+    this.posted.push(message);
+    this.postHook?.(message);
+    const peer = this.peer;
+    if (peer !== null && peer.listeners.size > 0) {
+      peer.deliver(message);
+      return;
+    }
+    if (!this.autoReceipt) return;
+    const outer = message as { readonly type?: unknown; readonly payload?: unknown };
+    if (outer.type !== PAGE_PROVIDER_RESPONSE_TYPE) return;
+    const terminal = readProviderTransportTerminalEnvelope(outer.payload);
+    if (terminal === null) return;
+    this.deliver(createPageProviderReceiptEnvelope(
+      createProviderTransportReceiptEnvelope(
+        terminal.correlationId,
+        terminal.receiptId,
+        terminal.expiresAt,
+      ),
+    ));
+  }
+
+  start(): void {
+    this.starts++;
+  }
+
+  close(): void {
+    this.closes++;
+  }
+
+  deliver(data: unknown): void {
+    for (const listener of [...this.listeners]) listener({ data });
+  }
+}
+
+class MockChannel {
+  readonly port1 = new MockChannelPort();
+  readonly port2 = new MockChannelPort();
+
+  constructor() {
+    this.port1.peer = this.port2;
+    this.port2.peer = this.port1;
+  }
+}
+
 class MockWindow implements ContentWindowApi, ProviderPageWindowApi {
   readonly location = { origin: ORIGIN };
   readonly listeners = new Set<ContentWindowMessageListener>();
   readonly posted: Array<{ readonly message: unknown; readonly targetOrigin: string }> = [];
+  readonly grants: Array<{
+    readonly message: unknown;
+    readonly targetOrigin: string;
+    readonly transfer: readonly unknown[];
+  }> = [];
+  readonly channel = new MockChannel();
   dispatchPosts = false;
   throwOnPost = false;
   postHook: ((message: unknown) => void) | null = null;
-  autoReceipt = true;
 
   addEventListener(type: "message", listener: ContentWindowMessageListener): void {
     expect(type).toBe("message");
@@ -161,23 +249,20 @@ class MockWindow implements ContentWindowApi, ProviderPageWindowApi {
     this.listeners.delete(listener);
   }
 
-  postMessage(message: unknown, targetOrigin: string): void {
+  postMessage(
+    message: unknown,
+    targetOrigin: string,
+    transfer?: readonly unknown[],
+  ): void {
     if (this.throwOnPost) throw new Error("document disappeared");
+    // The capability grant is recorded apart from ordinary page traffic so
+    // every `posted` assertion stays about what a page script can observe.
+    if (readProviderCapabilityEnvelope(message) !== null) {
+      this.grants.push({ message, targetOrigin, transfer: transfer ?? [] });
+      return;
+    }
     this.posted.push({ message, targetOrigin });
     this.postHook?.(message);
-    const outer = message as { readonly type?: unknown; readonly payload?: unknown };
-    const terminal = outer.type === PAGE_PROVIDER_RESPONSE_TYPE
-      ? readProviderTransportTerminalEnvelope(outer.payload)
-      : null;
-    if (this.autoReceipt && terminal !== null) {
-      this.emit(createPageProviderReceiptEnvelope(
-        createProviderTransportReceiptEnvelope(
-          terminal.correlationId,
-          terminal.receiptId,
-          terminal.expiresAt,
-        ),
-      ));
-    }
     if (this.dispatchPosts) this.emit(message);
   }
 
@@ -190,6 +275,24 @@ class MockWindow implements ContentWindowApi, ProviderPageWindowApi {
     };
     for (const listener of [...this.listeners]) listener(event);
   }
+
+  /** Replay the recorded grant into the document, transfer list included. */
+  handOffCapability(): void {
+    const grant = this.grants.at(-1);
+    if (grant === undefined) throw new Error("no capability grant was posted");
+    this.emit(grant.message, { ports: grant.transfer } as never);
+  }
+}
+
+function transport(
+  page: MockWindow,
+  runtime: MockRuntime,
+  options: ProviderContentTransportOptions = {},
+): ProviderContentTransportOwner {
+  return new ProviderContentTransportOwner(page, runtime, {
+    channelSource: () => page.channel,
+    ...options,
+  });
 }
 
 function signRequest(
@@ -305,7 +408,7 @@ describe("C20 bounded content provider transport", () => {
   it("opens lazily and retains one canonical copy instead of attacker-owned request data", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
     const transaction = [1, 2, 3];
     const request = signRequest(CORRELATION_ID, transaction);
 
@@ -327,7 +430,7 @@ describe("C20 bounded content provider transport", () => {
   it("resends the identical retained payload once after worker Port loss", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
     page.emit(requestEnvelope(signRequest()));
     const firstPort = runtime.port;
     const retained = firstPort.posted[0];
@@ -350,7 +453,7 @@ describe("C20 bounded content provider transport", () => {
   it("recovers every eligible outstanding request over one fresh Port", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
     page.emit(requestEnvelope(signRequest("content_request_1111111111", [1])));
     page.emit(requestEnvelope(signRequest("content_request_2222222222", [2])));
     const firstPort = runtime.port;
@@ -368,7 +471,7 @@ describe("C20 bounded content provider transport", () => {
   it("does not reconnect after an idle Port disconnect", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
     page.emit(requestEnvelope(signRequest()));
     const port = runtime.port;
     port.onMessage.emit(
@@ -387,7 +490,7 @@ describe("C20 bounded content provider transport", () => {
   it("forwards the existing exact unavailable response without widening it", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
     page.emit(requestEnvelope(signRequest()));
 
     runtime.port.onMessage.emit(terminalEnvelope(
@@ -395,24 +498,23 @@ describe("C20 bounded content provider transport", () => {
     ));
 
     expect(owner.pendingCount).toBe(0);
-    expect(page.posted).toEqual([
-      {
-        message: responseEnvelope(createUnavailableProviderResponse(CORRELATION_ID)),
-        targetOrigin: ORIGIN,
-      },
+    // The terminal crosses the capability, never the window.
+    expect(page.posted).toEqual([]);
+    expect(page.channel.port1.posted).toEqual([
+      responseEnvelope(createUnavailableProviderResponse(CORRELATION_ID)),
     ]);
   });
 
   it("ignores a stale Port and retains pending state until page receipt", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
     page.emit(requestEnvelope(signRequest()));
     const firstPort = runtime.port;
     firstPort.onDisconnect.emit();
     const secondPort = runtime.port;
     let observedPending = -1;
-    page.postHook = () => {
+    page.channel.port1.postHook = () => {
       observedPending = owner.pendingCount;
     };
 
@@ -421,7 +523,7 @@ describe("C20 bounded content provider transport", () => {
         createSignedTransactionProviderResponse(CORRELATION_ID, Uint8Array.of(7)),
       ),
     );
-    expect(page.posted).toEqual([]);
+    expect(page.channel.port1.posted).toEqual([]);
     secondPort.onMessage.emit(
       terminalEnvelope(
         createProviderTerminalFailureResponse(CORRELATION_ID, "WARDEN_REQUEST_CANCELLED"),
@@ -430,16 +532,13 @@ describe("C20 bounded content provider transport", () => {
 
     expect(observedPending).toBe(1);
     expect(owner.pendingCount).toBe(0);
-    expect(page.posted).toEqual([
-      {
-        message: responseEnvelope(
-          createProviderTerminalFailureResponse(
-            CORRELATION_ID,
-            "WARDEN_REQUEST_CANCELLED",
-          ),
+    expect(page.channel.port1.posted).toEqual([
+      responseEnvelope(
+        createProviderTerminalFailureResponse(
+          CORRELATION_ID,
+          "WARDEN_REQUEST_CANCELLED",
         ),
-        targetOrigin: ORIGIN,
-      },
+      ),
     ]);
   });
 
@@ -447,8 +546,8 @@ describe("C20 bounded content provider transport", () => {
     const runtime = new MockRuntime();
     runtime.autoSettleReceipts = false;
     const page = new MockWindow();
-    page.autoReceipt = false;
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    page.channel.port1.autoReceipt = false;
+    const owner = transport(page, runtime);
     page.emit(requestEnvelope(signRequest()));
     const firstPort = runtime.port;
     const retainedRequest = firstPort.posted[0];
@@ -466,9 +565,9 @@ describe("C20 bounded content provider transport", () => {
 
     firstPort.onMessage.emit(terminal);
     expect(owner.pendingCount).toBe(1);
-    expect(page.posted).toHaveLength(1);
+    expect(page.channel.port1.posted).toHaveLength(1);
 
-    page.emit(createPageProviderReceiptEnvelope(receipt));
+    page.channel.port1.deliver(createPageProviderReceiptEnvelope(receipt));
     expect(owner.pendingCount).toBe(1);
     expect(firstPort.posted).toEqual([retainedRequest, receipt]);
 
@@ -478,7 +577,7 @@ describe("C20 bounded content provider transport", () => {
     replacement.onMessage.emit(terminal);
 
     expect(owner.pendingCount).toBe(1);
-    expect(page.posted).toHaveLength(1);
+    expect(page.channel.port1.posted).toHaveLength(1);
     expect(replacement.posted).toEqual([retainedRequest, receipt]);
 
     replacement.onMessage.emit(createProviderTransportSettledEnvelope(
@@ -492,7 +591,7 @@ describe("C20 bounded content provider transport", () => {
   it("copies strict signed bytes before forwarding and ignores an unknown terminal id", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
     page.emit(requestEnvelope(signRequest()));
 
     runtime.port.onMessage.emit(
@@ -504,7 +603,7 @@ describe("C20 bounded content provider transport", () => {
       ),
     );
     expect(owner.pendingCount).toBe(1);
-    expect(page.posted).toEqual([]);
+    expect(page.channel.port1.posted).toEqual([]);
 
     const response = {
       version: 1,
@@ -516,16 +615,13 @@ describe("C20 bounded content provider transport", () => {
     runtime.port.onMessage.emit(terminalEnvelope(response));
     response.result.signedTransaction[0] = 0;
 
-    expect(page.posted).toEqual([
-      {
-        message: responseEnvelope(
-          createSignedTransactionProviderResponse(
-            CORRELATION_ID,
-            Uint8Array.of(9, 8, 7),
-          ),
+    expect(page.channel.port1.posted).toEqual([
+      responseEnvelope(
+        createSignedTransactionProviderResponse(
+          CORRELATION_ID,
+          Uint8Array.of(9, 8, 7),
         ),
-        targetOrigin: ORIGIN,
-      },
+      ),
     ]);
   });
 
@@ -533,7 +629,7 @@ describe("C20 bounded content provider transport", () => {
     const runtime = new MockRuntime();
     runtime.throwOnEveryPost = true;
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
 
     page.emit(requestEnvelope(signRequest()));
 
@@ -547,7 +643,7 @@ describe("C20 bounded content provider transport", () => {
     const runtime = new MockRuntime();
     runtime.failConnectCount = 1;
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
     page.emit(requestEnvelope(signRequest()));
 
     expect(runtime.connectCalls).toHaveLength(2);
@@ -565,7 +661,7 @@ describe("C20 bounded content provider transport", () => {
     const timers = new ContentTimers();
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime, {
+    const owner = transport(page, runtime, {
       readNow: () => now,
       requestTtlMs: 100,
       timerSource: timers,
@@ -609,7 +705,7 @@ describe("C20 bounded content provider transport", () => {
       initialNow = 1_100;
     };
     const initialPage = new MockWindow();
-    const initial = new ProviderContentTransportOwner(initialPage, initialRuntime, {
+    const initial = transport(initialPage, initialRuntime, {
       readNow: () => initialNow,
       requestTtlMs: 100,
       timerSource: initialTimers,
@@ -623,7 +719,7 @@ describe("C20 bounded content provider transport", () => {
     const recoveryTimers = new ContentTimers();
     const recoveryRuntime = new MockRuntime();
     const recoveryPage = new MockWindow();
-    const recovery = new ProviderContentTransportOwner(
+    const recovery = transport(
       recoveryPage,
       recoveryRuntime,
       {
@@ -648,7 +744,7 @@ describe("C20 bounded content provider transport", () => {
   it("fails closed on an unexpected background shape without reflecting detail", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
     page.emit(requestEnvelope(signRequest()));
 
     runtime.port.onMessage.emit({ privateKey: "must-not-cross" });
@@ -662,7 +758,7 @@ describe("C20 bounded content provider transport", () => {
   it("closes on duplicate correlations and unsupported matching requests", () => {
     const firstRuntime = new MockRuntime();
     const firstPage = new MockWindow();
-    const first = new ProviderContentTransportOwner(firstPage, firstRuntime);
+    const first = transport(firstPage, firstRuntime);
     firstPage.emit(requestEnvelope(signRequest()));
     firstPage.emit(requestEnvelope(signRequest()));
 
@@ -672,7 +768,7 @@ describe("C20 bounded content provider transport", () => {
 
     const secondRuntime = new MockRuntime();
     const secondPage = new MockWindow();
-    new ProviderContentTransportOwner(secondPage, secondRuntime);
+    transport(secondPage, secondRuntime);
     secondPage.emit(requestEnvelope({
       version: 1,
       type: "request",
@@ -687,7 +783,7 @@ describe("C20 bounded content provider transport", () => {
   it("enforces pending and document-lifetime ceilings without a reconnect loop", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime, {
+    const owner = transport(page, runtime, {
       pendingLimit: 1,
       requestLimit: 2,
     });
@@ -704,7 +800,7 @@ describe("C20 bounded content provider transport", () => {
   it("contains hostile proxies and disposes all volatile transport state", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    const owner = new ProviderContentTransportOwner(page, runtime);
+    const owner = transport(page, runtime);
     const revoked = Proxy.revocable(signRequest(), {});
     revoked.revoke();
 
@@ -714,7 +810,7 @@ describe("C20 bounded content provider transport", () => {
 
     const nextRuntime = new MockRuntime();
     const nextPage = new MockWindow();
-    const next = new ProviderContentTransportOwner(nextPage, nextRuntime);
+    const next = transport(nextPage, nextRuntime);
     nextPage.emit(requestEnvelope(signRequest()));
     next.dispose();
     next.dispose();
@@ -727,12 +823,15 @@ describe("C20 bounded content provider transport", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
     page.dispatchPosts = true;
-    page.autoReceipt = false;
-    const transport = new ProviderContentTransportOwner(page, runtime);
+    const contentOwner = transport(page, runtime);
     const requestOwner = new ProviderPageRequestOwner(page, {
       randomSource: new FixedRandom(),
       timerSource: new InertTimers(),
     });
+    // The content owner minted the grant at `document_start`; hand the
+    // transferred port to the main-world owner exactly as Chrome would.
+    page.handOffCapability();
+    expect(requestOwner.hasCapability).toBe(true);
     const result = requestOwner.signTransaction({
       accountAddress: ACCOUNT,
       transaction: Uint8Array.of(1, 2, 3),
@@ -760,11 +859,62 @@ describe("C20 bounded content provider transport", () => {
 
     await rejection;
     expect(requestOwner.pendingCount).toBe(0);
-    expect(transport.pendingCount).toBe(0);
+    expect(contentOwner.pendingCount).toBe(0);
     expect(page.posted.filter(({ message }) =>
       (message as { readonly type?: unknown }).type === PAGE_PROVIDER_REQUEST_TYPE
     )).toHaveLength(1);
+    // The terminal and its receipt never touched `window`.
+    expect(page.posted.filter(({ message }) =>
+      (message as { readonly type?: unknown }).type !== PAGE_PROVIDER_REQUEST_TYPE
+    )).toEqual([]);
     requestOwner.dispose();
-    transport.dispose();
+    contentOwner.dispose();
+  });
+
+  it("refuses to settle a page promise from a same-window forgery end to end", async () => {
+    const runtime = new MockRuntime();
+    const page = new MockWindow();
+    page.dispatchPosts = true;
+    const contentOwner = transport(page, runtime);
+    const requestOwner = new ProviderPageRequestOwner(page, {
+      randomSource: new FixedRandom(),
+      timerSource: new InertTimers(),
+    });
+    page.handOffCapability();
+    const result = requestOwner.signTransaction({
+      accountAddress: ACCOUNT,
+      transaction: Uint8Array.of(1, 2, 3),
+      chain: "solana:devnet",
+      options: { preflightCommitment: "confirmed", minContextSlot: 42 },
+    });
+    const retained = runtime.port.posted[0] as { readonly expiresAt: number };
+
+    // A same-document script replays the exact envelope shape the capability
+    // carries, on the window, with the correlation and deadline it just saw.
+    page.emit({
+      version: 1,
+      type: PAGE_PROVIDER_RESPONSE_TYPE,
+      payload: terminalEnvelope(
+        createSignedTransactionProviderResponse(
+          PAGE_CORRELATION_ID,
+          Uint8Array.of(6, 6, 6),
+        ),
+        retained.expiresAt,
+      ),
+    });
+    expect(requestOwner.pendingCount).toBe(1);
+
+    runtime.port.onMessage.emit(terminalEnvelope(
+      createSignedTransactionProviderResponse(
+        PAGE_CORRELATION_ID,
+        Uint8Array.of(1, 2, 3),
+      ),
+      retained.expiresAt,
+    ));
+
+    await expect(result).resolves.toEqual(Uint8Array.of(1, 2, 3));
+    expect(contentOwner.pendingCount).toBe(0);
+    requestOwner.dispose();
+    contentOwner.dispose();
   });
 });

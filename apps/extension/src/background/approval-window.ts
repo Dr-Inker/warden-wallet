@@ -4,6 +4,13 @@ import {
 } from "@warden/core/approval";
 
 import { parseApprovalRequestId } from "../approval-protocol.js";
+import {
+  MAX_APPROVAL_WINDOWS_PER_DOCUMENT,
+  MAX_APPROVAL_WINDOWS_PER_ORIGIN,
+  ProviderOriginCapacityError,
+  readProviderCapacityScope,
+  type ProviderCapacityScope,
+} from "./provider-origin-capacity.js";
 
 export const APPROVAL_WINDOW_WIDTH = 720;
 export const APPROVAL_WINDOW_HEIGHT = 600;
@@ -78,8 +85,18 @@ export interface ApprovalWindowLauncher {
   /**
    * Open one background-authored review page for an already-owned request.
    * The AbortSignal is the only caller-controlled lifetime capability.
+   *
+   * Audit finding X-2: `scope` names the browser-authenticated page principal
+   * the launch is on behalf of, so one origin cannot hold the whole global
+   * window pool. It is optional because not every route has a page principal —
+   * a privileged-UI or harness launch passes none and is bounded only by the
+   * global cap. The provider route always passes one.
    */
-  launch(requestId: string, signal: AbortSignal): Promise<void>;
+  launch(
+    requestId: string,
+    signal: AbortSignal,
+    scope?: ProviderCapacityScope,
+  ): Promise<void>;
 }
 
 export interface InstalledApprovalWindowOwner extends ApprovalWindowLauncher {
@@ -95,6 +112,7 @@ export class ApprovalWindowStateError extends Error {
 
 interface WindowEntry {
   readonly requestId: string;
+  readonly scope: ProviderCapacityScope | null;
   readonly signal: AbortSignal;
   readonly onAbort: () => void;
   windowId: number | undefined;
@@ -394,7 +412,11 @@ export function installApprovalWindowOwner(
     throw error;
   }
 
-  const launch = async (requestIdValue: string, signalValue: AbortSignal): Promise<void> => {
+  const launch = async (
+    requestIdValue: string,
+    signalValue: AbortSignal,
+    scopeValue?: ProviderCapacityScope,
+  ): Promise<void> => {
     if (disposed) {
       throw new ApprovalWindowStateError("approval window owner is disposed");
     }
@@ -413,6 +435,34 @@ export function installApprovalWindowOwner(
     if (requests.size >= MAX_ACTIVE_APPROVAL_WINDOWS) {
       throw new ApprovalWindowStateError("approval window capacity exhausted");
     }
+    // X-2: the per-origin share sits beneath the global cap, so global
+    // exhaustion still reports itself as global exhaustion.
+    const scope = readProviderCapacityScope(scopeValue, (message) => {
+      throw new ApprovalWindowStateError(message);
+    });
+    if (scope !== null) {
+      let sameOrigin = 0;
+      let sameDocument = 0;
+      for (const current of requests.values()) {
+        if (current.scope === null || current.scope.origin !== scope.origin) continue;
+        sameOrigin++;
+        if (current.scope.documentId === scope.documentId) sameDocument++;
+      }
+      if (sameDocument >= MAX_APPROVAL_WINDOWS_PER_DOCUMENT) {
+        throw new ProviderOriginCapacityError(
+          "open approval windows",
+          scope,
+          MAX_APPROVAL_WINDOWS_PER_DOCUMENT,
+        );
+      }
+      if (sameOrigin >= MAX_APPROVAL_WINDOWS_PER_ORIGIN) {
+        throw new ProviderOriginCapacityError(
+          "open approval windows",
+          Object.freeze({ origin: scope.origin, documentId: null }),
+          MAX_APPROVAL_WINDOWS_PER_ORIGIN,
+        );
+      }
+    }
 
     let entry!: WindowEntry;
     const onAbort = (): void => {
@@ -422,6 +472,7 @@ export function installApprovalWindowOwner(
     };
     entry = {
       requestId,
+      scope,
       signal,
       onAbort,
       windowId: undefined,

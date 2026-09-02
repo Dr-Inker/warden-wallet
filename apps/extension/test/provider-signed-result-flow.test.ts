@@ -6,6 +6,11 @@ import {
   ProviderSignedResultFlowOwner,
   ProviderSignedResultFlowStateError,
 } from "../src/background/provider-signed-result-flow.js";
+import {
+  MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN,
+  ProviderOriginCapacityError,
+  isProviderOriginCapacityRefusal,
+} from "../src/background/provider-origin-capacity.js";
 import type { ProviderTerminalResponse } from "../src/background/provider-terminal-protocol.js";
 
 const EXTENSION_ID = "a".repeat(32);
@@ -20,14 +25,14 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function owned(): OwnedProviderRequest {
+function owned(origin = "https://dapp.example"): OwnedProviderRequest {
   return Object.freeze({
     id: `req_${"11".repeat(16)}`,
     provenance: Object.freeze({
       kind: "provider" as const,
       extensionId: EXTENSION_ID,
       documentId: "document-0123456789",
-      origin: "https://dapp.example",
+      origin,
       tabId: 9,
       frameId: 2,
     }),
@@ -273,19 +278,102 @@ describe("C18/C19 provider terminal result composition", () => {
         },
       },
     });
-    const active = Array.from(
-      { length: MAX_ACTIVE_PROVIDER_SIGNED_RESULT_FLOWS },
-      () => owner.deliver(lease(owned()).lease),
+    // X-2: no single origin may reach the global cap, so the global cap is
+    // now only reachable across enough distinct origins.
+    const origins = Array.from(
+      {
+        length: MAX_ACTIVE_PROVIDER_SIGNED_RESULT_FLOWS /
+          MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN,
+      },
+      (_, index) => `https://site-${index}.example`,
+    );
+    const active = origins.flatMap((origin) =>
+      Array.from(
+        { length: MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN },
+        () => owner.deliver(lease(owned(origin)).lease),
+      )
     );
 
     expect(owner.activeCount).toBe(32);
-    await expect(owner.deliver(lease(owned()).lease)).rejects.toThrow(
-      "active flow capacity exhausted",
-    );
+    await expect(
+      owner.deliver(lease(owned("https://late.example")).lease),
+    ).rejects.toThrow("active flow capacity exhausted");
 
     terminal.resolve(false);
     const outcomes = await Promise.allSettled(active);
     expect(outcomes.every((outcome) => outcome.status === "rejected")).toBe(true);
+    expect(owner.activeCount).toBe(0);
+  });
+
+  it("keeps serving a second origin after the first has used its whole share", async () => {
+    const terminal = deferred<boolean>();
+    const owner = new ProviderSignedResultFlowOwner({
+      approvals: {
+        async launch() {
+          return Object.freeze({
+            kind: "opened" as const,
+            approval: Object.freeze({}),
+            terminal: terminal.promise,
+          });
+        },
+      },
+      results: {
+        async deliver() {
+          throw new Error("false terminal must not reach delivery");
+        },
+      },
+    });
+    const hostile = Array.from(
+      { length: MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN },
+      () => owner.deliver(lease(owned("https://hostile.example")).lease),
+    );
+
+    expect(owner.activeCount).toBe(MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN);
+    const refused = owner.deliver(
+      lease(owned("https://hostile.example")).lease,
+    );
+    await expect(refused).rejects.toBeInstanceOf(ProviderOriginCapacityError);
+    await expect(refused).rejects.toThrow(
+      "origin https://hostile.example may hold at most 4 active signed-result flows",
+    );
+    await refused.catch((error: unknown) => {
+      expect(isProviderOriginCapacityRefusal(error)).toBe(true);
+    });
+
+    // The victim origin is untouched and still gets its whole share.
+    const victim = Array.from(
+      { length: MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN },
+      () => owner.deliver(lease(owned("https://victim.example")).lease),
+    );
+    expect(owner.activeCount).toBe(
+      MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN * 2,
+    );
+
+    terminal.resolve(false);
+    await Promise.allSettled([...hostile, ...victim]);
+    expect(owner.activeCount).toBe(0);
+    expect(MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN).toBe(4);
+  });
+
+  it("refuses a lease that presents no browser-derived origin", async () => {
+    const owner = new ProviderSignedResultFlowOwner({
+      approvals: { async launch() { throw new Error("unreachable"); } },
+      results: { async deliver() { throw new Error("unreachable"); } },
+    });
+    const value = owned();
+    const anonymous = Object.freeze({
+      ...value,
+      provenance: Object.freeze({ ...value.provenance, origin: "" }),
+    }) as OwnedProviderRequest;
+
+    await expect(owner.deliver(Object.freeze({
+      owned: anonymous,
+      assertActive(): void {},
+      postMessage(): void {},
+      finish(): boolean {
+        return true;
+      },
+    }))).rejects.toThrow("origin is malformed");
     expect(owner.activeCount).toBe(0);
   });
 });

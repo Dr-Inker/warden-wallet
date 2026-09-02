@@ -16,6 +16,11 @@ import {
   installApprovalWindowOwner,
   type ApprovalWindowsApi,
 } from "../src/background/approval-window.js";
+import {
+  MAX_APPROVAL_WINDOWS_PER_DOCUMENT,
+  MAX_APPROVAL_WINDOWS_PER_ORIGIN,
+  ProviderOriginCapacityError,
+} from "../src/background/provider-origin-capacity.js";
 
 const EXTENSION_ID = "a".repeat(32);
 const REQUEST_ID = `req_${"ab".repeat(16)}`;
@@ -266,6 +271,112 @@ describe("background-owned approval windows", () => {
 
     ready.resolve();
     await Promise.all(openings);
+  });
+
+  it("gives each origin and document a share beneath the global window cap", async () => {
+    const ready = deferred<void>();
+    const records = Array.from(
+      { length: MAX_ACTIVE_APPROVAL_WINDOWS + 2 },
+      (_, index) => record(requestId(index + 1)),
+    );
+    const owner = new MemoryOwner(...records);
+    const { installed, windows } = install(owner, new FakeWindows(), {
+      ready: ready.promise,
+    });
+    const controller = new AbortController();
+    const openings: Promise<void>[] = [];
+    const scope = (origin: string, documentId: string) =>
+      Object.freeze({ origin, documentId });
+
+    // A hostile origin fills its own share across as many documents as it has.
+    let next = 0;
+    for (let index = 0; index < MAX_APPROVAL_WINDOWS_PER_ORIGIN; index++) {
+      openings.push(installed.launch(
+        records[next++]!.id,
+        controller.signal,
+        scope("https://hostile.example", `hostile-document-${index}`),
+      ));
+    }
+    await expect(installed.launch(
+      records[next]!.id,
+      controller.signal,
+      scope("https://hostile.example", "hostile-document-extra"),
+    )).rejects.toBeInstanceOf(ProviderOriginCapacityError);
+    await expect(installed.launch(
+      records[next]!.id,
+      controller.signal,
+      scope("https://hostile.example", "hostile-document-extra"),
+    )).rejects.toThrow(
+      "origin https://hostile.example may hold at most 4 open approval windows",
+    );
+
+    // One document may not hold two windows even inside its origin's share.
+    openings.push(installed.launch(
+      records[next++]!.id,
+      controller.signal,
+      scope("https://victim.example", "victim-document"),
+    ));
+    await expect(installed.launch(
+      records[next]!.id,
+      controller.signal,
+      scope("https://victim.example", "victim-document"),
+    )).rejects.toThrow(
+      "document victim-document of origin https://victim.example " +
+        "may hold at most 1 open approval windows",
+    );
+
+    // The victim origin is still served on a second document.
+    openings.push(installed.launch(
+      records[next++]!.id,
+      controller.signal,
+      scope("https://victim.example", "victim-document-2"),
+    ));
+    expect(MAX_APPROVAL_WINDOWS_PER_DOCUMENT).toBe(1);
+    expect(MAX_APPROVAL_WINDOWS_PER_ORIGIN).toBe(4);
+    expect(windows.createCalls).toEqual([]);
+
+    ready.resolve();
+    await Promise.all(openings);
+  });
+
+  it("still enforces the global window cap across many origins", async () => {
+    const ready = deferred<void>();
+    const records = Array.from(
+      { length: MAX_ACTIVE_APPROVAL_WINDOWS + 1 },
+      (_, index) => record(requestId(index + 1)),
+    );
+    const owner = new MemoryOwner(...records);
+    const { installed } = install(owner, new FakeWindows(), {
+      ready: ready.promise,
+    });
+    const controller = new AbortController();
+    const openings = records.slice(0, MAX_ACTIVE_APPROVAL_WINDOWS).map(
+      (value, index) => installed.launch(value.id, controller.signal, {
+        origin: `https://site-${Math.floor(index / MAX_APPROVAL_WINDOWS_PER_ORIGIN)}.example`,
+        documentId: `document-${index}`,
+      }),
+    );
+
+    await expect(installed.launch(
+      records[MAX_ACTIVE_APPROVAL_WINDOWS]!.id,
+      controller.signal,
+      { origin: "https://late.example", documentId: "late-document" },
+    )).rejects.toThrow("approval window capacity exhausted");
+
+    ready.resolve();
+    await Promise.all(openings);
+  });
+
+  it("refuses a malformed capacity scope", async () => {
+    const owner = new MemoryOwner(record());
+    const { installed, windows } = install(owner);
+
+    await expect(installed.launch(
+      REQUEST_ID,
+      new AbortController().signal,
+      { origin: "", documentId: "d" },
+    )).rejects.toBeInstanceOf(ApprovalWindowStateError);
+    expect(windows.createCalls).toEqual([]);
   });
 
   it("cancels without opening when the provider lifetime is already aborted", async () => {

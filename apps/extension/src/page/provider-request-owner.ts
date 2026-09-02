@@ -6,6 +6,14 @@
 //! the pending entry before sending, removes it before first settlement, and
 //! retains every issued id as a bounded document-lifetime tombstone. It is not
 //! imported by any production entry point yet.
+//!
+//! Audit finding X-1: terminal settlement is no longer authenticated by values
+//! this owner broadcast itself. Requests still leave over `window.postMessage`
+//! — a same-document script may still read, suppress, or spoof them — but a
+//! terminal response is accepted only over the one `MessagePort` the isolated
+//! content owner transferred into this document at `document_start`. The port
+//! reference never leaves this class, so no later same-document script can
+//! name it, and a well-formed forgery on `window` is ignored outright.
 
 import {
   MAX_PROVIDER_REQUESTS_PER_DOCUMENT,
@@ -32,6 +40,7 @@ import {
   createPageProviderReceiptEnvelope,
   createProviderTransportReceiptEnvelope,
   createProviderTransportRequestEnvelope,
+  readProviderCapabilityEnvelope,
   readProviderTransportTerminalEnvelope,
   type ProviderTransportReceiptEnvelope,
 } from "../provider-delivery-protocol.js";
@@ -64,6 +73,34 @@ export interface ProviderPageWindowMessageEvent {
   readonly data: unknown;
   readonly origin: string;
   readonly source: unknown;
+  /** Transferred `MessagePort`s, present only on the X-1 capability grant. */
+  readonly ports?: unknown;
+}
+
+export interface ProviderPageMessagePortEvent {
+  readonly data: unknown;
+}
+
+export type ProviderPageMessagePortListener = (
+  event: ProviderPageMessagePortEvent,
+) => void;
+
+/**
+ * The exact subset of `MessagePort` this owner uses. A real transferred
+ * `MessagePort` satisfies it structurally.
+ */
+export interface ProviderPageMessagePortApi {
+  addEventListener(
+    type: "message",
+    listener: ProviderPageMessagePortListener,
+  ): void;
+  removeEventListener(
+    type: "message",
+    listener: ProviderPageMessagePortListener,
+  ): void;
+  postMessage(message: unknown): void;
+  start(): void;
+  close(): void;
 }
 
 export type ProviderPageWindowMessageListener = (
@@ -103,6 +140,14 @@ export interface ProviderPageRequestOwnerOptions {
   readonly randomSource?: ProviderPageRandomSource;
   /** Test seam. Absolute-time checks remain authoritative over this timer. */
   readonly timerSource?: ProviderPageTimerSource;
+  /**
+   * Observability seam for X-1. Invoked, never thrown from, whenever a
+   * capability grant is refused because one is already claimed or because the
+   * grant carried no usable transferred port. `capabilityRefusalCount` is the
+   * durable record; this hook lets an entry point mirror it to a diagnostic
+   * sink without this class choosing a logging transport.
+   */
+  readonly onCapabilityRefused?: (reason: string) => void;
 }
 
 export class ProviderPageRequestStateError extends Error {
@@ -459,6 +504,35 @@ function readTerminalResponseEnvelope(
   }
 }
 
+/**
+ * Accept a capability grant only when it carries exactly one transferred object
+ * that exposes the whole `MessagePort` surface. Nothing here is trusted for
+ * authority: the port's unforgeability comes from the structured-clone transfer
+ * itself, and this check only refuses shapes this owner could not drive.
+ */
+function readTransferredCapabilityPort(
+  value: unknown,
+): ProviderPageMessagePortApi | null {
+  try {
+    if (!Array.isArray(value) || value.length !== 1) return null;
+    const candidate: unknown = value[0];
+    if (typeof candidate !== "object" || candidate === null) return null;
+    const port = candidate as Partial<ProviderPageMessagePortApi>;
+    if (
+      typeof port.addEventListener !== "function" ||
+      typeof port.removeEventListener !== "function" ||
+      typeof port.postMessage !== "function" ||
+      typeof port.start !== "function" ||
+      typeof port.close !== "function"
+    ) {
+      return null;
+    }
+    return candidate as ProviderPageMessagePortApi;
+  } catch {
+    return null;
+  }
+}
+
 function encodeCorrelationId(bytes: Uint8Array): string {
   let encoded = "page_";
   for (const byte of bytes) encoded += byte.toString(16).padStart(2, "0");
@@ -467,10 +541,34 @@ function encodeCorrelationId(bytes: Uint8Array): string {
 
 /**
  * Owns one main-world document's signTransaction promises. Same-page scripts
- * remain the caller trust principal and can observe, suppress, or forge page
- * traffic; this class grants them no origin, approval, account, or key
- * authority. Its guarantee is narrower: one owner-issued correlation can
- * settle at most one owner-created promise and can never name a later request.
+ * remain the caller trust principal for *initiating* work: they can still
+ * observe, suppress, or spoof the outbound `window.postMessage` request
+ * traffic, and this class grants them no origin, approval, account, or key
+ * authority.
+ *
+ * Two guarantees are claimed, and nothing wider:
+ *
+ * 1. One owner-issued correlation can settle at most one owner-created promise
+ *    and can never name a later request.
+ * 2. Audit finding X-1 — a promise only ever settles from a message delivered
+ *    over the single `MessagePort` transferred into this document by the
+ *    isolated content owner before any page script ran. The port reference is
+ *    private to this instance and is never echoed, logged, or re-posted, so no
+ *    later same-document script can obtain or name it. A same-window,
+ *    same-origin message carrying a correct `correlationId`, a correct
+ *    `expiresAt`, and a well-formed `receiptId` is therefore ignored: it can no
+ *    longer resolve a pending `signTransaction` with attacker-chosen "signed"
+ *    bytes, nor reject one with a fabricated terminal failure.
+ *
+ * The grant is claimed first-wins. A hostile script that manages to post a
+ * grant *before* the content owner's takes its own port and leaves this owner
+ * without a capability — every promise then times out. That is suppression,
+ * which the bridge threat model already accepts; it is not settlement.
+ *
+ * Ordering requirement: the entry point that constructs this owner must install
+ * it in the main world at `document_start`, before the isolated content owner
+ * pushes the grant. A page-script-constructed owner may miss the grant and can
+ * then only time out.
  */
 export class ProviderPageRequestOwner {
   readonly #page: ProviderPageWindowApi;
@@ -481,9 +579,12 @@ export class ProviderPageRequestOwner {
   readonly #requestLimit: number;
   readonly #randomSource: ProviderPageRandomSource;
   readonly #timerSource: ProviderPageTimerSource;
+  readonly #onCapabilityRefused: ((reason: string) => void) | null;
   readonly #pending = new Map<string, PendingPageRequest>();
   readonly #issued = new Set<string>();
   readonly #settledReceipts = new Map<string, SettledPageReceipt>();
+  #capabilityPort: ProviderPageMessagePortApi | null = null;
+  #capabilityRefusals = 0;
   #disposed = false;
   #listenerInstalled = false;
 
@@ -495,6 +596,16 @@ export class ProviderPageRequestOwner {
     ) {
       return;
     }
+    // The window carries exactly one inbound language now: the one-shot
+    // capability grant. Terminal responses arrive only over the granted port.
+    if (readProviderCapabilityEnvelope(event.data) === null) return;
+    this.#claimCapability(event.ports);
+  };
+
+  readonly #onCapabilityMessage = (
+    event: ProviderPageMessagePortEvent,
+  ): void => {
+    if (this.#disposed) return;
     const delivery = readTerminalResponseEnvelope(event.data);
     if (delivery === null) return;
     const { response, receipt } = delivery;
@@ -600,6 +711,13 @@ export class ProviderPageRequestOwner {
     this.#timerSource = requireTimerSource(
       options.timerSource ?? DEFAULT_TIMER_SOURCE,
     );
+    if (
+      options.onCapabilityRefused !== undefined &&
+      typeof options.onCapabilityRefused !== "function"
+    ) {
+      stateError("onCapabilityRefused must be a function");
+    }
+    this.#onCapabilityRefused = options.onCapabilityRefused ?? null;
     if (CLAIMED_PAGE_WINDOWS.has(this.#page)) {
       stateError("document already has a request owner");
     }
@@ -618,6 +736,66 @@ export class ProviderPageRequestOwner {
 
   get pendingCount(): number {
     return this.#pending.size;
+  }
+
+  /** True once the one-shot X-1 capability grant has been claimed. */
+  get hasCapability(): boolean {
+    return this.#capabilityPort !== null;
+  }
+
+  /** Every grant refused after the first, plus every malformed grant. */
+  get capabilityRefusalCount(): number {
+    return this.#capabilityRefusals;
+  }
+
+  #refuseCapability(reason: string): void {
+    this.#capabilityRefusals++;
+    if (this.#onCapabilityRefused === null) return;
+    try {
+      this.#onCapabilityRefused(reason);
+    } catch {
+      // A hostile or broken observer must not change settlement behaviour.
+    }
+  }
+
+  #claimCapability(ports: unknown): void {
+    if (this.#capabilityPort !== null) {
+      this.#refuseCapability("capability already claimed");
+      return;
+    }
+    const port = readTransferredCapabilityPort(ports);
+    if (port === null) {
+      this.#refuseCapability("capability grant carried no transferred port");
+      return;
+    }
+    // Claim before binding: a listener installation that throws must not leave
+    // the document able to hand this owner a second, attacker-owned port.
+    this.#capabilityPort = port;
+    try {
+      port.addEventListener("message", this.#onCapabilityMessage);
+      port.start();
+    } catch (error) {
+      this.#closeAfterFatal(
+        new ProviderPageRequestStateError("capability port setup failed", {
+          cause: error,
+        }),
+      );
+    }
+  }
+
+  #releaseCapability(): void {
+    const port = this.#capabilityPort;
+    if (port === null) return;
+    try {
+      port.removeEventListener("message", this.#onCapabilityMessage);
+    } catch {
+      // The disposed flag already refuses every later delivery.
+    }
+    try {
+      port.close();
+    } catch {
+      // Closing the in-memory owner still removes every settlement capability.
+    }
   }
 
   #currentTime(): number {
@@ -688,11 +866,12 @@ export class ProviderPageRequestOwner {
   }
 
   #postReceipt(receipt: ProviderTransportReceiptEnvelope): void {
+    const port = this.#capabilityPort;
+    if (port === null) return;
     try {
-      this.#page.postMessage(
-        createPageProviderReceiptEnvelope(receipt),
-        this.#documentOrigin,
-      );
+      // The receipt goes back over the capability, never over the window: the
+      // page must not be able to observe or replay delivery acknowledgments.
+      port.postMessage(createPageProviderReceiptEnvelope(receipt));
     } catch {
       // The promise is already settled. A duplicate exact terminal delivery
       // may retry this idempotent receipt while the document remains alive.
@@ -754,6 +933,7 @@ export class ProviderPageRequestOwner {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#removeListener();
+    this.#releaseCapability();
     const failure = error instanceof Error
       ? error
       : new ProviderPageRequestStateError("request owner failed");
@@ -843,6 +1023,7 @@ export class ProviderPageRequestOwner {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#removeListener();
+    this.#releaseCapability();
     for (const entry of [...this.#pending.values()]) {
       this.#rejectEntry(entry, new ProviderPageRequestDisposedError());
     }

@@ -40,6 +40,8 @@ import type { ProviderTerminalDeliveryLease } from "../src/background/provider-t
 import {
   ProviderPageRequestOwner,
   ProviderPageTerminalError,
+  type ProviderPageMessagePortApi,
+  type ProviderPageMessagePortListener,
   type ProviderPageRandomSource,
   type ProviderPageTimerSource,
   type ProviderPageWindowApi,
@@ -50,6 +52,7 @@ import {
   PAGE_PROVIDER_RESPONSE_TYPE,
 } from "../src/provider-protocol.js";
 import {
+  createProviderCapabilityEnvelope,
   createProviderTransportTerminalEnvelope,
   readProviderTransportRequestEnvelope,
 } from "../src/provider-delivery-protocol.js";
@@ -96,10 +99,43 @@ function owned(
   });
 }
 
+/** Stands in for the X-1 capability port the content owner transfers. */
+class FlowCapabilityPort implements ProviderPageMessagePortApi {
+  readonly listeners = new Set<ProviderPageMessagePortListener>();
+  readonly posted: unknown[] = [];
+
+  addEventListener(
+    _type: "message",
+    listener: ProviderPageMessagePortListener,
+  ): void {
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(
+    _type: "message",
+    listener: ProviderPageMessagePortListener,
+  ): void {
+    this.listeners.delete(listener);
+  }
+
+  postMessage(message: unknown): void {
+    this.posted.push(message);
+  }
+
+  start(): void {}
+
+  close(): void {}
+
+  deliver(data: unknown): void {
+    for (const listener of [...this.listeners]) listener({ data });
+  }
+}
+
 class FlowPage implements ProviderPageWindowApi {
   readonly location = { origin: ORIGIN };
   readonly listeners = new Set<ProviderPageWindowMessageListener>();
   readonly posted: Array<{ readonly message: unknown; readonly targetOrigin: string }> = [];
+  readonly capability = new FlowCapabilityPort();
 
   addEventListener(
     _type: "message",
@@ -119,13 +155,20 @@ class FlowPage implements ProviderPageWindowApi {
     this.posted.push({ message, targetOrigin });
   }
 
-  emit(data: unknown): void {
+  emit(data: unknown, ports?: readonly unknown[]): void {
     const event: ProviderPageWindowMessageEvent = {
       data,
       origin: ORIGIN,
       source: this,
+      ...(ports === undefined ? {} : { ports }),
     };
     for (const listener of [...this.listeners]) listener(event);
+  }
+
+  /** Push the one-shot capability grant into the document. */
+  grant(): FlowCapabilityPort {
+    this.emit(createProviderCapabilityEnvelope(), [this.capability]);
+    return this.capability;
   }
 }
 
@@ -454,6 +497,7 @@ describe("C19 durable provider terminal outcome", () => {
       timerSource: new InertTimers(),
       readNow: () => 1_000,
     });
+    page.grant();
     const pageResult = pageOwner.signTransaction({
       accountAddress: ACCOUNT,
       transaction: Uint8Array.of(1, 2, 3),
@@ -499,7 +543,7 @@ describe("C19 durable provider terminal outcome", () => {
       owned: value,
       assertActive: current.lease.assertActive.bind(current.lease),
       postMessage(message: ProviderTerminalResponse): void {
-        page.emit(Object.freeze({
+        page.capability.deliver(Object.freeze({
           version: 1,
           type: PAGE_PROVIDER_RESPONSE_TYPE,
           payload: createProviderTransportTerminalEnvelope(

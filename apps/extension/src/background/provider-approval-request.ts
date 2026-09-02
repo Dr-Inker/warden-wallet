@@ -23,6 +23,10 @@ import type {
 import { PublicKey } from "@solana/web3.js";
 
 import type { ApprovalWindowLauncher } from "./approval-window.js";
+import {
+  MAX_PROVIDER_APPROVAL_REQUESTS_PER_ORIGIN,
+  ProviderOriginCapacityError,
+} from "./provider-origin-capacity.js";
 import type { OwnedProviderRequest } from "./provider-port.js";
 import type { ProviderChain } from "./provider-message.js";
 
@@ -992,6 +996,12 @@ export class ProviderApprovalRequestOwner {
         await this.#dependencies.launchWindow(
           entry.binding.id,
           entry.lifetimeController.signal,
+          // X-2: the window pool's quota subject is the page principal this
+          // approval already bound, not anything the page can restate.
+          Object.freeze({
+            origin: entry.owned.provenance.origin,
+            documentId: entry.owned.provenance.documentId,
+          }),
         );
         assertAuthorityActive(entry.authoritySignal);
         this.#assertUsable();
@@ -1055,6 +1065,23 @@ export class ProviderApprovalRequestOwner {
     }
     if (this.activeCount >= MAX_ACTIVE_PROVIDER_APPROVAL_REQUESTS) {
       stateError("too many active provider approval requests");
+    }
+    // X-2: beneath the global cap, one browser-authenticated origin may hold
+    // only its own share of the preparing + active pool.
+    const origin = owned.provenance.origin;
+    let sameOrigin = 0;
+    for (const current of this.#preparing) {
+      if (current.provenance.origin === origin) sameOrigin++;
+    }
+    for (const entry of this.#active) {
+      if (entry.owned.provenance.origin === origin) sameOrigin++;
+    }
+    if (sameOrigin >= MAX_PROVIDER_APPROVAL_REQUESTS_PER_ORIGIN) {
+      throw new ProviderOriginCapacityError(
+        "active approval requests",
+        Object.freeze({ origin, documentId: null }),
+        MAX_PROVIDER_APPROVAL_REQUESTS_PER_ORIGIN,
+      );
     }
     this.#preparing.add(owned);
 

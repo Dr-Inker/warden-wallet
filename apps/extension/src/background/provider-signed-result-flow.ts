@@ -10,6 +10,10 @@
 import type { OwnedProviderRequest } from "./provider-port.js";
 import type { ProviderTerminalDeliveryLease } from "./provider-terminal-result.js";
 import type { ProviderTerminalResponse } from "./provider-terminal-protocol.js";
+import {
+  MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN,
+  ProviderOriginCapacityError,
+} from "./provider-origin-capacity.js";
 
 export const MAX_ACTIVE_PROVIDER_SIGNED_RESULT_FLOWS = 32;
 
@@ -120,6 +124,34 @@ function requireSignal(value: unknown): AbortSignal {
   return value as AbortSignal;
 }
 
+/**
+ * X-2 quota subject. The origin is Chrome-derived provenance the background
+ * minted; a lease that cannot present one is refused rather than admitted with
+ * no share, because an unattributable entry would consume global capacity that
+ * no per-origin rule could ever reclaim.
+ */
+function requireProvenanceOrigin(owned: unknown): string {
+  let provenance: unknown;
+  try {
+    provenance = (owned as Partial<OwnedProviderRequest>).provenance;
+  } catch (error) {
+    stateError("provider delivery lease provenance access failed", error);
+  }
+  if (typeof provenance !== "object" || provenance === null) {
+    stateError("provider delivery lease has no provenance");
+  }
+  let origin: unknown;
+  try {
+    origin = (provenance as { readonly origin?: unknown }).origin;
+  } catch (error) {
+    stateError("provider delivery lease origin access failed", error);
+  }
+  if (typeof origin !== "string" || origin.length === 0) {
+    stateError("provider delivery lease origin is malformed");
+  }
+  return origin;
+}
+
 function bindLease(value: unknown): BoundDeliveryLease {
   const lease = requireObject(
     value,
@@ -135,6 +167,7 @@ function bindLease(value: unknown): BoundDeliveryLease {
     stateError("provider delivery lease has no owned request");
   }
   requireSignal((owned as Partial<OwnedProviderRequest>).signal);
+  requireProvenanceOrigin(owned);
   const assertActive = requireMethod(lease, "assertActive", "lease.assertActive");
   const postMessage = requireMethod(lease, "postMessage", "lease.postMessage");
   const finish = requireMethod(lease, "finish", "lease.finish");
@@ -252,6 +285,19 @@ export class ProviderSignedResultFlowOwner {
       if (existing !== undefined) return existing;
       if (this.#active.size >= MAX_ACTIVE_PROVIDER_SIGNED_RESULT_FLOWS) {
         stateError("active flow capacity exhausted");
+      }
+      // X-2: the per-origin share sits beneath the global cap above.
+      const origin = requireProvenanceOrigin(lease.owned);
+      let sameOrigin = 0;
+      for (const current of this.#active.keys()) {
+        if (requireProvenanceOrigin(current) === origin) sameOrigin++;
+      }
+      if (sameOrigin >= MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN) {
+        throw new ProviderOriginCapacityError(
+          "active signed-result flows",
+          Object.freeze({ origin, documentId: null }),
+          MAX_PROVIDER_SIGNED_RESULT_FLOWS_PER_ORIGIN,
+        );
       }
 
       let flow!: Promise<ProviderSignedResultFlowResult>;

@@ -7,6 +7,14 @@
 //! independently rederive browser provenance and durable operation identity.
 //! Exhausted recovery never fabricates a terminal page error; C16's absolute
 //! deadline remains authoritative when no durable terminal response arrives.
+//!
+//! Audit finding X-1: this owner mints one `MessageChannel` per document and
+//! transfers `port2` into the page in its constructor — at `document_start`,
+//! before any page script runs. Terminal responses and page receipts travel
+//! only over that channel; requests keep arriving on `window`, where a
+//! same-document script may still spoof or suppress them. The grant is minted
+//! exactly once: this owner never answers a page-initiated handshake, so a
+//! later same-document script has no path to a second port.
 
 import {
   parseProviderRequest,
@@ -36,6 +44,7 @@ import type {
   ContentWindowMessageEvent,
 } from "./bridge.js";
 import {
+  createProviderCapabilityEnvelope,
   createProviderTransportCancelEnvelope,
   createProviderTransportReceiptEnvelope,
   createProviderTransportRequestEnvelope,
@@ -69,6 +78,58 @@ const DEFAULT_TIMER_SOURCE: ProviderContentTimerSource = {
     globalThis.clearTimeout(handle as ReturnType<typeof globalThis.setTimeout>),
 };
 
+export interface ProviderContentMessagePortEvent {
+  readonly data: unknown;
+}
+
+export type ProviderContentMessagePortListener = (
+  event: ProviderContentMessagePortEvent,
+) => void;
+
+/** The exact subset of `MessagePort` this owner drives. */
+export interface ProviderContentMessagePort {
+  addEventListener(
+    type: "message",
+    listener: ProviderContentMessagePortListener,
+  ): void;
+  removeEventListener(
+    type: "message",
+    listener: ProviderContentMessagePortListener,
+  ): void;
+  postMessage(message: unknown): void;
+  start(): void;
+  close(): void;
+}
+
+export interface ProviderContentMessageChannel {
+  readonly port1: ProviderContentMessagePort;
+  readonly port2: unknown;
+}
+
+export type ProviderContentChannelSource = () => ProviderContentMessageChannel;
+
+/**
+ * `window.postMessage` including the transfer list. `ContentWindowApi` models
+ * only the two-argument form the shipped bridge uses; the capability grant
+ * needs the third, so this owner binds the wider signature itself rather than
+ * widening the shipped content-bundle interface.
+ */
+type PostPageMessage = (
+  message: unknown,
+  targetOrigin: string,
+  transfer?: readonly unknown[],
+) => void;
+
+const DEFAULT_CHANNEL_SOURCE: ProviderContentChannelSource = () => {
+  const factory = (globalThis as {
+    MessageChannel?: new () => ProviderContentMessageChannel;
+  }).MessageChannel;
+  if (typeof factory !== "function") {
+    stateError("MessageChannel is unavailable in this realm");
+  }
+  return new factory();
+};
+
 export interface ProviderContentTransportOptions {
   readonly readNow?: () => number;
   readonly requestTtlMs?: number;
@@ -78,6 +139,8 @@ export interface ProviderContentTransportOptions {
   readonly pendingLimit?: number;
   /** May only lower the production bound; useful for focused tests. */
   readonly requestLimit?: number;
+  /** Test seam for the X-1 one-shot capability grant. */
+  readonly channelSource?: ProviderContentChannelSource;
 }
 
 export class ProviderContentTransportStateError extends Error {
@@ -397,14 +460,16 @@ export class ProviderContentTransportOwner {
   readonly #connect: ContentRuntimeApi["connect"];
   readonly #addPageListener: ContentWindowApi["addEventListener"];
   readonly #removePageListener: ContentWindowApi["removeEventListener"];
-  readonly #postPageMessage: ContentWindowApi["postMessage"];
+  readonly #postPageMessage: PostPageMessage;
   readonly #readNow: () => number;
   readonly #requestTtlMs: number;
   readonly #timerSource: ProviderContentTimerSource;
   readonly #pendingLimit: number;
   readonly #requestLimit: number;
+  readonly #channelSource: ProviderContentChannelSource;
   readonly #pending = new Map<string, PendingContentRequest>();
   readonly #issued = new Set<string>();
+  #capabilityPort: ProviderContentMessagePort | null = null;
   #activePort: BoundContentPort | null = null;
   #nextPortGeneration = 1;
   #open = true;
@@ -426,11 +491,9 @@ export class ProviderContentTransportOwner {
       this.#close(true);
       return;
     }
-    if (envelope === null) {
-      const receipt = readPageProviderReceiptEnvelope(event.data);
-      if (receipt !== null) this.#acceptPageReceipt(receipt.payload);
-      return;
-    }
+    // Receipts arrive on the capability channel only; the window carries
+    // requests and nothing else inbound.
+    if (envelope === null) return;
     let snapshot: ContentRequestSnapshot | null;
     try {
       snapshot = snapshotPageRequest(envelope.payload);
@@ -484,6 +547,15 @@ export class ProviderContentTransportOwner {
     this.#dispatchInitial(entry);
   };
 
+  readonly #onCapabilityMessage = (
+    event: ProviderContentMessagePortEvent,
+  ): void => {
+    if (!this.#open) return;
+    const receipt = readPageProviderReceiptEnvelope(event.data);
+    if (receipt === null) return;
+    this.#acceptPageReceipt(receipt.payload);
+  };
+
   constructor(
     pageValue: ContentWindowApi,
     runtimeValue: ContentRuntimeApi,
@@ -509,7 +581,7 @@ export class ProviderContentTransportOwner {
       "removeEventListener",
       "window.removeEventListener",
     );
-    this.#postPageMessage = bindMethod(
+    this.#postPageMessage = bindMethod<PostPageMessage>(
       page,
       "postMessage",
       "window.postMessage",
@@ -535,6 +607,11 @@ export class ProviderContentTransportOwner {
       MAX_PROVIDER_CONTENT_REQUESTS_PER_DOCUMENT,
       "requestLimit",
     );
+    const channelSource = options.channelSource ?? DEFAULT_CHANNEL_SOURCE;
+    if (typeof channelSource !== "function") {
+      stateError("channelSource must be a function");
+    }
+    this.#channelSource = channelSource;
     if (CLAIMED_CONTENT_WINDOWS.has(this.#page)) {
       stateError("document already has a content transport owner");
     }
@@ -548,6 +625,92 @@ export class ProviderContentTransportOwner {
       this.#removePageListenerBestEffort();
       CLAIMED_CONTENT_WINDOWS.delete(this.#page);
       stateError("page listener installation failed", error);
+    }
+
+    try {
+      this.#grantCapability();
+    } catch (error) {
+      this.#open = false;
+      this.#removePageListenerBestEffort();
+      CLAIMED_CONTENT_WINDOWS.delete(this.#page);
+      if (error instanceof ProviderContentTransportStateError) throw error;
+      stateError("capability grant failed", error);
+    }
+  }
+
+  /**
+   * Mint and transfer the one-shot X-1 capability. Called exactly once, from
+   * the constructor, so the port a document receives is bound to the first
+   * owner installed in it and cannot be re-requested by page script later.
+   */
+  #grantCapability(): void {
+    let channel: ProviderContentMessageChannel;
+    try {
+      channel = this.#channelSource();
+    } catch (error) {
+      if (error instanceof ProviderContentTransportStateError) throw error;
+      stateError("capability channel could not be minted", error);
+    }
+    const local = requireObject(
+      (channel as { readonly port1?: unknown } | undefined)?.port1,
+      "capability port1",
+    );
+    const port: ProviderContentMessagePort = Object.freeze({
+      addEventListener: bindMethod<ProviderContentMessagePort["addEventListener"]>(
+        local,
+        "addEventListener",
+        "capability port1.addEventListener",
+      ),
+      removeEventListener: bindMethod<
+        ProviderContentMessagePort["removeEventListener"]
+      >(
+        local,
+        "removeEventListener",
+        "capability port1.removeEventListener",
+      ),
+      postMessage: bindMethod<ProviderContentMessagePort["postMessage"]>(
+        local,
+        "postMessage",
+        "capability port1.postMessage",
+      ),
+      start: bindMethod<ProviderContentMessagePort["start"]>(
+        local,
+        "start",
+        "capability port1.start",
+      ),
+      close: bindMethod<ProviderContentMessagePort["close"]>(
+        local,
+        "close",
+        "capability port1.close",
+      ),
+    });
+    const transferred = (channel as { readonly port2?: unknown }).port2;
+    if (typeof transferred !== "object" || transferred === null) {
+      stateError("capability port2 is unavailable");
+    }
+    this.#capabilityPort = port;
+    port.addEventListener("message", this.#onCapabilityMessage);
+    port.start();
+    this.#postPageMessage(
+      createProviderCapabilityEnvelope(),
+      this.#documentOrigin,
+      [transferred],
+    );
+  }
+
+  #releaseCapability(): void {
+    const port = this.#capabilityPort;
+    if (port === null) return;
+    this.#capabilityPort = null;
+    try {
+      port.removeEventListener("message", this.#onCapabilityMessage);
+    } catch {
+      // The open flag already refuses every later delivery.
+    }
+    try {
+      port.close();
+    } catch {
+      // A vanished document already tore the channel down.
     }
   }
 
@@ -734,6 +897,7 @@ export class ProviderContentTransportOwner {
     if (!this.#open) return;
     this.#open = false;
     this.#removePageListenerBestEffort();
+    this.#releaseCapability();
     for (const entry of [...this.#pending.values()]) this.#removeEntry(entry);
     if (this.#activePort !== null) {
       this.#releasePort(this.#activePort, disconnectPort);
@@ -849,15 +1013,20 @@ export class ProviderContentTransportOwner {
       return;
     }
 
+    // Audit finding X-1: the terminal response leaves over the capability, not
+    // over `window`, so only the holder of the transferred port can settle the
+    // page promise it names.
+    const capability = this.#capabilityPort;
+    if (capability === null) {
+      this.#close(true);
+      return;
+    }
     try {
-      this.#postPageMessage(
-        Object.freeze({
-          version: 1,
-          type: PAGE_PROVIDER_RESPONSE_TYPE,
-          payload: delivery.envelope,
-        }),
-        this.#documentOrigin,
-      );
+      capability.postMessage(Object.freeze({
+        version: 1,
+        type: PAGE_PROVIDER_RESPONSE_TYPE,
+        payload: delivery.envelope,
+      }));
     } catch {
       this.#close(true);
     }

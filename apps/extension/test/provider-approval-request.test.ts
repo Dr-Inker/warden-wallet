@@ -29,6 +29,10 @@ import {
   type ProviderRequestLease,
 } from "../src/background/provider-approval-request.js";
 import {
+  MAX_PROVIDER_APPROVAL_REQUESTS_PER_ORIGIN,
+  ProviderOriginCapacityError,
+} from "../src/background/provider-origin-capacity.js";
+import {
   ProviderApprovalOperationOwner,
 } from "../src/background/provider-approval-operation.js";
 import {
@@ -58,6 +62,8 @@ import type { ProviderSignedTransactionResponse } from "../src/background/provid
 import { classifyProviderSender } from "../src/background/sender-provenance.js";
 import {
   ProviderPageRequestOwner,
+  type ProviderPageMessagePortApi,
+  type ProviderPageMessagePortListener,
   type ProviderPageWindowApi,
   type ProviderPageWindowMessageEvent,
   type ProviderPageWindowMessageListener,
@@ -67,6 +73,7 @@ import {
   readPageProviderRequestEnvelope,
 } from "../src/provider-protocol.js";
 import {
+  createProviderCapabilityEnvelope,
   createProviderTransportTerminalEnvelope,
   readProviderTransportRequestEnvelope,
 } from "../src/provider-delivery-protocol.js";
@@ -124,6 +131,7 @@ function rawRequest(overrides: Record<string, unknown> = {}): Record<string, unk
 
 function providerLease(
   request: Record<string, unknown> = rawRequest(),
+  origin = "https://iframe.example",
 ): {
   readonly session: ProviderPortSession;
   readonly owned: OwnedProviderRequest;
@@ -136,9 +144,9 @@ function providerLease(
       documentLifecycle: "active",
       frameId: 4,
       id: EXTENSION_ID,
-      origin: "https://iframe.example",
+      origin,
       tab: { id: 19, url: "https://host.example/parent" },
-      url: "https://iframe.example/embedded",
+      url: `${origin}/embedded`,
     },
   });
   const session = new ProviderPortSession(provenance, {
@@ -174,10 +182,45 @@ class MemoryApprovals {
   }
 }
 
+/** Stands in for the X-1 capability port the content owner transfers. */
+class FlowCapabilityPort implements ProviderPageMessagePortApi {
+  readonly listeners = new Set<ProviderPageMessagePortListener>();
+  readonly posted: unknown[] = [];
+
+  addEventListener(
+    type: "message",
+    listener: ProviderPageMessagePortListener,
+  ): void {
+    expect(type).toBe("message");
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(
+    type: "message",
+    listener: ProviderPageMessagePortListener,
+  ): void {
+    expect(type).toBe("message");
+    this.listeners.delete(listener);
+  }
+
+  postMessage(message: unknown): void {
+    this.posted.push(message);
+  }
+
+  start(): void {}
+
+  close(): void {}
+
+  deliver(data: unknown): void {
+    for (const listener of [...this.listeners]) listener({ data });
+  }
+}
+
 class FlowPage implements ProviderPageWindowApi {
   readonly location = { origin: "https://iframe.example" };
   readonly listeners = new Set<ProviderPageWindowMessageListener>();
   readonly posted: Array<{ readonly message: unknown; readonly targetOrigin: string }> = [];
+  readonly capability = new FlowCapabilityPort();
 
   addEventListener(
     type: "message",
@@ -199,13 +242,20 @@ class FlowPage implements ProviderPageWindowApi {
     this.posted.push({ message, targetOrigin });
   }
 
-  emit(data: unknown): void {
+  emit(data: unknown, ports?: readonly unknown[]): void {
     const event: ProviderPageWindowMessageEvent = {
       data,
       origin: this.location.origin,
       source: this,
+      ...(ports === undefined ? {} : { ports }),
     };
     for (const listener of [...this.listeners]) listener(event);
+  }
+
+  /** Push the one-shot capability grant into the document. */
+  grant(): FlowCapabilityPort {
+    this.emit(createProviderCapabilityEnvelope(), [this.capability]);
+    return this.capability;
   }
 }
 
@@ -1047,9 +1097,13 @@ describe("provider-bound session approval preparation", () => {
       readonly authoritySignal: AbortSignal;
     }>();
     installed.resolver.resolveImpl = () => selection.promise;
+    // X-2: the global cap is only reachable across enough distinct origins.
     const leases = Array.from(
       { length: MAX_ACTIVE_PROVIDER_APPROVAL_REQUESTS + 1 },
-      () => providerLease(),
+      (_, index) => providerLease(
+        rawRequest(),
+        `https://site-${Math.floor(index / MAX_PROVIDER_APPROVAL_REQUESTS_PER_ORIGIN)}.example`,
+      ),
     );
     const launches = leases.slice(0, MAX_ACTIVE_PROVIDER_APPROVAL_REQUESTS)
       .map(({ lease: current }) => installed.owner.launch(current));
@@ -1069,6 +1123,59 @@ describe("provider-bound session approval preparation", () => {
     expect(results.every((result) => result.status === "rejected")).toBe(true);
     expect(installed.owner.activeCount).toBe(0);
     expect(installed.coordinator.prepareCalls).toEqual([]);
+  });
+
+  it("serves a second origin after the first has used its whole share", async () => {
+    const installed = install();
+    const selection = deferred<{
+      readonly account: Uint8Array;
+      readonly chain: "solana:devnet";
+      readonly coordinator: ProviderApprovalCoordinator;
+      readonly authoritySignal: AbortSignal;
+    }>();
+    installed.resolver.resolveImpl = () => selection.promise;
+    const hostile = Array.from(
+      { length: MAX_PROVIDER_APPROVAL_REQUESTS_PER_ORIGIN },
+      () => providerLease(rawRequest(), "https://hostile.example"),
+    );
+    const excess = providerLease(rawRequest(), "https://hostile.example");
+    const victim = Array.from(
+      { length: MAX_PROVIDER_APPROVAL_REQUESTS_PER_ORIGIN },
+      () => providerLease(rawRequest(), "https://victim.example"),
+    );
+    const launches = hostile.map(({ lease: current }) =>
+      installed.owner.launch(current)
+    );
+
+    expect(installed.owner.activeCount).toBe(
+      MAX_PROVIDER_APPROVAL_REQUESTS_PER_ORIGIN,
+    );
+    await expect(installed.owner.launch(excess.lease)).rejects.toBeInstanceOf(
+      ProviderOriginCapacityError,
+    );
+    await expect(installed.owner.launch(excess.lease)).rejects.toThrow(
+      "origin https://hostile.example may hold at most 4 active approval requests",
+    );
+
+    // The victim origin is still served while the hostile origin is refused.
+    launches.push(...victim.map(({ lease: current }) =>
+      installed.owner.launch(current)
+    ));
+    expect(installed.owner.activeCount).toBe(
+      MAX_PROVIDER_APPROVAL_REQUESTS_PER_ORIGIN * 2,
+    );
+    expect(MAX_PROVIDER_APPROVAL_REQUESTS_PER_ORIGIN).toBe(4);
+
+    for (const { session } of [...hostile, excess, ...victim]) session.disconnect();
+    selection.resolve({
+      account: ACCOUNT.slice(),
+      chain: "solana:devnet",
+      coordinator: installed.coordinator,
+      authoritySignal: installed.resolver.authority.signal,
+    });
+    const results = await Promise.allSettled(launches);
+    expect(results.every((result) => result.status === "rejected")).toBe(true);
+    expect(installed.owner.activeCount).toBe(0);
   });
 
   it("cancels a preparation that resolves after owner disposal", async () => {
@@ -1392,6 +1499,7 @@ describe("provider operation to approval composition", () => {
       timerSource: new InertTimers(),
       readNow: () => 1_000,
     });
+    page.grant();
     const pageResult = pageOwner.signTransaction({
       accountAddress: ACCOUNT_ADDRESS,
       transaction: Uint8Array.of(1, 2, 3),
@@ -1436,7 +1544,7 @@ describe("provider operation to approval composition", () => {
       owned,
       assertActive: () => session.assertActive(owned),
       postMessage(message: ProviderSignedTransactionResponse): void {
-        page.emit(Object.freeze({
+        page.capability.deliver(Object.freeze({
           version: 1,
           type: PAGE_PROVIDER_RESPONSE_TYPE,
           payload: createProviderTransportTerminalEnvelope(
@@ -1479,6 +1587,7 @@ describe("provider operation to approval composition", () => {
       timerSource: new InertTimers(),
       readNow: () => 1_000,
     });
+    page.grant();
     const pageResult = pageOwner.signTransaction({
       accountAddress: ACCOUNT_ADDRESS,
       transaction: Uint8Array.of(1, 2, 3),
@@ -1532,7 +1641,7 @@ describe("provider operation to approval composition", () => {
       owned,
       assertActive: () => session.assertActive(owned),
       postMessage(message: ProviderSignedTransactionResponse): void {
-        page.emit(Object.freeze({
+        page.capability.deliver(Object.freeze({
           version: 1,
           type: PAGE_PROVIDER_RESPONSE_TYPE,
           payload: createProviderTransportTerminalEnvelope(
@@ -1577,6 +1686,7 @@ describe("provider operation to approval composition", () => {
       timerSource: new InertTimers(),
       readNow: () => 1_000,
     });
+    page.grant();
     const pageResult = pageOwner.signTransaction({
       accountAddress: ACCOUNT_ADDRESS,
       transaction: Uint8Array.of(1, 2, 3),
@@ -1684,7 +1794,7 @@ describe("provider operation to approval composition", () => {
       owned: retry.owned,
       assertActive: () => retry.session.assertActive(retry.owned),
       postMessage(message: ProviderSignedTransactionResponse): void {
-        page.emit(Object.freeze({
+        page.capability.deliver(Object.freeze({
           version: 1,
           type: PAGE_PROVIDER_RESPONSE_TYPE,
           payload: createProviderTransportTerminalEnvelope(

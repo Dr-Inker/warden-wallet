@@ -25,6 +25,7 @@ import {
   type ApprovalWindowsApi,
   type InstalledApprovalWindowOwner,
 } from "./approval-window.js";
+import type { ProviderCapacityScope } from "./provider-origin-capacity.js";
 import {
   KEYRING_RECORD_STORAGE_KEY,
   type KeyringRecordStorageArea,
@@ -589,8 +590,12 @@ export function startBackground(
     },
   );
   const approvalWindows: ApprovalWindowLauncher = Object.freeze({
-    launch(requestId: string, signal: AbortSignal): Promise<void> {
-      return approvalWindowOwner.launch(requestId, signal);
+    launch(
+      requestId: string,
+      signal: AbortSignal,
+      scope?: ProviderCapacityScope,
+    ): Promise<void> {
+      return approvalWindowOwner.launch(requestId, signal, scope);
     },
   });
 
