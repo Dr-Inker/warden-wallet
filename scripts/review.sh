@@ -251,8 +251,8 @@ PROMPT_FILE="$(mktemp -t warden-review-prompt.XXXXXX)"
 # ---- 3. assemble the prompt -------------------------------------------------
 {
   cat <<HDR
-You are performing an adversarial security review of a Solana Anchor program: the Warden smart-account
-wallet. You are not the author; no author framing is provided; do not assume the change is correct.
+You are performing a defensive assurance review of a Solana Anchor program: the Warden smart-account
+wallet. You are not the author; no author framing is provided; verify the change independently.
 
 THE RANGE UNDER REVIEW IS THE COMMIT RANGE  ${BASE_SHA}..${HEAD_SHA}
 The repository is checked out at ${HEAD_SHA}. Obtain the diff yourself, e.g.:
@@ -302,11 +302,16 @@ HDR
    unreachable objects unless a changed evidence citation requires one exact ancestry/object check.
    Once the changed code, its direct callers/tests, seeded invariants, siblings, and prior-art classes
    are decided, return the typed JSON promptly; repeated re-reading does not strengthen the review.
-11. KEEP FINDINGS DEFENSIVE AND CONCISE. Identify the affected function, violated invariant, and
-   fail-closed regression assertion, but do not include operational exploitation instructions,
-   executable payload bytes, or step-by-step abuse sequences. In `reproducer`, name the defensive
-   test setup and expected rejection at a high level; the remediation owner can implement it from
-   the cited source locations. This is a code-review artefact, not an exploitation guide.
+11. KEEP ALL OUTPUT STRICTLY DEFENSIVE AND CONCISE. Describe a defect only as a validation mismatch:
+   name the affected function, the violated invariant, the state shape that must be rejected, and the
+   expected fail-closed error. Do not narrate an unauthorized actor's objective or benefit; do not
+   describe asset movement, transaction construction, payload composition, invocation ordering,
+   operational feasibility, executable bytes, or a step-by-step sequence. Do not use exploit-guide
+   language. In `rationale`, give only the bounded source trace that proves the missing validation.
+   In `reproducer`, name a defensive regression fixture and its expected rejection at a high level;
+   the remediation owner can implement it from the cited source locations. If more detail would be
+   needed, omit it and cite the relevant file and line instead. This is an assurance artefact whose
+   sole purpose is to make the implementation fail closed.
 HDR
   echo
   echo "BASE SHA: $BASE_SHA"
