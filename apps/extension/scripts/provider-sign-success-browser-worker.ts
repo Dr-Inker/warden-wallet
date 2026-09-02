@@ -465,10 +465,12 @@ function installSigningCommitCheckpoint(): void {
       if (armedCheckpoint !== "during-signing-commit") return;
       armedCheckpoint = null;
       checkpointReached = "during-signing-commit";
+      const holdUntilWallClockMs = Date.now() + 20_000;
       void chromeApi.storage.session.set({
         [SIGNING_COMMIT_CHECKPOINT_STORAGE_KEY]: {
           stage: "during-signing-commit",
           bootId,
+          holdUntilWallClockMs,
           ...candidate,
           selectionCalls: counters.selectionCalls,
           approvalCreates: counters.approvalCreates,
@@ -479,8 +481,7 @@ function installSigningCommitCheckpoint(): void {
           rpc: { ...rpcCounters },
         },
       });
-      const holdUntil = Date.now() + 20_000;
-      while (Date.now() < holdUntil) {
+      while (Date.now() < holdUntilWallClockMs) {
         // C26 closes the actual worker target before this native event returns.
       }
     }, { once: true });
