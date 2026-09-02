@@ -7,7 +7,7 @@
 // Without the first, review coverage is invisible; without the second, a garbage artefact could
 // buy a coverage line.
 import { describe, it, expect } from "vitest";
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -312,6 +312,114 @@ describe("recorded reviewer evidence completeness", () => {
       expect(prompt).toContain(`beginning at ${integrationFindingId}`);
       expect(prompt).toContain(`DIFF ${historicalBase}..${historicalHead}`);
     } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  it("WRDF-0158 reads original historical objects when replacement refs exist", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "warden-grok-raw-objects-"));
+    const outputDir = mkdtempSync(join(tmpdir(), "warden-grok-raw-output-"));
+    const target = join(fixture, "src/review-target.ts");
+    const findingsPath = join(outputDir, "findings.json");
+    const gitEnv = {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_OPTIONAL_LOCKS: "0",
+    };
+    const git = (args: string[]) => execFileSync(
+      "/usr/bin/git",
+      ["-C", fixture, ...args],
+      { env: gitEnv, stdio: "pipe" },
+    ).toString().trim();
+    const put = (path: string, contents: string) => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, contents);
+    };
+    const source = (marker: string) =>
+      `export const evidence = ${JSON.stringify(marker)};\n${"// context padding\n".repeat(3000)}`;
+    try {
+      git(["init", "-q"]);
+      git(["config", "user.name", "Warden Test"]);
+      git(["config", "user.email", "warden@example.invalid"]);
+      put(join(fixture, "scripts/review-grok.sh"), readFileSync(REVIEW_GROK, "utf8"));
+      put(
+        join(fixture, ".codex/schemas/warden-findings.json"),
+        readFileSync(join(REPO, ".codex/schemas/warden-findings.json"), "utf8"),
+      );
+      put(join(fixture, "docs/security/PRIOR-ART-FINDINGS.md"), "# Prior art\n");
+      put(
+        join(fixture, "docs/security/invariants.jsonl"),
+        JSON.stringify({
+          id: "WRD-TEST-01",
+          title: "Raw historical evidence",
+          statement: "Review evidence comes from the named original objects.",
+          status: "unimplemented",
+          spec_ref: "test",
+          code_ref: "src/review-target.ts",
+          prior_art: [],
+          evidence: [],
+        }) + "\n",
+      );
+      put(
+        join(fixture, "docs/security/REVIEW-SCORECARD.jsonl"),
+        JSON.stringify({ finding_id: "WRDF-0004" }) + "\n",
+      );
+      put(target, source("BASE"));
+      git(["add", "."]);
+      git(["commit", "-q", "-m", "base"]);
+      const baseSha = git(["rev-parse", "HEAD"]);
+
+      put(target, source("ORIGINAL_HEAD"));
+      git(["add", "src/review-target.ts"]);
+      git(["commit", "-q", "-m", "original head"]);
+      const originalHead = git(["rev-parse", "HEAD"]);
+
+      put(join(fixture, "integration-marker.txt"), "integration\n");
+      git(["add", "integration-marker.txt"]);
+      git(["commit", "-q", "-m", "integration head"]);
+      const integrationBranch = git(["branch", "--show-current"]);
+
+      git(["checkout", "-q", "-b", "replacement-tree", baseSha]);
+      put(target, source("SUBSTITUTED_HEAD"));
+      git(["add", "src/review-target.ts"]);
+      git(["commit", "-q", "-m", "replacement head"]);
+      const replacementHead = git(["rev-parse", "HEAD"]);
+      git(["checkout", "-q", integrationBranch]);
+      git(["replace", originalHead, replacementHead]);
+
+      const wrapperEnv = { ...process.env };
+      delete wrapperEnv.GIT_NO_REPLACE_OBJECTS;
+      const result = spawnSync(
+        "bash",
+        [
+          "scripts/review-grok.sh",
+          baseSha,
+          originalHead,
+          "--historical",
+          "--dry-run",
+          "--max-chars",
+          "1000000",
+          "--finding-id-start",
+          "WRDF-0005",
+          "--out",
+          findingsPath,
+        ],
+        { cwd: fixture, env: wrapperEnv, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+
+      const expectations = JSON.parse(
+        readFileSync(findingsPath.replace(/\.json$/, ".expect.json"), "utf8"),
+      ) as { head_sha?: string };
+      const prompt = readFileSync(findingsPath.replace(/\.json$/, ".prompt.txt"), "utf8");
+      expect(expectations.head_sha).toBe(originalHead);
+      expect(prompt).toContain('export const evidence = "ORIGINAL_HEAD";');
+      expect(prompt).not.toContain('export const evidence = "SUBSTITUTED_HEAD";');
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
       rmSync(outputDir, { recursive: true, force: true });
     }
   });
