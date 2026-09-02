@@ -352,6 +352,33 @@ describe("outer metadata is authenticated, including an unused fallback", () => 
       hex(await openKeyringRecordWithPasswordBytes({ record, passwordBytes: password() })),
     ).toBe(hex(SECRET));
   });
+
+  it("snapshots PRF and plaintext inputs before async derivation (WRDF-0122)", async () => {
+    const plaintext = SECRET.slice();
+    const prfOutput = PRF_OUTPUT.slice();
+    const pending = sealKeyringRecord({
+      metadata: prepared(true),
+      plaintext,
+      passwordBytes: password(),
+      prfOutput,
+    });
+
+    plaintext.fill(0x41);
+    prfOutput.fill(0x42);
+    const record = await pending;
+
+    expect(
+      hex(await openKeyringRecordWithPasswordBytes({ record, passwordBytes: password() })),
+    ).toBe(hex(SECRET));
+    expect(
+      hex(
+        await openKeyringRecordWithPrfBytes({
+          record,
+          prfOutput: PRF_OUTPUT.slice(),
+        }),
+      ),
+    ).toBe(hex(SECRET));
+  });
 });
 
 describe("record orchestration cannot carry a stale clock sample across derivation", () => {
