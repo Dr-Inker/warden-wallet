@@ -3211,3 +3211,50 @@ registry, production KDF decision, Wallet Standard registration, trusted live
 RPC/release composition, send/confirm path, external audit, or real-funds
 exercise. Further delivery micro-cuts would now displace higher-value
 production-enablement work and are not the next lane.
+
+---
+
+## Audit A-1 / A-2 extension hardening — 699beec, 215663f — 2026-09-02 — pending sign-off
+
+Two extension findings from the independent Fable audit
+(`docs/security/FABLE-AUDIT-2026-09-02.md` §A-1, §A-2). Per this file's
+append-only rule the client threat table in the C0+V0 seeding block is extended
+and corrected here, not rewritten in place.
+
+**Client / extension (audit A-1):**
+
+| # | Threat | v1 answer | Ledger rows |
+|---|---|---|---|
+| C-12 | Click-race / clickjacking on the approval window — a page primes rapid clicks or keypresses at the coordinates where the fixed-size approval popup appears, and the user's next input lands on "Approve and sign" before they have read, or even seen, the request | The approve control is not armed by the review response. It arms only after the window has held focus continuously for a 600 ms dwell, a trusted pointer move has happened inside the document since the review landed, and no focus or visibility loss has intervened; any loss clears the dwell, the pointer move, and any primed press. A click is turned into an approve request only if it is `isTrusted` and is backed by browser-generated evidence from after the arm time — a complete trusted pointerdown/pointerup pair, or a trusted Enter/Space keydown. Everything else is refused silently and the request stays pending. The window's `left`/`top` are drawn per launch so the button's position is not pre-computable. The rules live in one pure module, `apps/extension/src/approval/approval-arm.ts`, tested over passed-in timestamps rather than DOM timing | `WRD-EXT-04` |
+
+**C-3 refinement (audit A-2).** The C0+V0 row already said "alarms are a wake
+aid, not the authority". Until `215663f` there was no alarm at all: expiry was
+checked only lazily, so after the idle or hard deadline the serialized unwrap key
+sat in `chrome.storage.session` until the worker next woke for an unrelated
+reason. The extension now declares the `alarms` permission and keeps one one-shot
+`warden.unlock-session.expiry` alarm armed at `min(idle, hard)`, re-armed on
+activation, touch and wake restore and cleared on lock. The alarm supplies only
+the occasion — it runs exactly the same `assertActive` check every key use runs —
+so the row's answer is unchanged in substance and `WRD-KEY-03` deliberately keeps
+its `unimplemented` status. Chrome may delay a sub-30-second alarm and may drop
+alarms across a browser restart, and none of this is browser-measured: the
+exposure window is narrowed, not closed.
+
+**Residual, stated as a threat.** Neither control is exercised by anything a user
+can reach today: the shipped bundle's `canApprove` is `false` and `build.mjs`
+keeps the provider pipeline off the worker, so C-12's guard is armed ahead of the
+capability it defends. The guard governs only when the approval PAGE is willing
+to send a request; the background remains the trust boundary that owns the
+record, the digest, and the single atomic winner (`WRD-APR-01`..`-03`). Placement
+randomness is a jitter drawn from `Math.random` over an ASSUMED 1024x768 display
+— an MV3 worker has no screen metrics without the `system.display` permission,
+which was judged not worth adding — so it raises the cost of pre-computing the
+button position rather than making it unknowable. There is no real-Chromium input
+stream, overlay, or cross-origin framing evidence behind C-12, and no real
+`chrome.alarms` delivery, MV3 eviction, or clock-change evidence behind the C-3
+refinement. One consequence needs an owner decision before signing is enabled:
+the human-presence condition is a trusted POINTER move, so the approve path is
+not reachable by keyboard alone. That is the stronger reading — a primed
+keypress stream is part of this same threat, and accepting a trusted keydown as
+presence would let one arm the control once the dwell elapsed — but it is an
+accessibility cost, not a free win.
