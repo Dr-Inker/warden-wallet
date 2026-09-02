@@ -10,6 +10,7 @@ cargo metadata --locked --format-version 1 >/dev/null
 # mutable tags/branches locally as well as in the workflow's first post-checkout
 # step; only full commit SHAs (or Docker sha256 digests) are accepted.
 node --test test/github-actions-pins.test.mjs
+node --test test/pnpm-license-evidence.test.mjs
 # WARDEN_SKIP_SPIKES=1 (spec §17 L9, plan Task 11 fix round 1): CI's main
 # gate job sets this to skip `spikes/*/ts` — those packages include a
 # Playwright suite (spikes/02-webauthn or similar); spikes are throwaway

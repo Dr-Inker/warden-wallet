@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   RELEASE_GIT_EXECUTABLE,
   RELEASE_GIT_KILL_SIGNAL,
+  assertReleaseGitSourceTree,
   releaseGitEnvironment,
   runReleaseGit,
 } from "../scripts/release-git.mjs";
@@ -211,5 +212,38 @@ describe("release producer git child processes", () => {
     await expect(
       releaseGit.assertReleaseGitSourceTree({ cwd: hidden.path }),
     ).rejects.toThrow(/index flag|source tree/);
+  });
+
+  it("WRDF-0133 rejects a tracked change hidden by repository-local fsmonitor state", async () => {
+    const monitored = await createRepository(
+      fixture.root,
+      "fsmonitor-hidden",
+      "committed release input\n",
+    );
+    const monitor = join(monitored.path, ".git", "hooks", "lying-fsmonitor");
+    await writeFile(monitor, [
+      "#!/bin/sh",
+      "if [ \"$1\" = \"2\" ]; then",
+      "  printf 'warden-token\\0'",
+      "else",
+      "  printf '0\\n'",
+      "fi",
+      "",
+    ].join("\n"));
+    await chmod(monitor, 0o755);
+    await git(["config", "core.fsmonitor", monitor], monitored.path);
+    await git(["update-index", "--fsmonitor"], monitored.path);
+    await git(["status", "--porcelain=v1", "--untracked-files=all"], monitored.path);
+    await git(["update-index", "--fsmonitor-valid", "tracked.txt"], monitored.path);
+    await writeFile(join(monitored.path, "tracked.txt"), "uncommitted hidden release input\n");
+    const { stdout: status } = await runReleaseGit(
+      ["status", "--porcelain=v1", "--untracked-files=all"],
+      { cwd: monitored.path },
+    );
+    expect(status).toBe("");
+
+    await expect(
+      assertReleaseGitSourceTree({ cwd: monitored.path }),
+    ).rejects.toThrow(/source tree/);
   });
 });

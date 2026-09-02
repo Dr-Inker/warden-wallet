@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import {
   auditGitHubActionReferences,
@@ -11,6 +13,7 @@ import {
 } from "../scripts/github-actions-pins.mjs";
 
 const WORKFLOWS_DIR = path.resolve(".github/workflows");
+const execFile = promisify(execFileCallback);
 
 test("pin grammar distinguishes immutable and mutable action references", () => {
   const commit = "0123456789abcdef0123456789abcdef01234567";
@@ -96,6 +99,79 @@ test("WRDF-0130 audits semantic uses keys and recursively follows local composit
     assert.deepEqual(
       mutableReferences.map((entry) => entry.replace(/^.*?:\d+: /, "")).sort(),
       ["owner/flow@main", "owner/nested@v2", "owner/quoted@v1"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("WRDF-0132 reaches the action audit in a clean checkout without node_modules", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "warden-actions-clean-checkout-"));
+  try {
+    const scripts = path.join(root, "scripts");
+    const workflows = path.join(root, ".github", "workflows");
+    await mkdir(scripts, { recursive: true });
+    await mkdir(workflows, { recursive: true });
+    await copyFile(
+      path.resolve("scripts/github-actions-pins.mjs"),
+      path.join(scripts, "github-actions-pins.mjs"),
+    );
+    await writeFile(path.join(workflows, "fixture.yml"), [
+      "jobs:",
+      "  audit:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - uses: owner/mutable@main",
+      "",
+    ].join("\n"));
+    await writeFile(path.join(root, "run-audit.mjs"), [
+      'import { auditGitHubActionReferences } from "./scripts/github-actions-pins.mjs";',
+      "const result = await auditGitHubActionReferences(process.cwd());",
+      'if (!result.mutableReferences.some((entry) => entry.endsWith("owner/mutable@main"))) {',
+      '  throw new Error("known mutable reference was not rejected");',
+      "}",
+      'console.log("WRDF-0132 audit reached validation");',
+      "",
+    ].join("\n"));
+
+    const { stdout } = await execFile(process.execPath, ["run-audit.mjs"], {
+      cwd: root,
+      encoding: "utf8",
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+    });
+    assert.match(stdout, /WRDF-0132 audit reached validation/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("WRDF-0134 audits a remote image declared by a local Docker action", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "warden-actions-docker-audit-"));
+  try {
+    const workflows = path.join(root, ".github", "workflows");
+    const dockerAction = path.join(root, ".github", "actions", "docker");
+    await mkdir(workflows, { recursive: true });
+    await mkdir(dockerAction, { recursive: true });
+    await writeFile(path.join(workflows, "fixture.yml"), [
+      "jobs:",
+      "  local:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - uses: ./.github/actions/docker",
+      "",
+    ].join("\n"));
+    await writeFile(path.join(dockerAction, "action.yml"), [
+      "name: local Docker action",
+      "runs:",
+      "  using: docker",
+      "  image: docker://ghcr.io/owner/action:latest",
+      "",
+    ].join("\n"));
+
+    const { mutableReferences } = await auditGitHubActionReferences(root, workflows);
+    assert.deepEqual(
+      mutableReferences.map((entry) => entry.replace(/^.*?:\d+: /, "")),
+      ["docker://ghcr.io/owner/action:latest"],
     );
   } finally {
     await rm(root, { recursive: true, force: true });
