@@ -1,5 +1,13 @@
 # Warden Wallet — independent audit by Claude Fable 5 (2026-09-02)
 
+> **Remediation status (2026-09-03):** this report is the immutable audit input, not an active
+> work queue. Its authorized remediation and the subsequent Codex R0–R8 campaign are closed.
+> The follow-up recorded WRDF-0112..0161 (50 adopted, 49 remediated and verified); WRDF-0121 is
+> intentionally unverified pending owner decision O8, and its affected MAIN-world provider
+> modules remain unshipped. See `docs/NEXT-SESSION.md` for the authoritative handoff and the exact
+> full-gate command with its passed-at SHA; see `docs/security/REVIEW-SCORECARD.jsonl` for each
+> finding's evidence coordinates.
+
 | | |
 |---|---|
 | **Tree audited** | branch `phase1b`, HEAD `2518520`, working tree clean |

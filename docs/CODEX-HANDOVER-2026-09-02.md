@@ -1,5 +1,14 @@
 # Codex Handover — 2026-09-02 — post-Fable-audit remediation, review debt, owner decisions
 
+> **CLOSED 2026-09-03 — historical input, not current instruction.** R0–R8 were recorded and
+> converged. WRDF-0112..0161 produced 50 adopted findings: 49 are remediated and verified at the
+> exact clean-tree gate SHA `23df466e2c31a0ac5f21b4c552abff26a7f540f3`; WRDF-0121 remains
+> adopted and unverified pending owner decision O8. The exact gate command, round/thread map,
+> side effects, residual owner decisions, and current handoff contract are in
+> `docs/NEXT-SESSION.md`. The docs-only campaign close is
+> `ede734d608b681f8478062da2f8eba1d33dd6dbd`. Preserve the body below verbatim as the original
+> pickup evidence; do not execute its “owed” instructions.
+
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** Codex (gpt-5.6-sol @ max — the only reviewer configuration Warden accepts for a

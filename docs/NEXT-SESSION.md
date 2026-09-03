@@ -100,7 +100,10 @@
 > an owner and were not silently expanded into this campaign. No production release, deployment,
 > store action, external audit, legal ruling, or live-state mutation was performed.
 
-> ## 2026-09-02 CODEX REVIEW CAMPAIGN — ACTIVE
+> ## 2026-09-02 CODEX REVIEW CAMPAIGN — HISTORICAL PICKUP (SUPERSEDED)
+>
+> **Historical only — do not execute this contract.** The completed campaign memo above is the
+> authoritative handoff; this block is retained only to preserve the original pickup boundary.
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
@@ -126,7 +129,7 @@
 >   state here using this same contract, and provide the handover §9 report to the user.
 >
 > The 2026-09-01 memo below remains historical evidence for C75 and its external owner work;
-> it no longer instructs this active review campaign to stop.
+> neither historical memo changes the completed-campaign stop state above.
 
 > ## 2026-09-01 CLEAN-BREAK PICKUP MEMO — C75 CLOSED; EXTERNAL OWNER WORK REMAINS
 >

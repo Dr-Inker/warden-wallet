@@ -2015,10 +2015,11 @@ same session Codex found five real defects across three rounds, three of them in
 the previous round's own fixes.
 
 **Therefore:** the Grok lane is a **fallback that keeps the loop moving when the
-primary lane is blocked — not an equivalent reviewer.** Round 101 does NOT
-discharge the obligation to run a Codex round over `c5a4514..77a8273` once the
-filter clears. Treat a 0-finding Grok round as "nothing this reviewer could see",
-never as "this range is clean".
+primary lane is blocked — not an equivalent reviewer.** Round 101 did not itself
+discharge the Codex obligation over `c5a4514..77a8273`; that debt was later
+discharged by the recorded R0 campaign threads listed in `docs/NEXT-SESSION.md`.
+Treat a 0-finding Grok round as "nothing this reviewer could see", never as "this
+range is clean".
 
 ## WRDF-0117 — historical gate-claim correction (2026-09-02)
 
@@ -2034,3 +2035,27 @@ The first later executable full-gate evidence containing that program change is
 failed, clippy `-D clippy::arithmetic_side_effects` clean, L9 supply-chain gate
 PASS). This later evidence does not retroactively make the wording in `14ee34b`
 properly sourced; it is the durable replacement evidence.
+
+## Fable → Warden review-campaign close-out (2026-09-03)
+
+The post-Fable handover campaign recorded R0–R8 and converged after 50 adopted findings
+(`WRDF-0112..0161`). Forty-nine remediations are verified. `WRDF-0121` remains adopted but
+unverified because production `document_start` bootstrap/binding is owner decision O8; the
+affected MAIN-world provider modules remain outside shipped bundles.
+
+The exact clean-tree gate ran at
+`23df466e2c31a0ac5f21b4c552abff26a7f540f3` and exited 0, printing that SHA before and after:
+
+```sh
+git rev-parse HEAD && test -z "$(git status --porcelain)" && env CARGO_HOME=/tmp/warden-cargo-deny-home GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= npm_config_cache=/tmp/warden-npm-cache bash .claude/test-gate.sh && test -z "$(git status --porcelain)" && git rev-parse HEAD
+```
+
+That run passed action-pin evidence 8/8, pnpm-license evidence 4/4, core 729/729, extension
+704/704, UI-token 11/11, transaction-budget 8/8, WebAuthn 1/1, real-Chromium 15/15, and Rust
+697 passed / 0 failed / 1 ignored; clippy was clean and L9 passed with no high/critical advisory
+reaching shipped code. The docs-only close commit is
+`ede734d608b681f8478062da2f8eba1d33dd6dbd`; it does not inherit the full-gate verdict.
+
+The authoritative current contract, complete thread map, measured Argon2/host-delay values, side
+effects, and owner decisions O1–O10 are in `docs/NEXT-SESSION.md`. The original pickup remains in
+`docs/CODEX-HANDOVER-2026-09-02.md` as historical evidence only.
