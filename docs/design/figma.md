@@ -335,6 +335,5 @@ review runs 142, findings 286 (16 critical), Rust 697, client 729 + 704 = 1,433.
 Renders: `docs/design/brand/landing-v3-desktop.png`, `landing-v3-mobile.png`.
 
 **SHIPPED 2026-09-04** to `/var/www/wardenwallet/index.html` (backup `index.html.bak-<ts>-v2` beside it). Source copy:
-`docs/design/brand/landing-v3.html`; browser proofs `landing-v3-browser-1440.png` / `-360.png`. The shipped receipt prints
-the PUBLIC head `6d714b2` (56/89 · 101 · 233 · 16 · 670 · 301) because the local tree (`cc19ce3`, +487 commits) is not
-pushed — bump the receipt after the next push (refresh procedure is in the HTML head comment).
+`docs/design/brand/landing-v3.html`; browser proofs `landing-v3-browser-1440.png` / `-360.png`. Receipt first shipped pinned to the then-public head `6d714b2`; after the same-day push (phase1b → `0404300`) it was
+bumped to `0404300` (66/100 · 142 · 286 · 16 · Rust 697 · client 1,433) and redeployed. Refresh procedure is in the HTML head comment.
