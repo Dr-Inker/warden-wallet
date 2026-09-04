@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Warden — a wallet that shows its work</title>
+<meta name="description" content="Warden is a security-first smart-account wallet for Solana: passkey root authority, scoped session keys, policy enforced on-chain. In development — not live, not externally audited.">
+<link rel="canonical" href="https://wardenwallet.io/">
+<meta property="og:title" content="Warden — a wallet that shows its work">
+<meta property="og:description" content="A Solana smart-account wallet built in the open — passkey root authority, scoped session keys, policy enforced on-chain. Every review round and finding is public. Not live yet.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wardenwallet.io/">
+<meta name="twitter:card" content="summary">
+<meta name="theme-color" content="#0B0F17">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230B0F17'/%3E%3Cpath d='M16 8.2 L26.6 10.4 C26.6 19.4 23.2 26.4 16 30 C8.8 26.4 5.4 19.4 5.4 10.4 Z' fill='none' stroke='%23B3B8BE' stroke-width='1.7'/%3E%3Cpath d='M10.8 13 L14.6 24.4 L16.4 17.8 L18.2 24.4 L21.6 14.2' fill='none' stroke='%23B3B8BE' stroke-width='2'/%3E%3C/svg%3E">
+<script>document.documentElement.className+=" js";</script>
+<!--
+  RECEIPT SOURCE — every number in the build receipt below is read from the PUBLIC repository
+  at the commit printed on the receipt (github.com/Dr-Inker/warden-wallet, branch phase1b):
+    docs/security/invariants.jsonl        → rows / status=test-covered
+    docs/security/REVIEW-RUNS.jsonl       → adversarial review rounds
+    docs/security/REVIEW-SCORECARD.jsonl  → findings logged / severity=critical
+    docs/NEXT-SESSION.md gate memo        → test counts
+  Refresh procedure: recount at the new public head, update the six values + the commit/date, ship.
+  A number that goes down is as publishable as one that goes up.
+  Design: Figma "Warden Wallet — design system" → page "Landing — Facelift 2026-09-04" (docs/design/figma.md).
+-->
+<style>
+/* self-hosted, pinned woff2 — no third-party requests */
+@font-face{font-family:'Newsreader';font-style:normal;font-weight:400 700;font-display:swap;src:url('fonts/newsreader-latin-var.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+@font-face{font-family:'Newsreader';font-style:italic;font-weight:400 700;font-display:swap;src:url('fonts/newsreader-italic-latin-var.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+@font-face{font-family:'Inter';font-style:normal;font-weight:300 700;font-display:swap;src:url('fonts/inter-latin-var.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 600;font-display:swap;src:url('fonts/jetbrains-mono-latin-var.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+
+:root{
+  /* two materials: midnight + bone paper. one accent: the product's indigo. steel stays achromatic. */
+  --bg:#0B0F17; --surf:#121722; --ink:#E8E6E1; --muted:#A3A8B2; --dim:#7C828C; --steel:#B3B8BE;
+  --hair:rgba(255,255,255,.08); --hair-2:rgba(255,255,255,.12);
+  --acc:#6A81CE; --acc-l:#495DA7;
+  --bone:#F8F5EF; --ivory:#EFECE5; --paper:#F7F3EA; --ink-l:#1B1E24; --muted-l:#5F646E; --steel-d:#61666C; --hair-l:rgba(0,0,0,.08);
+  --crit:#B0382F; --ok:#9AE6B4;
+  --serif:'Newsreader',Georgia,'Times New Roman',serif;
+  --sans:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --ease-out:cubic-bezier(.16,1,.3,1); --ease-emph:cubic-bezier(.2,0,0,1); --dur-ack:120ms; --dur-reveal:240ms;
+  --gutter:clamp(20px,8.33vw,120px);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.5;letter-spacing:-.011em;font-feature-settings:"kern","liga","calt";-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+a:focus-visible,button:focus-visible{outline:2px solid var(--acc);outline-offset:3px;border-radius:4px}
+::selection{background:var(--acc);color:#fff}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums slashed-zero}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--steel)}
+.eyebrow::before{content:"";width:28px;height:1px;background:currentColor;opacity:.9}
+.wrap{padding-left:var(--gutter);padding-right:var(--gutter)}
+
+/* film grain — the one deliberate imperfection, kept quiet */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.045;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+main,header,footer{position:relative;z-index:1}
+
+/* ---------- header ---------- */
+.site{display:flex;align-items:center;justify-content:space-between;gap:24px;padding-top:20px;padding-bottom:20px;border-bottom:1px solid var(--hair)}
+.lockup{display:flex;align-items:center;gap:12px;min-width:0}
+.lockup svg{width:28px;height:31px;flex:none;color:var(--steel)}
+.lockup b{font-weight:600;font-size:18px;letter-spacing:-.01em}
+.lockup small{font-size:14px;color:var(--muted)}
+.nav{display:flex;align-items:center;gap:32px}
+.nav a{font-size:14px;font-weight:500;color:var(--muted);transition:color var(--dur-ack) var(--ease-emph)}
+.nav a:hover{color:var(--ink)}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:7px 14px 7px 12px;border-radius:999px;border:1px solid var(--hair-2);background:var(--surf);font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--steel)}
+.pill i{width:6px;height:6px;border-radius:50%;background:var(--steel)}
+
+/* ---------- hero ---------- */
+.hero{position:relative;display:grid;grid-template-columns:minmax(0,620px) minmax(0,1fr);gap:72px;align-items:center;padding-top:104px;padding-bottom:112px;isolation:isolate}
+.hero::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(90% 60% at -5% -5%,rgba(106,129,206,.10),transparent 70%)}
+.copy>*+*{margin-top:28px}
+.h1{font-family:var(--serif);font-weight:400;letter-spacing:-.025em}
+.h1 .a{display:block;font-size:clamp(52px,6vw,84px);line-height:1}
+.h1 .b{display:block;font-style:italic;font-size:clamp(38px,4.3vw,60px);line-height:1.13;color:var(--muted);margin-top:2px}
+.h1 .b em{font-style:inherit;color:var(--acc)}
+.lead{font-size:clamp(16.5px,1.32vw,19px);line-height:1.58;color:var(--muted);max-width:560px;letter-spacing:-.005em}
+.lead strong{color:var(--ink);font-weight:600}
+.strip{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.strip span{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.strip span::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--crit)}
+.strip span.on{color:var(--ink)}.strip span.on::before{background:var(--ok)}
+.strip i{width:1px;height:12px;background:rgba(255,255,255,.15)}
+.ctas{display:flex;flex-wrap:wrap;gap:12px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:14px 22px;border-radius:8px;font-weight:600;font-size:15px;line-height:1;transition:transform var(--dur-ack) var(--ease-emph),background var(--dur-ack) var(--ease-emph),border-color var(--dur-ack) var(--ease-emph)}
+.btn svg{width:16px;height:16px;flex:none}
+.btn-p{background:var(--bone);color:var(--ink-l);box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 8px 20px -6px rgba(0,0,0,.35)}
+.btn-p:hover{background:#fff;transform:translateY(-1px)}
+.btn-s{border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.03);color:var(--ink)}
+.btn-s:hover{border-color:rgba(255,255,255,.3);background:rgba(255,255,255,.06)}
+.btn-s .arr{color:var(--muted);font-size:14px}
+
+/* the receipt — the money shot */
+.rcol{display:flex;flex-direction:column;align-items:center;gap:20px;min-width:0}
+.receipt{width:min(484px,100%);background:var(--paper);color:var(--ink-l);border-radius:3px;padding:28px 32px;transform:rotate(1.2deg);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 6px 12px -4px rgba(0,0,0,.35),0 30px 60px -12px rgba(0,0,0,.55);
+  font-family:var(--mono);font-size:13.5px;font-variant-numeric:tabular-nums slashed-zero}
+.rhead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.rtitle{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;letter-spacing:.1em}
+.rtitle svg{width:14px;height:15px}
+.rmeta{text-align:right;font-size:11px;line-height:1.5}
+.rmeta b{font-weight:400;letter-spacing:.06em}
+.rmeta span{display:block;color:var(--muted-l)}
+.rhr{height:1px;background:rgba(27,30,36,.35);margin:18px 0 14px}
+.rsec{font-size:11px;letter-spacing:.08em;color:var(--muted-l);margin-bottom:8px}
+.row{display:flex;align-items:baseline;gap:10px;padding:6px 0}
+.row .l{white-space:nowrap}.row .l.dim{color:var(--muted-l)}
+.row .dots{flex:1;border-bottom:1px dotted rgba(27,30,36,.45);transform:translateY(-4px)}
+.row .v{font-weight:500;white-space:nowrap}.row .v.dim{color:var(--muted-l);font-weight:400}
+.row .m{width:14px;flex:none;color:var(--muted-l)}.row .m.x{color:var(--crit)}
+.ropen{display:flex;align-items:center;gap:12px;margin:16px 0 10px;font-size:11px;letter-spacing:.1em;color:var(--muted-l)}
+.ropen::before,.ropen::after{content:"";flex:1;height:1px;background:rgba(27,30,36,.25)}
+.rfoot{text-align:center;font-size:11.5px;line-height:1.5;color:var(--muted-l);max-width:420px;margin:0 auto 6px}
+.rcap{font-size:13px;line-height:1.55;color:#8A9098;text-align:center;max-width:400px}
+.short{display:none}
+
+/* ---------- proof (paper) ---------- */
+.proof{background:var(--bone);color:var(--ink-l);padding-top:112px;padding-bottom:120px}
+.proof .eyebrow{color:var(--steel-d)}
+.phead{display:grid;grid-template-columns:minmax(0,640px) minmax(0,464px);justify-content:space-between;gap:48px 96px;align-items:end;margin-top:56px}
+.h2{font-family:var(--serif);font-weight:400;font-size:clamp(36px,3.9vw,56px);line-height:1.07;letter-spacing:-.02em}
+.proof .h2{color:var(--ink-l)}
+.plead{font-size:clamp(16px,1.25vw,18px);line-height:1.56;color:var(--muted-l)}
+.flow{display:grid;grid-template-columns:1fr 40px 1fr 40px 1fr;align-items:stretch;margin-top:56px}
+.step{background:var(--ivory);border:1px solid var(--hair-l);border-radius:12px 12px 4px 12px;padding:28px 28px 32px;box-shadow:inset 0 1px 0 rgba(255,255,255,.9);display:flex;flex-direction:column;gap:14px}
+.step .n{display:flex;align-items:center;gap:12px}
+.step .n em{font-family:var(--serif);font-style:italic;font-size:28px;line-height:1;color:var(--acc-l)}
+.step .n span{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--steel-d)}
+.step h3{font-family:var(--serif);font-weight:400;font-size:26px;line-height:1.15;letter-spacing:-.01em;margin-top:4px}
+.step p{font-size:15.5px;line-height:1.55;color:var(--muted-l)}
+.con{display:flex;align-items:center;justify-content:center;color:var(--steel-d)}
+.con svg{width:32px;height:8px}
+.fnote{margin-top:56px;font-family:var(--mono);font-size:12px;letter-spacing:.02em;color:var(--steel-d)}
+
+/* ---------- build (dark) ---------- */
+.build{display:grid;grid-template-columns:minmax(0,520px) minmax(0,1fr);gap:48px 96px;align-items:start;padding-top:112px;padding-bottom:120px}
+.build .copy>*+*{margin-top:24px}
+.build .lead{max-width:480px;font-size:18px}
+.ledger{list-style:none;border-top:1px solid rgba(255,255,255,.1)}
+.ledger li{border-bottom:1px solid rgba(255,255,255,.1)}
+.ledger a{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;padding:22px 0;transition:padding var(--dur-ack) var(--ease-emph)}
+.ledger a:hover{padding-left:6px}
+.ledger h3{font-family:var(--serif);font-weight:400;font-size:24px;line-height:1.15;letter-spacing:-.01em}
+.ledger p{font-size:14.5px;line-height:1.5;color:var(--muted);margin-top:6px}
+.ledger code{display:block;font-family:var(--mono);font-size:11.5px;color:var(--steel);opacity:.8;margin-top:6px}
+.ledger .arr{color:var(--acc);font-size:18px;flex:none;padding-top:4px}
+
+/* ---------- footer ---------- */
+.foot{display:flex;justify-content:space-between;gap:48px 96px;align-items:flex-start;padding-top:32px;padding-bottom:40px;border-top:1px solid var(--hair);font-size:13px}
+.foot .l{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;color:var(--muted)}
+.foot .l b{font-weight:500;color:var(--ink)}.foot .l a{color:var(--ink)}
+.foot .d{max-width:560px;font-size:12.5px;line-height:1.55;color:var(--dim)}
+
+/* ---------- motion ---------- */
+@media (prefers-reduced-motion:no-preference){
+  .js .reveal{opacity:0;transform:translateY(14px);transition:opacity 700ms var(--ease-out),transform 700ms var(--ease-out)}
+  .js .reveal.in{opacity:1;transform:none}
+  .js .receipt.reveal{transform:rotate(1.2deg) translateY(18px)}
+  .js .receipt.reveal.in{transform:rotate(1.2deg)}
+}
+
+/* ---------- responsive ---------- */
+@media (max-width:1080px){
+  .hero{grid-template-columns:1fr;gap:56px;padding-top:72px;padding-bottom:80px}
+  .rcol{align-items:center}
+  .phead{grid-template-columns:1fr;align-items:start;gap:24px}
+  .flow{grid-template-columns:1fr;gap:0}
+  .con{height:32px}.con svg{transform:rotate(90deg)}
+  .build{grid-template-columns:1fr;gap:48px}
+  .foot{flex-direction:column;gap:20px}
+}
+@media (max-width:640px){
+  .nav a{display:none}
+  .eyebrow{font-size:11px;letter-spacing:.1em}.eyebrow::before{width:20px}
+  .lockup small{display:none}
+  .lockup svg{width:24px;height:26px}
+  .hero{padding-top:48px;padding-bottom:56px;gap:48px}
+  .copy>*+*{margin-top:24px}
+  .h1 .a{font-size:clamp(40px,13vw,52px)}
+  .h1 .b{font-size:clamp(30px,9vw,44px)}
+  .strip{flex-direction:column;align-items:flex-start;gap:8px}
+  .strip i{display:none}
+  .ctas{flex-direction:column}.btn{width:100%}
+  .receipt{transform:rotate(.8deg);padding:22px 20px;font-size:12.5px}
+  .js .receipt.reveal{transform:rotate(.8deg) translateY(18px)}.js .receipt.reveal.in{transform:rotate(.8deg)}
+  .rhead{flex-direction:column;gap:10px}.rmeta{text-align:left}
+  .long{display:none}.short{display:inline}
+  .proof{padding-top:64px;padding-bottom:64px}
+  .phead{margin-top:24px}.flow{margin-top:32px}.fnote{margin-top:32px;line-height:1.55}
+  .step{padding:22px 22px 24px}.step h3{font-size:24px}
+  .build{padding-top:64px;padding-bottom:64px}
+  .ledger h3{font-size:21px}.ledger a{padding:16px 0}
+  .foot{padding-top:28px;padding-bottom:36px}
+  .foot .l{flex-direction:column;align-items:flex-start;gap:6px}.foot .l>span:empty,.foot .l>span.dot{display:none}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="wshield" viewBox="0 0 100 110">
+    <path d="M50 8 L9 15 C9 52 21 83 50 103 C79 83 91 52 91 15 Z" fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="miter"/>
+    <path d="M50 15.5 L16.5 21 C16.5 51 26.5 77 50 94 C73.5 77 83.5 51 83.5 21 Z" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".6"/>
+    <path d="M31 38 L43.5 79 L50.5 55 L57.5 79 L70 42" fill="none" stroke="currentColor" stroke-width="8" stroke-linejoin="miter"/>
+  </symbol>
+  <symbol id="gh" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></symbol>
+  <symbol id="arrow" viewBox="0 0 32 8"><path d="M0 4h26" stroke="currentColor" stroke-width="1"/><path d="M25 0l7 4-7 4z" fill="currentColor"/></symbol>
+</svg>
+
+<header class="site wrap">
+  <a class="lockup" href="https://wardenwallet.io/" aria-label="Warden home">
+    <svg aria-hidden="true"><use href="#wshield"/></svg>
+    <b>Warden</b><small>by drinkerlabs</small>
+  </a>
+  <nav class="nav" aria-label="Site">
+    <a href="#how">How it works</a>
+    <a href="https://github.com/Dr-Inker/warden-wallet">Source</a>
+    <a href="#ledger">Ledger</a>
+    <span class="pill" role="status"><i aria-hidden="true"></i>in development</span>
+  </nav>
+</header>
+
+<main>
+<section class="hero wrap">
+  <div class="copy">
+    <p class="eyebrow"><span class="long">Warden ·&nbsp;</span>smart-account wallet for Solana</p>
+    <h1 class="h1"><span class="a">Not ready yet.</span><span class="b">Here’s exactly <em>how far.</em></span></h1>
+    <p class="lead">Warden is a Solana wallet where a passkey holds root authority, everyday signing runs on scoped session keys, and the rules protecting your funds are enforced by an on-chain program — not by the interface asking you to click. <strong>It isn’t live.</strong> The receipt here is the real build ledger, printed from the repository.</p>
+    <p class="strip" aria-label="Status"><span class="on">building in the open</span><i aria-hidden="true"></i><span>not live</span><i aria-hidden="true"></i><span>not externally audited</span></p>
+    <p class="ctas">
+      <a class="btn btn-p" href="https://github.com/Dr-Inker/warden-wallet"><svg aria-hidden="true"><use href="#gh"/></svg>Read the source</a>
+      <a class="btn btn-s" href="#how">How it works <span class="arr" aria-hidden="true">↗</span></a>
+    </p>
+  </div>
+
+  <div class="rcol">
+    <aside class="receipt reveal" aria-labelledby="rtitle">
+      <div class="rhead">
+        <div class="rtitle" id="rtitle"><svg aria-hidden="true"><use href="#wshield"/></svg>BUILD&nbsp;RECEIPT</div>
+        <div class="rmeta"><b>PHASE 1B</b><span>as of 23 Aug 2026 · 6d714b2</span></div>
+      </div>
+      <div class="rhr"></div>
+      <div class="rsec"><span class="long">SOLANA PROGRAM · </span>COUNTS READ FROM THE REPO</div>
+      <div class="row"><span class="l">security invariants</span><span class="dots"></span><span class="v">56 / 89 covered</span></div>
+      <div class="row"><span class="l"><span class="long">adversarial </span>review rounds</span><span class="dots"></span><span class="v">101</span></div>
+      <div class="row"><span class="l">findings logged</span><span class="dots"></span><span class="v">233</span></div>
+      <div class="row"><span class="l dim">— of those, critical</span><span class="dots"></span><span class="v">16</span></div>
+      <div class="row"><span class="l">program tests<span class="long"> (Rust)</span></span><span class="dots"></span><span class="v">670 passing</span></div>
+      <div class="row"><span class="l">client tests</span><span class="dots"></span><span class="v">301 passing</span></div>
+      <div class="ropen">STILL OPEN</div>
+      <div class="row"><span class="m x" aria-hidden="true">✗</span><span class="l">external<span class="long"> security</span> audit</span><span class="dots"></span><span class="v">not started</span></div>
+      <div class="row"><span class="m x" aria-hidden="true">✗</span><span class="l">mainnet deployment</span><span class="dots"></span><span class="v">not deployed</span></div>
+      <div class="row"><span class="m" aria-hidden="true">◦</span><span class="l">browser extension</span><span class="dots"></span><span class="v dim">in progress</span></div>
+      <div class="rhr"></div>
+      <p class="rfoot">Every finding above was written down — including the ones found in our own fixes. None of it is a substitute for an external audit.</p>
+    </aside>
+    <p class="rcap">Counts taken from the repository’s invariant and review ledgers at the commit shown. A number that goes down is as publishable as one that goes up.</p>
+  </div>
+</section>
+
+<section class="proof wrap" id="how">
+  <p class="eyebrow reveal">What we’re building</p>
+  <div class="phead">
+    <h2 class="h2 reveal">A default keypair wallet is one signature from empty.</h2>
+    <p class="plead reveal">One hot key signs everything, every approval is all-or-nothing, and the only thing between a dApp and your balance is a popup you’ve learned to click through. Warden moves custody into the place the funds actually live.</p>
+  </div>
+  <div class="flow">
+    <article class="step reveal">
+      <div class="n"><em>01</em><span>Root authority</span></div>
+      <h3>Your passkey is the key</h3>
+      <p>Root actions are authorized by a signature your device makes and the chain verifies. The account is designed so no single hot key can drain it.</p>
+    </article>
+    <div class="con" aria-hidden="true"><svg><use href="#arrow"/></svg></div>
+    <article class="step reveal">
+      <div class="n"><em>02</em><span>Everyday signing</span></div>
+      <h3>Session keys that expire</h3>
+      <p>Routine activity runs on scoped keys with their own limits and lifetime, so a compromised session is a bounded loss instead of the whole balance.</p>
+    </article>
+    <div class="con" aria-hidden="true"><svg><use href="#arrow"/></svg></div>
+    <article class="step reveal">
+      <div class="n"><em>03</em><span>Enforcement</span></div>
+      <h3>Policy lives on-chain</h3>
+      <p>Spending limits and refusals are enforced by the program itself. An interface can promise anything; a program has to be argued with in code.</p>
+    </article>
+  </div>
+  <p class="fnote reveal">Root → session → program. Each layer is enforced by the one below it, never by the popup.</p>
+</section>
+
+<section class="build wrap" id="ledger">
+  <div class="copy">
+    <p class="eyebrow reveal">No waitlist<span class="long"> · nothing to sign up for</span></p>
+    <h2 class="h2 reveal">Watch it get built.</h2>
+    <p class="lead reveal">The repository, the invariant ledger, and every review round are public — the same evidence we use to decide whether it’s ready.</p>
+    <p class="reveal"><a class="btn btn-p mono" href="https://github.com/Dr-Inker/warden-wallet"><svg aria-hidden="true"><use href="#gh"/></svg><span class="long">github.com/</span>Dr-Inker/warden-wallet</a></p>
+  </div>
+  <ul class="ledger reveal">
+    <li><a href="https://github.com/Dr-Inker/warden-wallet/blob/phase1b/docs/security/INVARIANTS.md"><span><h3>Invariant ledger</h3><p>89 rows · 56 test-covered · 32 unimplemented · 1 llm-asserted — a correct primitive is not a satisfied invariant.</p><code>docs/security/INVARIANTS.md</code></span><span class="arr" aria-hidden="true">↗</span></a></li>
+    <li><a href="https://github.com/Dr-Inker/warden-wallet/blob/phase1b/docs/security/REVIEW-RUNS.jsonl"><span><h3>Review runs</h3><p>101 adversarial rounds — zero-finding rounds are recorded too, because silence on a seeded invariant is a failure, not a pass.</p><code>docs/security/REVIEW-RUNS.jsonl</code></span><span class="arr" aria-hidden="true">↗</span></a></li>
+    <li><a href="https://github.com/Dr-Inker/warden-wallet/blob/phase1b/docs/security/REVIEW-SCORECARD.jsonl"><span><h3>Findings scorecard</h3><p>233 rulings · 16 critical · every one adjudicated by a human ruling or an independent artefact, never by the model’s own claim.</p><code>docs/security/REVIEW-SCORECARD.jsonl</code></span><span class="arr" aria-hidden="true">↗</span></a></li>
+    <li><a href="https://github.com/Dr-Inker/warden-wallet/blob/phase1b/docs/security/THREATMODEL.md"><span><h3>Threat model &amp; release integrity</h3><p>What we defend against, and how a shipped build proves it is the one that was reviewed.</p><code>docs/security/THREATMODEL.md</code></span><span class="arr" aria-hidden="true">↗</span></a></li>
+  </ul>
+</section>
+</main>
+
+<footer class="foot wrap">
+  <p class="l"><b>Warden</b><span class="dot">·</span><span>a <a href="https://drinkerlabs.info/">drinkerlabs</a> project</span><span class="dot">·</span><a href="https://drinkerlabs.info/warden/">the long version</a></p>
+  <p class="d">Warden is unreleased software under active development. It is not live, has not been externally audited, and has not been deployed to mainnet. Nothing here is an offer, a promise of a launch date, or financial advice.</p>
+</footer>
+
+<script>
+(function(){
+  var els = document.querySelectorAll('.reveal');
+  if (!('IntersectionObserver' in window) ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    els.forEach(function(e){ e.classList.add('in'); });
+    return;
+  }
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+    });
+  }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+  els.forEach(function(e){ io.observe(e); });
+})();
+</script>
+</body>
+</html>

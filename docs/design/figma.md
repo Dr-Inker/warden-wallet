@@ -314,3 +314,27 @@ descriptions instead. Gotchas worth recording:
 4. A frame fixed at 600 px with a `layoutGrow: 1` body will happily overflow and clip without any error. To check for
    overflow, set the frame back to `AUTO` (and the body to `layoutGrow: 0`), read `height`, then restore.
 5. `get_screenshot` only downscales — `maxDimension` above the node's natural size returns 1×.
+
+## Landing facelift lease — 2026-09-04 (page `26:2` "Landing — Facelift 2026-09-04")
+
+Explicit Figma edit lease (owner request: "eyeball wardenwallet.io and give it a facelift using the figma mcp").
+Additive page only — Components / Screens / Receipt Exploration untouched; no variables changed.
+
+| Node | id | notes |
+|---|---|---|
+| Designer's note | `35:2` | direction, palette, honesty guard — read first |
+| L-01 desktop 1440 | `27:2` | header · hero + build receipt (484 px, 1.2°) · paper "What we're building" with 01→02→03 custody flow · dark "Watch it get built" ledger rows · footer |
+| L-01m mobile 390 | `34:2` | same content stacked; status strip vertical; CTAs full-width; receipt labels shortened |
+| BEFORE desktop / mobile | `33:2` / `33:3` | live wardenwallet.io captures 2026-09-04 (scroll-reveal forced) |
+
+Palette: midnight `#0B0F17` / surface `#121722` / ink `#E8E6E1` / muted `#A3A8B2` / steel `#B3B8BE` (achromatic — the mark is
+brushed steel) / bone `#F8F5EF` / ivory `#EFECE5` / ink-on-paper `#1B1E24` / **one accent = design-system indigo**
+`#6A81CE` dark, `#495DA7` light. Type: Newsreader (display + true italic), Inter (UI), JetBrains Mono (ledger) — all already
+self-hosted on the live site. Receipt counts read from the repo at `cc19ce3` (2026-09-03): invariants 66/100 test-covered,
+review runs 142, findings 286 (16 critical), Rust 697, client 729 + 704 = 1,433. Re-read `docs/security/*.jsonl` before building.
+Renders: `docs/design/brand/landing-v3-desktop.png`, `landing-v3-mobile.png`.
+
+**SHIPPED 2026-09-04** to `/var/www/wardenwallet/index.html` (backup `index.html.bak-<ts>-v2` beside it). Source copy:
+`docs/design/brand/landing-v3.html`; browser proofs `landing-v3-browser-1440.png` / `-360.png`. The shipped receipt prints
+the PUBLIC head `6d714b2` (56/89 · 101 · 233 · 16 · 670 · 301) because the local tree (`cc19ce3`, +487 commits) is not
+pushed — bump the receipt after the next push (refresh procedure is in the HTML head comment).
