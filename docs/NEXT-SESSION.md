@@ -30,6 +30,15 @@
 > - **RETURN:** implementation SHA, measured tests, browser/full-gate status,
 >   local run instructions and unresolved deployment prerequisites.
 >
+> **Checkpoint evidence:** implementation `9389e6c`; receipt fix/tested code
+> `e61dfa62ccad27da05791a544b7c38d7a6772b5c`. The exact sequential command in
+> `docs/CRITIQUE-2026-09-05.md` passed 27 core tests, 12 extension tests, the Rust
+> create/transfer ABI contract, both typechecks/builds and invariant consistency
+> at that SHA. Rust measured create 1062 B, transfer 735 B and exact 1000000
+> lamport debit/credit. The browser attempt at `9389e6c` was blocked by PreToolUse
+> (session `01a06eb3` active 81 seconds earlier); no full-gate or browser verdict
+> is inherited by the later fix or this documentation checkpoint.
+>
 > **External prerequisite:** the checked-in Warden address is absent on devnet
 > at confirmed slot 493700271. An owner-held program keypair and authorized devnet
 > deployment are required; do not rotate the shared ID. The regular extension

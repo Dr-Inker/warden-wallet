@@ -62,6 +62,8 @@ top-level, browser-identified document on `/test`, `/test/`, or `/test/index.htm
 at `https://wardenwallet.io`, `http://localhost:4173`, or `http://127.0.0.1:4173`.
 The review tab is bound to its exact Chrome tab ID and random internal URL.
 Disconnect/restart invalidates the request; no approvals survive worker restart.
+A bound review sends a 15-second keepalive, capped by the five-minute request
+expiry, following Chrome's [MV3 messaging lifetime rules](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle).
 Only `connect` and the bounded native transfer schema are accepted. There is no
 page-supplied RPC endpoint, program ID, arbitrary transaction, or signing API.
 Chrome's [external messaging manifest](https://developer.chrome.com/docs/extensions/reference/manifest/externally-connectable)
