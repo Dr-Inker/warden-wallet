@@ -1,0 +1,116 @@
+{
+  "wallet": {
+    "version": 1,
+    "origin": "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "credentialId": "01",
+    "publicKey": "027135fa4fd93a09dce98bbf681b4bfcf50e7c0d6354e62afb0bff2a3429617865",
+    "salt": "0303030303030303030303030303030303030303030303030303030303030303",
+    "address": "C4Dn6ijZ7eWaDtMwLxVxoZbeXUDgj5ZvCQVNuYJQVuBh"
+  },
+  "payer": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+  "destination": "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh",
+  "slot": 350000000,
+  "now": 1760000000,
+  "create": {
+    "challenge": "be15d97cd6f6e7964572402297f2eca752957a9abffda7209d1110e1fe8662cb",
+    "assertion": {
+      "authenticatorData": "bad6bf68a724af2cb5900133a712bc5c142a4f2bd8d951e1e4e51322485b42af0500000000",
+      "clientDataJSON": "7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a227668585a664e623235355a46636b41696c5f4c7370314b566570715f5f6163676e52455134663647597373222c226f726967696e223a226368726f6d652d657874656e73696f6e3a2f2f6161616161616161616161616161616161616161616161616161616161616161222c2263726f73734f726967696e223a66616c73657d",
+      "signature": "3046022100b4ed04253c6df8bb43a3f078111b613d4ec9ddea7d8521561822079064a281a602210096166331ef0a9dd1844482d5c6826024b8466928bbf6cb1ac8a4f4bff7fd7d72"
+    },
+    "instructions": [
+      {
+        "programId": "Secp256r1SigVerify1111111111111111111111111",
+        "keys": [],
+        "data": "01003100ffff1000ffff71004500ffff027135fa4fd93a09dce98bbf681b4bfcf50e7c0d6354e62afb0bff2a3429617865b4ed04253c6df8bb43a3f078111b613d4ec9ddea7d8521561822079064a281a669e99ccd10f5622f7bbb7d2a397d9fdb04a09184eb20d36a2b14d6030465a7dfbad6bf68a724af2cb5900133a712bc5c142a4f2bd8d951e1e4e51322485b42af0500000000f466b08eb19f663d290846390d98f63d3ba2af5f4b6843dbb5a27139fcf374a1"
+      },
+      {
+        "programId": "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
+        "keys": [
+          {
+            "pubkey": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+            "isSigner": true,
+            "isWritable": true
+          },
+          {
+            "pubkey": "C4Dn6ijZ7eWaDtMwLxVxoZbeXUDgj5ZvCQVNuYJQVuBh",
+            "isSigner": false,
+            "isWritable": true
+          },
+          {
+            "pubkey": "Sysvar1nstructions1111111111111111111111111",
+            "isSigner": false,
+            "isWritable": false
+          },
+          {
+            "pubkey": "11111111111111111111111111111111",
+            "isSigner": false,
+            "isWritable": false
+          },
+          {
+            "pubkey": "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
+            "isSigner": false,
+            "isWritable": false
+          }
+        ],
+        "data": "63148277c4eb839500027135fa4fd93a09dce98bbf681b4bfcf50e7c0d6354e62afb0bff2a34296178650025000000bad6bf68a724af2cb5900133a712bc5c142a4f2bd8d951e1e4e51322485b42af0500000000a40000007b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a227668585a664e623235355a46636b41696c5f4c7370314b566570715f5f6163676e52455134663647597373222c226f726967696e223a226368726f6d652d657874656e73696f6e3a2f2f6161616161616161616161616161616161616161616161616161616161616161222c2263726f73734f726967696e223a66616c73657d7878e768000000008093dc14000000000303030303030303030303030303030303030303030303030303030303030303bad6bf68a724af2cb5900133a712bc5c142a4f2bd8d951e1e4e51322485b42af330000006368726f6d652d657874656e73696f6e3a2f2f6161616161616161616161616161616161616161616161616161616161616161ce59db5080fc2c6d3bcf7ca90712d3c2e5e6c28f27f0dfbb9953bdb0894c03ab0100000001000000069b8857feab8184fb687f634618c035dac439dc1aeb3b5598a0f00000000001809698000000000000e1f5050000000000ca9a3b000000000000000001000000069b8857feab8184fb687f634618c035dac439dc1aeb3b5598a0f00000000001809698000000000000000000000000000000000000000000100e000000000000100e000000000000100e0000000000000000"
+      }
+    ]
+  },
+  "transfer": {
+    "challenge": "da13ede589f990d14f2f873ee931d4a1d7fcd75e709e5113174d6add22ecb519",
+    "assertion": {
+      "authenticatorData": "bad6bf68a724af2cb5900133a712bc5c142a4f2bd8d951e1e4e51322485b42af0500000000",
+      "clientDataJSON": "7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a223268507435596e356b4e46504c34632d365448556f646638313135776e6c45544630317133534c7374526b222c226f726967696e223a226368726f6d652d657874656e73696f6e3a2f2f6161616161616161616161616161616161616161616161616161616161616161222c2263726f73734f726967696e223a66616c73657d",
+      "signature": "3046022100c43ad4a137a0c80b6b0016c06522e8a58c9ef66897f9be3ec9c686953987bee6022100af612cf181cd00a55c2a224d5ccc089dba5867b683240f5a21172d32fe4f7bd7"
+    },
+    "instructions": [
+      {
+        "programId": "Secp256r1SigVerify1111111111111111111111111",
+        "keys": [],
+        "data": "01003100ffff1000ffff71004500ffff027135fa4fd93a09dce98bbf681b4bfcf50e7c0d6354e62afb0bff2a3429617865c43ad4a137a0c80b6b0016c06522e8a58c9ef66897f9be3ec9c686953987bee6509ed30d7e32ff5ba3d5ddb2a333f762028e92f723f38f2ad2a29d8ffe13a97abad6bf68a724af2cb5900133a712bc5c142a4f2bd8d951e1e4e51322485b42af050000000067ff2ba14e213e7b24cd370b9f46339ce8ba21de8d738af98e15d2b9b7209bef"
+      },
+      {
+        "programId": "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
+        "keys": [
+          {
+            "pubkey": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+            "isSigner": true,
+            "isWritable": false
+          },
+          {
+            "pubkey": "C4Dn6ijZ7eWaDtMwLxVxoZbeXUDgj5ZvCQVNuYJQVuBh",
+            "isSigner": false,
+            "isWritable": true
+          },
+          {
+            "pubkey": "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
+            "isSigner": false,
+            "isWritable": false
+          },
+          {
+            "pubkey": "Sysvar1nstructions1111111111111111111111111",
+            "isSigner": false,
+            "isWritable": false
+          },
+          {
+            "pubkey": "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh",
+            "isSigner": false,
+            "isWritable": true
+          },
+          {
+            "pubkey": "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
+            "isSigner": false,
+            "isWritable": false
+          },
+          {
+            "pubkey": "6nX7pb3j5NTebXnP3dqCcxniRe7fJqwvfNi461g4Dm2",
+            "isSigner": false,
+            "isWritable": false
+          }
+        ],
+        "data": "a334c8e78c0345ba010025000000bad6bf68a724af2cb5900133a712bc5c142a4f2bd8d951e1e4e51322485b42af0500000000a40000007b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a223268507435596e356b4e46504c34632d365448556f646638313135776e6c45544630317133534c7374526b222c226f726967696e223a226368726f6d652d657874656e73696f6e3a2f2f6161616161616161616161616161616161616161616161616161616161616161222c2263726f73734f726967696e223a66616c73657d7878e768000000008093dc14000000000040420f0000000000"
+      }
+    ]
+  }
+}

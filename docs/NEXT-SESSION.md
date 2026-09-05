@@ -1,5 +1,45 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-05 DEVNET WEBSITE / PASSKEY FLOW — LOCAL IMPLEMENTATION
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** current session and next Warden maintainer.
+> - **TASK:** implement the user's requested website-to-wallet devnet test flow:
+>   passkey account creation, explicit connection consent and approved/rejected
+>   native SOL transfers with actual transaction receipts. The user's “lets go”
+>   authorizes this implementation beyond the preceding public-address-only slice.
+> - **CWD:** `/opt/warden`, branch `phase1b`.
+> - **BASE:** `87ba0919c51a21f02d19b287eb108d98951a9387`.
+> - **READ:** `docs/DEVNET-TEST.md`, `docs/CRITIQUE-2026-09-05.md`,
+>   `docs/security/THREATMODEL.md`, root transcript/create/transfer code.
+> - **WRITE (edit lease):** separate devnet build, browser-safe root client,
+>   website `/test` source, focused client/Chrome/Rust ABI contracts, markdown
+>   ledgers, ordinary commits and the previously requested branch push.
+> - **DO_NOT_TOUCH:** live `/var/www`, deployment, production pins/composition,
+>   on-chain program handlers, program keypairs, frozen session graphs, main,
+>   tags, force-push, third-party messages and ungranted subagents.
+> - **ACCEPT:** verified devnet genesis/program binary; public passkey metadata
+>   only at rest; ephemeral fee payer; exact-origin/document/tab-bound review;
+>   reject/expiry/disconnect behavior; exact recipient/amount ceremony; real
+>   on-chain confirmation before success; persisted ambiguous-send receipt;
+>   packet-size and actual Rust execution evidence. Commands plus passed SHA
+>   are required for every claimed gate. The full gate remains separate.
+> - **SIDE_EFFECTS:** local edits/builds/test artifacts and normal git checkpoint;
+>   read-only public devnet RPC. No transactions or deployment performed.
+> - **RETURN:** implementation SHA, measured tests, browser/full-gate status,
+>   local run instructions and unresolved deployment prerequisites.
+>
+> **External prerequisite:** the checked-in Warden address is absent on devnet
+> at confirmed slot 493700271. An owner-held program keypair and authorized devnet
+> deployment are required; do not rotate the shared ID. The regular extension
+> remains public-account-only. See `docs/DEVNET-TEST.md` for the isolated build.
+> The website is configured as `wardenwallet.io` (no hyphen); `/test` is prepared
+> locally and not published. The supplied host instructions require a documented
+> PLAYBOOK §8 procedure for live publication; none exists in this Warden repo.
+> Browser/full-gate and independent review remain UNVERIFIED until recorded.
+
+
 > ## 2026-09-05 DOCUMENTATION AND BRANCH CHECKPOINT
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`

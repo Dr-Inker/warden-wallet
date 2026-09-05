@@ -4,6 +4,7 @@
     "baseUrl": ".",
     "rootDir": "../..",
     "paths": {
+      "@warden/core/devnet": ["../../packages/core/src/devnet.ts"],
       "@warden/core": ["../../packages/core/src/index.ts"],
       "@warden/core/approval": ["../../packages/core/src/approval/index.ts"],
       "@warden/core/constants": ["../../packages/core/src/constants.ts"],

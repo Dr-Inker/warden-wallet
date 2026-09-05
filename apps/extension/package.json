@@ -17,7 +17,8 @@
     "release:verify-store": "node scripts/verify-store-package.mjs",
     "test": "vitest run",
     "test:browser": "pnpm run build && playwright test -c playwright.config.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:devnet": "node scripts/build-devnet.mjs"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.0",

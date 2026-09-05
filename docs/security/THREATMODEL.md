@@ -3500,3 +3500,28 @@ Do not wire this selection to signing or funding without a new authenticated
 account-binding contract. No invariant is promoted. The exact 66-test/typecheck/
 build command and passed-at SHA are recorded in `docs/CRITIQUE-2026-09-05.md`;
 browser/full-gate and independent review remain **UNVERIFIED**.
+
+
+## Isolated devnet website experiment (2026-09-05)
+
+`build:devnet` composes `packages/core/src/devnet.ts` with a separate extension
+and static `/test/` site. It does not alter production mainnet/keyring pins or
+activate the excluded production provider prototypes. See `docs/DEVNET-TEST.md`.
+Page input is a closed connect/native-transfer schema, capped at 0.01 devnet SOL;
+Chrome external-port sender origin, top-level document ID and tab identify the
+request. A random internal URL and exact created tab ID bind review. Requests
+expire after five minutes and do not survive disconnect or worker restart.
+Root passkeys remain authenticator-owned. Only public credential metadata and
+transaction receipts are persisted; the temporary fee payer exists solely in a
+wallet document. Web Locks serialize actions across wallet tabs. Before sending,
+the client persists the local transaction signature/expiry and blocks further
+sends while an outcome is unknown. Every write pins official devnet RPC/genesis
+and verifies exact locally built ELF bytes through the canonical loader accounts.
+
+Residuals: this is an unaudited devnet experiment, not a production authority
+resolver or O8 closure. Devnet upgrade authority can change program behavior;
+its governance is not authenticated by the production deployment gate here.
+Real passkey enrollment, browser provenance, worker interruptions and live
+confirmation still require executable end-to-end evidence. Never interpret
+mocked missing-deployment UI tests as successful devnet transactions. No trust
+invariant is promoted solely because this test profile exists.
