@@ -1,27 +1,34 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-05 PRODUCT CRITIQUE AND REVIEW-SURFACE BUILD — IN PROGRESS
+> ## 2026-09-05 REVIEW-SURFACE BUILD — IMPLEMENTED; VALIDATION OPEN
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** current Warden implementation session and next maintainer.
-> - **TASK:** user requested a harsh progress critique, improvements and continued
->   building. Selected slice: approval dwell/held-key fixes, full-origin rendering,
+> - **TASK:** complete browser/full-gate verification and independent review of the
+>   implemented slice: approval dwell/held-key fixes, full-origin rendering,
 >   separate review evidence, and a useful development popup with bounded retry.
 > - **CWD:** `/opt/warden`, branch `phase1b`.
-> - **BASE:** `5aa73090fef0d3570a4c293f27c57c532bdc9f14`.
+> - **BASE:** campaign base `5aa73090fef0d3570a4c293f27c57c532bdc9f14`; RED
+>   `92e18cbb07c00d0aec7210eaca9d92150b037f54`; implementation
+>   `beac90f3e1bd502e718d06a9d97796ed82322182`; final product source
+>   `5bd960225562689882619652cdd240ed8508ba22`. Later ledger commits are docs-only.
 > - **READ:** `docs/CRITIQUE-2026-09-05.md`, prior completed campaign below,
 >   `docs/security/invariants.jsonl`, and affected extension source/tests.
 > - **WRITE (edit lease):** local extension UI/guard/tests, README, SECURITY,
 >   critique/handoff/threat/invariant ledgers as needed to record this slice.
 > - **DO_NOT_TOUCH:** frozen session graphs, live `/var/www`, `spikes`, production
 >   keys/pins/tags, `main`, external services, signing, publishing or deployment.
-> - **ACCEPT:** regressions fail before the fix and pass after; state exact
->   command/SHA for every gate result. Browser and independent review remain
->   UNVERIFIED until actually run. Preserve O2 pointer policy and O8 exclusion.
+> - **ACCEPT:** preserve the 3 RED regressions and 24 guard/11 popup tests passing
+>   at `beac90f` using the exact commands in the critique. Full gate there exited
+>   1 in the new layout check (15 existing browser tests passed). The viewport
+>   correction built/typechecked at `5bd9602`, but final browser/full gate and
+>   independent review remain UNVERIFIED. Preserve O2 pointer policy/O8 exclusion.
 > - **SIDE_EFFECTS:** local edits/commits and disposable test artifacts only.
-> - **RETURN:** implementation and evidence SHAs, measured outcomes, review/gate
->   limits, and a concrete next product milestone.
+> - **RETURN:** executable browser measurements, review adjudication and full
+>   command/SHA outcome. The PreToolUse hook blocked the last browser rerun due
+>   to another active host session; do not bypass it. After this verification,
+>   prioritize local onboarding/account registry over more release-tool churn.
 
 > ## 2026-09-02 CODEX REVIEW CAMPAIGN — COMPLETE; OWNER WORK REMAINS
 >
