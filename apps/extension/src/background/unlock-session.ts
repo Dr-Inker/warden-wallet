@@ -516,12 +516,15 @@ export class UnlockSessionOwner {
     };
     try {
       assertUnlockCheck(this.checkFor(active), "activate unlock session");
+      // The clock is caller code and can synchronously lock or replace this
+      // owner before the candidate becomes active. That newer transition wins.
+      if (this.transition !== generation) throw new KeyringLockedError("activate unlock session");
     } catch (error) {
       this.abortActive(active);
       // The previous generation was already revoked above. Queue cleanup now,
       // before yielding, so it follows any old pending write and precedes a
       // later activation. Otherwise a worker restart can restore that old key.
-      await this.removeStored();
+      if (this.transition === generation) await this.removeStored();
       throw error;
     }
     this.active = active;
@@ -562,12 +565,13 @@ export class UnlockSessionOwner {
     try {
       restored = await this.restoreSession(expectedBundleId);
     } catch (error) {
-      await this.clearAlarm();
+      // A superseding activation owns its own alarm lifecycle.
+      if (this.active === undefined) await this.clearAlarm();
       throw error;
     }
     const active = this.active;
-    if (restored && active !== undefined) {
-      await this.scheduleAlarm(active.deadlines);
+    if (active !== undefined) {
+      if (active.committed) await this.scheduleAlarm(active.deadlines);
     } else {
       await this.clearAlarm();
     }
@@ -623,11 +627,12 @@ export class UnlockSessionOwner {
         };
         try {
           assertUnlockCheck(this.checkFor(active), "restore unlock session");
+          if (this.transition !== generation) throw new KeyringLockedError("restore unlock session");
         } catch (error) {
           this.abortActive(active);
           // A failed live check revokes persisted authority too, including an
           // unavailable/invalid clock. A later wake must not resurrect it.
-          await this.removeStored();
+          if (this.transition === generation) await this.removeStored();
           if (error instanceof KeyringExpiredError) {
             return false;
           }

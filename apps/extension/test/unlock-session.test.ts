@@ -377,6 +377,7 @@ describe("MV3 unlock session ownership", () => {
         ? state.owner.unlock(params()) : state.owner.restore(BUNDLE_ID);
       await expect(attempted).rejects.toThrow(/readNow failed/);
       await newer;
+      expect(state.alarms.scheduled).toBe(T0 + POLICY.idleTimeoutMs);
       const restarted = owner(state.storage);
       expect(await restarted.owner.restore(OTHER_BUNDLE_ID)).toBe(true);
     },
