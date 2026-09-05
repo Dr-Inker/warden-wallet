@@ -18,6 +18,44 @@ function armed(reviewAt = T0): { guard: ApprovalArmGuard; armAt: number } {
 }
 
 describe("approval arming dwell (audit A-1: click-race / clickjacking)", () => {
+  it("requires 600 ms of visible review even when focus preceded a slow response", () => {
+    const guard = new ApprovalArmGuard();
+    guard.noteFocus(0);
+    guard.noteReviewVisible(5_000);
+    guard.notePointerMove(5_001, true);
+    guard.notePointerDown(5_002, true);
+    guard.notePointerUp(5_003, true);
+    expect(guard.acceptsActivation(5_004, true)).toBe(false);
+    expect(guard.isArmed(5_599)).toBe(false);
+    expect(guard.isArmed(5_600)).toBe(true);
+  });
+
+  it("starts a fresh 600 ms dwell for a replacement review in the same focus run", () => {
+    const guard = new ApprovalArmGuard();
+    guard.noteFocus(0);
+    guard.noteReviewVisible(0);
+    guard.notePointerMove(1, true);
+    expect(guard.isArmed(600)).toBe(true);
+    guard.noteReviewVisible(2_000);
+    guard.notePointerMove(2_001, true);
+    expect(guard.isArmed(2_599)).toBe(false);
+    expect(guard.isArmed(2_600)).toBe(true);
+  });
+
+  it("does not turn a held activation key into consent when its repeats cross the dwell", () => {
+    for (const key of ["Enter", " "]) {
+      const guard = new ApprovalArmGuard();
+      guard.noteFocus(0);
+      guard.noteReviewVisible(0);
+      guard.notePointerMove(1, true);
+      guard.noteKeyActivation(100, true, key);
+      guard.noteKeyActivation(601, true, key, true);
+      expect(guard.acceptsActivation(602, true)).toBe(false);
+      guard.noteKeyActivation(700, true, key, false);
+      expect(guard.acceptsActivation(701, true)).toBe(true);
+    }
+  });
+
   it("keeps the dwell inside the reviewed 500-700 ms band", () => {
     expect(APPROVAL_ARM_DWELL_MS).toBeGreaterThanOrEqual(500);
     expect(APPROVAL_ARM_DWELL_MS).toBeLessThanOrEqual(700);

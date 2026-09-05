@@ -1,5 +1,28 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-05 PRODUCT CRITIQUE AND REVIEW-SURFACE BUILD — IN PROGRESS
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** current Warden implementation session and next maintainer.
+> - **TASK:** user requested a harsh progress critique, improvements and continued
+>   building. Selected slice: approval dwell/held-key fixes, full-origin rendering,
+>   separate review evidence, and a useful development popup with bounded retry.
+> - **CWD:** `/opt/warden`, branch `phase1b`.
+> - **BASE:** `5aa73090fef0d3570a4c293f27c57c532bdc9f14`.
+> - **READ:** `docs/CRITIQUE-2026-09-05.md`, prior completed campaign below,
+>   `docs/security/invariants.jsonl`, and affected extension source/tests.
+> - **WRITE (edit lease):** local extension UI/guard/tests, README, SECURITY,
+>   critique/handoff/threat/invariant ledgers as needed to record this slice.
+> - **DO_NOT_TOUCH:** frozen session graphs, live `/var/www`, `spikes`, production
+>   keys/pins/tags, `main`, external services, signing, publishing or deployment.
+> - **ACCEPT:** regressions fail before the fix and pass after; state exact
+>   command/SHA for every gate result. Browser and independent review remain
+>   UNVERIFIED until actually run. Preserve O2 pointer policy and O8 exclusion.
+> - **SIDE_EFFECTS:** local edits/commits and disposable test artifacts only.
+> - **RETURN:** implementation and evidence SHAs, measured outcomes, review/gate
+>   limits, and a concrete next product milestone.
+
 > ## 2026-09-02 CODEX REVIEW CAMPAIGN — COMPLETE; OWNER WORK REMAINS
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
