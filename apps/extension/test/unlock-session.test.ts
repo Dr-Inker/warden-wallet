@@ -353,6 +353,61 @@ describe("MV3 unlock session ownership", () => {
     expect(await restarted.owner.restore(OTHER_BUNDLE_ID)).toBe(true);
   });
 
+  it.each(["unlock", "restore"] as const)(
+    "preserves a newer activation started inside a failing %s clock callback",
+    async (operation) => {
+      let onClock = (): void => {};
+      const state = owner(undefined, () => {
+        const effect = onClock;
+        onClock = () => {};
+        effect();
+        return T0 + 1;
+      });
+      const params = () => ({
+        account: ACCOUNT, bundleId: BUNDLE_ID, unwrapKey: key(),
+        deadlines: startUnlockSession(T0, POLICY),
+      });
+      await state.owner.unlock(params());
+      let newer!: Promise<void>;
+      onClock = () => {
+        newer = state.owner.unlock({ ...params(), bundleId: OTHER_BUNDLE_ID });
+        throw new Error("old clock failed after starting the newer transition");
+      };
+      const attempted = operation === "unlock"
+        ? state.owner.unlock(params()) : state.owner.restore(BUNDLE_ID);
+      await expect(attempted).rejects.toThrow(/readNow failed/);
+      await newer;
+      const restarted = owner(state.storage);
+      expect(await restarted.owner.restore(OTHER_BUNDLE_ID)).toBe(true);
+    },
+  );
+
+  it.each(["unlock", "restore"] as const)(
+    "does not revive authority when the %s clock callback locks the owner",
+    async (operation) => {
+      let onClock = (): void => {};
+      const state = owner(undefined, () => {
+        const effect = onClock;
+        onClock = () => {};
+        effect();
+        return T0 + 1;
+      });
+      const params = () => ({
+        account: ACCOUNT, bundleId: BUNDLE_ID, unwrapKey: key(),
+        deadlines: startUnlockSession(T0, POLICY),
+      });
+      await state.owner.unlock(params());
+      let locked!: Promise<void>;
+      onClock = () => { locked = state.owner.lock(); };
+      const attempted = operation === "unlock"
+        ? state.owner.unlock(params()) : state.owner.restore(BUNDLE_ID);
+      await expect(attempted).rejects.toThrow(KeyringLockedError);
+      await locked;
+      const restarted = owner(state.storage);
+      expect(await restarted.owner.restore(BUNDLE_ID)).toBe(false);
+    },
+  );
+
   it("removes an old pending write after its replacement fails preflight", async () => {
     const state = owner();
     const writing = gate();
