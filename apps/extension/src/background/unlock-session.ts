@@ -518,6 +518,10 @@ export class UnlockSessionOwner {
       assertUnlockCheck(this.checkFor(active), "activate unlock session");
     } catch (error) {
       this.abortActive(active);
+      // The previous generation was already revoked above. Queue cleanup now,
+      // before yielding, so it follows any old pending write and precedes a
+      // later activation. Otherwise a worker restart can restore that old key.
+      await this.removeStored();
       throw error;
     }
     this.active = active;
@@ -621,8 +625,10 @@ export class UnlockSessionOwner {
           assertUnlockCheck(this.checkFor(active), "restore unlock session");
         } catch (error) {
           this.abortActive(active);
+          // A failed live check revokes persisted authority too, including an
+          // unavailable/invalid clock. A later wake must not resurrect it.
+          await this.removeStored();
           if (error instanceof KeyringExpiredError) {
-            await this.removeStored();
             return false;
           }
           throw error;

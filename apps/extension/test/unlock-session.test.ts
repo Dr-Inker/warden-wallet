@@ -327,6 +327,71 @@ describe("MV3 unlock session ownership", () => {
     expect(state.storage.value).toBeUndefined();
   });
 
+  it("orders rejected-replacement cleanup before a later successful activation", async () => {
+    const state = owner();
+    await state.owner.unlock({
+      account: ACCOUNT, bundleId: BUNDLE_ID, unwrapKey: key(),
+      deadlines: startUnlockSession(T0, POLICY),
+    });
+    const removal = gate();
+    state.storage.removeGate = removal;
+    const removalEntered = state.storage.waitForNextRemove();
+    const failed = expect(state.owner.unlock({
+      account: ACCOUNT, bundleId: BUNDLE_ID, unwrapKey: key(),
+      deadlines: { idleExpiresAt: T0 + 1, hardExpiresAt: T0 + 10 },
+    })).rejects.toThrow(KeyringExpiredError);
+    await removalEntered;
+    const latest = state.owner.unlock({
+      account: ACCOUNT, bundleId: OTHER_BUNDLE_ID, unwrapKey: key(),
+      deadlines: startUnlockSession(T0, POLICY),
+    });
+    expect(await state.owner.isUnlocked()).toBe(false);
+    removal.release();
+    await failed;
+    await latest;
+    const restarted = owner(state.storage);
+    expect(await restarted.owner.restore(OTHER_BUNDLE_ID)).toBe(true);
+  });
+
+  it("removes an old pending write after its replacement fails preflight", async () => {
+    const state = owner();
+    const writing = gate();
+    state.storage.setGate = writing;
+    const old = expect(state.owner.unlock({
+      account: ACCOUNT, bundleId: BUNDLE_ID, unwrapKey: key(),
+      deadlines: startUnlockSession(T0, POLICY),
+    })).rejects.toThrow(KeyringLockedError);
+    await state.storage.setEntered;
+    const failed = expect(state.owner.unlock({
+      account: ACCOUNT, bundleId: OTHER_BUNDLE_ID, unwrapKey: key(),
+      deadlines: { idleExpiresAt: T0 + 1, hardExpiresAt: T0 + 10 },
+    })).rejects.toThrow(KeyringExpiredError);
+    writing.release();
+    await old;
+    await failed;
+    const restarted = owner(state.storage);
+    expect(await restarted.owner.restore(BUNDLE_ID)).toBe(false);
+  });
+
+  it("reports failed durable cleanup and remains locally locked after rejected replacement", async () => {
+    const state = owner();
+    await state.owner.unlock({
+      account: ACCOUNT, bundleId: BUNDLE_ID, unwrapKey: key(),
+      deadlines: startUnlockSession(T0, POLICY),
+    });
+    state.storage.rejectRemove = true;
+    const replacementKey = key();
+    await expect(state.owner.unlock({
+      account: ACCOUNT, bundleId: OTHER_BUNDLE_ID, unwrapKey: replacementKey,
+      deadlines: { idleExpiresAt: T0 + 1, hardExpiresAt: T0 + 10 },
+    })).rejects.toThrow(UnlockSessionStorageError);
+    expect(replacementKey.bytes).toEqual(new Uint8Array(32));
+    expect(await state.owner.isUnlocked()).toBe(false);
+    // A failed storage API cannot establish durable deletion. Report the error;
+    // do not mistake a locked in-memory owner for successful cleanup.
+    expect(state.storage.value).toBeDefined();
+  });
+
   it("does not expose a session until its storage replacement commits", async () => {
     const state = owner();
     const setGate = gate();

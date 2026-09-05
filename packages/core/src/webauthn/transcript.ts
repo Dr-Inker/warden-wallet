@@ -127,13 +127,10 @@ export function encodeGrantBody(f: GrantBodyFields): Uint8Array {
   if (f.label.length !== 16) throw new Error("label must be 16 bytes");
   if (f.caps.length !== f.lifetimeCap.length)
     throw new Error("caps and lifetimeCap must be the same length");
-  if (f.kind < 0 || f.kind > 0xff) throw new Error("kind must be a u8");
-  if (f.opsMask < 0 || f.opsMask > 0xffff) throw new Error("opsMask must be a u16");
-  if (f.programAllowlistId < 0 || f.programAllowlistId > 0xffff)
-    throw new Error("programAllowlistId must be a u16");
-  assertU64(f.expiryTs < 0n ? 0n : f.expiryTs, "expiryTs"); // i64: range-check magnitude
-  if (f.expiryTs < -(2n ** 63n) || f.expiryTs >= 2n ** 63n)
-    throw new Error("expiryTs out of i64 range");
+  assertU8(f.kind, "kind");
+  assertU16(f.opsMask, "opsMask");
+  assertU16(f.programAllowlistId, "programAllowlistId");
+  assertI64(f.expiryTs, "expiryTs");
   // borsh: i64 | pubkey | u8 | u16 | Vec<MintCap> | Vec<u64> | u16 | [u8;16] | [u8;32]
   const capBytes = 4 + f.caps.length * (32 + 8 + 8 + 8);
   const lifeBytes = 4 + f.lifetimeCap.length * 8;
@@ -516,6 +513,13 @@ function assertU8(v: number, name: string): void {
 function assertU32(v: number, name: string): void {
   if (!Number.isInteger(v) || v < 0 || v > U32_MAX) {
     throw new RangeError(`${name} must be an integer in [0, ${U32_MAX}] (u32), got ${v}`);
+  }
+}
+
+/** Reject JS coercion before encoding a Rust u16 authority field. */
+function assertU16(v: number, name: string): void {
+  if (!Number.isInteger(v) || v < 0 || v > 0xffff) {
+    throw new RangeError(`${name} must be an integer in [0, 65535] (u16), got ${v}`);
   }
 }
 

@@ -436,12 +436,44 @@ export function normalizeComputeBudget(
     defaultComputeUnitLimit: number;
   },
 ): TransactionInstruction[] {
+  // Only the pinned compute-budget language may be hoisted out of the reviewed
+  // payload. In particular, arbitrary account metas must not smuggle additional
+  // signers or writable privileges into the outer transaction.
+  const seen = new Set<number>();
+  for (const ix of dappCbIxs) {
+    if (!ix.programId.equals(ComputeBudgetProgram.programId) || ix.keys.length !== 0) {
+      throw new Error("wrapForExecute: compute-budget instructions must use the budget program with no account metas");
+    }
+    const tag = ix.data[0];
+    if (tag === undefined || tag < 1 || tag > 4) {
+      throw new Error("wrapForExecute: unsupported compute-budget instruction tag");
+    }
+    // Preserve the existing named errors for duplicate heap/compute limits.
+    if (seen.has(tag) && (tag === 3 || tag === 4)) {
+      throw new Error(`wrapForExecute: duplicate compute-budget instruction tag ${tag}`);
+    }
+    seen.add(tag);
+    if (tag === 3 && ix.data.length !== 9) {
+      throw new Error("wrapForExecute: malformed compute-budget SetComputeUnitPrice (expected 9 bytes)");
+    }
+    if (tag === 4) {
+      if (ix.data.length !== 5) {
+        throw new Error("wrapForExecute: malformed compute-budget SetLoadedAccountsDataSizeLimit (expected 5 bytes)");
+      }
+      if (ix.data.subarray(1).every((byte) => byte === 0)) {
+        throw new Error("wrapForExecute: compute-budget loaded-account data limit must be positive");
+      }
+    }
+  }
   const limits = dappCbIxs.filter((ix) => ix.data[0] === CB_SET_COMPUTE_UNIT_LIMIT);
   const frames = dappCbIxs.filter((ix) => ix.data[0] === CB_REQUEST_HEAP_FRAME);
   if (limits.length > 1) throw new Error("wrapForExecute: multiple SetComputeUnitLimit instructions");
   if (frames.length > 1) throw new Error("wrapForExecute: multiple RequestHeapFrame instructions");
 
   const validateUnits = (units: number, src: string) => {
+    if (!Number.isInteger(units)) {
+      throw new Error(`wrapForExecute: ${src} compute-unit limit must be an integer`);
+    }
     if (units < MIN_COMPUTE_UNIT_LIMIT) {
       throw new Error(`wrapForExecute: ${src} compute-unit limit ${units} is below the floor ${MIN_COMPUTE_UNIT_LIMIT}`);
     }

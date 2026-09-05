@@ -254,6 +254,33 @@ describe("wrapForExecute", () => {
     expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer })).toThrow(/compute.budget/i);
   });
 
+  it.each([
+    { isSigner: false, isWritable: false },
+    { isSigner: false, isWritable: true },
+    { isSigner: true, isWritable: false },
+  ])("refuses hoisted budget account metas %j", (flags) => {
+    const price = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5n });
+    price.keys.push({ pubkey: Keypair.generate().publicKey, ...flags });
+    const work = new TransactionInstruction({ programId: wardenProgram, keys: [], data: Buffer.from([42]) });
+    const msg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [price, work] }).compileToV0Message();
+    expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer })).toThrow(/no account metas/);
+  });
+
+  it("preserves canonical full-width price and loaded-data limit bytes", () => {
+    const budgetBytes = [[3, 255, 255, 255, 255, 255, 255, 255, 255], [4, 0, 0, 0, 4]];
+    const budgets = budgetBytes.map((bytes) => new TransactionInstruction({ programId: CB, keys: [], data: Buffer.from(bytes) }));
+    const work = new TransactionInstruction({ programId: wardenProgram, keys: [], data: Buffer.from([42]) });
+    const msg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [...budgets, work] }).compileToV0Message();
+    const wrapped = wrapForExecute(msg, { wardenProgram, smartAccount, signer });
+    expect(wrapped.computeBudgetIxs.slice(0, 2).map((ix) => [...ix.data])).toEqual(budgetBytes);
+  });
+
+  it.each([NaN, 250_000.5])("rejects coercion of default compute-unit limit %s", (defaultComputeUnitLimit) => {
+    expect(() => wrapForExecute(dappMsg(false).msg, {
+      wardenProgram, smartAccount, signer, defaultComputeUnitLimit,
+    })).toThrow(/must be an integer/);
+  });
+
   // WRDF-0076 — an undersized (or malformed) compute-unit limit is rejected, not
   // rubber-stamped by tag presence.
   it("rejects a dApp compute-unit limit below the measured floor", () => {
