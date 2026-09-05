@@ -310,17 +310,114 @@ describe("isolated-world page provider bridge", () => {
   it("does not let reconnects bypass the per-document request ceiling", () => {
     const runtime = new MockRuntime();
     const page = new MockWindow();
-    installPageProviderBridge(page, runtime);
+    let now = 0;
+    installPageProviderBridge(page, runtime, { readNow: () => now });
 
     for (let index = 0; index < MAX_PROVIDER_REQUESTS_PER_DOCUMENT; index++) {
       page.emit(requestEnvelope());
+      now += 125;
+      if (index === 511) runtime.port.onDisconnect.emit();
     }
     page.emit(requestEnvelope());
 
-    expect(runtime.connectCalls).toHaveLength(1);
-    expect(runtime.port.posted).toHaveLength(MAX_PROVIDER_REQUESTS_PER_DOCUMENT);
+    expect(runtime.connectCalls).toHaveLength(2);
+    expect(runtime.ports.flatMap((port) => port.posted)).toHaveLength(1_024);
     expect(runtime.port.disconnectCalls).toBe(1);
     expect(page.listeners.size).toBe(0);
+  });
+
+  it("closes after 32 immediate page requests before another worker post", () => {
+    const runtime = new MockRuntime();
+    const page = new MockWindow();
+    installPageProviderBridge(page, runtime, { readNow: () => 0 });
+    for (let i = 0; i < 1_000; i++) page.emit(requestEnvelope());
+    expect(runtime.port.posted).toHaveLength(32);
+    expect(runtime.connectCalls).toHaveLength(1);
+    expect(runtime.port.disconnectCalls).toBe(1);
+    expect(page.listeners.size).toBe(0);
+    expect(runtime.port.onMessage.listeners.size).toBe(0);
+    expect(runtime.port.onDisconnect.listeners.size).toBe(0);
+  });
+
+  it("does not reset burst credit when Chrome disconnects the worker", () => {
+    const runtime = new MockRuntime();
+    const page = new MockWindow();
+    installPageProviderBridge(page, runtime, { readNow: () => 0 });
+    for (let i = 0; i < 100; i++) {
+      page.emit(requestEnvelope());
+      runtime.port.onDisconnect.emit();
+    }
+    expect(runtime.ports.flatMap((port) => port.posted)).toHaveLength(32);
+    expect(runtime.connectCalls).toHaveLength(32);
+    expect(page.listeners.size).toBe(0);
+  });
+
+  it.each([124, 125])("refills one request at the 125 ms boundary: %s ms", (elapsed) => {
+    const runtime = new MockRuntime();
+    const page = new MockWindow();
+    let now = 1_000;
+    installPageProviderBridge(page, runtime, { readNow: () => now });
+    for (let i = 0; i < 32; i++) page.emit(requestEnvelope());
+    now += elapsed;
+    page.emit(requestEnvelope());
+    expect(runtime.port.posted).toHaveLength(elapsed === 125 ? 33 : 32);
+    expect(page.listeners.size).toBe(elapsed === 125 ? 1 : 0);
+  });
+
+  it("caps idle refill and keeps another document's capacity independent", () => {
+    const runtime = new MockRuntime();
+    const page = new MockWindow();
+    let now = 0;
+    installPageProviderBridge(page, runtime, { readNow: () => now });
+    page.emit(requestEnvelope());
+    now = 1_000_000;
+    for (let i = 0; i < 100; i++) page.emit(requestEnvelope());
+    expect(runtime.port.posted).toHaveLength(33);
+    const other = new MockWindow();
+    const otherRuntime = new MockRuntime();
+    installPageProviderBridge(other, otherRuntime, { readNow: () => now });
+    other.emit(requestEnvelope());
+    expect(otherRuntime.port.posted).toHaveLength(1);
+  });
+
+  it.each([NaN, Infinity, -1])("refuses an invalid monotonic clock before connecting: %s", (now) => {
+    const runtime = new MockRuntime();
+    const page = new MockWindow();
+    installPageProviderBridge(page, runtime, { readNow: () => now });
+    page.emit(requestEnvelope());
+    expect(runtime.connectCalls).toHaveLength(0);
+    expect(page.listeners.size).toBe(0);
+  });
+
+  it("closes when the clock moves backwards or throws", () => {
+    for (const badClock of [() => 99, () => { throw new Error("clock failed"); }]) {
+      const runtime = new MockRuntime();
+      const page = new MockWindow();
+      let readNow = () => 100;
+      installPageProviderBridge(page, runtime, { readNow: () => readNow() });
+      page.emit(requestEnvelope());
+      readNow = badClock;
+      page.emit(requestEnvelope());
+      expect(runtime.port.posted).toHaveLength(1);
+      expect(page.listeners.size).toBe(0);
+    }
+  });
+
+  it("does not spend clock or burst work on unrelated or foreign messages", () => {
+    const runtime = new MockRuntime();
+    const page = new MockWindow();
+    let clockReads = 0;
+    installPageProviderBridge(page, runtime, { readNow: () => { clockReads++; return 0; } });
+    for (let i = 0; i < 100; i++) {
+      page.emit({ unrelated: true });
+      page.emit(requestEnvelope(), { origin: "https://other.example" });
+      page.emit(requestEnvelope(), { source: {} });
+    }
+    expect(clockReads).toBe(0);
+    expect(runtime.connectCalls).toHaveLength(0);
+    for (let i = 0; i < 32; i++) page.emit(requestEnvelope());
+    expect(runtime.port.posted).toHaveLength(32);
+    expect(page.listeners.size).toBe(1);
   });
 
   it("disposal is idempotent and a page clone failure closes the whole bridge", () => {

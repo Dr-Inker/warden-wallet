@@ -141,6 +141,7 @@ function safeDisconnect(port: ContentRuntimePort): void {
 export function installPageProviderBridge(
   page: ContentWindowApi,
   runtime: ContentRuntimeApi,
+  _options: { readonly readNow?: () => number } = {},
 ): PageProviderBridge {
   if (typeof page !== "object" || page === null) fail("window API is unavailable");
   if (
