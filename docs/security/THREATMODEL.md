@@ -3422,3 +3422,44 @@ The shipped provider/signing exclusions remain enforced by the existing build.
 Independent second-model review is UNVERIFIED; no independent-review row or
 remediation promotion is fabricated for this author pass. Browser/full-gate
 results must be read at their exact command/SHA in the critique ledger.
+
+
+## 2026-09-05 — local session, encoding and ingress hardening (author review)
+
+Base `54d5e1960dac13ccb2648c03dcae27cde2ef2c2c`; final implementation
+`0d37449af22e47dcdc36d9b46bc7a8fb59881beb`. Exact RED and passing commands/SHAs
+are in `docs/CRITIQUE-2026-09-05.md`; no independent-review promotion is made.
+
+- A replacement unlock that has already revoked the old in-memory owner now
+  queues removal of stored unlock material when its live deadline/clock check
+  fails. Restore does the same for failed clock checks. Reentrant clock code
+  cannot resurrect a candidate after a newer lock or erase a newer activation;
+  generation checks bind both adoption and cleanup. Tests instantiate a fresh
+  owner to check persistence across simulated worker death and exercise delayed
+  writes/removals. A rejecting Chrome storage API can still retain bytes; the
+  operation surfaces a typed storage error and remains locally locked. There is
+  no claim of guaranteed durable erasure under storage failure or real-device
+  worker/clock/alarm measurement. Existing wall-clock rollback limitations remain.
+- Grant kind, operations mask and allowlist id require integer JS numbers in
+  their exact ABI ranges, and expiry requires an i64 bigint. NaN/fractions and
+  coercible values are rejected before signing different authority bytes. This
+  does not choose new program policy or alter valid Rust-pinned golden bytes.
+- The SDK hoists only canonical compute-budget tags 1/2/3/4; reserved/unknown
+  tags, malformed price/loaded-data lengths, duplicate settings, zero loaded-data
+  limits and account metas are refused. Default compute limits must be integers.
+  Price remains a full-width u64; this adds no fee cap or affordability verdict.
+  These are client validation controls; no on-chain acceptance bypass was found.
+- The shipped isolated bridge has document-owned burst credit (32 requests,
+  refill 1/125 ms) beneath the 1,024 lifetime ceiling. Credit is checked before
+  worker connection/posting and survives worker disconnection. Exceeding the
+  budget tears down the listener/port until document reload; stale-port retry is
+  still at most two post attempts for one admitted request. There is no queue or
+  timer. The budget is provisional policy, not a measured O7 production floor.
+  Each new document has fresh credit, a single large browser-cloned payload is
+  still unbounded here, and page scripts can suppress/forge same-page messages.
+  No global availability or authenticated page capability is claimed.
+
+Production provider methods remain unavailable; no new signing, RPC, storage or
+key authority is exposed to pages. Full browser/repository gates and independent
+review are pending because the host concurrency guard continued rejecting the
+browser lane; targeted tests and builds do not substitute for those gates.
