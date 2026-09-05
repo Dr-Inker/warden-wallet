@@ -26,7 +26,7 @@ function harness() {
   });
   vi.stubGlobal("chrome", { runtime: { connect } });
   vi.stubGlobal("document", {
-    querySelector: (selector: string) => selector === "#boundary-status" ? status : retry,
+    querySelector: (selector: string) => selector === "#boundary-status" ? status : selector === "#retry-status" ? retry : null,
   });
   vi.stubGlobal("addEventListener", (name: string, listener: () => void) => {
     events.set(name, listener);

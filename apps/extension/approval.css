@@ -458,6 +458,77 @@ dd {
   padding: 20px;
 }
 
+.popup-page [hidden] {
+  display: none !important;
+}
+
+.popup-page .saved-accounts h2 {
+  margin: 8px 0 12px;
+  font-size: 24px;
+}
+
+.saved-accounts label {
+  display: block;
+  margin: 12px 0 6px;
+  color: #b8c1cb;
+  font-size: 13px;
+}
+
+.saved-accounts input,
+.saved-accounts textarea,
+.saved-accounts select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid #47515e;
+  border-radius: 8px;
+  padding: 10px;
+  background: #171d24;
+  color: #edf1f4;
+}
+
+.saved-accounts textarea {
+  resize: vertical;
+  overflow-wrap: anywhere;
+}
+
+.saved-accounts :is(input, textarea, select):focus-visible {
+  outline: 3px solid rgba(109, 224, 186, 0.5);
+  outline-offset: 2px;
+}
+
+.account-address {
+  padding: 12px;
+  border: 1px solid #303944;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+  user-select: all;
+}
+
+.account-form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.saved-accounts .button {
+  min-height: 44px;
+  font-size: 13px;
+}
+
+.account-removal {
+  margin-top: 12px;
+  border-top: 1px solid #47515e;
+}
+
+.account-removal .button {
+  margin-bottom: 8px;
+}
+
+#accounts-status[data-state="error"] {
+  color: #f2b5ba;
+}
+
 .popup-page .brand-row {
   grid-template-columns: 40px 1fr;
   gap: 12px;

@@ -18,6 +18,8 @@ import {
 import { POPUP_PORT_NAME } from "../popup-protocol.js";
 import { APPROVAL_UI_PORT_NAME } from "../approval-protocol.js";
 import { PROVIDER_PORT_NAME } from "../provider-protocol.js";
+import { ACCOUNT_REGISTRY_PORT_NAME } from "../account-registry-protocol.js";
+import { installAccountRegistryBoundary, type AccountRegistryBoundaryOptions } from "./account-registry-port.js";
 
 export interface RuntimeBoundaries {
   dispose(): void;
@@ -65,6 +67,7 @@ export function installRuntimeBoundaries(
   runtime: ProviderRuntimeApi,
   approvalOptions: ApprovalReviewBoundaryOptions,
   providerOptions: ProviderPortSessionOptions = {},
+  accountOptions?: AccountRegistryBoundaryOptions,
 ): RuntimeBoundaries {
   if (
     typeof runtime !== "object" ||
@@ -80,10 +83,15 @@ export function installRuntimeBoundaries(
   const providerEvents = new RoutedConnectEvent();
   const popupEvents = new RoutedConnectEvent();
   const approvalEvents = new RoutedConnectEvent();
+  const accountEvents = new RoutedConnectEvent();
+  let accountBoundary: RuntimeBoundaries | null = null;
   let providerBoundary: UnavailableProviderBoundary | null = null;
   let popupBoundary: UnavailablePopupBoundary | null = null;
   let approvalBoundary: ApprovalReviewBoundary | null = null;
   try {
+    if (accountOptions !== undefined) {
+      accountBoundary = installAccountRegistryBoundary({ id: runtime.id, onConnect: accountEvents }, accountOptions);
+    }
     providerBoundary = installUnavailableProviderBoundary(
       { id: runtime.id, onConnect: providerEvents },
       providerOptions,
@@ -97,6 +105,7 @@ export function installRuntimeBoundaries(
       approvalOptions,
     );
   } catch (error) {
+    accountBoundary?.dispose();
     approvalBoundary?.dispose();
     popupBoundary?.dispose();
     providerBoundary?.dispose();
@@ -115,6 +124,8 @@ export function installRuntimeBoundaries(
       popupEvents.emit(port);
     } else if (port.name === APPROVAL_UI_PORT_NAME) {
       approvalEvents.emit(port);
+    } else if (port.name === ACCOUNT_REGISTRY_PORT_NAME && accountBoundary !== null) {
+      accountEvents.emit(port);
     } else {
       safeDisconnectUnknown(port);
     }
@@ -123,6 +134,7 @@ export function installRuntimeBoundaries(
   try {
     runtime.onConnect.addListener(onConnect);
   } catch (error) {
+    accountBoundary?.dispose();
     approvalBoundary.dispose();
     popupBoundary.dispose();
     providerBoundary.dispose();
@@ -137,7 +149,7 @@ export function installRuntimeBoundaries(
         runtime.onConnect.removeListener(onConnect);
       } finally {
         try {
-          approvalBoundary.dispose();
+          try { accountBoundary?.dispose(); } finally { approvalBoundary.dispose(); }
         } finally {
           try {
             popupBoundary.dispose();

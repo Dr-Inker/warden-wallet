@@ -38,7 +38,9 @@ const approvalOwner = new ApprovalOwner(
 );
 const background = startBackground(backgroundChrome, approvalOwner);
 
-// Provider and popup surfaces remain fixed-unavailable. The separately routed
+// Provider and popup capability-status surfaces remain fixed-unavailable.
+// A separate popup-only lane owns public account metadata after readiness.
+// The separately routed
 // approval page can only read/reject/cancel one URL-bound durable request after
 // readiness; it has no signing capability. Keep initialization failure visible.
 void background.runtimeBoundariesReady.catch((error: unknown) => {

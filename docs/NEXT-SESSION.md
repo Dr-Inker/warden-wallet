@@ -1,5 +1,35 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-05 LOCAL ACCOUNT ONBOARDING — IMPLEMENTATION IN PROGRESS
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** current implementation session and next maintainer.
+> - **TASK:** finish the local public-account onboarding slice and its executable
+>   verification. The user authorized the proposed next feature; an optional
+>   scope question was offered, then public-account setup was the stated default.
+> - **CWD:** `/opt/warden`, branch `phase1b`.
+> - **BASE:** `f0ff20901df522f1def63b8f61ef2b6dfcad284e`.
+> - **READ:** this memo, `docs/CRITIQUE-2026-09-05.md`, the account registry,
+>   popup/runtime routing, their tests, and the threat model.
+> - **WRITE (edit lease):** local extension account registry/protocol/popup,
+>   composition/build allowlist, focused tests and incumbent markdown ledgers.
+> - **DO_NOT_TOUCH:** live `/var/www`, frozen session graphs, production
+>   keys/pins/trust values, on-chain programs, provider/signing/RPC composition,
+>   `main`, tags, pushes, external services and deployment.
+> - **ACCEPT:** add/name/select/reopen/remove public addresses on this device;
+>   canonical 32-byte base58 validation; maximum 20 accounts; popup provenance,
+>   startup readiness, bounded work, serialized storage/readback and honest
+>   failure states. Never infer ownership, funding readiness or signing authority
+>   from a saved address. Record exact command/SHA evidence; browser/full gate
+>   and independent review remain pending until actually executed.
+> - **SIDE_EFFECTS:** local edits/commits and ignored build/test artifacts only;
+>   one heavy job at a time; no subagents without an explicit numerical grant.
+> - **RETURN:** implementation SHA, focused results, browser measurements,
+>   independent review and full-gate outcome. The initial pending-review browser
+>   retry was blocked by PreToolUse: session `01a06eb3` active 33 seconds earlier.
+>   No alternate gate entry point was used to bypass that block.
+
 > ## 2026-09-05 SECURITY CONTINUATION — IMPLEMENTED; FULL VALIDATION OPEN
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`

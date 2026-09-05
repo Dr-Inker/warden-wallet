@@ -39,6 +39,7 @@ import {
   type UnlockKeyringWithPasswordParams,
 } from "./keyring-lifecycle.js";
 import { shippedExpectedKeyringContext } from "./expected-keyring-context.js";
+import { AccountRegistryOwner } from "./account-registry.js";
 
 /**
  * Startup knobs. `expectedContext` exists so a test (or a future non-default
@@ -364,6 +365,9 @@ export function startBackground(
       ready: approvalRuntimeReady,
       projectReview: decodeSessionApprovalReview,
       onFatal: (error) => reportApprovalFatal(error),
+    }, {}, {
+      ready: approvalRuntimeReady,
+      accounts: new AccountRegistryOwner(chromeApi.storage.local),
     });
     boundaryInstalled = true;
     approvalWindowOwner = installApprovalWindowOwner(chromeApi.windows, {

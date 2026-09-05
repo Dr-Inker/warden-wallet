@@ -138,6 +138,9 @@ if (
 const allowedPopupInputs = [
   join(appDirectory, "src/popup/main.ts"),
   join(appDirectory, "src/popup-protocol.ts"),
+  join(appDirectory, "src/popup/accounts.ts"),
+  join(appDirectory, "src/popup/account-client.ts"),
+  join(appDirectory, "src/account-registry-protocol.ts"),
 ].map((input) => resolve(input)).sort();
 const popupInputs = Object.keys(popupResult.metafile.inputs)
   .map((input) => resolve(appDirectory, input))

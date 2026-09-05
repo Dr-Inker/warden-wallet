@@ -17,12 +17,42 @@
         </div>
       </header>
 
-      <section class="popup-intro" aria-labelledby="build-title">
-        <p class="eyebrow">Development preview · 0.0.1</p>
-        <h2 id="build-title">Wallet setup<br>is coming next.</h2>
-        <p>This build cannot create an account, connect to apps, or move funds.</p>
-        <p class="funds-note">Unaudited. Do not use with real funds.</p>
+      <section id="saved-accounts" class="saved-accounts" aria-labelledby="accounts-title" aria-busy="true">
+        <p class="eyebrow">Local setup · Development preview</p>
+        <h2 id="accounts-title">Your accounts</h2>
+        <div id="accounts-welcome" hidden>
+          <p>Save a Solana public address on this device. No recovery phrase or private key needed.</p>
+        </div>
+        <div id="accounts-home" hidden>
+          <label for="account-select">Saved account</label>
+          <select id="account-select"></select>
+          <p class="account-kind">Public address only · Solana</p>
+          <p id="account-address" class="account-address" dir="ltr"></p>
+          <p>Balance and ownership have not been checked. Saving an address does not create a wallet or give access to its funds.</p>
+          <button id="account-remove" class="button secondary" type="button">Remove from this device</button>
+          <div id="account-removal" class="account-removal" hidden>
+            <p>Remove this saved address and its name? This only changes this device's list.</p>
+            <button id="account-remove-confirm" class="button secondary" type="button">Confirm removal</button>
+            <button id="account-remove-cancel" class="button secondary" type="button">Keep account</button>
+          </div>
+        </div>
+        <form id="account-form" hidden novalidate>
+          <label for="account-label">Account name</label>
+          <input id="account-label" name="label" type="text" maxlength="40" autocomplete="off" required>
+          <label for="account-input">Solana public address</label>
+          <textarea id="account-input" name="address" rows="2" maxlength="44" autocomplete="off" autocapitalize="off" spellcheck="false" dir="ltr" aria-describedby="account-help" required></textarea>
+          <p id="account-help">Paste a public address only. Never enter a recovery phrase or private key.</p>
+          <div class="account-form-actions">
+            <button class="button primary" type="submit">Save account</button>
+            <button id="account-cancel" class="button secondary" type="button">Cancel</button>
+          </div>
+        </form>
+        <p id="accounts-status" role="status" data-state="loading">Loading saved accounts…</p>
+        <button id="account-add" class="button primary" type="button" hidden>Add public account</button>
+        <button id="accounts-reload" class="button secondary" type="button" hidden>Reload accounts</button>
       </section>
+
+      <p class="funds-note">Unaudited. Do not use with real funds.</p>
 
       <section class="popup-connection" aria-labelledby="connection-title">
         <h2 id="connection-title">Extension status</h2>
@@ -32,9 +62,9 @@
 
       <details class="popup-guide">
         <summary>What can I try?</summary>
-        <p>Check that the extension responds, and explore this build's status. Wallet setup and transactions are still being built.</p>
+        <p>Save and select public accounts locally. This build cannot create a wallet, fetch balances, connect to apps, or move funds.</p>
         <dl>
-          <div><dt>Account setup</dt><dd>Not available</dd></div>
+          <div><dt>Account setup</dt><dd>Saved public addresses only</dd></div>
           <div><dt>App connections</dt><dd>Not available</dd></div>
           <div><dt>Signing &amp; sending</dt><dd>Not available</dd></div>
         </dl>

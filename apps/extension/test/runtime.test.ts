@@ -36,6 +36,8 @@ import {
 } from "../src/background/unlock-session.js";
 import { PROVIDER_PORT_NAME } from "../src/background/provider-port.js";
 import { POPUP_PORT_NAME } from "../src/popup-protocol.js";
+import { ACCOUNT_REGISTRY_PORT_NAME } from "../src/account-registry-protocol.js";
+import { ACCOUNT_REGISTRY_STORAGE_KEY } from "../src/background/account-registry.js";
 import type {
   ProviderConnectEvent,
   ProviderDisconnectEvent,
@@ -950,6 +952,38 @@ describe("MV3 background bootstrap", () => {
     localGate.release();
     sessionGate.release();
     await application.runtimeBoundariesReady;
+    application.dispose();
+  });
+
+  it("composes popup account storage only after trusted storage readiness", async () => {
+    const localGate = gate();
+    const onConnect = new RuntimeConnectEvent();
+    const data: Record<string, unknown> = {};
+    const keysRead: string[] = [];
+    const storage: ExtensionBackgroundStorageApi = {
+      local: localArea(async () => localGate.promise, {
+        get: async (key) => { keysRead.push(key); return Object.hasOwn(data, key) ? { [key]: data[key] } : {}; },
+        set: async (items) => { Object.assign(data, structuredClone(items)); },
+      }),
+      session: { setAccessLevel: async () => undefined, get: async () => ({}), set: async () => undefined, remove: async () => undefined },
+    };
+    const application = startBackground({ storage: observableStorage(storage), runtime: { id: EXTENSION_ID, onConnect } });
+    const onMessage = new RuntimeMessageEvent();
+    const onDisconnect = new RuntimeDisconnectEvent();
+    let resolve!: (value: unknown) => void;
+    const response = new Promise<unknown>((done) => { resolve = done; });
+    onConnect.emit({ name: ACCOUNT_REGISTRY_PORT_NAME,
+      sender: { id: EXTENSION_ID, url: `chrome-extension://${EXTENSION_ID}/popup.html`, origin: `chrome-extension://${EXTENSION_ID}` },
+      onMessage, onDisconnect, postMessage: resolve, disconnect: () => onDisconnect.emit() });
+    onMessage.emit({ version: 1, type: "request", correlationId: "accounts_runtime_1234", method: "accounts:add",
+      params: { address: "FTPSf3Po3uMpD9KRxWZtaqM27t7zCR8k7oAgz22u2eEC", label: "Primary" } });
+    await Promise.resolve();
+    expect(keysRead).toEqual([]);
+    localGate.release();
+    await application.runtimeBoundariesReady;
+    expect(await response).toMatchObject({ ok: true, result: { selectedAddress: "FTPSf3Po3uMpD9KRxWZtaqM27t7zCR8k7oAgz22u2eEC" } });
+    expect(Object.keys(data)).toEqual([ACCOUNT_REGISTRY_STORAGE_KEY]);
+    expect(await application.keyring.isUnlocked()).toBe(false);
     application.dispose();
   });
 

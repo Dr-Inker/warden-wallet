@@ -2,6 +2,23 @@
 
 This is a pre-alpha development extension. It must not be used with real funds.
 
+## Local account setup
+
+Build with `pnpm --filter @warden/extension build`, then load
+`apps/extension/dist` as an unpacked extension in Chrome's developer mode.
+Open Warden, choose **Add public account**, enter a name and a Solana public
+address, and save. The selected account survives popup closure and worker
+restart. Add up to 20 accounts; use the selector to switch or confirm removal
+from the device. Public addresses and names are stored locally, without sync.
+
+This is a public-address list, not wallet creation or a proof of ownership.
+Balances and account existence are not checked. No password, recovery phrase,
+passkey, private key, signing or network access is involved in this flow.
+If a write cannot be confirmed, reload accounts before retrying; the write may
+have reached storage even if its reply was lost. Corrupt data is preserved and
+reported rather than silently reset. Current verification evidence and pending
+browser/full-gate/independent-review work are in `docs/NEXT-SESSION.md`.
+
 ## Deterministic upload artifact
 
 From a clean committed tree, with the exact Node and pnpm versions pinned in the

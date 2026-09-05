@@ -72,6 +72,7 @@ test("review surface shows full origins and a usable development popup", async (
 
     await page.goto(`${extensionOrigin}/popup.html`);
     await expect(page.locator("#boundary-status")).toHaveAttribute("data-boundary", "unavailable");
+    await expect(page.locator("#accounts-status")).toHaveAttribute("data-state", "ready");
     const retry = page.getByRole("button", { name: "Check again" });
     await retry.focus();
     await page.keyboard.press("Enter");

@@ -2,6 +2,7 @@ import {
   POPUP_PORT_NAME,
   isPopupUnavailableResponse,
 } from "../popup-protocol.js";
+import { initializeAccounts } from "./accounts.js";
 
 interface PopupPort {
   readonly onMessage: {
@@ -107,7 +108,7 @@ function checkBoundary(): void {
         finish("closed", "Warden's background returned an invalid response.");
         return;
       }
-      finish("unavailable", "Wallet controls are not enabled in this pre-alpha build.");
+      finish("unavailable", "Connected. Signing and app connections are not enabled.");
     });
 
     port.onDisconnect.addListener(() => {
@@ -133,3 +134,4 @@ retryButton.addEventListener("click", () => {
 });
 globalThis.addEventListener("pagehide", () => cancelCheck?.(), { once: true });
 checkBoundary();
+initializeAccounts();
