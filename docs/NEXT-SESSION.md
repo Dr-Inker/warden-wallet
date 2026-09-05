@@ -1,5 +1,35 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-05 DOCUMENTATION AND BRANCH CHECKPOINT
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** current session and next Warden maintainer.
+> - **TASK:** preserve the implemented onboarding and outstanding verification;
+>   update markdown, commit and push the current branch as explicitly requested
+>   by the user. This request authorizes the branch push despite older local-only
+>   handoffs; it does not supply the pending numerical reviewer grant.
+> - **CWD:** `/opt/warden`, branch `phase1b`.
+> - **BASE:** documentation close `781696cdbd6b81f7424911b8dc51a9c86810563b`;
+>   onboarding implementation `8bf7dd98f75c3b8e13ad2a32ea169720661e68b2`.
+> - **READ:** the onboarding handoff below, `docs/CRITIQUE-2026-09-05.md`,
+>   `docs/security/THREATMODEL.md`, README and CLAUDE.md.
+> - **WRITE (edit lease):** incumbent markdown, a local documentation commit,
+>   and a normal fast-forward push to `origin/phase1b`.
+> - **DO_NOT_TOUCH:** live services, deployment, production keys/trust pins,
+>   frozen session graphs, product code, `main`, tags and force-push operations.
+> - **ACCEPT:** `git diff --check`; `node scripts/gen-invariants.mjs --check`;
+>   a clean tree after commit; remote `refs/heads/phase1b` matching local HEAD
+>   after `git push origin HEAD:refs/heads/phase1b`. These are checkpoint checks,
+>   not the full product gate.
+> - **SIDE_EFFECTS:** documentation commit and the explicitly requested GitHub
+>   branch update, including prior local commits. Fetch showed no divergence:
+>   the branch was 15 commits ahead before this documentation checkpoint.
+> - **RETURN:** pushed SHA and clean-tree/remote verification. Keep browser,
+>   full-gate and independent review pending; preserve exact focused-test
+>   command/SHA evidence in the critique. No product tests are rerun solely for
+>   this documentation change.
+
 > ## 2026-09-05 LOCAL ACCOUNT ONBOARDING — IMPLEMENTED; BROWSER/REVIEW OPEN
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
