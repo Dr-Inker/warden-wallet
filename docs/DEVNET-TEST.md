@@ -5,6 +5,22 @@ passkey enrollment, authenticated smart-account creation, account verification,
 connection approval, and root-approved native SOL transfers. It does not enable
 these capabilities in the regular extension or implement Wallet Standard.
 
+## Checkpoint and readiness
+
+The implementation/evidence checkpoint
+`9a3e5ee90f5a5946fc6faab177a55fc6ce5c29e3` was pushed to `origin/phase1b`.
+The tested code is `e61dfa62ccad27da05791a544b7c38d7a6772b5c`; exact commands
+and results are in [the critique](CRITIQUE-2026-09-05.md). Documentation commits
+after that code SHA do not inherit its test verdict.
+
+The source and local build exist. Browser verification, independent review,
+full-gate verification and real devnet passkey/transfer testing remain open.
+`https://wardenwallet.io/test/` has not been published. The owner has been asked
+for the original program keypair's secure path and the applicable Warden
+deployment procedure; neither has been supplied. The RPC observation below is
+the recorded implementation-session result, not a new network check performed
+for this documentation update.
+
 ## Run locally
 
 From `/opt/warden`, with `target/deploy/warden.so` already built:

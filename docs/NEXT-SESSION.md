@@ -1,34 +1,34 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-05 DEVNET WEBSITE / PASSKEY FLOW — LOCAL IMPLEMENTATION
+> ## 2026-09-05 DEVNET WEBSITE / PASSKEY FLOW — PUSHED; DOCUMENTATION PICKUP
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
 > - **TO:** current session and next Warden maintainer.
-> - **TASK:** implement the user's requested website-to-wallet devnet test flow:
->   passkey account creation, explicit connection consent and approved/rejected
->   native SOL transfers with actual transaction receipts. The user's “lets go”
->   authorizes this implementation beyond the preceding public-address-only slice.
+> - **TASK:** update the incumbent markdown as requested after the devnet flow
+>   checkpoint was pushed. Preserve the implementation, exact test evidence and
+>   unresolved verification/deployment work; commit and push the documentation
+>   under the user's earlier authorization. Product work is not reopened by
+>   this documentation request.
 > - **CWD:** `/opt/warden`, branch `phase1b`.
-> - **BASE:** `87ba0919c51a21f02d19b287eb108d98951a9387`.
+> - **BASE:** pushed implementation/evidence checkpoint
+>   `9a3e5ee90f5a5946fc6faab177a55fc6ce5c29e3`; tested code
+>   `e61dfa62ccad27da05791a544b7c38d7a6772b5c`.
 > - **READ:** `docs/DEVNET-TEST.md`, `docs/CRITIQUE-2026-09-05.md`,
 >   `docs/security/THREATMODEL.md`, root transcript/create/transfer code.
-> - **WRITE (edit lease):** separate devnet build, browser-safe root client,
->   website `/test` source, focused client/Chrome/Rust ABI contracts, markdown
->   ledgers, ordinary commits and the previously requested branch push.
-> - **DO_NOT_TOUCH:** live `/var/www`, deployment, production pins/composition,
+> - **WRITE (edit lease):** incumbent markdown, ordinary documentation commits
+>   and the previously authorized normal `origin/phase1b` push.
+> - **DO_NOT_TOUCH:** product code, live `/var/www`, deployment, production pins/composition,
 >   on-chain program handlers, program keypairs, frozen session graphs, main,
 >   tags, force-push, third-party messages and ungranted subagents.
-> - **ACCEPT:** verified devnet genesis/program binary; public passkey metadata
->   only at rest; ephemeral fee payer; exact-origin/document/tab-bound review;
->   reject/expiry/disconnect behavior; exact recipient/amount ceremony; real
->   on-chain confirmation before success; persisted ambiguous-send receipt;
->   packet-size and actual Rust execution evidence. Commands plus passed SHA
->   are required for every claimed gate. The full gate remains separate.
-> - **SIDE_EFFECTS:** local edits/builds/test artifacts and normal git checkpoint;
->   read-only public devnet RPC. No transactions or deployment performed.
-> - **RETURN:** implementation SHA, measured tests, browser/full-gate status,
->   local run instructions and unresolved deployment prerequisites.
+> - **ACCEPT:** `git diff --check`; `node scripts/gen-invariants.mjs --check`;
+>   clean tree after commit; remote `refs/heads/phase1b` matching local HEAD after
+>   the normal push. Preserve existing command/SHA evidence without assigning
+>   product-test results to a later documentation SHA.
+> - **SIDE_EFFECTS:** markdown edits, documentation commit and branch update.
+>   No product tests, transactions, program deployment or website publication.
+> - **RETURN:** updated files, documentation SHA, push/clean-tree status and the
+>   next-session queue below.
 >
 > **Checkpoint evidence:** implementation `9389e6c`; receipt fix/tested code
 > `e61dfa62ccad27da05791a544b7c38d7a6772b5c`. The exact sequential command in
@@ -47,6 +47,25 @@
 > locally and not published. The supplied host instructions require a documented
 > PLAYBOOK §8 procedure for live publication; none exists in this Warden repo.
 > Browser/full-gate and independent review remain UNVERIFIED until recorded.
+
+**Next implementation session:**
+
+1. Read [the run guide](DEVNET-TEST.md) and
+   [the exact evidence](CRITIQUE-2026-09-05.md). When the host lane is available,
+   run the targeted Chrome command recorded there and fix measured failures.
+   Do not bypass the active-session guard; its recorded rejection is historical,
+   not a fresh claim about current host occupancy.
+2. Obtain the required numerical grant before launching an independent reviewer;
+   no subagent has been authorized or run for this slice. Complete review and the
+   full `.claude/test-gate.sh` on the resulting clean code SHA before release.
+3. Obtain the original program keypair's secure filesystem path and the Warden
+   deployment procedure. These were requested from the owner but not supplied.
+   Do not put private key contents in chat, markdown or git, or rotate the shared ID.
+4. After the applicable deployment authorization and checks, deploy the reviewed
+   binary on devnet, record its fingerprint and RPC readback, then exercise real
+   passkey creation, connect/reject, transfer confirmation and interrupted sends.
+   Publish the prepared `site/test/` files through the Warden procedure and verify
+   the live `https://wardenwallet.io/test/` route. No step here has been performed.
 
 
 > ## 2026-09-05 DOCUMENTATION AND BRANCH CHECKPOINT
