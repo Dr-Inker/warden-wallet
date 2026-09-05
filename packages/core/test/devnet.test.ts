@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { Connection, Keypair, PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
-import { checkDevnet, DEVNET_GENESIS, DEVNET_PROGRAM, DEVNET_RPC, hex, parseTestAmount, prepareCeremony,
+import { checkDevnet, DEVNET_GENESIS, DEVNET_PROGRAM, DEVNET_RPC, hex, inspectTestReceipt, parseTestAmount, prepareCeremony,
   readRootState, rootInstructions, sendTestTransaction, unhex, validateWallet, verifyProgramBytes, type WalletMetadata } from "../src/devnet.js";
 
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/devnet-root.json", import.meta.url), "utf8"));
@@ -109,5 +109,23 @@ describe("devnet trust and submission boundaries", () => {
     const connection = rpc(); const fee = Keypair.generate();
     await expect(sendTestTransaction(connection as unknown as Connection, pin, fee, [SystemProgram.transfer({ fromPubkey: fee.publicKey, toPubkey: destination, lamports: 1 })], () => { throw new Error("request closed"); })).rejects.toThrow(/closed/);
     expect(connection.sendRawTransaction).not.toHaveBeenCalled();
+  });
+  it("checks absence after finalized expiry, preserving a receipt that landed between reads", async () => {
+    const calls: string[] = [];
+    const connection = { getBlockHeight: async () => { calls.push("height"); return 701; },
+      getSignatureStatuses: async () => { calls.push("status"); return { value: [{ err: null, confirmationStatus: "confirmed" }] }; } } as unknown as Connection;
+    expect(await inspectTestReceipt(connection, "test-signature", 700)).toEqual({ state: "confirmed" });
+    expect(calls).toEqual(["height", "status"]);
+  });
+  it("does not expire a processed transaction or absence at the last valid height", async () => {
+    const getSignatureStatuses = vi.fn().mockResolvedValue({ value: [null] });
+    const getBlockHeight = vi.fn().mockResolvedValue(700);
+    const connection = { getBlockHeight, getSignatureStatuses } as unknown as Connection;
+    expect(await inspectTestReceipt(connection, "test-signature", 700)).toEqual({ state: "pending" });
+    getBlockHeight.mockResolvedValue(701);
+    getSignatureStatuses.mockResolvedValue({ value: [{ err: null, confirmationStatus: "processed" }] });
+    expect(await inspectTestReceipt(connection, "test-signature", 700)).toEqual({ state: "pending" });
+    getSignatureStatuses.mockResolvedValue({ value: [null] });
+    expect(await inspectTestReceipt(connection, "test-signature", 700)).toEqual({ state: "expired" });
   });
 });

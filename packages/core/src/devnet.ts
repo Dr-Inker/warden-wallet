@@ -216,6 +216,20 @@ export async function confirmTestSignature(connection: Connection, signature: st
   throw new Error("Confirmation is still unknown. Check the transaction link before trying again");
 }
 
+export async function inspectTestReceipt(connection: Connection, signature: string, lastValidBlockHeight?: number): Promise<
+  { state: "pending" | "confirmed" | "expired" } | { state: "failed"; error: string }
+> {
+  // Read expiry height FIRST. A null status observed before expiry cannot
+  // prove absence after expiry: the transaction could land between the reads.
+  const height = Number.isSafeInteger(lastValidBlockHeight) && lastValidBlockHeight! >= 0 ?
+    await connection.getBlockHeight("finalized") : undefined;
+  const status = (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
+  if (status?.err) return { state: "failed", error: JSON.stringify(status.err) };
+  if (status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized") return { state: "confirmed" };
+  if (!status && height !== undefined && height > lastValidBlockHeight!) return { state: "expired" };
+  return { state: "pending" };
+}
+
 export async function enrollPasskey(origin: string, rpId: string): Promise<WalletMetadata> {
   const result = await navigator.credentials.create({ publicKey: {
     rp: { id: rpId, name: "Warden DEVNET TEST" },

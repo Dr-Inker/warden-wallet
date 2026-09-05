@@ -1,5 +1,5 @@
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
-import { assertPasskey, checkDevnet, confirmTestSignature, devnetConnection, enrollPasskey, getRootState,
+import { assertPasskey, checkDevnet, confirmTestSignature, devnetConnection, enrollPasskey, getRootState, inspectTestReceipt,
   prepareCeremony, rootInstructions, sendTestTransaction, validateWallet, type ProgramPin, type WalletMetadata } from "@warden/core/devnet";
 import { getChrome, parseTestRequest, type Port, type TestRequest } from "./protocol.js";
 
@@ -77,9 +77,15 @@ async function send(instructions: Parameters<typeof sendTestTransaction>[3]): Pr
   });
 }
 async function confirmed(signature: string): Promise<void> {
-  await chrome.storage.local.set({ [RECEIPT_KEY]: { signature, pending: false } });
+  await settleReceipt(signature);
   uncertain = false;
   message("Transaction confirmed on Solana devnet.");
+}
+async function settleReceipt(signature: string): Promise<void> {
+  // Every caller holds the document-shared Web Lock. An old tab's receipt
+  // must never clear a NEWER tab's unresolved transaction.
+  const current = (await chrome.storage.local.get(RECEIPT_KEY))[RECEIPT_KEY] as { signature?: string } | undefined;
+  if (current?.signature === signature) await chrome.storage.local.set({ [RECEIPT_KEY]: { signature, pending: false } });
 }
 element("fee-account").textContent = payer.publicKey.toBase58();
 element("extension-id").textContent = chrome.runtime.id;
@@ -138,21 +144,15 @@ element("check-receipt").onclick = () => void execute(async () => {
   if (!lastSignature) return;
   // A rejected request can still have an in-flight send. This readback never
   // signs another transfer or sends a result to a disconnected website.
-  const status = (await connection.getSignatureStatuses([lastSignature], { searchTransactionHistory: true })).value[0];
-  if (!status) {
-    const stored = (await chrome.storage.local.get(RECEIPT_KEY))[RECEIPT_KEY] as { signature?: string; lastValidBlockHeight?: number } | undefined;
-    if (stored?.signature === lastSignature && Number.isSafeInteger(stored.lastValidBlockHeight) &&
-        await connection.getBlockHeight("finalized") > stored.lastValidBlockHeight!) {
-      await chrome.storage.local.set({ [RECEIPT_KEY]: { signature: lastSignature, pending: false } });
-      uncertain = false; message("Transaction expired without a receipt. You can request a new approval."); return;
-    }
-    throw new Error("No confirmed receipt yet. Do not repeat the transfer; check again shortly.");
+  const stored = (await chrome.storage.local.get(RECEIPT_KEY))[RECEIPT_KEY] as { signature?: string; lastValidBlockHeight?: number; pending?: boolean } | undefined;
+  if (stored?.pending && typeof stored.signature === "string" && /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(stored.signature)) receipt(stored.signature);
+  const status = await inspectTestReceipt(connection, lastSignature!, stored?.signature === lastSignature ? stored.lastValidBlockHeight : undefined);
+  if (status.state === "pending") throw new Error("No confirmed receipt yet. Do not repeat the transfer; check again shortly.");
+  if (status.state === "expired" || status.state === "failed") {
+    await settleReceipt(lastSignature!);
+    uncertain = false;
+    message(status.state === "failed" ? `Transaction failed on devnet: ${status.error}` : "Transaction expired without a receipt. You can request a new approval."); return;
   }
-  if (status.err) {
-    await chrome.storage.local.set({ [RECEIPT_KEY]: { signature: lastSignature, pending: false } });
-    uncertain = false; message(`Transaction failed on devnet: ${JSON.stringify(status.err)}`); return;
-  }
-  if (status.confirmationStatus !== "confirmed" && status.confirmationStatus !== "finalized") throw new Error("Confirmation is still pending");
   await confirmed(lastSignature); await refresh();
 }, true);
 element("reject").onclick = () => {
