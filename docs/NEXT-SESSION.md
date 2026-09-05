@@ -1,6 +1,6 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
-> ## 2026-09-05 LOCAL ACCOUNT ONBOARDING — IMPLEMENTATION IN PROGRESS
+> ## 2026-09-05 LOCAL ACCOUNT ONBOARDING — IMPLEMENTED; BROWSER/REVIEW OPEN
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
 >
@@ -10,6 +10,7 @@
 >   scope question was offered, then public-account setup was the stated default.
 > - **CWD:** `/opt/warden`, branch `phase1b`.
 > - **BASE:** `f0ff20901df522f1def63b8f61ef2b6dfcad284e`.
+>   Implementation: `8bf7dd98f75c3b8e13ad2a32ea169720661e68b2`.
 > - **READ:** this memo, `docs/CRITIQUE-2026-09-05.md`, the account registry,
 >   popup/runtime routing, their tests, and the threat model.
 > - **WRITE (edit lease):** local extension account registry/protocol/popup,
@@ -29,6 +30,24 @@
 >   independent review and full-gate outcome. The initial pending-review browser
 >   retry was blocked by PreToolUse: session `01a06eb3` active 33 seconds earlier.
 >   No alternate gate entry point was used to bypass that block.
+>
+> **Observed:** the exact sequential command under “Local public-account
+> onboarding” in `docs/CRITIQUE-2026-09-05.md` passed 66 focused tests,
+> extension typecheck/build, and clean-tree checks at implementation SHA
+> `8bf7dd98f75c3b8e13ad2a32ea169720661e68b2`. A second browser attempt at that
+> SHA was rejected by PreToolUse: session `01a06eb3` active four seconds earlier.
+> The full gate contains those browser jobs and was not launched through another
+> entry point. No captures or layout measurements were produced. An explicit
+> one-reviewer grant was requested under the supplied AGENTS.md host limit;
+> no reviewer/subagent has been launched and no independent verdict is claimed.
+> The earlier review-surface/security browser/full-gate debt also remains open.
+>
+> **Next:** when the host lane is free, run the exact targeted browser command
+> in the critique, fix any measured failures, obtain the authorized independent
+> review, then run the full `.claude/test-gate.sh` on the resulting clean SHA.
+> Public-account setup does not create a wallet, verify account existence or
+> ownership, fetch balances, or grant signing authority. Passkey creation remains
+> the next separate product decision after this slice is verified.
 
 > ## 2026-09-05 SECURITY CONTINUATION — IMPLEMENTED; FULL VALIDATION OPEN
 >

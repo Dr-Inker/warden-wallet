@@ -3463,3 +3463,40 @@ Production provider methods remain unavailable; no new signing, RPC, storage or
 key authority is exposed to pages. Full browser/repository gates and independent
 review are pending because the host concurrency guard continued rejecting the
 browser lane; targeted tests and builds do not substitute for those gates.
+
+## Local public-account onboarding — 8bf7dd98f75c3b8e13ad2a32ea169720661e68b2 — 2026-09-05 — pending independent sign-off
+
+**New trust surface:** the popup has a separate, strict `warden:accounts:v1`
+route for public metadata in `chrome.storage.local["warden:public-accounts:v1"]`.
+Chrome-owned extension identity/origin and exact `/popup.html` sender URL are
+required before parsing. Runtime registration remains synchronous for MV3 wake;
+account reads/writes wait for trusted-storage and keyring/approval startup.
+The route can list/add/select/remove public addresses and names only. Neither
+the request language nor its owner has an approval/signing, keyring or RPC hook.
+Page/content/provider callers acquire no new fund-moving capability.
+
+**Controls:** canonical 32-byte base58 addresses (including off-curve PDAs),
+unique addresses, a 20-account cap, bounded names with control/bidi characters
+rejected, closed data-property schemas, snapshots before async work, one request
+per connection, 16 live connections, 10-second expiry and a separate 16-operation
+queue cap. The single worker serializes writes, rereads stored state, verifies
+write readback and preserves malformed/uncertain records. Disconnect prevents
+an unsubmitted mutation; an already-submitted Chrome write cannot be rolled back.
+The UI requests reload after uncertainty and renders labels/address as text.
+
+**Authority boundary:** saved account selection is network-neutral display
+metadata. It is not a Warden account verification, ownership claim, receive
+address authorization, keyring context, authenticated session identity or signer
+selection. The popup says ownership/balance are unchecked and exposes no funding
+action. Production provider/signing/RPC composition stays excluded from bundles.
+
+**Residual:** public addresses and names are plaintext local metadata; there is
+no sync or RPC lookup. A compromised trusted extension context or OS can change
+them. Chrome storage provides no cross-worker transactional compare-and-swap;
+serialization/readback is not a durability guarantee under browser/storage
+failure. A lost reply can follow a successful write. Existing tabless-action
+document-identity limits remain; this lane does not mint financial authority.
+Do not wire this selection to signing or funding without a new authenticated
+account-binding contract. No invariant is promoted. The exact 66-test/typecheck/
+build command and passed-at SHA are recorded in `docs/CRITIQUE-2026-09-05.md`;
+browser/full-gate and independent review remain **UNVERIFIED**.
