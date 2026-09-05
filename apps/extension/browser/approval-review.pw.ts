@@ -52,7 +52,7 @@ test("review surface shows full origins and a usable development popup", async (
         };
       });
       expect(metrics.originScrollWidth).toBeLessThanOrEqual(metrics.originWidth);
-      expect(metrics.documentWidth).toBe(width);
+      expect(metrics.documentWidth).toBe(metrics.viewportWidth);
       expect(metrics.lineCount).toBeGreaterThan(1);
       expect(metrics.everyLineVisible).toBe(true);
       measurements.push({ surface: "approval", width, ...metrics });
@@ -85,7 +85,7 @@ test("review surface shows full origins and a usable development popup", async (
         retryHeight: document.querySelector("#retry-status")!.getBoundingClientRect().height,
         contentBottom: document.querySelector(".popup-shell")!.getBoundingClientRect().bottom,
       }));
-      expect(metrics.documentWidth).toBe(width);
+      expect(metrics.documentWidth).toBe(metrics.viewportWidth);
       expect(metrics.retryHeight).toBeGreaterThanOrEqual(44);
       expect(metrics.contentBottom).toBeLessThanOrEqual(600);
       measurements.push({ surface: "popup", width, ...metrics });
