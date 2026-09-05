@@ -3395,3 +3395,30 @@ was in scope. The journal changes are covered by direct unit tests of the
 extracted pure admission and retention decisions, not by an IndexedDB-backed
 test — `provider-operation-store.ts` still has no vitest harness, and its only
 end-to-end coverage remains the Playwright browser lane.
+
+
+## 2026-09-05 — local review-surface corrections (author review)
+
+Base: `5aa73090fef0d3570a4c293f27c57c532bdc9f14`; executable consent RED:
+`92e18cbb07c00d0aec7210eaca9d92150b037f54`. Implementation and verification
+coordinates are in `docs/CRITIQUE-2026-09-05.md`.
+
+The page now starts the approval dwell after both focus and the current review
+exist, and refuses repeated Enter/Space activation, including reuse of a prior
+pointer pair. The original input-race protection was overstated: time spent
+waiting for the review counted as time spent viewing it. These changes narrow
+when the UI will request approval; background request/digest ownership is unchanged.
+The pointer-presence requirement and its keyboard-only exclusion remain O2.
+
+The displayed origin wraps in full, and request origin, local decoding, absent
+simulation and absent UI policy evaluation have separate labels. No simulation,
+site-identity verification or policy verdict is invented. The popup gains only a
+five-second connection timeout, retry and local capability guidance; its sole
+request remains `popup:getBoundaryStatus`, and its sole valid response remains
+unavailable. It receives no accounts, storage, keys, signing or RPC capability.
+Late events from a timed-out connection cannot settle a newer attempt.
+
+The shipped provider/signing exclusions remain enforced by the existing build.
+Independent second-model review is UNVERIFIED; no independent-review row or
+remediation promotion is fabricated for this author pass. Browser/full-gate
+results must be read at their exact command/SHA in the critique ledger.

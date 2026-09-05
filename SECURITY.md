@@ -4,7 +4,9 @@ Warden is **pre-alpha and unaudited**. Nothing here is deployed with real funds,
 
 If you find a vulnerability, please **do not open a public issue**. Email security@drinkerlabs.info with a description and, if you can, a reproducing test (the LiteSVM harness in `programs/warden/tests` is the preferred vehicle). We will acknowledge within 7 days.
 
-What we consider in scope right now: the on-chain program in `programs/warden` (root verification, session bounds, bucket accounting, transfer conservation), and the TypeScript transcript mirror in `packages/core`. The `spikes/` directory is throwaway evidence and is out of scope.
+Reports are in scope for the on-chain program in `programs/warden`, the TypeScript SDK and keyring in `packages/core`, and the extension in `apps/extension` (origin/Port boundaries, encrypted storage, approval UI, signing prototypes and release tooling). Please distinguish an issue reachable in the shipped bundle from one in an internal test-only composition; both are useful reports. The `spikes/` directory is throwaway evidence and is out of scope.
+
+Current extension capabilities and known unimplemented protections are recorded in `README.md`, `docs/security/invariants.jsonl` and `docs/NEXT-SESSION.md`. A decoded transaction is not a simulation result or a policy verdict. Production signing and provider delivery remain disabled.
 
 Known, documented limitations are listed in `docs/spikes/DECISION.md` (open items) and `docs/program/PHASE1A-MEASUREMENTS.md` (design notes).
 

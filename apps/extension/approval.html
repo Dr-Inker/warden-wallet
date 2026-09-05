@@ -27,8 +27,18 @@
         <div class="intent-block">
           <span class="label">Exact decoded action</span>
           <p id="memo-value" class="memo">—</p>
-          <p class="intent-caption">Post one account-less Memo through Warden execute.</p>
+          <p class="intent-caption">Add this memo to the transaction.</p>
         </div>
+
+        <section id="review-evidence" class="review-evidence" aria-label="Review evidence" hidden>
+          <h2>What this review establishes</h2>
+          <dl>
+            <div><dt>Request origin</dt><dd>Recorded by the extension. Site identity is not verified.</dd></div>
+            <div><dt>Action decoding</dt><dd>The exact message is decoded locally.</dd></div>
+            <div><dt>Simulation</dt><dd>Not run. Network effects have not been simulated.</dd></div>
+            <div><dt>Policy checks</dt><dd>Not evaluated here. A policy version is not a limits check.</dd></div>
+          </dl>
+        </section>
 
         <dl class="facts">
           <div>
@@ -130,10 +140,11 @@
           <button type="button" class="button secondary" data-action="reject" disabled>
             Reject request
           </button>
-          <button type="button" class="button primary" data-action="approve" disabled>
+          <button type="button" class="button primary" data-action="approve" aria-describedby="capability-message approval-help" disabled>
             Signing unavailable
           </button>
         </div>
+        <p id="approval-help" class="approval-help" hidden>Before approving, keep this window focused and move your pointer within it. Then press and release the approval control.</p>
       </section>
     </main>
     <script src="approval.js"></script>

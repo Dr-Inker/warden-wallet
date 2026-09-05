@@ -113,6 +113,8 @@ const rejectButton = element<HTMLButtonElement>("[data-action=reject]");
 const approveButton = element<HTMLButtonElement>("[data-action=approve]");
 const capabilityTitle = element<HTMLElement>("#capability-title");
 const capabilityMessage = element<HTMLElement>("#capability-message");
+const reviewEvidence = element<HTMLElement>("#review-evidence");
+const approvalHelp = element<HTMLElement>("#approval-help");
 
 let port: ApprovalUiPort | undefined;
 let requestId: string;
@@ -246,6 +248,7 @@ function renderReview(review: ApprovalReviewDetails, canApprove: boolean): void 
     return;
   }
   origin.textContent = review.origin;
+  reviewEvidence.hidden = false;
   memo.textContent = review.memo;
   network.textContent = NETWORK_LABELS[review.chain];
   method.textContent = "Sign transaction";
@@ -275,6 +278,7 @@ function renderReview(review: ApprovalReviewDetails, canApprove: boolean): void 
   phase = "review-visible";
   rejectButton.disabled = false;
   approvalEnabled = canApprove;
+  approvalHelp.hidden = !canApprove;
   // The control stays closed until the guard arms it; a review response is a
   // reason to START the dwell, never a reason to accept a click (audit A-1).
   approveButton.disabled = true;
@@ -450,7 +454,10 @@ try {
     arm.notePointerUp(event.timeStamp, event.isTrusted);
   });
   approveButton.addEventListener("keydown", (event) => {
-    arm.noteKeyActivation(event.timeStamp, event.isTrusted, event.key);
+    if (event.repeat && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+    }
+    arm.noteKeyActivation(event.timeStamp, event.isTrusted, event.key, event.repeat);
   });
   addEventListener("pagehide", () => {
     closeUi(

@@ -3,12 +3,42 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
     <title>Warden Wallet</title>
+    <link rel="stylesheet" href="approval.css">
   </head>
-  <body>
-    <main>
-      <h1>Warden</h1>
-      <p id="boundary-status" role="status">Checking the extension boundary…</p>
+  <body class="popup-page">
+    <main class="popup-shell" aria-labelledby="page-title">
+      <header class="brand-row">
+        <div class="brand-mark" aria-hidden="true">W</div>
+        <div>
+          <p class="eyebrow">Warden wallet</p>
+          <h1 id="page-title">Your wallet, bounded.</h1>
+        </div>
+      </header>
+
+      <section class="popup-intro" aria-labelledby="build-title">
+        <p class="eyebrow">Development preview · 0.0.1</p>
+        <h2 id="build-title">The foundations are here.<br>Your wallet comes next.</h2>
+        <p>This build cannot create an account, connect to apps, or move funds.</p>
+        <p class="funds-note">Pre-alpha · Unaudited · Do not use with real funds.</p>
+      </section>
+
+      <section class="popup-connection" aria-labelledby="connection-title">
+        <h2 id="connection-title">Extension status</h2>
+        <p id="boundary-status" role="status" data-boundary="checking">Checking the extension connection…</p>
+        <button id="retry-status" class="button secondary" type="button" disabled>Check again</button>
+      </section>
+
+      <details class="popup-guide">
+        <summary>What can I try?</summary>
+        <p>Check that the extension responds, and explore this build's status. Wallet setup and transactions are still being built.</p>
+        <dl>
+          <div><dt>Account setup</dt><dd>Not available</dd></div>
+          <div><dt>App connections</dt><dd>Not available</dd></div>
+          <div><dt>Signing &amp; sending</dt><dd>Not available</dd></div>
+        </dl>
+      </details>
     </main>
     <script src="popup.js"></script>
   </body>

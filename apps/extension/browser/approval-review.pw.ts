@@ -11,6 +11,98 @@ import {
   APPROVAL_OBJECT_STORE_NAME,
 } from "../src/background/approval-store.js";
 
+test("review surface shows full origins and a usable development popup", async () => {
+  const context = await chromium.launchPersistentContext("", {
+    headless: false,
+    args: [
+      `--disable-extensions-except=${EXTENSION_DIRECTORY}`,
+      `--load-extension=${EXTENSION_DIRECTORY}`,
+      "--headless=new",
+    ],
+  });
+  try {
+    const worker = await liveExtensionWorker(context);
+    const extensionOrigin = `chrome-extension://${new URL(worker.url()).hostname}`;
+    const longOrigin = "https://wallet.accounts.customer-support.trusted-looking-name.attacker.example:8443";
+    const record = approval("fa", 120_000, longOrigin);
+    await seedRecord(worker, record);
+    const page = await context.newPage();
+    await page.goto(`${extensionOrigin}/approval.html?request=${record.id}`);
+    await expect(page.locator("#approval-status")).toHaveAttribute("data-state", "review");
+    await expect(page.locator("#request-origin")).toHaveText(longOrigin);
+    await expect(page.getByRole("region", { name: "Review evidence" })).toBeVisible();
+    await expect(page.getByText("Not run. Network effects have not been simulated.")).toBeVisible();
+    await expect(page.getByText("Not evaluated here. A policy version is not a limits check.")).toBeVisible();
+    const measurements: unknown[] = [];
+    for (const width of [320, 360, 720]) {
+      await page.setViewportSize({ width, height: 900 });
+      const metrics = await page.locator("#request-origin").evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return {
+          originWidth: element.clientWidth,
+          originScrollWidth: element.scrollWidth,
+          documentWidth: document.documentElement.scrollWidth,
+          viewportWidth: document.documentElement.clientWidth,
+          lineCount: range.getClientRects().length,
+          everyLineVisible: Array.from(range.getClientRects()).every((rect) =>
+            rect.left >= box.left - 1 && rect.right <= box.right + 1 &&
+            rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1),
+        };
+      });
+      expect(metrics.originScrollWidth).toBeLessThanOrEqual(metrics.originWidth);
+      expect(metrics.documentWidth).toBe(width);
+      expect(metrics.lineCount).toBeGreaterThan(1);
+      expect(metrics.everyLineVisible).toBe(true);
+      measurements.push({ surface: "approval", width, ...metrics });
+      await page.screenshot({ path: test.info().outputPath(`full-origin-${width}.png`), fullPage: true });
+    }
+
+    // Prove the measurement rejects the previous ellipsis presentation. A DOM
+    // toHaveText assertion alone would pass both presentations.
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.locator("#request-origin").evaluate((element) => {
+      element.style.whiteSpace = "nowrap";
+      element.style.overflow = "hidden";
+      element.style.textOverflow = "ellipsis";
+    });
+    expect(await page.locator("#request-origin").evaluate((element) =>
+      element.scrollWidth > element.clientWidth)).toBe(true);
+
+    await page.goto(`${extensionOrigin}/popup.html`);
+    await expect(page.locator("#boundary-status")).toHaveAttribute("data-boundary", "unavailable");
+    const retry = page.getByRole("button", { name: "Check again" });
+    await retry.focus();
+    await page.keyboard.press("Enter");
+    await expect(retry).toBeEnabled();
+    await expect(page.locator("#boundary-status")).toHaveAttribute("data-boundary", "unavailable");
+    for (const width of [320, 360]) {
+      await page.setViewportSize({ width, height: 600 });
+      const metrics = await page.evaluate(() => ({
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: document.documentElement.clientWidth,
+        retryHeight: document.querySelector("#retry-status")!.getBoundingClientRect().height,
+        contentBottom: document.querySelector(".popup-shell")!.getBoundingClientRect().bottom,
+      }));
+      expect(metrics.documentWidth).toBe(width);
+      expect(metrics.retryHeight).toBeGreaterThanOrEqual(44);
+      expect(metrics.contentBottom).toBeLessThanOrEqual(600);
+      measurements.push({ surface: "popup", width, ...metrics });
+      await page.screenshot({ path: test.info().outputPath(`popup-${width}.png`), fullPage: true });
+    }
+    await page.getByText("What can I try?", { exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".popup-guide")).toHaveAttribute("open", "");
+    await expect(page.getByText("Account setup", { exact: true })).toBeVisible();
+    await test.info().attach("review-surface-measurements", {
+      body: JSON.stringify(measurements, null, 2), contentType: "application/json",
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 const EXTENSION_DIRECTORY = resolve(import.meta.dirname, "../dist");
 const SMART_ACCOUNT = "FTPSf3Po3uMpD9KRxWZtaqM27t7zCR8k7oAgz22u2eEC";
 const SESSION_SIGNER = "3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3";
@@ -52,11 +144,11 @@ async function liveExtensionWorker(context: BrowserContext) {
   });
 }
 
-function approval(idByte: string, ttlMs = 120_000): ApprovalRecord {
+function approval(idByte: string, ttlMs = 120_000, origin = "https://dapp.example"): ApprovalRecord {
   const now = Date.now();
   return createPendingApprovalRecord({
     id: `req_${idByte.repeat(16)}`,
-    origin: "https://dapp.example",
+    origin,
     tabId: 7,
     frameId: 0,
     documentId: `browser-provider-${idByte}`,

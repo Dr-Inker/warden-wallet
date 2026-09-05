@@ -14,7 +14,7 @@ function armed(reviewAt = T0): { guard: ApprovalArmGuard; armAt: number } {
   guard.noteFocus(reviewAt - 10);
   guard.noteReviewVisible(reviewAt);
   guard.notePointerMove(reviewAt + 5, true);
-  return { guard, armAt: reviewAt - 10 + DWELL };
+  return { guard, armAt: reviewAt + 600 };
 }
 
 describe("approval arming dwell (audit A-1: click-race / clickjacking)", () => {
@@ -54,6 +54,14 @@ describe("approval arming dwell (audit A-1: click-race / clickjacking)", () => {
       guard.noteKeyActivation(700, true, key, false);
       expect(guard.acceptsActivation(701, true)).toBe(true);
     }
+  });
+
+  it("does not let a repeated key borrow a previous pointer activation", () => {
+    const { guard, armAt } = armed();
+    guard.notePointerDown(armAt + 5, true);
+    guard.notePointerUp(armAt + 9, true);
+    guard.noteKeyActivation(armAt + 10, true, "Enter", true);
+    expect(guard.acceptsActivation(armAt + 11, true)).toBe(false);
   });
 
   it("keeps the dwell inside the reviewed 500-700 ms band", () => {

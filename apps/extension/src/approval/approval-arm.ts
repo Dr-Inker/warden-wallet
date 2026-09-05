@@ -22,13 +22,9 @@
  */
 
 /**
- * Continuous-focus dwell required before the approve control arms.
- *
- * 600 ms is the midpoint of the 500-700 ms band the audit recommended. It is
- * comfortably longer than the interval a primed input stream can bridge between
- * the window appearing and the user's next click (human click-reaction latency
- * is ~250 ms, and the window must also paint), while staying short enough that
- * a user who is actually reading the request never perceives it as lag.
+ * Continuous-focus dwell AFTER the review is rendered, before approval arms.
+ * 600 ms is the midpoint of the audit's 500-700 ms band. This is an input-race
+ * mitigation, not proof the user has read or understood the request.
  */
 export const APPROVAL_ARM_DWELL_MS = 600;
 
@@ -128,8 +124,14 @@ export class ApprovalArmGuard {
     this.#pointerUpAt = stamp;
   }
 
-  noteKeyActivation(at: number, isTrusted: boolean, key: string): void {
+  noteKeyActivation(at: number, isTrusted: boolean, key: string, repeat = false): void {
     if (isTrusted !== true || !ACTIVATION_KEYS.has(key)) return;
+    // A held key must not turn into fresh consent when auto-repeat crosses the
+    // dwell. A keyboard activation also cannot borrow a prior pointer pair.
+    this.#pointerDownAt = undefined;
+    this.#pointerUpAt = undefined;
+    this.#keyActivationAt = undefined;
+    if (repeat) return;
     const stamp = finite(at);
     if (stamp === undefined) return;
     this.#keyActivationAt = stamp;
@@ -143,7 +145,10 @@ export class ApprovalArmGuard {
     if (this.#reviewAt === undefined) return undefined;
     if (this.#focusSince === undefined) return undefined;
     if (this.#pointerMoveAt === undefined) return undefined;
-    return Math.max(this.#focusSince + APPROVAL_ARM_DWELL_MS, this.#pointerMoveAt);
+    return Math.max(
+      Math.max(this.#reviewAt, this.#focusSince) + APPROVAL_ARM_DWELL_MS,
+      this.#pointerMoveAt,
+    );
   }
 
   isArmed(now: number): boolean {
