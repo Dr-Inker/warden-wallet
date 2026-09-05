@@ -15,6 +15,11 @@ export {
   MAX_PROVIDER_REQUESTS_PER_DOCUMENT,
 };
 
+// Provisional development policy, not a measured production workload budget.
+// Owned by the document, so worker restarts cannot replenish burst capacity.
+export const PROVIDER_REQUEST_BURST = 32;
+export const PROVIDER_REQUEST_REFILL_MS = 125;
+
 export interface ContentPortMessageEvent {
   addListener(listener: (message: unknown) => void): void;
   removeListener(listener: (message: unknown) => void): void;
@@ -141,7 +146,7 @@ function safeDisconnect(port: ContentRuntimePort): void {
 export function installPageProviderBridge(
   page: ContentWindowApi,
   runtime: ContentRuntimeApi,
-  _options: { readonly readNow?: () => number } = {},
+  options: { readonly readNow?: () => number } = {},
 ): PageProviderBridge {
   if (typeof page !== "object" || page === null) fail("window API is unavailable");
   if (
@@ -159,11 +164,15 @@ export function installPageProviderBridge(
   ) {
     fail("runtime API is unavailable");
   }
+  const readNow = options.readNow ?? performance.now.bind(performance);
+  if (typeof readNow !== "function") fail("monotonic clock is unavailable");
 
   let open = true;
   let pageListenerInstalled = false;
   let activePort: BoundContentPort | null = null;
   let forwardedRequestCount = 0;
+  let requestCredit = PROVIDER_REQUEST_BURST;
+  let lastRequestAt: number | undefined;
 
   const releasePort = (
     owner: BoundContentPort,
@@ -286,6 +295,29 @@ export function installPageProviderBridge(
       close(true);
       return;
     }
+    let now: number;
+    try {
+      now = readNow();
+    } catch {
+      close(true);
+      return;
+    }
+    if (!Number.isFinite(now) || now < 0 || (lastRequestAt !== undefined && now < lastRequestAt)) {
+      close(true);
+      return;
+    }
+    if (lastRequestAt !== undefined) {
+      requestCredit = Math.min(
+        PROVIDER_REQUEST_BURST,
+        requestCredit + (now - lastRequestAt) / PROVIDER_REQUEST_REFILL_MS,
+      );
+    }
+    lastRequestAt = now;
+    if (requestCredit < 1) {
+      close(true);
+      return;
+    }
+    requestCredit--;
     forwardedRequestCount++;
     // Deliberately do not parse, enrich, or rewrite attacker-controlled data.
     // The service worker applies the closed schema and browser provenance.
