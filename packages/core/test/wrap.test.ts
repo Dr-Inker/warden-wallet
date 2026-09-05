@@ -229,6 +229,31 @@ describe("wrapForExecute", () => {
     expect(heapFrame(r.computeBudgetIxs)).toBeDefined();
   });
 
+  it.each([
+    ["empty data", []],
+    ["reserved tag", [0, 0, 0, 0, 0]],
+    ["unknown tag", [5, 0, 0, 0, 0]],
+    ["truncated price", [3, 1]],
+    ["trailing price bytes", [3, 1, 0, 0, 0, 0, 0, 0, 0, 0]],
+    ["truncated loaded-data limit", [4, 1]],
+    ["trailing loaded-data bytes", [4, 1, 0, 0, 0, 0]],
+    ["zero loaded-data limit", [4, 0, 0, 0, 0]],
+  ])("rejects unchecked compute-budget passthrough: %s", (_label, bytes) => {
+    const budget = new TransactionInstruction({ programId: CB, keys: [], data: Buffer.from(bytes) });
+    const work = new TransactionInstruction({ programId: wardenProgram, keys: [], data: Buffer.from([42]) });
+    const msg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [budget, work] }).compileToV0Message();
+    expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer })).toThrow(/compute.budget/i);
+  });
+
+  it.each([3, 4])("rejects duplicate compute-budget tag %s", (tag) => {
+    const budget = new TransactionInstruction({
+      programId: CB, keys: [], data: Buffer.from(tag === 3 ? [3, 5, 0, 0, 0, 0, 0, 0, 0] : [4, 0, 0, 0, 4]),
+    });
+    const work = new TransactionInstruction({ programId: wardenProgram, keys: [], data: Buffer.from([42]) });
+    const msg = new TransactionMessage({ payerKey: signer, recentBlockhash: BLOCKHASH, instructions: [budget, budget, work] }).compileToV0Message();
+    expect(() => wrapForExecute(msg, { wardenProgram, smartAccount, signer })).toThrow(/compute.budget/i);
+  });
+
   // WRDF-0076 — an undersized (or malformed) compute-unit limit is rejected, not
   // rubber-stamped by tag presence.
   it("rejects a dApp compute-unit limit below the measured floor", () => {

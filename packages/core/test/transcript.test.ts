@@ -497,6 +497,33 @@ describe("grant (OP_GRANT_SESSION, 0x01) — GROK-EXP-07", () => {
     );
   });
 
+  it.each(["kind", "opsMask", "programAllowlistId"] as const)(
+    "rejects non-integer and non-number %s instead of signing coerced authority",
+    (field) => {
+      for (const value of [NaN, 1.5, "1", null, undefined, true, Infinity, -1]) {
+        expect(() => encodeGrantBody({
+          ...grantFields, [field]: value as number,
+        }), `${field}=${String(value)}`).toThrow();
+      }
+    },
+  );
+
+  it("encodes scalar integer boundaries at literal GrantBody offsets", () => {
+    const body = encodeGrantBody({
+      ...grantFields, expiryTs: -(2n ** 63n), kind: 255, opsMask: 65535,
+      programAllowlistId: 65535,
+    });
+    expect(hex(body.slice(0, 8))).toBe("0000000000000080");
+    expect(hex(body.slice(40, 43))).toBe("ffffff");
+    expect(hex(body.slice(115, 117))).toBe("ffff");
+    for (const [field, value] of [["kind", 256], ["opsMask", 65536], ["programAllowlistId", 65536]]) {
+      expect(() => encodeGrantBody({ ...grantFields, [field!]: value })).toThrow();
+    }
+    for (const expiryTs of [-(2n ** 63n) - 1n, 2n ** 63n, -1 as unknown as bigint]) {
+      expect(() => encodeGrantBody({ ...grantFields, expiryTs })).toThrow();
+    }
+  });
+
   it("rejects wrong-size fields and mismatched cap/lifetime lengths", () => {
     expect(() => encodeGrantBody({ ...grantFields, sessionPubkey: fill(31, 1) })).toThrow();
     expect(() => encodeGrantBody({ ...grantFields, priorAuthorityHash: fill(31, 1) })).toThrow();

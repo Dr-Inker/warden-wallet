@@ -1,5 +1,30 @@
 # Next Session — Claude Security, Vanity, and UI Handoff
 
+> ## 2026-09-05 SECURITY CONTINUATION — IN PROGRESS
+>
+> `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`
+>
+> - **TO:** current implementation session and next maintainer.
+> - **TASK:** reproduce and repair failed unlock-transition persistence, grant
+>   scalar coercion, and unchecked compute-budget passthrough; continue bounded
+>   defensive improvements under the user's instruction to do the work fully.
+> - **CWD:** `/opt/warden`, branch `phase1b`.
+> - **BASE:** `54d5e1960dac13ccb2648c03dcae27cde2ef2c2c`.
+> - **READ:** this memo, `docs/CRITIQUE-2026-09-05.md`, threat/invariant ledgers,
+>   affected source/tests, and the pinned compute-budget interface.
+> - **WRITE (edit lease):** local core/extension security implementation, focused
+>   regression tests and incumbent markdown/security ledgers.
+> - **DO_NOT_TOUCH:** frozen session graphs, live `/var/www`, `spikes`, keys,
+>   release-pin values, tags, `main`, signing, external services or deployment.
+> - **ACCEPT:** committed failing regressions, fixes preserving existing golden
+>   bytes, targeted tests/builds at exact SHAs, full gate and independent review
+>   before claiming completion. No assurance promotion from author review alone.
+> - **SIDE_EFFECTS:** local edits, commits and disposable test artifacts only;
+>   one heavy job at a time and no bypass of the host concurrency guard.
+> - **RETURN:** exact command/SHA evidence, material residuals and next action.
+>   The prior browser correction still needs rendered verification; its rerun
+>   was again rejected because another host session was active.
+
 > ## 2026-09-05 REVIEW-SURFACE BUILD — IMPLEMENTED; VALIDATION OPEN
 >
 > `TO / TASK / CWD / BASE / READ / WRITE (edit lease) / DO_NOT_TOUCH / ACCEPT / SIDE_EFFECTS / RETURN`

@@ -283,6 +283,50 @@ describe("MV3 unlock session ownership", () => {
     expect(state.storage.value).toBeUndefined();
   });
 
+  it.each(["expired", "clock failure"] as const)(
+    "cannot restore the revoked session after a replacement fails with %s",
+    async (failure) => {
+      let failClock = false;
+      const state = owner(undefined, () => {
+        if (failClock) throw new Error("clock unavailable");
+        return T0 + 1;
+      });
+      await state.owner.unlock({
+        account: ACCOUNT, bundleId: BUNDLE_ID, unwrapKey: key(),
+        deadlines: startUnlockSession(T0, POLICY),
+      });
+      failClock = failure === "clock failure";
+      const replacementKey = key();
+      await expect(state.owner.unlock({
+        account: ACCOUNT, bundleId: OTHER_BUNDLE_ID, unwrapKey: replacementKey,
+        deadlines: failure === "expired"
+          ? { idleExpiresAt: T0 + 1, hardExpiresAt: T0 + 10 }
+          : startUnlockSession(T0, POLICY),
+      })).rejects.toThrow(failure === "expired" ? KeyringExpiredError : /readNow failed/);
+      expect(await state.owner.isUnlocked()).toBe(false);
+      expect(replacementKey.bytes).toEqual(new Uint8Array(32));
+
+      // A fresh owner models worker death: inspect actual persisted authority,
+      // not just the old owner's in-memory status.
+      const restarted = owner(state.storage);
+      expect(await restarted.owner.restore(BUNDLE_ID)).toBe(false);
+      expect(state.storage.value).toBeUndefined();
+    },
+  );
+
+  it("removes restored material when the wake-time clock check fails", async () => {
+    const state = owner();
+    await state.owner.unlock({
+      account: ACCOUNT, bundleId: BUNDLE_ID, unwrapKey: key(),
+      deadlines: startUnlockSession(T0, POLICY),
+    });
+    const failedWake = owner(state.storage, () => { throw new Error("clock unavailable"); });
+    await expect(failedWake.owner.restore(BUNDLE_ID)).rejects.toThrow(/readNow failed/);
+    const laterWake = owner(state.storage);
+    expect(await laterWake.owner.restore(BUNDLE_ID)).toBe(false);
+    expect(state.storage.value).toBeUndefined();
+  });
+
   it("does not expose a session until its storage replacement commits", async () => {
     const state = owner();
     const setGate = gate();
